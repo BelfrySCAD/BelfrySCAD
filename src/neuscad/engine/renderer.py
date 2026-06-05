@@ -45,12 +45,33 @@ void main() {
 }
 """
 
+_GIZMO_VERT = """
+#version 330 core
+in vec3 in_position;
+in vec3 in_color;
+uniform mat4 mvp;
+out vec3 v_color;
+void main() {
+    gl_Position = mvp * vec4(in_position, 1.0);
+    v_color = in_color;
+}
+"""
+
+_GIZMO_FRAG = """
+#version 330 core
+in vec3 v_color;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(v_color, 1.0);
+}
+"""
+
 
 class Camera:
     """Spherical-coordinate orbit camera."""
 
     def __init__(self):
-        self.azimuth = 45.0
+        self.azimuth = 295.0
         self.elevation = 35.0
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
@@ -96,10 +117,10 @@ class MeshBuffer:
         self.vao = vao
         self.num_indices = num_indices
         self.color = color
-        self.cpu_v0 = cpu_v0          # (T, 3) first vertex of each triangle
-        self.cpu_v1 = cpu_v1          # (T, 3)
-        self.cpu_v2 = cpu_v2          # (T, 3)
-        self.tri_ids = tri_ids        # (T,) originalID per triangle
+        self.cpu_v0 = cpu_v0
+        self.cpu_v1 = cpu_v1
+        self.cpu_v2 = cpu_v2
+        self.tri_ids = tri_ids
         self.original_ids: set[int] = set(int(x) for x in tri_ids)
 
 
@@ -107,15 +128,28 @@ class SceneRenderer:
     def __init__(self):
         self._ctx: Optional[mgl.Context] = None
         self._prog: Optional[mgl.Program] = None
+        self._gizmo_prog: Optional[mgl.Program] = None
+        self._gizmo_vbo: Optional[mgl.Buffer] = None
+        self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._buffers: list[MeshBuffer] = []
         self.camera = Camera()
         self._viewport: tuple[int, int] = (800, 600)
         self._default_color = (0.6, 0.7, 0.85, 1.0)
         self.selected_id: Optional[int] = None
+        self.show_gizmo: bool = False
+        self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
+        self.drag_offset: np.ndarray = np.zeros(3, dtype=np.float32)
+        self.gizmo_type: int = 0           # 0=translate, 1=rotate
+        self.drag_rotation_axis: int = -1
+        self.drag_rotation_angle: float = 0.0
+        self.show_axes: bool = True
+        self._axes_vbo: Optional[mgl.Buffer] = None
+        self._axes_vao: Optional[mgl.VertexArray] = None
 
     def initialize(self, ctx: mgl.Context):
         self._ctx = ctx
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
+        self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
 
     def set_viewport(self, w: int, h: int):
         self._viewport = (w, h)
@@ -123,6 +157,9 @@ class SceneRenderer:
     def load_geometry(self, bodies: list[ColoredBody]):
         self._clear_buffers()
         self.selected_id = None
+        self.drag_offset = np.zeros(3, dtype=np.float32)
+        self.drag_rotation_angle = 0.0
+        self.drag_rotation_axis = -1
         if not bodies or self._ctx is None:
             return
 
@@ -151,7 +188,6 @@ class SceneRenderer:
 
         T = len(tris)
 
-        # Build per-triangle originalID array from Manifold run data
         run_ids = np.array(mesh.run_original_id, dtype=np.int32)
         run_idx = np.array(mesh.run_index, dtype=np.int32)
         tri_ids = np.zeros(T, dtype=np.int32)
@@ -160,8 +196,7 @@ class SceneRenderer:
             if s < T:
                 tri_ids[s:e] = run_ids[i]
 
-        # Flat shading: unroll triangles so each corner gets its face normal.
-        v0 = verts[tris[:, 0]]  # (T, 3)
+        v0 = verts[tris[:, 0]]
         v1 = verts[tris[:, 1]]
         v2 = verts[tris[:, 2]]
 
@@ -170,8 +205,8 @@ class SceneRenderer:
         lengths = np.where(lengths == 0, 1, lengths)
         face_normals /= lengths
 
-        normals_per_corner = np.repeat(face_normals, 3, axis=0)         # (3T, 3)
-        positions_per_corner = np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3)  # (3T, 3)
+        normals_per_corner = np.repeat(face_normals, 3, axis=0)
+        positions_per_corner = np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3)
 
         interleaved = np.concatenate(
             [positions_per_corner, normals_per_corner], axis=1
@@ -187,7 +222,7 @@ class SceneRenderer:
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
                           tri_ids=tri_ids)
 
-    def paint(self, bg_color: tuple = (0.15, 0.15, 0.15, 1.0), qt_fbo_id: int = 0):
+    def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0):
         if self._ctx is None or self._prog is None:
             return
 
@@ -205,24 +240,310 @@ class SceneRenderer:
         self._ctx.clear(*bg_color[:3])
         self._ctx.enable(mgl.DEPTH_TEST)
 
-        # Light fixed in view space (upper-front-right of screen).
-        # Transform from view → world so the shader can use world-space normals.
         L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
         L_world = (view[:3, :3].T @ L_view).astype(np.float32)
         L_world /= np.linalg.norm(L_world)
         self._prog["light_dir"].value = tuple(L_world)
-        self._prog["model"].write(model.T.astype(np.float32).tobytes())
-        self._prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+
+        has_drag = np.any(self.drag_offset != 0)
+        has_rotation = self.drag_rotation_axis >= 0 and self.drag_rotation_angle != 0.0
+
+        rot_center = None
+        if has_rotation:
+            bbox = self._selected_buffer_bbox()
+            if bbox is not None:
+                rot_center, _ = bbox
 
         for buf in self._buffers:
-            color = buf.color
-            if self.selected_id is not None and self.selected_id in buf.original_ids:
-                color = _highlight_color(color)
+            is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
+            color = _highlight_color(buf.color) if is_selected else buf.color
+
+            if is_selected and has_drag:
+                buf_model = np.eye(4, dtype=np.float32)
+                buf_model[:3, 3] = self.drag_offset
+            elif is_selected and has_rotation and rot_center is not None:
+                buf_model = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
+            else:
+                buf_model = model
+
+            self._prog["model"].write(buf_model.T.tobytes())
+            self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
             buf.vao.render()
 
+        if self.show_axes and self._gizmo_prog is not None:
+            self._render_axes(mvp)
+
+        # Draw gizmo on top (no depth test so it's always visible)
+        if self.show_gizmo and self.selected_id is not None and self._gizmo_prog is not None:
+            self._render_gizmo(mvp)
+
+    def _render_gizmo(self, mvp: np.ndarray):
+        bbox = self._selected_buffer_bbox()
+        if bbox is None:
+            return
+        center, _ = bbox
+        scale = self.camera.distance * 0.14
+
+        if self.gizmo_type == 0:
+            if np.any(self.drag_offset != 0):
+                center = center + self.drag_offset
+            geo = _build_gizmo_geo(center, scale, self.active_gizmo_axis)
+        else:
+            geo = _build_rotate_gizmo_geo(center, scale, self.active_gizmo_axis)
+
+        if self._gizmo_vbo is not None:
+            self._gizmo_vao.release()
+            self._gizmo_vbo.release()
+
+        self._gizmo_vbo = self._ctx.buffer(geo.tobytes())
+        self._gizmo_vao = self._ctx.vertex_array(
+            self._gizmo_prog,
+            [(self._gizmo_vbo, "3f 3f", "in_position", "in_color")],
+        )
+
+        self._ctx.disable(mgl.DEPTH_TEST)
+        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._gizmo_vao.render()
+        self._ctx.enable(mgl.DEPTH_TEST)
+
+    def _render_axes(self, mvp: np.ndarray):
+        L       = self.camera.distance * 2.5
+        spacing = _nice_spacing(L)
+        black   = np.zeros(3, dtype=np.float32)
+        light   = np.array([0.65, 0.65, 0.65], dtype=np.float32)
+
+        # Tick sizes: minor ~8 px half-length, major exactly 2×
+        w, h = self._viewport
+        px_to_world = (self.camera.distance
+                       * math.tan(math.radians(self.camera.fov / 2))
+                       / max(h, 1))
+        minor_half = px_to_world * 8
+        tick_half  = minor_half * 2
+
+        rows: list[np.ndarray] = []
+
+        # Positive solid axes
+        for i in range(3):
+            p0 = np.zeros(3, dtype=np.float32)
+            p1 = np.zeros(3, dtype=np.float32)
+            p1[i] = float(L)
+            rows.append(np.concatenate([p0, black]))
+            rows.append(np.concatenate([p1, black]))
+
+        # Negative axes — solid, light gray
+        for i in range(3):
+            p0 = np.zeros(3, dtype=np.float32)
+            p1 = np.zeros(3, dtype=np.float32)
+            p1[i] = -float(L)
+            rows.append(np.concatenate([p0, light]))
+            rows.append(np.concatenate([p1, light]))
+
+        # Tick marks:
+        #   X-axis → perpendicular in Y
+        #   Y-axis → perpendicular in X
+        #   Z-axis → perpendicular in Y
+        perp_axis = [1, 0, 1]   # which axis the tick extends along
+        minor_spacing = spacing / 10
+        minor_half = tick_half * 0.5
+
+        k = 1
+        while True:
+            t = k * minor_spacing
+            if t > L + 1e-9:
+                break
+            is_major = (k % 10 == 0)
+            half = tick_half if is_major else minor_half
+            for sign in (1.0, -1.0):
+                pos = sign * t
+                for ai in range(3):
+                    pi = perp_axis[ai]
+                    p0 = np.zeros(3, dtype=np.float32)
+                    p1 = np.zeros(3, dtype=np.float32)
+                    p0[ai] = float(pos)
+                    p1[ai] = float(pos)
+                    p0[pi] = -float(half)
+                    p1[pi] =  float(half)
+                    rows.append(np.concatenate([p0, black]))
+                    rows.append(np.concatenate([p1, black]))
+            k += 1
+
+        geo = np.array(rows, dtype=np.float32)
+
+        if self._axes_vbo is not None:
+            self._axes_vao.release()
+            self._axes_vbo.release()
+
+        self._axes_vbo = self._ctx.buffer(geo.tobytes())
+        self._axes_vao = self._ctx.vertex_array(
+            self._gizmo_prog,
+            [(self._axes_vbo, "3f 3f", "in_position", "in_color")],
+        )
+
+        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._axes_vao.render(mgl.LINES)
+
+    def _ray_blocked(self, ray_o: np.ndarray, ray_d: np.ndarray, max_t: float) -> bool:
+        """Return True if any triangle intersects the ray at t < max_t."""
+        for buf in self._buffers:
+            if len(buf.tri_ids) == 0:
+                continue
+            _, t = _moller_trumbore_batch(ray_o, ray_d, buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)
+            if t < max_t - 1e-3:
+                return True
+        return False
+
+    def axis_tick_labels(self, w: int, h: int) -> list[tuple[float, float, str]]:
+        """Return (screen_x, screen_y, text) for every unoccluded tick label."""
+        L = self.camera.distance * 2.5
+        spacing = _nice_spacing(L)
+        aspect = w / h if h > 0 else 1.0
+        vp = (self.camera.projection_matrix(aspect) @ self.camera.view_matrix()).astype(np.float64)
+        eye = self.camera.eye_position().astype(np.float64)
+
+        def project(world):
+            p4 = np.array([*world, 1.0], dtype=np.float64)
+            clip = vp @ p4
+            if clip[3] < 1e-6:
+                return None
+            ndc = clip[:3] / clip[3]
+            if abs(ndc[0]) > 1.05 or abs(ndc[1]) > 1.05 or ndc[2] > 1.0:
+                return None
+            return ((ndc[0] + 1) * 0.5 * w, (1 - ndc[1]) * 0.5 * h)
+
+        result = []
+        t = spacing
+        while t <= L + 1e-9:
+            for sign in (1.0, -1.0):
+                pos = sign * t
+                lbl = _fmt_tick(pos, spacing)
+                for ai in range(3):
+                    world = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+                    world[ai] = pos
+                    sc = project(world)
+                    if sc is None:
+                        continue
+                    to_tick = world - eye
+                    dist = float(np.linalg.norm(to_tick))
+                    if dist < 1e-6:
+                        continue
+                    ray_d = (to_tick / dist).astype(np.float32)
+                    ray_o = eye.astype(np.float32)
+                    if not self._ray_blocked(ray_o, ray_d, dist):
+                        result.append((sc[0], sc[1], lbl))
+            t += spacing
+        return result
+
+    def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
+        if self.selected_id is None:
+            return None
+        for buf in self._buffers:
+            if self.selected_id in buf.original_ids:
+                all_v = np.vstack([buf.cpu_v0, buf.cpu_v1, buf.cpu_v2])
+                bb_min = all_v.min(axis=0)
+                bb_max = all_v.max(axis=0)
+                center = ((bb_min + bb_max) / 2).astype(np.float32)
+                extent = float(np.linalg.norm(bb_max - bb_min))
+                return center, extent
+        return None
+
+    def pick_gizmo_axis(self, px: float, py: float, w: int, h: int) -> int:
+        """Return which gizmo axis (0=X,1=Y,2=Z) is under the pixel, or -1."""
+        if self.gizmo_type == 0:
+            return self._pick_translate_axis(px, py, w, h)
+        return self._pick_rotate_axis(px, py, w, h)
+
+    def _pick_translate_axis(self, px: float, py: float, w: int, h: int) -> int:
+        bbox = self._selected_buffer_bbox()
+        if bbox is None:
+            return -1
+        center, _ = bbox
+        if np.any(self.drag_offset != 0):
+            center = center + self.drag_offset
+        scale = self.camera.distance * 0.14
+
+        aspect = w / h if h > 0 else 1.0
+        view = self.camera.view_matrix()
+        proj = self.camera.projection_matrix(aspect)
+        vp = proj @ view
+
+        def to_screen(p: np.ndarray):
+            p4 = np.array([p[0], p[1], p[2], 1.0], dtype=np.float64)
+            clip = vp @ p4
+            if abs(clip[3]) < 1e-8:
+                return None
+            ndc = clip[:3] / clip[3]
+            return np.array([(ndc[0] + 1) * 0.5 * w, (1 - ndc[1]) * 0.5 * h])
+
+        mouse = np.array([px, py])
+        sc = to_screen(center)
+        if sc is None:
+            return -1
+
+        best_dist, best_axis = 12.0, -1
+        for ai, ad in enumerate([np.array([scale, 0, 0]),
+                                  np.array([0, scale, 0]),
+                                  np.array([0, 0, scale])]):
+            st = to_screen(center + ad)
+            if st is None:
+                continue
+            seg = st - sc
+            seg_len_sq = float(np.dot(seg, seg))
+            if seg_len_sq < 1e-6:
+                continue
+            t = float(np.clip(np.dot(mouse - sc, seg) / seg_len_sq, 0.0, 1.0))
+            dist = float(np.linalg.norm(mouse - (sc + t * seg)))
+            if dist < best_dist:
+                best_dist, best_axis = dist, ai
+        return best_axis
+
+    def _pick_rotate_axis(self, px: float, py: float, w: int, h: int) -> int:
+        bbox = self._selected_buffer_bbox()
+        if bbox is None:
+            return -1
+        center, _ = bbox
+        scale = self.camera.distance * 0.14
+
+        aspect = w / h if h > 0 else 1.0
+        view = self.camera.view_matrix()
+        proj = self.camera.projection_matrix(aspect)
+        vp = proj @ view
+
+        def to_screen(p: np.ndarray):
+            p4 = np.array([p[0], p[1], p[2], 1.0], dtype=np.float64)
+            clip = vp @ p4
+            if abs(clip[3]) < 1e-8:
+                return None
+            ndc = clip[:3] / clip[3]
+            return np.array([(ndc[0] + 1) * 0.5 * w, (1 - ndc[1]) * 0.5 * h])
+
+        mouse = np.array([px, py])
+        n_sample = 32
+        angles = np.linspace(0, 2 * math.pi, n_sample, endpoint=False)
+        best_dist, best_axis = 12.0, -1
+
+        for ai in range(3):
+            p1 = _AXES_PERP1[ai].astype(np.float64)
+            p2 = _AXES_PERP2[ai].astype(np.float64)
+            pts = center + scale * (np.cos(angles)[:, None] * p1 + np.sin(angles)[:, None] * p2)
+            screen = [to_screen(p) for p in pts]
+            for i in range(n_sample):
+                j = (i + 1) % n_sample
+                s0, s1 = screen[i], screen[j]
+                if s0 is None or s1 is None:
+                    continue
+                seg = s1 - s0
+                seg_sq = float(np.dot(seg, seg))
+                if seg_sq < 1e-6:
+                    dist = float(np.linalg.norm(mouse - s0))
+                else:
+                    t = float(np.clip(np.dot(mouse - s0, seg) / seg_sq, 0.0, 1.0))
+                    dist = float(np.linalg.norm(mouse - (s0 + t * seg)))
+                if dist < best_dist:
+                    best_dist, best_axis = dist, ai
+        return best_axis
+
     def camera_ray(self, px: float, py: float, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
-        """Unproject a viewport pixel to a world-space ray (origin, normalised direction)."""
         aspect = w / h if h > 0 else 1.0
         proj = self.camera.projection_matrix(aspect)
         view = self.camera.view_matrix()
@@ -244,7 +565,6 @@ class SceneRenderer:
         return origin, direction
 
     def ray_cast(self, ray_origin: np.ndarray, ray_dir: np.ndarray) -> Optional[int]:
-        """Return the originalID of the closest hit triangle, or None."""
         best_t = np.inf
         best_id = None
         for buf in self._buffers:
@@ -259,6 +579,118 @@ class SceneRenderer:
 
     def release(self):
         self._clear_buffers()
+        if self._gizmo_vbo is not None:
+            self._gizmo_vao.release()
+            self._gizmo_vbo.release()
+            self._gizmo_vao = None
+            self._gizmo_vbo = None
+        if self._axes_vbo is not None:
+            self._axes_vao.release()
+            self._axes_vbo.release()
+            self._axes_vao = None
+            self._axes_vbo = None
+
+
+# ------------------------------------------------------------------
+# Gizmo geometry
+# ------------------------------------------------------------------
+
+_AXES_DIRS  = np.array([[1,0,0],[0,1,0],[0,0,1]], dtype=np.float32)
+_AXES_PERP1 = np.array([[0,1,0],[1,0,0],[1,0,0]], dtype=np.float32)
+_AXES_PERP2 = np.array([[0,0,1],[0,0,1],[0,1,0]], dtype=np.float32)
+_AXES_COLORS = np.array([[1.0,0.18,0.18],[0.18,1.0,0.18],[0.18,0.18,1.0]], dtype=np.float32)
+_HIGHLIGHT   = np.array([1.0, 1.0, 0.2], dtype=np.float32)
+
+
+def _build_gizmo_geo(center: np.ndarray, length: float, active_axis: int) -> np.ndarray:
+    """Return interleaved (pos3, color3) vertex data for 3 axis arrows (GL_TRIANGLES)."""
+    n_seg = 8
+    shaft_r  = length * 0.04
+    cone_r   = length * 0.09
+    shaft_t  = 0.72
+
+    rows: list[np.ndarray] = []
+
+    for ai in range(3):
+        d  = _AXES_DIRS[ai]
+        p1 = _AXES_PERP1[ai]
+        p2 = _AXES_PERP2[ai]
+        col = _HIGHLIGHT if ai == active_axis else _AXES_COLORS[ai]
+
+        shaft_end = center + d * (length * shaft_t)
+        cone_tip  = center + d * length
+
+        angles  = np.linspace(0, 2 * math.pi, n_seg, endpoint=False, dtype=np.float32)
+        offsets = np.cos(angles)[:, None] * p1 + np.sin(angles)[:, None] * p2  # (n,3)
+
+        ring0 = center    + shaft_r * offsets   # (n,3)
+        ring1 = shaft_end + shaft_r * offsets   # (n,3)
+        cring = shaft_end + cone_r  * offsets   # (n,3)
+
+        for i in range(n_seg):
+            j = (i + 1) % n_seg
+
+            # Shaft quad (2 triangles)
+            for tri in ((ring0[i], ring0[j], ring1[i]),
+                        (ring0[j], ring1[j], ring1[i])):
+                for v in tri:
+                    rows.append(np.concatenate([v, col]))
+
+            # Cone side
+            for v in (cring[i], cring[j], cone_tip):
+                rows.append(np.concatenate([v, col]))
+
+            # Cone base cap (back-facing to close the tip)
+            for v in (shaft_end, cring[j], cring[i]):
+                rows.append(np.concatenate([v, col]))
+
+    return np.array(rows, dtype=np.float32)   # (N, 6)
+
+
+def _build_rotate_gizmo_geo(center: np.ndarray, radius: float, active_axis: int) -> np.ndarray:
+    """Return interleaved (pos3, color3) vertex data for 3 axis rings (GL_TRIANGLES)."""
+    n_seg = 64
+    half_w = radius * 0.055
+
+    rows: list[np.ndarray] = []
+
+    for ai in range(3):
+        p1 = _AXES_PERP1[ai].astype(np.float32)
+        p2 = _AXES_PERP2[ai].astype(np.float32)
+        col = _HIGHLIGHT if ai == active_axis else _AXES_COLORS[ai]
+
+        angles = np.linspace(0, 2 * math.pi, n_seg, endpoint=False, dtype=np.float32)
+        dirs = np.cos(angles)[:, None] * p1 + np.sin(angles)[:, None] * p2  # (n,3)
+
+        inner = center + (radius - half_w) * dirs
+        outer = center + (radius + half_w) * dirs
+
+        for i in range(n_seg):
+            j = (i + 1) % n_seg
+            for v in (inner[i], outer[i], outer[j]):
+                rows.append(np.concatenate([v, col]))
+            for v in (inner[i], outer[j], inner[j]):
+                rows.append(np.concatenate([v, col]))
+
+    return np.array(rows, dtype=np.float32)
+
+
+def _rotation_model(center: np.ndarray, axis_idx: int, angle_deg: float) -> np.ndarray:
+    """4×4 rotation matrix: rotate around world axis by angle_deg, pivoting at center."""
+    angle_rad = math.radians(angle_deg)
+    c = math.cos(angle_rad)
+    s = math.sin(angle_rad)
+    t = 1 - c
+    ax, ay, az = (float(_AXES_DIRS[axis_idx, k]) for k in range(3))
+    R = np.array([
+        [t*ax*ax+c,    t*ax*ay-s*az, t*ax*az+s*ay, 0],
+        [t*ax*ay+s*az, t*ay*ay+c,   t*ay*az-s*ax, 0],
+        [t*ax*az-s*ay, t*ay*az+s*ax, t*az*az+c,   0],
+        [0,            0,            0,             1],
+    ], dtype=np.float32)
+    T_c  = np.eye(4, dtype=np.float32); T_c[:3, 3]  =  center
+    T_nc = np.eye(4, dtype=np.float32); T_nc[:3, 3] = -center
+    return T_c @ R @ T_nc
 
 
 # ------------------------------------------------------------------
@@ -268,26 +700,25 @@ class SceneRenderer:
 def _moller_trumbore_batch(ray_origin: np.ndarray, ray_dir: np.ndarray,
                             v0: np.ndarray, v1: np.ndarray,
                             v2: np.ndarray) -> tuple[Optional[int], float]:
-    """Vectorised Möller-Trumbore over T triangles. Returns (hit_index, t) or (None, inf)."""
     eps = 1e-8
-    edge1 = v1 - v0                                         # (T, 3)
-    edge2 = v2 - v0                                         # (T, 3)
+    edge1 = v1 - v0
+    edge2 = v2 - v0
 
-    h = np.cross(ray_dir[np.newaxis, :], edge2)             # (T, 3)
-    a = np.sum(edge1 * h, axis=1)                           # (T,)
+    h = np.cross(ray_dir[np.newaxis, :], edge2)
+    a = np.sum(edge1 * h, axis=1)
 
     valid = np.abs(a) > eps
     inv_a = np.where(valid, 1.0 / np.where(valid, a, 1.0), 0.0)
 
-    s = ray_origin[np.newaxis, :] - v0                      # (T, 3)
-    u = inv_a * np.sum(s * h, axis=1)                       # (T,)
+    s = ray_origin[np.newaxis, :] - v0
+    u = inv_a * np.sum(s * h, axis=1)
     valid &= (u >= 0.0) & (u <= 1.0)
 
-    q = np.cross(s, edge1)                                  # (T, 3)
-    v = inv_a * (q @ ray_dir)                               # (T,)
+    q = np.cross(s, edge1)
+    v = inv_a * (q @ ray_dir)
     valid &= (v >= 0.0) & (u + v <= 1.0)
 
-    t = inv_a * np.sum(edge2 * q, axis=1)                   # (T,)
+    t = inv_a * np.sum(edge2 * q, axis=1)
     valid &= t > eps
 
     t_vals = np.where(valid, t, np.inf)
@@ -297,8 +728,24 @@ def _moller_trumbore_batch(ray_origin: np.ndarray, ray_dir: np.ndarray,
     return hit_idx, float(t_vals[hit_idx])
 
 
+def _nice_spacing(L: float) -> float:
+    """Return a round tick spacing giving ~5-10 ticks along an axis of length L."""
+    raw = max(L, 1e-9) / 14
+    mag = 10 ** math.floor(math.log10(raw))
+    for f in (1, 2, 5, 10):
+        if f * mag >= raw:
+            return float(f * mag)
+    return mag * 10.0
+
+
+def _fmt_tick(val: float, spacing: float) -> str:
+    if spacing >= 1.0:
+        return str(int(round(val)))
+    decimals = max(0, -math.floor(math.log10(spacing)))
+    return f"{val:.{decimals}f}"
+
+
 def _highlight_color(color: tuple) -> tuple:
-    """Blend colour toward bright amber to indicate selection."""
     r, g, b, a = color
     return (min(1.0, r * 0.35 + 0.65),
             min(1.0, g * 0.35 + 0.52),

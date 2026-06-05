@@ -10,13 +10,19 @@ from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
 
 import re
+from pathlib import Path
+
+_ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
+_TOOL_ICONS = {
+    0: "tool-translate.svg",
+    1: "tool-rotate.svg",
+    2: "tool-scale.svg",
+}
 
 
 class _GizmoCmd(QUndoCommand):
-    _MERGE_ID = 1001
-
-    def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn):
-        super().__init__("Translate")
+    def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn, merge_id, label):
+        super().__init__(label)
         self._tab = tab
         self._editor = editor
         self._before = before
@@ -24,12 +30,15 @@ class _GizmoCmd(QUndoCommand):
         self._render = render_fn
         self._new_node_start = new_node_start
         self._restore = restore_fn
+        self._merge_id = merge_id
 
     def id(self):
-        return self._MERGE_ID
+        return self._merge_id
 
     def mergeWith(self, other):
-        if not isinstance(other, _GizmoCmd) or other._tab is not self._tab:
+        if (not isinstance(other, _GizmoCmd)
+                or other._tab is not self._tab
+                or other._merge_id != self._merge_id):
             return False
         self._after = other._after
         self._render = other._render
@@ -97,11 +106,16 @@ class DocumentTab(QWidget):
             (2, "S", "Scale"),
         ):
             btn = QToolButton()
-            btn.setText(label)
             btn.setToolTip(tooltip)
             btn.setCheckable(True)
             btn.setFixedSize(36, 36)
-            btn.setFont(QFont("Helvetica", 13, QFont.Weight.Bold))
+            icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
+            if icon_path.exists():
+                btn.setIcon(QIcon(str(icon_path)))
+                btn.setIconSize(QSize(26, 26))
+            else:
+                btn.setText(label)
+                btn.setFont(QFont("Helvetica", 13, QFont.Weight.Bold))
             self._tool_group.addButton(btn, tool_id)
             layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -354,6 +368,9 @@ class MainWindow(QMainWindow):
         tab.viewport.translate_committed.connect(
             lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
         )
+        tab.viewport.rotate_committed.connect(
+            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
+        )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -424,6 +441,9 @@ class MainWindow(QMainWindow):
         )
         tab.viewport.translate_committed.connect(
             lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
+        )
+        tab.viewport.rotate_committed.connect(
+            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -649,7 +669,10 @@ class MainWindow(QMainWindow):
             tab.tools_strip.setVisible(visible)
 
     def _toggle_axes(self, visible):
-        pass  # TODO: pass to renderer
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.show_axes = visible
+            tab.viewport.update()
 
     def _toggle_edges(self, visible):
         pass  # TODO: pass to renderer
@@ -751,6 +774,7 @@ class MainWindow(QMainWindow):
         cmd = _GizmoCmd(
             tab, tab.editor, source, new_source, self._render,
             new_node_start, self._restore_selection_after_translate,
+            merge_id=1001, label="Translate",
         )
         self._undo_stack.push(cmd)
 
@@ -764,6 +788,59 @@ class MainWindow(QMainWindow):
         tab.viewport._renderer.selected_id = None
         tab.editor.clear_selection()
         tab.viewport.update()
+
+    # ------------------------------------------------------------------
+    # Rotate gizmo commit
+    # ------------------------------------------------------------------
+
+    def _on_rotate_committed(self, tab, axis: int, angle_deg: float):
+        orig_id = tab.viewport._renderer.selected_id
+        if orig_id is None:
+            return
+        node = tab.id_to_node.get(orig_id)
+        if node is None:
+            return
+
+        source = tab.editor.toPlainText()
+        start = node.position.start_offset
+
+        def _fmt(v: float) -> str:
+            return f"{v:.4g}"
+
+        prefix = source[:start]
+        m = re.search(
+            r'rotate\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
+            prefix
+        )
+
+        merged = False
+        if m:
+            try:
+                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                merged = True
+            except ValueError:
+                pass
+
+        if merged:
+            vals = [ex, ey, ez]
+            vals[axis] += angle_deg
+            new_rotate = f"rotate([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
+            match_start = m.start()
+            new_source = source[:match_start] + new_rotate + source[start:]
+            new_node_start = match_start + len(new_rotate)
+        else:
+            vals = [0.0, 0.0, 0.0]
+            vals[axis] = angle_deg
+            insert = f"rotate([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
+            new_source = source[:start] + insert + source[start:]
+            new_node_start = start + len(insert)
+
+        cmd = _GizmoCmd(
+            tab, tab.editor, source, new_source, self._render,
+            new_node_start, self._restore_selection_after_translate,
+            merge_id=1002, label="Rotate",
+        )
+        self._undo_stack.push(cmd)
 
     # ------------------------------------------------------------------
     # Coordinate display

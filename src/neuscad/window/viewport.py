@@ -4,14 +4,27 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor
 
 from neuscad.engine.renderer import SceneRenderer
 
 
+_RING_PERP1 = [
+    np.array([0.0, 1.0, 0.0], dtype=np.float64),  # X ring: perp1 = Y
+    np.array([1.0, 0.0, 0.0], dtype=np.float64),  # Y ring: perp1 = X
+    np.array([1.0, 0.0, 0.0], dtype=np.float64),  # Z ring: perp1 = X
+]
+_RING_PERP2 = [
+    np.array([0.0, 0.0, 1.0], dtype=np.float64),  # X ring: perp2 = Z
+    np.array([0.0, 0.0, 1.0], dtype=np.float64),  # Y ring: perp2 = Z
+    np.array([0.0, 1.0, 0.0], dtype=np.float64),  # Z ring: perp2 = Y
+]
+
+
 class Viewport(QOpenGLWidget):
-    selection_changed   = Signal(int)           # originalID or -1
-    translate_committed = Signal(float, float, float)  # world-space delta
+    selection_changed   = Signal(int)                    # originalID or -1
+    translate_committed = Signal(float, float, float)    # world-space delta
+    rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,6 +75,11 @@ class Viewport(QOpenGLWidget):
             import traceback
             print("paintGL error:", traceback.format_exc())
 
+    def paintEvent(self, event):
+        super().paintEvent(event)   # triggers paintGL
+        if self._ctx is not None and self._renderer.show_axes:
+            self._draw_axis_labels()
+
     def closeEvent(self, event):
         self.makeCurrent()
         self._renderer.release()
@@ -89,7 +107,8 @@ class Viewport(QOpenGLWidget):
 
     def set_active_tool(self, tool_id: int):
         self._active_tool = tool_id
-        self._renderer.show_gizmo = (tool_id == 0)  # only translate for now
+        self._renderer.show_gizmo = tool_id in (0, 1)
+        self._renderer.gizmo_type = tool_id
         self._gizmo_drag_axis = -1
         self._renderer.active_gizmo_axis = -1
         self.update()
@@ -123,9 +142,9 @@ class Viewport(QOpenGLWidget):
         elif preset == "right":
             cam.azimuth, cam.elevation = 90, 0
         elif preset == "iso":
-            cam.azimuth, cam.elevation = 45, 35
+            cam.azimuth, cam.elevation = 295, 35
         elif preset == "all":
-            cam.azimuth, cam.elevation = 45, 35
+            cam.azimuth, cam.elevation = 295, 35
         self.update()
 
     def zoom(self, direction: int):
@@ -146,8 +165,8 @@ class Viewport(QOpenGLWidget):
             self._do_selection(pos)
             return
 
-        # Gizmo drag start (T tool active, gizmo visible, axis hit)
-        if (self._active_tool == 0
+        # Gizmo drag start (T/R tool active, gizmo visible, axis hit)
+        if (self._active_tool in (0, 1)
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None):
             axis = self._renderer.pick_gizmo_axis(pos.x(), pos.y(),
@@ -175,7 +194,7 @@ class Viewport(QOpenGLWidget):
             return
 
         # Highlight which gizmo axis the cursor is over
-        if (self._active_tool == 0
+        if (self._active_tool in (0, 1)
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None
                 and self._last_mouse is None):   # not orbiting
@@ -217,6 +236,25 @@ class Viewport(QOpenGLWidget):
         cam.distance = max(0.1, cam.distance * factor)
         self.update()
 
+    def _draw_axis_labels(self):
+        w, h = self.width(), self.height()
+        labels = self._renderer.axis_tick_labels(w, h)
+        if not labels:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        font = QFont("Helvetica", 12)
+        painter.setFont(font)
+        painter.setPen(QColor("#222222"))
+        fm = painter.fontMetrics()
+        asc = fm.ascent()
+        for sx, sy, text in labels:
+            tw = fm.horizontalAdvance(text)
+            px, py = int(sx) + 4, int(sy) + asc // 2
+            if 0 <= px + tw < w and 0 <= py - asc < h:
+                painter.drawText(px, py, text)
+        painter.end()
+
     # ------------------------------------------------------------------
     # Selection
     # ------------------------------------------------------------------
@@ -249,24 +287,40 @@ class Viewport(QOpenGLWidget):
         self._gizmo_drag_axis = axis
         self._renderer.active_gizmo_axis = axis
 
-        t = self._axis_plane_hit(pos.x(), pos.y())
+        if self._active_tool == 0:
+            t = self._axis_plane_hit(pos.x(), pos.y())
+        else:
+            t = self._axis_ring_hit(pos.x(), pos.y())
         if t is None:
             self._gizmo_drag_axis = -1
             return
         self._drag_start_1d = t
 
+        if self._active_tool == 1:
+            self._renderer.drag_rotation_axis = axis
+
     def _update_gizmo_drag(self, pos: QPoint):
-        t = self._axis_plane_hit(pos.x(), pos.y())
-        if t is None:
-            return
-        delta = round(t - self._drag_start_1d, 1)
-        self._renderer.drag_offset = self._drag_axis_world * delta
-        self._show_delta(delta)
+        if self._active_tool == 0:
+            t = self._axis_plane_hit(pos.x(), pos.y())
+            if t is None:
+                return
+            delta = round(t - self._drag_start_1d, 1)
+            self._renderer.drag_offset = self._drag_axis_world * delta
+            self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta:+.1f}")
+        else:
+            t = self._axis_ring_hit(pos.x(), pos.y())
+            if t is None:
+                return
+            raw = t - self._drag_start_1d
+            while raw >  180: raw -= 360
+            while raw < -180: raw += 360
+            delta_deg = round(raw)
+            self._renderer.drag_rotation_angle = float(delta_deg)
+            self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta_deg:+.0f}°")
         self.update()
 
-    def _show_delta(self, delta: float):
-        axis_name = ["X", "Y", "Z"][self._gizmo_drag_axis]
-        self._delta_label.setText(f"{axis_name}  {delta:+.1f}")
+    def _show_delta(self, text: str):
+        self._delta_label.setText(text)
         self._delta_label.adjustSize()
         x = (self.width() - self._delta_label.width()) // 2
         y = self.height() - self._delta_label.height() - 24
@@ -274,17 +328,53 @@ class Viewport(QOpenGLWidget):
         self._delta_label.show()
 
     def _commit_gizmo_drag(self):
-        offset = self._renderer.drag_offset.copy()
-        self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
-        self._renderer.active_gizmo_axis = -1
-        self._gizmo_drag_axis = -1
         self._delta_label.hide()
-        self.update()
-        dx = round(float(offset[0]), 1)
-        dy = round(float(offset[1]), 1)
-        dz = round(float(offset[2]), 1)
-        if abs(dx) + abs(dy) + abs(dz) > 1e-4:
-            self.translate_committed.emit(dx, dy, dz)
+        self._renderer.active_gizmo_axis = -1
+
+        if self._active_tool == 0:
+            offset = self._renderer.drag_offset.copy()
+            self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
+            self._gizmo_drag_axis = -1
+            self.update()
+            dx = round(float(offset[0]), 1)
+            dy = round(float(offset[1]), 1)
+            dz = round(float(offset[2]), 1)
+            if abs(dx) + abs(dy) + abs(dz) > 1e-4:
+                self.translate_committed.emit(dx, dy, dz)
+        else:
+            angle = self._renderer.drag_rotation_angle
+            axis  = self._gizmo_drag_axis
+            self._renderer.drag_rotation_angle = 0.0
+            self._renderer.drag_rotation_axis  = -1
+            self._gizmo_drag_axis = -1
+            self.update()
+            if angle != 0:
+                self.rotate_committed.emit(axis, float(angle))
+
+    def _axis_ring_hit(self, px: float, py: float) -> float | None:
+        """
+        Intersect camera ray with the ring's plane (normal = drag axis through center).
+        Returns the angle in degrees of the hit point relative to the ring's reference frame.
+        """
+        w, h = self.width(), self.height()
+        ray_o, ray_d = self._renderer.camera_ray(px, py, w, h)
+
+        axis   = self._drag_axis_world.astype(np.float64)
+        center = self._drag_gizmo_center.astype(np.float64)
+        ray_o  = ray_o.astype(np.float64)
+        ray_d  = ray_d.astype(np.float64)
+
+        denom = float(np.dot(ray_d, axis))
+        if abs(denom) < 1e-8:
+            return None
+        t = float(np.dot(center - ray_o, axis)) / denom
+        hit = ray_o + t * ray_d
+
+        radial = hit - center
+        ai = self._gizmo_drag_axis
+        p1 = _RING_PERP1[ai]
+        p2 = _RING_PERP2[ai]
+        return float(np.degrees(np.arctan2(np.dot(radial, p2), np.dot(radial, p1))))
 
     def _axis_plane_hit(self, px: float, py: float) -> float | None:
         """
