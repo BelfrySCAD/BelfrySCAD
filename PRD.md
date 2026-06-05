@@ -262,18 +262,23 @@ Opens with a single blank untitled document.
 │   Code Editor            │                          │   ·    │
 │                          │                          │   ·    │
 ├──────────────────────────┴──────────────────────────┴────────┤
-│  Console                                                      │  ← always visible
+│  Console                                                      │
+├──────────────────────────────────────────────────────────────┤
+│  x: 10.0  y: 5.0  z: 2.5                                    │  ← status bar
 └──────────────────────────────────────────────────────────────┘
 ```
 
 * **Toolbar**: Open, Render, Export, Undo, Redo across the top
 * **Tabs**: one per open file; tabs can be torn off into separate windows
 * **Code editor**: left pane (QScintilla)
-* **3D viewport**: center pane; cube gizmo overlaid in a corner for view angle control; always visible
+* **3D viewport**: center pane; always visible; contains:
+  * Cube gizmo in a corner for view angle control
+  * Small camera icon adjacent to the cube gizmo; clicking it opens a popup showing the current viewport translation, rotation, distance, and FOV
 * **Tools strip**: narrow panel to the right of the viewport — Translate, Rotate, Scale, and future tools
 * **Console**: pane at the bottom
+* **Status bar**: thin strip at the very bottom; displays the 3D coordinates of the last clicked point on the mesh
 
-All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console) are individually hideable via the View menu.
+All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console, status bar) are individually hideable via the View menu.
 
 ### Menus:
 
