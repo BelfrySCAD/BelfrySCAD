@@ -102,6 +102,9 @@ class CodeEditor(QPlainTextEdit):
             self.fontMetrics().horizontalAdvance(" ") * 4
         )
 
+        self._error_selections: list = []
+        self._selection_extra: list = []
+
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self._update_line_number_area_width()
@@ -156,23 +159,45 @@ class CodeEditor(QPlainTextEdit):
             block_number += 1
 
     def set_error_location(self, line, col):
-        """Highlight a parse error with a squiggly underline."""
         fmt = QTextCharFormat()
         fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
         fmt.setUnderlineColor(QColor("#F44747"))
-
         block = self.document().findBlockByLineNumber(line - 1)
         if not block.isValid():
             return
         cursor_start = block.position() + max(0, col - 1)
         cursor_end = block.position() + block.length() - 1
-
-        selection = QTextEdit.ExtraSelection()
-        selection.format = fmt
-        selection.cursor = self.textCursor()
-        selection.cursor.setPosition(cursor_start)
-        selection.cursor.setPosition(cursor_end, selection.cursor.MoveMode.KeepAnchor)
-        self.setExtraSelections([selection])
+        sel = QTextEdit.ExtraSelection()
+        sel.format = fmt
+        sel.cursor = self.textCursor()
+        sel.cursor.setPosition(cursor_start)
+        sel.cursor.setPosition(cursor_end, sel.cursor.MoveMode.KeepAnchor)
+        self._error_selections = [sel]
+        self._refresh_extra_selections()
 
     def clear_errors(self):
-        self.setExtraSelections([])
+        self._error_selections = []
+        self._refresh_extra_selections()
+
+    def set_selection(self, start_offset: int, end_offset: int):
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor("#ADD6FF"))
+        sel = QTextEdit.ExtraSelection()
+        sel.format = fmt
+        sel.cursor = self.textCursor()
+        sel.cursor.setPosition(start_offset)
+        sel.cursor.setPosition(end_offset, sel.cursor.MoveMode.KeepAnchor)
+        self._selection_extra = [sel]
+        self._refresh_extra_selections()
+        # Scroll to the selected node
+        c = self.textCursor()
+        c.setPosition(start_offset)
+        self.setTextCursor(c)
+        self.ensureCursorVisible()
+
+    def clear_selection(self):
+        self._selection_extra = []
+        self._refresh_extra_selections()
+
+    def _refresh_extra_selections(self):
+        self.setExtraSelections(self._error_selections + self._selection_extra)

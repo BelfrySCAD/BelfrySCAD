@@ -1,11 +1,13 @@
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
 from neuscad.engine.renderer import SceneRenderer
 
 
 class Viewport(QOpenGLWidget):
+    selection_changed = Signal(int)  # originalID, or -1 for deselect
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(400, 300)
@@ -110,8 +112,21 @@ class Viewport(QOpenGLWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event: QMouseEvent):
+        # Cmd+click (ControlModifier on macOS) → selection
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._do_selection(event.position().toPoint())
+            return
         self._last_mouse = event.position().toPoint()
         self._mouse_button = event.button()
+
+    def _do_selection(self, pos: QPoint):
+        import numpy as np
+        w, h = self.width(), self.height()
+        ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
+        orig_id = self._renderer.ray_cast(ray_origin, ray_dir)
+        self._renderer.selected_id = orig_id
+        self.update()
+        self.selection_changed.emit(orig_id if orig_id is not None else -1)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         self._last_mouse = None

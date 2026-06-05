@@ -78,14 +78,14 @@ class Evaluator:
     # Public entry point
     # ------------------------------------------------------------------
 
-    def evaluate(self, nodes: list[ASTNode], root_scope) -> list[ColoredBody]:
-        """Walk top-level AST nodes and return all geometry produced."""
+    def evaluate(self, nodes: list[ASTNode], root_scope) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
+        """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
         ctx = EvalContext(scope=root_scope)
         result = []
         for node in nodes:
             bodies = self._eval_statement(node, ctx)
             result.extend(bodies)
-        return result
+        return result, self.id_to_node
 
     # ------------------------------------------------------------------
     # Statement dispatch
@@ -232,9 +232,8 @@ class Evaluator:
     # --- primitives ---
 
     def _tag(self, body: m3d.Manifold, node: ASTNode, ctx: EvalContext) -> ColoredBody:
-        orig_id = body.to_mesh().run_original_id
-        if len(orig_id) > 0:
-            self.id_to_node[int(orig_id[-1])] = node
+        for orig_id in body.to_mesh().run_original_id:
+            self.id_to_node[int(orig_id)] = node
         return ColoredBody(body=body, color=ctx.color)
 
     def _fn(self, ctx: EvalContext) -> int:

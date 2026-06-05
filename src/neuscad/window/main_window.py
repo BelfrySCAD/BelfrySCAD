@@ -302,8 +302,12 @@ class MainWindow(QMainWindow):
 
     def _new_document(self):
         tab = DocumentTab()
+        tab.id_to_node = {}
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
+        )
+        tab.viewport.selection_changed.connect(
+            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -363,11 +367,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open Error", str(e))
             return
         tab = DocumentTab()
+        tab.id_to_node = {}
         tab.file_path = path
         tab.editor.setPlainText(text)
         tab.is_modified = False
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
+        )
+        tab.viewport.selection_changed.connect(
+            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -456,7 +464,8 @@ class MainWindow(QMainWindow):
         # --- Evaluate ---
         evaluator = Evaluator()
         try:
-            bodies = evaluator.evaluate(nodes, root_scope)
+            bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
+            tab.id_to_node = id_to_node
         except EvalError as e:
             self.log(f"Eval error: {e}")
             return
@@ -632,6 +641,20 @@ class MainWindow(QMainWindow):
 
     def _bring_all_to_front(self):
         self.raise_()
+
+    # ------------------------------------------------------------------
+    # Selection
+    # ------------------------------------------------------------------
+
+    def _on_selection_changed(self, tab, orig_id: int):
+        if orig_id < 0:
+            tab.editor.clear_selection()
+            return
+        node = tab.id_to_node.get(orig_id)
+        if node is None:
+            tab.editor.clear_selection()
+            return
+        tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
 
     # ------------------------------------------------------------------
     # Coordinate display
