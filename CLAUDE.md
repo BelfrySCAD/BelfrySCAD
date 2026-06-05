@@ -128,6 +128,57 @@ When a drag commits, the system rewrites the minimum necessary source text based
 
 Note: editing a variable declaration affects all sites that reference that variable, which is intentional — the user's parametric relationships are preserved.
 
+## AST Evaluator
+
+The evaluator sits between openscad_parser and Manifold. It is a recursive AST walker that produces Manifold geometry from a parsed AST.
+
+### Scope processing
+
+Call `build_scopes()` on the AST immediately after parsing. This annotates every node with a `.scope` attribute. Three independent namespaces exist — variables, functions, modules — and parent-chain lookup is automatic:
+
+```python
+scope.lookup_variable(name)  # returns the Assignment/ParameterDeclaration node
+scope.lookup_function(name)  # returns the FunctionDeclaration node
+scope.lookup_module(name)    # returns the ModuleDeclaration node or None (built-in)
+```
+
+Declarations are hoisted within their block (forward references work). Last-wins scoping is already implemented by the library — later assignments in the same scope overwrite earlier ones.
+
+### Architecture
+
+Recursive AST walker with a built-ins dispatch table:
+
+1. For each `ModularCall` node: look up via `scope.lookup_module(name)`
+   - If `None` (not user-defined) → dispatch to built-ins table
+   - If found → recursively evaluate the module body in a new child scope
+2. For each `Identifier` in an expression: call `scope.lookup_variable(name)` then evaluate the bound value
+3. For each function call: look up via `scope.lookup_function(name)`, evaluate args in caller's scope, evaluate body in new scope
+4. Default parameter values are evaluated in the **caller's** scope, not the callee's
+
+### Built-ins the evaluator must implement
+
+**Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`
+
+**Transforms** (→ apply to child geometry): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
+
+**Booleans** (→ Manifold CSG ops): `union`, `difference`, `intersection`
+
+**Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
+
+**Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution for curved surfaces. OpenSCAD defaults: `$fn=0`, `$fa=12`, `$fs=2`.
+
+### originalID assignment
+
+Each geometry-producing node (primitives and their transform/boolean ancestors) is assigned a unique Manifold `originalID` via `ReserveIDs`. The evaluator builds and returns the `originalID → AST node` lookup table alongside the Manifold mesh.
+
+### Color propagation
+
+`color()` sets the current color in the evaluation context; it cascades to all child geometry. The evaluator passes per-body color information to the renderer alongside the Manifold mesh.
+
+### Open questions
+- Runtime error handling: undefined variable, wrong argument count, etc. — report to console and keep last-valid geometry, or abort evaluation entirely?
+- `include` vs `use`: both load external `.scad` files; `include` brings all declarations into scope, `use` brings only functions and modules (not top-level geometry). Needs implementation.
+
 ## Manifold API: Geometry Provenance
 
 Manifold tracks geometry provenance through CSG operations via the `MeshGL` output structure. The key fields after any boolean op:

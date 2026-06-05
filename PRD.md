@@ -156,7 +156,39 @@ Fallback behavior:
 
 ---
 
-## 5.3 Geometry Kernel
+## 5.3 AST Evaluator
+
+### Responsibilities:
+
+* Recursive AST walker — sits between openscad_parser and Manifold
+* Calls `build_scopes()` on the parsed AST to get scope annotations; uses `scope.lookup_variable()`, `scope.lookup_function()`, `scope.lookup_module()` for all name resolution
+* Evaluates all expressions (arithmetic, ternary, list comprehensions, etc.)
+* Dispatches built-in module calls to a built-ins table; recursively evaluates user-defined modules
+* Evaluates default parameter values in caller's scope
+
+### Built-ins implemented by the evaluator:
+
+* **Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`
+* **Transforms**: `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
+* **Booleans**: `union`, `difference`, `intersection`
+* **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
+* **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`
+
+### Outputs:
+
+* Manifold mesh (result of full CSG evaluation)
+* `originalID → AST node` lookup table (built during evaluation)
+* Per-body color information (from `color()` propagation)
+* Error messages (parse errors and runtime errors → console)
+
+### Open questions:
+
+* Runtime error handling: abort evaluation or report to console and keep last-valid geometry?
+* `include` vs `use` semantics for external `.scad` files
+
+---
+
+## 5.4 Geometry Kernel
 
 ### Technology:
 
@@ -174,7 +206,7 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 
 ---
 
-## 5.4 Rendering System
+## 5.5 Rendering System
 
 ### Technology:
 
@@ -191,7 +223,7 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 
 ---
 
-## 5.5 UI Framework
+## 5.6 UI Framework
 
 ### Technology:
 
