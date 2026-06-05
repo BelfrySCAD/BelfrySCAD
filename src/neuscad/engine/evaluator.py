@@ -117,7 +117,7 @@ class Evaluator:
         if isinstance(node, (ModularEcho, ModularAssert)):
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
-            return self._eval_children(node.children, ctx)
+            return self._eval_statement(node.child, ctx)
         if isinstance(node, (ModularModifierBackground, ModularModifierDisable)):
             return []
         if isinstance(node, (ModuleDeclaration, FunctionDeclaration)):

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
 from PySide6.QtCore import Qt, QSize
+import time
 
 from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
@@ -18,6 +19,59 @@ _TOOL_ICONS = {
     1: "tool-rotate.svg",
     2: "tool-scale.svg",
 }
+
+
+class _TextEditCmd(QUndoCommand):
+    """Undo command for raw text edits in the code editor."""
+    _MERGE_WINDOW = 3.0   # seconds: edits this close are merged into one undo step
+
+    def __init__(self, tab, editor, before, cursor_before, after, cursor_after):
+        super().__init__("Edit")
+        self._tab = tab
+        self._editor = editor
+        self._before = before
+        self._cursor_before = cursor_before
+        self._after = after
+        self._cursor_after = cursor_after
+        self._t = time.monotonic()
+        self._first_redo = True   # push() calls redo() immediately; skip it
+
+    def id(self):
+        return 2000
+
+    def mergeWith(self, other):
+        if (not isinstance(other, _TextEditCmd)
+                or other._tab is not self._tab
+                or other._t - self._t > self._MERGE_WINDOW):
+            return False
+        self._after = other._after
+        self._cursor_after = other._cursor_after
+        self._t = other._t
+        return True
+
+    def _set_cursor(self, pos):
+        cursor = self._editor.textCursor()
+        cursor.setPosition(min(pos, len(self._editor.toPlainText())))
+        self._editor.setTextCursor(cursor)
+
+    def undo(self):
+        self._tab._suppress_text_undo = True
+        self._editor.setPlainText(self._before)
+        self._tab._suppress_text_undo = False
+        self._tab._last_text = self._before
+        self._tab._last_cursor = self._cursor_before
+        self._set_cursor(self._cursor_before)
+
+    def redo(self):
+        if self._first_redo:
+            self._first_redo = False
+            return   # text is already correct; user just typed it
+        self._tab._suppress_text_undo = True
+        self._editor.setPlainText(self._after)
+        self._tab._suppress_text_undo = False
+        self._tab._last_text = self._after
+        self._tab._last_cursor = self._cursor_after
+        self._set_cursor(self._cursor_after)
 
 
 class _GizmoCmd(QUndoCommand):
@@ -46,14 +100,20 @@ class _GizmoCmd(QUndoCommand):
         return True
 
     def undo(self):
+        self._tab._suppress_text_undo = True
         self._editor.setPlainText(self._before)
+        self._tab._suppress_text_undo = False
+        self._tab._last_text = self._before
         self._render()
         self._tab.viewport._renderer.selected_id = None
         self._tab.editor.clear_selection()
         self._tab.viewport.update()
 
     def redo(self):
+        self._tab._suppress_text_undo = True
         self._editor.setPlainText(self._after)
+        self._tab._suppress_text_undo = False
+        self._tab._last_text = self._after
         self._render()
         self._restore(self._tab, self._new_node_start)
 
@@ -359,6 +419,9 @@ class MainWindow(QMainWindow):
     def _new_document(self):
         tab = DocumentTab()
         tab.id_to_node = {}
+        tab._last_text = ""
+        tab._last_cursor = 0
+        tab._suppress_text_undo = False
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
         )
@@ -414,6 +477,18 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._tabs.setTabText(idx, tab.display_name())
+        if getattr(tab, '_suppress_text_undo', False):
+            return
+        current = tab.editor.toPlainText()
+        cursor_after = tab.editor.textCursor().position()
+        before = getattr(tab, '_last_text', current)
+        cursor_before = getattr(tab, '_last_cursor', 0)
+        tab._last_text = current
+        tab._last_cursor = cursor_after
+        if current != before:
+            self._undo_stack.push(
+                _TextEditCmd(tab, tab.editor, before, cursor_before, current, cursor_after)
+            )
 
     # ------------------------------------------------------------------
     # File operations
@@ -434,6 +509,9 @@ class MainWindow(QMainWindow):
         tab = DocumentTab()
         tab.id_to_node = {}
         tab.file_path = path
+        tab._last_text = text
+        tab._last_cursor = 0
+        tab._suppress_text_undo = False
         tab.editor.setPlainText(text)
         tab.is_modified = False
         tab.editor.document().contentsChanged.connect(

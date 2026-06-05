@@ -3,7 +3,8 @@ from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath,
 )
-from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint
+from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent
+from PySide6.QtGui import QKeySequence
 
 
 def _compute_fold_regions(doc) -> dict[int, int]:
@@ -307,6 +308,21 @@ class CodeEditor(QPlainTextEdit):
         c.setPosition(start_offset)
         self.setTextCursor(c)
         self.ensureCursorVisible()
+
+    def event(self, event):
+        if event.type() == QEvent.Type.ShortcutOverride:
+            if (event.matches(QKeySequence.StandardKey.Undo)
+                    or event.matches(QKeySequence.StandardKey.Redo)):
+                event.ignore()
+                return True
+        return super().event(event)
+
+    def keyPressEvent(self, event):
+        if (event.matches(QKeySequence.StandardKey.Undo)
+                or event.matches(QKeySequence.StandardKey.Redo)):
+            event.ignore()
+            return
+        super().keyPressEvent(event)
 
     def clear_selection(self):
         self._selection_extra = []
