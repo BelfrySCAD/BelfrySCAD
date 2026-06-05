@@ -179,8 +179,11 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 Runtime errors (undefined variable, wrong argument count, type mismatch, etc.) are reported to the console and evaluation is aborted — the last-valid geometry is kept in the viewport. This mirrors the same fallback behavior used for parse errors.
 
-### Open questions
-- `include` vs `use`: both load external `.scad` files; `include` brings all declarations into scope, `use` brings only functions and modules (not top-level geometry). Needs implementation.
+### `include` vs `use`
+
+Follows OpenSCAD semantics exactly:
+- `include <file.scad>` — brings all declarations and top-level geometry into the current scope
+- `use <file.scad>` — brings only functions and modules (top-level geometry is ignored)
 
 ## Manifold API: Geometry Provenance
 
