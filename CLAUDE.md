@@ -280,7 +280,7 @@ Opens with a single blank untitled document.
 - **Console**: pane at the bottom
 - **Status bar**: thin strip at the very bottom; displays the 3D coordinates of the last clicked point on the mesh
 
-All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console, status bar) are individually hideable via the View menu.
+All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console, status bar) are individually hideable via the View menu. Scale markers are tick marks along the viewport axes showing distance units.
 
 ## Menu Structure
 
@@ -288,14 +288,14 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 
 **Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
 
-**Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection)
+**Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)*
 
 **View**:
 - Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console
 - —
 - Top / Bottom / Left / Right / Front / Back / Isometric / View All
 - —
-- Show Axes / Show Edges / Show Scale Markers / Show Crosshairs
+- Show Axes / Show Edges / Show Scale Markers / Show Crosshairs / Show Status Bar
 
 **Window**: Minimize / Zoom / — / Move Tab to New Window / — / *(open document list)* / Bring All to Front
 
