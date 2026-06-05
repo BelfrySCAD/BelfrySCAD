@@ -55,31 +55,49 @@ Core principle:
 
 ---
 
-# 3. 🧱 System Architecture
+# 3. 📁 File Format & Export
 
-## 3.1 Core pipeline
+* **File format**: `.scad` (OpenSCAD-compatible plain text)
+* **Language**: Full OpenSCAD language — variables, functions, modules, loops, conditionals, all built-in primitives and transforms
+* **Export formats**: STL, OBJ, 3MF
+* **STEP**: under investigation — Manifold produces triangle meshes; STEP is a B-rep format, so any STEP output would be a faceted solid with limited downstream CAD value
+* **Export workflow**: if no current render exists, Export triggers a render automatically before exporting
+
+---
+
+# 4. 🧱 System Architecture
+
+## 4.1 Core pipeline
 
 ```text
 Source Code
    ↓
 QScintilla Editor (text layer)
    ↓
+  [on Render trigger]
+   ↓
 openscad_parser (strict PEG AST)
    ↓
 AST evaluation layer
    ↓
-Manifold CSG engine
+Manifold CSG engine (full boolean evaluation)
    ↓
-Mesh generation
+Watertight mesh
    ↓
 ModernGL renderer
    ↓
 PySide6 UI
 ```
 
+Render triggers: explicit Render action, file open, file save, gizmo commit. The viewport shows the last render result while the user edits; it does not update live.
+
 ---
 
-## 3.2 Key architectural constraint
+## 4.2 Error display
+
+Parse errors are indicated in the editor with a squiggly underline at the error location (QScintilla `INDIC_SQUIGGLE`). Errors are also reported in the console.
+
+## 4.3 Key architectural constraint
 
 * Parser is **strict (non-tolerant)**
 * AST only exists for valid code
@@ -92,11 +110,11 @@ Fallback behavior:
 
 ---
 
-# 4. 🧩 Key Components
+# 5. 🧩 Key Components
 
 ---
 
-## 4.1 Code Editor
+## 5.1 Code Editor
 
 ### Technology:
 
@@ -118,7 +136,7 @@ Fallback behavior:
 
 ---
 
-## 4.2 Parser / AST System
+## 5.2 Parser / AST System
 
 ### Technology:
 
@@ -126,7 +144,7 @@ Fallback behavior:
 
 ### Responsibilities:
 
-* strict parsing of OpenSCAD-like language
+* strict parsing of full OpenSCAD language syntax
 * AST generation with file/line/column/span metadata
 * failure on invalid syntax (by design)
 
@@ -134,10 +152,11 @@ Fallback behavior:
 
 * no partial AST output
 * no recovery mode in v1
+* no knowledge of built-in functions or modules — treats `cube()`, `translate()`, etc. as generic calls; the evaluator layer is responsible for implementing all OpenSCAD built-ins
 
 ---
 
-## 4.3 Geometry Kernel
+## 5.3 Geometry Kernel
 
 ### Technology:
 
@@ -151,11 +170,11 @@ Fallback behavior:
 
 ### Provenance tracking:
 
-Each geometry-producing AST node is assigned a unique `originalID`. Manifold preserves these IDs through boolean operations via the `MeshGL` output structure (`run_original_id`, `run_index`). The application maintains a lookup table of `originalID → AST node`, rebuilt on every successful evaluation cycle.
+Each geometry-producing AST node is assigned a unique `originalID`. Manifold preserves these IDs through boolean operations via the `MeshGL` output structure (`run_original_id`, `run_index`). The application maintains a lookup table of `originalID → AST node`, rebuilt on every render trigger.
 
 ---
 
-## 4.4 Rendering System
+## 5.4 Rendering System
 
 ### Technology:
 
@@ -168,10 +187,11 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 * selection ray casting
 * visual feedback for selection and highlighting
 * ghost mesh rendering during drag operations
+* color rendering — OpenSCAD's `color()` function affects viewport display; color cascades to all children in the subtree and is passed from the evaluator to the renderer
 
 ---
 
-## 4.5 UI Framework
+## 5.5 UI Framework
 
 ### Technology:
 
@@ -185,6 +205,40 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 * editor + 3D viewport integration
 * transform toolbar (Translate, Rotate, Scale)
 * value overlay during transform operations
+
+### Undo/Redo:
+
+Both code edits and gizmo drags are undo/redo-able. QScintilla handles code edit history natively; gizmo commits must be pushed to a separate application-level undo stack that covers both.
+
+### Console output:
+
+* Parse errors (with file/line/col location)
+* On each render: bounding box of the resulting mesh and current camera position
+
+### Keyboard Shortcuts:
+
+Standard platform conventions apply throughout. Custom shortcuts:
+
+| Key | Action |
+|---|---|
+| Cmd+4 | Top view |
+| Cmd+5 | Bottom view |
+| Cmd+6 | Left view |
+| Cmd+7 | Right view |
+| Cmd+8 | Front view |
+| Cmd+9 | Back view |
+| Cmd+0 | Isometric view |
+| F6 | Render |
+
+### Application Preferences:
+
+* **Font size**: editor font size
+* **Viewport background color**: background color of the 3D display
+* **Editor theme**: syntax highlighting color scheme for QScintilla
+
+### Startup:
+
+Opens with a single blank untitled document.
 
 ### Layout:
 
@@ -217,7 +271,7 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
 
 **Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection)
 
@@ -232,25 +286,32 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 
 ---
 
-# 5. 🧠 Core Interaction Model
+# 6. 🧠 Core Interaction Model
 
-## 5.1 Primary loop
+## 6.1 Primary loop
 
 ```text
-User edits code
+Render trigger (Render action / file open / file save / gizmo commit)
    ↓
-Parse (if valid)
-   ↓
-Full rebuild: evaluate AST → Manifold CSG → mesh
-   ↓
-Render updated model
+Parse → full Manifold CSG evaluation → watertight mesh → ModernGL viewport
 ```
 
-Every successful parse triggers a full rebuild. Incremental evaluation is a planned future optimization.
+There is no live preview. The viewport shows the last render result while the user edits code.
 
 ---
 
-## 5.2 WYSIWYG interaction
+## 6.2 WYSIWYG interaction
+
+### Camera Controls
+
+| Input | Action |
+|---|---|
+| Left-button drag | Orbit |
+| Right-button drag | Pan |
+| Scroll wheel | Zoom |
+| Trackpad click+drag | Orbit |
+| Trackpad two-finger scroll | Pan |
+| Trackpad pinch | Zoom |
 
 ### Selection
 
@@ -267,11 +328,15 @@ Command-click always lands on the leaf geometry node. The selection can be walke
 * **Up**: expands to the parent node; editor and viewport highlight the full subtree
 * **Down**: selects the child whose geometry is closest to the original ray-cast hit point
 
+Multiple objects can be selected, but only as a complete subtree — walking up to a parent node selects all its children as a unit. Selecting arbitrary disjoint objects is not supported.
+
+Selected objects are highlighted with an outline (stencil buffer technique). If outline rendering proves too expensive, fall back to mesh tinting.
+
 Selecting a shape enables the transform toolbar.
 
 ### Transform tools
 
-When a tool is active, axis handles are drawn over the selected shape in local (post-transform) space. A ghost copy of the mesh is displayed during drag; the AST edit is committed on mouse-up.
+When a tool is active, axis handles are drawn over the selected shape in local (post-transform) space. A wireframe ghost copy of the mesh is displayed during drag; the AST edit is committed on mouse-up.
 
 | Tool | Handle | AST effect |
 |---|---|---|
@@ -308,7 +373,7 @@ Editing a variable declaration intentionally affects all sites that reference it
 
 ---
 
-## 5.3 Invalid state handling
+## 6.3 Invalid state handling
 
 When parsing fails:
 
@@ -319,11 +384,11 @@ When parsing fails:
 
 ---
 
-# 6. 🔑 Key Design Requirements
+# 7. 🔑 Key Design Requirements
 
 ---
 
-## 6.1 Code ↔ Geometry mapping
+## 7.1 Code ↔ Geometry mapping
 
 * Every geometry-producing AST node is assigned a unique `originalID` (allocated via Manifold's `ReserveIDs`)
 * Manifold preserves provenance through CSG operations via `run_original_id` in `MeshGL` output
@@ -331,7 +396,7 @@ When parsing fails:
 
 ---
 
-## 6.2 Stability under invalid code
+## 7.2 Stability under invalid code
 
 * UI must never break when code is invalid
 * viewport must always display something meaningful
@@ -339,32 +404,31 @@ When parsing fails:
 
 ---
 
-## 6.3 Deterministic regeneration
+## 7.3 Deterministic regeneration
 
 * AST → geometry must be reproducible
 * no hidden state in rendering layer
-* full rebuild on every successful parse (no incremental evaluation in v1)
+* full Manifold rebuild on every render trigger (no incremental evaluation in v1)
 
 ---
 
-## 6.4 Performance target (v1)
+## 7.4 Performance target (v1)
 
 * model regeneration: interactive (<200ms typical small/medium models)
 * viewport: 60 FPS target
-* parsing: fast enough for "pause-to-compile" workflow
 
 ---
 
-# 7. 🚧 Known Challenges
+# 8. 🚧 Known Challenges
 
-## 7.1 Strict parser limitation
+## 8.1 Strict parser limitation
 
 * no AST during invalid code states
 * **Resolution**: cache last-known-good AST and geometry; display cached geometry while code is invalid; never block the UI
 
 ---
 
-## 7.2 Bidirectional editing complexity
+## 8.2 Bidirectional editing complexity
 
 * mapping geometry edits → AST changes
 * preserving user intent (not just numeric edits)
@@ -372,14 +436,14 @@ When parsing fails:
 
 ---
 
-## 7.3 CSG provenance tracking
+## 8.3 CSG provenance tracking
 
 * tracking which AST node produced which mesh faces, especially after boolean operations
 * **Resolution**: Manifold's `originalID` / `run_original_id` system in `MeshGL` output; application maintains `originalID → AST node` table
 
 ---
 
-## 7.4 UI/semantic separation
+## 8.4 UI/semantic separation
 
 * editor is not semantic source of truth
 * AST is not always present
@@ -388,7 +452,7 @@ When parsing fails:
 
 ---
 
-# 8. 🧪 Future Extensions (out of scope for v1)
+# 9. 🧪 Future Extensions (out of scope for v1)
 
 * incremental parsing / tolerant AST
 * incremental geometry evaluation (full rebuild used in v1)
@@ -400,7 +464,7 @@ When parsing fails:
 
 ---
 
-# 9. 🧭 Product Philosophy
+# 10. 🧭 Product Philosophy
 
 * Code-first, but not code-only
 * Geometry is interactive, not passive
@@ -410,7 +474,7 @@ When parsing fails:
 
 ---
 
-# 10. 📌 Open Questions
+# 11. 📌 Open Questions
 
 1. ~~How is geometry provenance tracked through Manifold operations?~~ **Resolved**: `originalID` assigned per AST node; `run_original_id` in `MeshGL` tracks provenance through boolean ops.
 2. ~~What is the ID system for pickable geometry elements?~~ **Resolved**: `originalID` is the pick ID; ray-cast hit triangle → `run_original_id` lookup → AST node.

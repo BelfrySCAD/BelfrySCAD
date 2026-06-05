@@ -12,7 +12,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: QScintilla (text layer only — not semantically aware)
-- **Parser**: openscad_parser (strict PEG-based, generates AST with file/line/col/span metadata)
+- **Parser**: openscad_parser (strict PEG-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions or modules — the evaluator layer implements all built-ins)
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
@@ -26,6 +26,10 @@ Source Code → QScintilla Editor → openscad_parser (AST) → Evaluator → Ma
 ```
 
 **The AST is the single source of truth** — not the rendered geometry, not the editor text.
+
+### Error Display
+
+Parse errors are indicated in the editor with a squiggly underline at the error location. QScintilla supports this natively via its indicator API (`INDIC_SQUIGGLE`). Errors are also reported in the console.
 
 ### Critical Constraint: Strict Parser
 
@@ -45,6 +49,17 @@ This requires every AST node to carry both its **source span** (file/line/col) a
 
 ## WYSIWYG Interaction Design
 
+### Camera Controls
+
+| Input | Action |
+|---|---|
+| Left-button drag | Orbit |
+| Right-button drag | Pan |
+| Scroll wheel | Zoom |
+| Trackpad click+drag | Orbit |
+| Trackpad two-finger scroll | Pan |
+| Trackpad pinch | Zoom |
+
 ### Selection
 
 Command-click in the viewport triggers selection:
@@ -55,6 +70,10 @@ ray cast → hit triangle → run_original_id lookup → AST node → highlight 
 Command-click always lands on the leaf geometry node (the innermost primitive). The selection can then be walked up or down the AST hierarchy — expanding the selection to a parent node (e.g., from `cube()` up to its enclosing `translate()`, then up to a `difference()`) or back down toward the leaf. Moving the selection up highlights the geometry produced by the entire subtree rooted at that node. The editor highlight tracks accordingly, covering the full source span of the selected node.
 
 When walking down from a node with multiple children, select the child whose geometry is closest to the original ray-cast hit point.
+
+Multiple objects can be selected, but only as a complete subtree — walking up to a parent node selects all its children as a unit. Selecting arbitrary disjoint objects is not supported.
+
+Selected objects are highlighted with an outline (stencil buffer technique). If outline rendering proves too expensive, fall back to mesh tinting.
 
 Selecting a shape enables the transform toolbar (Translate, Rotate, Scale, and future tools).
 
@@ -93,7 +112,7 @@ Displayed value follows the same classification as the source rewrite rules: sho
 
 - **Nested transforms of the same type**: Modify the innermost matching wrapper.
 - **Transform composition order**: New wrappers are always inserted outside any existing transform wrappers on the selected node.
-- **Live drag preview**: Display a ghost copy of the mesh during drag; commit the AST edit (and trigger re-parse + re-render) only on mouse-up.
+- **Live drag preview**: Display a wireframe ghost copy of the mesh during drag; commit the AST edit and trigger a render on mouse-up.
 - **Gizmo orientation**: Handles are drawn in local (post-transform) space.
 
 ### Source Rewrite Rules (Intent Preservation)
@@ -148,18 +167,75 @@ mesh.run_index                      # numpy array: run boundaries
 mesh.face_id                        # numpy array: source face per triangle (optional)
 ```
 
+## Color Support
+
+OpenSCAD's `color()` function affects viewport display. Color is applied by the evaluator and passed to ModernGL for rendering. `color()` cascades to all children in the subtree, following OpenSCAD's standard behavior.
+
 ## Key Design Requirements
 
-- **Code ↔ Geometry mapping**: Every geometry-producing AST node owns an `originalID`. The `originalID → AST node` table must be rebuilt on each successful parse/evaluate cycle.
+- **Code ↔ Geometry mapping**: Every geometry-producing AST node owns an `originalID`. The `originalID → AST node` table must be rebuilt on each render trigger.
 - **Stability under invalid code**: UI must never crash or go blank when code is invalid.
-- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Every successful parse triggers a full rebuild (incremental evaluation is a future optimization).
+- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Full Manifold rebuild runs on every render trigger (incremental evaluation is a future optimization).
 - **Performance**: <200ms model regeneration for small/medium models; 60 FPS viewport.
+
+## File Format & Export
+
+- **File format**: `.scad` (OpenSCAD-compatible plain text)
+- **Language**: Full OpenSCAD language (variables, functions, modules, loops, conditionals, all built-in primitives and transforms)
+- **Export**: STL, OBJ, 3MF; STEP under investigation (Manifold produces triangle meshes; STEP is B-rep — any STEP export would be a faceted solid, which may have limited downstream CAD value)
+- **Export workflow**: if no current render exists, Export triggers a render automatically before exporting
+
+## Render Triggers
+
+There is no live preview. Full Manifold CSG processing runs when:
+
+- The user selects **Render** (toolbar or Design menu)
+- A file is **opened**
+- A file is **saved**
+- A **gizmo drag commits** (mouse-up)
+
+The viewport always shows the result of the last render. While the user edits code, the viewport is static.
 
 ## V1 Scope Boundaries
 
 **In scope**: Script editing, real-time 3D rendering, basic WYSIWYG drag interaction, CSG operations, graceful invalid-code handling.
 
 **Explicitly out of scope for v1**: Constraint solver, collaborative editing, cloud modeling, incremental/tolerant parsing, node-based visual programming, plugin system.
+
+## Undo/Redo
+
+Both code edits and gizmo drags are undo/redo-able. QScintilla handles code edit history natively; gizmo commits must be pushed to a separate application-level undo stack. Undo/redo applies across both.
+
+## Console Output
+
+The console displays:
+- Parse errors (with file/line/col from AST metadata)
+- On each render: bounding box of the resulting mesh and current camera position
+
+## Keyboard Shortcuts
+
+Standard platform conventions apply throughout. Custom shortcuts:
+
+| Key | Action |
+|---|---|
+| Cmd+4 | Top view |
+| Cmd+5 | Bottom view |
+| Cmd+6 | Left view |
+| Cmd+7 | Right view |
+| Cmd+8 | Front view |
+| Cmd+9 | Back view |
+| Cmd+0 | Isometric view |
+| F6 | Render |
+
+## Application Preferences
+
+- **Font size**: editor font size
+- **Viewport background color**: the background color of the 3D display
+- **Editor theme**: syntax highlighting color scheme for QScintilla
+
+## Startup Behavior
+
+Opens with a single blank untitled document.
 
 ## GUI Layout
 
@@ -192,7 +268,7 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
 
 **Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection)
 
@@ -209,6 +285,6 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 
 1. ~~How is geometry provenance tracked through Manifold CSG operations?~~ Resolved: `originalID` + `run_original_id` in `MeshGL`.
 2. ~~What is the ID system for pickable geometry elements in the viewport?~~ Resolved: `originalID` is the pick ID; ray-cast hit triangle → `run_original_id` lookup.
-3. ~~How does drag-to-edit decide which AST expression to modify when multiple are candidates?~~ Resolved: tool choice (Translate/Rotate/Scale) declares the transform type; find existing wrapper or insert new one. Sub-questions remain (see WYSIWYG section above).
+3. ~~How does drag-to-edit decide which AST expression to modify when multiple are candidates?~~ Resolved: tool choice (Translate/Rotate/Scale) declares the transform type; find innermost existing wrapper or insert new one outside existing wrappers.
 4. ~~How is user "intent" inferred from code structure (e.g., named parameters vs. positional)?~~ Resolved: literal → rewrite in place; variable = literal → update declaration; variable = expression or inline expression → append delta. See Source Rewrite Rules above.
 5. ~~Full rebuild vs. incremental regeneration on each edit?~~ Resolved: full rebuild for v1; incremental rebuild is a planned future optimization.
