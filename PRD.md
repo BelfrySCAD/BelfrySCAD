@@ -172,7 +172,7 @@ Fallback behavior:
 * **Transforms**: `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
 * **Booleans**: `union`, `difference`, `intersection`
 * **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
-* **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`
+* **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`. `$`-prefixed variables use dynamic scoping (inherited down the call chain), not lexical scoping — the evaluator maintains a separate dynamic binding context threaded through module calls
 
 ### Outputs:
 

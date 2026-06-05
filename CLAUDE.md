@@ -179,6 +179,12 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 Runtime errors (undefined variable, wrong argument count, type mismatch, etc.) are reported to the console and evaluation is aborted — the last-valid geometry is kept in the viewport. This mirrors the same fallback behavior used for parse errors.
 
+### Special variable scoping (`$variables`)
+
+`$`-prefixed variables (`$fn`, `$fa`, `$fs`, `$t`, `$children`, etc.) use **dynamic scoping** — they are inherited down the **call chain**, not the lexical scope chain. This is distinct from regular variables, which follow lexical scoping.
+
+The evaluator must maintain a separate dynamic binding context (a dictionary threaded through each module call). When a module is invoked with `$fn=32`, that value propagates to all nested calls made within that invocation, regardless of lexical scope boundaries. Regular `scope.lookup_variable()` must not be used for `$`-prefixed names.
+
 ### `include` vs `use`
 
 Follows OpenSCAD semantics exactly:
