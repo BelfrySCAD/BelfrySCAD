@@ -34,6 +34,10 @@ uniform vec4 object_color;
 uniform vec3 light_dir;
 out vec4 fragColor;
 void main() {
+    if (!gl_FrontFacing) {
+        fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
     vec3 n = normalize(v_normal);
     float diff_key  = max(dot(n, normalize(light_dir)), 0.0);
     float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
@@ -142,6 +146,9 @@ class SceneRenderer:
         self.gizmo_type: int = 0           # 0=translate, 1=rotate
         self.drag_rotation_axis: int = -1
         self.drag_rotation_angle: float = 0.0
+        self.drag_scale_axis: int = -1
+        self.drag_scale_factor: float = 1.0
+        self.drag_scale_uniform: bool = False
         self.show_axes: bool = True
         self._axes_vbo: Optional[mgl.Buffer] = None
         self._axes_vao: Optional[mgl.VertexArray] = None
@@ -160,6 +167,9 @@ class SceneRenderer:
         self.drag_offset = np.zeros(3, dtype=np.float32)
         self.drag_rotation_angle = 0.0
         self.drag_rotation_axis = -1
+        self.drag_scale_axis = -1
+        self.drag_scale_factor = 1.0
+        self.drag_scale_uniform = False
         if not bodies or self._ctx is None:
             return
 
@@ -247,12 +257,19 @@ class SceneRenderer:
 
         has_drag = np.any(self.drag_offset != 0)
         has_rotation = self.drag_rotation_axis >= 0 and self.drag_rotation_angle != 0.0
+        has_scale = self.drag_scale_axis >= 0 and self.drag_scale_factor != 1.0
 
         rot_center = None
         if has_rotation:
             bbox = self._selected_buffer_bbox()
             if bbox is not None:
                 rot_center, _ = bbox
+
+        scale_center = None
+        if has_scale:
+            bbox = self._selected_buffer_bbox()
+            if bbox is not None:
+                scale_center, _ = bbox
 
         for buf in self._buffers:
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
@@ -263,6 +280,9 @@ class SceneRenderer:
                 buf_model[:3, 3] = self.drag_offset
             elif is_selected and has_rotation and rot_center is not None:
                 buf_model = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
+            elif is_selected and has_scale and scale_center is not None:
+                buf_model = _scale_model(scale_center, self.drag_scale_axis,
+                                         self.drag_scale_factor, self.drag_scale_uniform)
             else:
                 buf_model = model
 
@@ -289,8 +309,10 @@ class SceneRenderer:
             if np.any(self.drag_offset != 0):
                 center = center + self.drag_offset
             geo = _build_gizmo_geo(center, scale, self.active_gizmo_axis)
-        else:
+        elif self.gizmo_type == 1:
             geo = _build_rotate_gizmo_geo(center, scale, self.active_gizmo_axis)
+        else:
+            geo = _build_scale_gizmo_geo(center, scale, self.active_gizmo_axis)
 
         if self._gizmo_vbo is not None:
             self._gizmo_vao.release()
@@ -451,7 +473,10 @@ class SceneRenderer:
         """Return which gizmo axis (0=X,1=Y,2=Z) is under the pixel, or -1."""
         if self.gizmo_type == 0:
             return self._pick_translate_axis(px, py, w, h)
-        return self._pick_rotate_axis(px, py, w, h)
+        elif self.gizmo_type == 1:
+            return self._pick_rotate_axis(px, py, w, h)
+        else:
+            return self._pick_translate_axis(px, py, w, h)  # scale uses same arrow shape
 
     def _pick_translate_axis(self, px: float, py: float, w: int, h: int) -> int:
         bbox = self._selected_buffer_bbox()
@@ -673,6 +698,75 @@ def _build_rotate_gizmo_geo(center: np.ndarray, radius: float, active_axis: int)
                 rows.append(np.concatenate([v, col]))
 
     return np.array(rows, dtype=np.float32)
+
+
+def _build_scale_gizmo_geo(center: np.ndarray, length: float, active_axis: int) -> np.ndarray:
+    """Return interleaved (pos3, color3) vertex data for 3 axis scale handles (GL_TRIANGLES).
+    Like translate arrows but with a cube tip instead of a cone."""
+    n_seg = 8
+    shaft_r = length * 0.04
+    box_h   = length * 0.10   # half-size of cube tip
+    shaft_t = 0.72
+
+    rows: list[np.ndarray] = []
+
+    for ai in range(3):
+        d  = _AXES_DIRS[ai]
+        p1 = _AXES_PERP1[ai]
+        p2 = _AXES_PERP2[ai]
+        col = _HIGHLIGHT if ai == active_axis else _AXES_COLORS[ai]
+
+        shaft_end = center + d * (length * shaft_t)
+        box_ctr   = center + d * length
+
+        # Shaft cylinder
+        angles  = np.linspace(0, 2 * math.pi, n_seg, endpoint=False, dtype=np.float32)
+        offsets = np.cos(angles)[:, None] * p1 + np.sin(angles)[:, None] * p2
+        ring0 = center    + shaft_r * offsets
+        ring1 = shaft_end + shaft_r * offsets
+
+        for i in range(n_seg):
+            j = (i + 1) % n_seg
+            for tri in ((ring0[i], ring0[j], ring1[i]),
+                        (ring0[j], ring1[j], ring1[i])):
+                for v in tri:
+                    rows.append(np.concatenate([v, col]))
+
+        # Cube tip — 6 faces as quads
+        bc   = box_ctr.astype(np.float32)
+        bh_d = box_h * d.astype(np.float32)
+        bh_1 = box_h * p1.astype(np.float32)
+        bh_2 = box_h * p2.astype(np.float32)
+
+        def quad(offset, a1, a2):
+            fc = bc + offset
+            v = [fc - a1 - a2, fc + a1 - a2, fc + a1 + a2, fc - a1 + a2]
+            for tri_v in ((v[0], v[1], v[2]), (v[0], v[2], v[3])):
+                for vv in tri_v:
+                    rows.append(np.concatenate([vv, col]))
+
+        quad(+bh_d, bh_1, bh_2)
+        quad(-bh_d, bh_1, bh_2)
+        quad(+bh_1, bh_d, bh_2)
+        quad(-bh_1, bh_d, bh_2)
+        quad(+bh_2, bh_d, bh_1)
+        quad(-bh_2, bh_d, bh_1)
+
+    return np.array(rows, dtype=np.float32)
+
+
+def _scale_model(center: np.ndarray, axis_idx: int, factor: float, uniform: bool) -> np.ndarray:
+    """4×4 scale matrix: scale around center, along one axis (or all three if uniform)."""
+    if uniform:
+        sx = sy = sz = factor
+    else:
+        sx = factor if axis_idx == 0 else 1.0
+        sy = factor if axis_idx == 1 else 1.0
+        sz = factor if axis_idx == 2 else 1.0
+    T_c  = np.eye(4, dtype=np.float32); T_c[:3, 3]  =  center
+    T_nc = np.eye(4, dtype=np.float32); T_nc[:3, 3] = -center
+    S = np.diag([sx, sy, sz, 1.0]).astype(np.float32)
+    return T_c @ S @ T_nc
 
 
 def _rotation_model(center: np.ndarray, axis_idx: int, angle_deg: float) -> np.ndarray:

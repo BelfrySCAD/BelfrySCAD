@@ -371,6 +371,9 @@ class MainWindow(QMainWindow):
         tab.viewport.rotate_committed.connect(
             lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
         )
+        tab.viewport.scale_committed.connect(
+            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
+        )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -444,6 +447,9 @@ class MainWindow(QMainWindow):
         )
         tab.viewport.rotate_committed.connect(
             lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
+        )
+        tab.viewport.scale_committed.connect(
+            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -839,6 +845,65 @@ class MainWindow(QMainWindow):
             tab, tab.editor, source, new_source, self._render,
             new_node_start, self._restore_selection_after_translate,
             merge_id=1002, label="Rotate",
+        )
+        self._undo_stack.push(cmd)
+
+    # ------------------------------------------------------------------
+    # Scale gizmo commit
+    # ------------------------------------------------------------------
+
+    def _on_scale_committed(self, tab, axis: int, factor: float, uniform: bool):
+        orig_id = tab.viewport._renderer.selected_id
+        if orig_id is None:
+            return
+        node = tab.id_to_node.get(orig_id)
+        if node is None:
+            return
+
+        source = tab.editor.toPlainText()
+        start = node.position.start_offset
+
+        def _fmt(v: float) -> str:
+            return f"{v:.4g}"
+
+        prefix = source[:start]
+        m = re.search(
+            r'scale\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
+            prefix
+        )
+
+        merged = False
+        if m:
+            try:
+                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                merged = True
+            except ValueError:
+                pass
+
+        if merged:
+            vals = [ex, ey, ez]
+            if uniform:
+                vals = [v * factor for v in vals]
+            else:
+                vals[axis] *= factor
+            new_scale = f"scale([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
+            match_start = m.start()
+            new_source = source[:match_start] + new_scale + source[start:]
+            new_node_start = match_start + len(new_scale)
+        else:
+            if uniform:
+                vals = [factor, factor, factor]
+            else:
+                vals = [1.0, 1.0, 1.0]
+                vals[axis] = factor
+            insert = f"scale([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
+            new_source = source[:start] + insert + source[start:]
+            new_node_start = start + len(insert)
+
+        cmd = _GizmoCmd(
+            tab, tab.editor, source, new_source, self._render,
+            new_node_start, self._restore_selection_after_translate,
+            merge_id=1003, label="Scale",
         )
         self._undo_stack.push(cmd)
 

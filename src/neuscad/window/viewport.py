@@ -25,6 +25,7 @@ class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
+    scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -107,7 +108,7 @@ class Viewport(QOpenGLWidget):
 
     def set_active_tool(self, tool_id: int):
         self._active_tool = tool_id
-        self._renderer.show_gizmo = tool_id in (0, 1)
+        self._renderer.show_gizmo = tool_id in (0, 1, 2)
         self._renderer.gizmo_type = tool_id
         self._gizmo_drag_axis = -1
         self._renderer.active_gizmo_axis = -1
@@ -166,7 +167,7 @@ class Viewport(QOpenGLWidget):
             return
 
         # Gizmo drag start (T/R tool active, gizmo visible, axis hit)
-        if (self._active_tool in (0, 1)
+        if (self._active_tool in (0, 1, 2)
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None):
             axis = self._renderer.pick_gizmo_axis(pos.x(), pos.y(),
@@ -194,7 +195,7 @@ class Viewport(QOpenGLWidget):
             return
 
         # Highlight which gizmo axis the cursor is over
-        if (self._active_tool in (0, 1)
+        if (self._active_tool in (0, 1, 2)
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None
                 and self._last_mouse is None):   # not orbiting
@@ -287,10 +288,10 @@ class Viewport(QOpenGLWidget):
         self._gizmo_drag_axis = axis
         self._renderer.active_gizmo_axis = axis
 
-        if self._active_tool == 0:
-            t = self._axis_plane_hit(pos.x(), pos.y())
-        else:
+        if self._active_tool == 1:
             t = self._axis_ring_hit(pos.x(), pos.y())
+        else:
+            t = self._axis_plane_hit(pos.x(), pos.y())
         if t is None:
             self._gizmo_drag_axis = -1
             return
@@ -298,6 +299,8 @@ class Viewport(QOpenGLWidget):
 
         if self._active_tool == 1:
             self._renderer.drag_rotation_axis = axis
+        elif self._active_tool == 2:
+            self._renderer.drag_scale_axis = axis
 
     def _update_gizmo_drag(self, pos: QPoint):
         if self._active_tool == 0:
@@ -307,7 +310,7 @@ class Viewport(QOpenGLWidget):
             delta = round(t - self._drag_start_1d, 1)
             self._renderer.drag_offset = self._drag_axis_world * delta
             self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta:+.1f}")
-        else:
+        elif self._active_tool == 1:
             t = self._axis_ring_hit(pos.x(), pos.y())
             if t is None:
                 return
@@ -317,6 +320,19 @@ class Viewport(QOpenGLWidget):
             delta_deg = round(raw)
             self._renderer.drag_rotation_angle = float(delta_deg)
             self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta_deg:+.0f}°")
+        else:
+            t = self._axis_plane_hit(pos.x(), pos.y())
+            if t is None:
+                return
+            gizmo_len = self._renderer.camera.distance * 0.14
+            raw_factor = 1.0 + (t - self._drag_start_1d) / max(gizmo_len, 1e-6)
+            factor = max(0.1, round(raw_factor, 1))
+            from PySide6.QtWidgets import QApplication
+            uniform = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self._renderer.drag_scale_factor = factor
+            self._renderer.drag_scale_uniform = uniform
+            axis_name = "XYZ" if uniform else "XYZ"[self._gizmo_drag_axis]
+            self._show_delta(f"{axis_name}  ×{factor:.1f}")
         self.update()
 
     def _show_delta(self, text: str):
@@ -341,7 +357,7 @@ class Viewport(QOpenGLWidget):
             dz = round(float(offset[2]), 1)
             if abs(dx) + abs(dy) + abs(dz) > 1e-4:
                 self.translate_committed.emit(dx, dy, dz)
-        else:
+        elif self._active_tool == 1:
             angle = self._renderer.drag_rotation_angle
             axis  = self._gizmo_drag_axis
             self._renderer.drag_rotation_angle = 0.0
@@ -350,6 +366,17 @@ class Viewport(QOpenGLWidget):
             self.update()
             if angle != 0:
                 self.rotate_committed.emit(axis, float(angle))
+        else:
+            factor  = self._renderer.drag_scale_factor
+            axis    = self._gizmo_drag_axis
+            uniform = self._renderer.drag_scale_uniform
+            self._renderer.drag_scale_factor  = 1.0
+            self._renderer.drag_scale_axis    = -1
+            self._renderer.drag_scale_uniform = False
+            self._gizmo_drag_axis = -1
+            self.update()
+            if abs(factor - 1.0) > 0.05:
+                self.scale_committed.emit(axis, factor, uniform)
 
     def _axis_ring_hit(self, px: float, py: float) -> float | None:
         """
