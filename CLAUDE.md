@@ -175,8 +175,11 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 `color()` sets the current color in the evaluation context; it cascades to all child geometry. The evaluator passes per-body color information to the renderer alongside the Manifold mesh.
 
+### Error handling
+
+Runtime errors (undefined variable, wrong argument count, type mismatch, etc.) are reported to the console and evaluation is aborted — the last-valid geometry is kept in the viewport. This mirrors the same fallback behavior used for parse errors.
+
 ### Open questions
-- Runtime error handling: undefined variable, wrong argument count, etc. — report to console and keep last-valid geometry, or abort evaluation entirely?
 - `include` vs `use`: both load external `.scad` files; `include` brings all declarations into scope, `use` brings only functions and modules (not top-level geometry). Needs implementation.
 
 ## Manifold API: Geometry Provenance

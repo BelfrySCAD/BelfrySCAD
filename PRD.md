@@ -181,9 +181,12 @@ Fallback behavior:
 * Per-body color information (from `color()` propagation)
 * Error messages (parse errors and runtime errors → console)
 
+### Error handling:
+
+Runtime errors (undefined variable, wrong argument count, type mismatch, etc.) are reported to the console; evaluation is aborted and last-valid geometry is kept in the viewport — the same fallback behavior as parse errors.
+
 ### Open questions:
 
-* Runtime error handling: abort evaluation or report to console and keep last-valid geometry?
 * `include` vs `use` semantics for external `.scad` files
 
 ---
