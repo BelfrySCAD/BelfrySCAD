@@ -322,6 +322,13 @@ class CodeEditor(QPlainTextEdit):
                 or event.matches(QKeySequence.StandardKey.Redo)):
             event.ignore()
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            cursor = self.textCursor()
+            block_text = cursor.block().text()
+            indent = len(block_text) - len(block_text.lstrip())
+            super().keyPressEvent(event)
+            self.insertPlainText(" " * indent)
+            return
         super().keyPressEvent(event)
 
     def clear_selection(self):
