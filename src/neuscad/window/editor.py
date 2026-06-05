@@ -326,9 +326,31 @@ class CodeEditor(QPlainTextEdit):
             cursor = self.textCursor()
             block_text = cursor.block().text()
             indent = len(block_text) - len(block_text.lstrip())
+            stripped = block_text.rstrip()
+            if stripped.endswith(("{", "[", "(")):
+                indent += 4
             super().keyPressEvent(event)
             self.insertPlainText(" " * indent)
             return
+        if event.key() == Qt.Key.Key_Backspace:
+            cursor = self.textCursor()
+            if not cursor.hasSelection():
+                block_text = cursor.block().text()
+                pos_in_block = cursor.positionInBlock()
+                before_cursor = block_text[:pos_in_block]
+                if before_cursor and not before_cursor.strip() and len(before_cursor) >= 4:
+                    for _ in range(4):
+                        cursor.deletePreviousChar()
+                    return
+        if event.text() in ('}', ']', ')'):
+            cursor = self.textCursor()
+            block_text = cursor.block().text()
+            # Only unindent if the line is pure whitespace so far
+            if block_text and not block_text.strip() and len(block_text) >= 4:
+                cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(cursor.MoveOperation.Right,
+                                    cursor.MoveMode.KeepAnchor, 4)
+                cursor.removeSelectedText()
         super().keyPressEvent(event)
 
     def clear_selection(self):
