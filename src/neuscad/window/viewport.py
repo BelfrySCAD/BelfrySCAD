@@ -1,4 +1,8 @@
+from __future__ import annotations
+import numpy as np
+
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
@@ -6,7 +10,8 @@ from neuscad.engine.renderer import SceneRenderer
 
 
 class Viewport(QOpenGLWidget):
-    selection_changed = Signal(int)  # originalID, or -1 for deselect
+    selection_changed   = Signal(int)           # originalID or -1
+    translate_committed = Signal(float, float, float)  # world-space delta
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -16,6 +21,24 @@ class Viewport(QOpenGLWidget):
         self._last_mouse: QPoint | None = None
         self._mouse_button: Qt.MouseButton | None = None
         self.setMouseTracking(True)
+
+        # Tool state
+        self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale
+
+        # Delta overlay label
+        self._delta_label = QLabel("", self)
+        self._delta_label.setStyleSheet(
+            "QLabel { background: rgba(0,0,0,160); color: white;"
+            " padding: 4px 10px; border-radius: 4px;"
+            " font-family: Menlo; font-size: 13px; }"
+        )
+        self._delta_label.hide()
+
+        # Gizmo drag state
+        self._gizmo_drag_axis: int = -1
+        self._drag_axis_world: np.ndarray = np.zeros(3, dtype=np.float32)
+        self._drag_gizmo_center: np.ndarray = np.zeros(3, dtype=np.float32)
+        self._drag_start_1d: float = 0.0
 
     # ------------------------------------------------------------------
     # GL lifecycle
@@ -51,7 +74,6 @@ class Viewport(QOpenGLWidget):
     # ------------------------------------------------------------------
 
     def load_geometry(self, bodies):
-        """Called from the render pipeline with a list of ColoredBody."""
         self.makeCurrent()
         self._renderer.load_geometry(bodies)
         self.doneCurrent()
@@ -62,8 +84,14 @@ class Viewport(QOpenGLWidget):
         self.update()
 
     def set_background_color(self, r, g, b):
-        # stored on next paint
         self._renderer._bg_color = (r, g, b, 1.0)
+        self.update()
+
+    def set_active_tool(self, tool_id: int):
+        self._active_tool = tool_id
+        self._renderer.show_gizmo = (tool_id == 0)  # only translate for now
+        self._gizmo_drag_axis = -1
+        self._renderer.active_gizmo_axis = -1
         self.update()
 
     def camera_info(self) -> dict:
@@ -97,64 +125,84 @@ class Viewport(QOpenGLWidget):
         elif preset == "iso":
             cam.azimuth, cam.elevation = 45, 35
         elif preset == "all":
-            # Frame to current bounding box — just reset distance
             cam.azimuth, cam.elevation = 45, 35
         self.update()
 
     def zoom(self, direction: int):
         cam = self._renderer.camera
-        factor = 1.02 if direction < 0 else 0.98
+        factor = 1.03 if direction < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
         self.update()
 
     # ------------------------------------------------------------------
-    # Mouse input → camera orbit / pan / zoom
+    # Mouse input
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event: QMouseEvent):
-        # Cmd+click (ControlModifier on macOS) → selection
+        pos = event.position().toPoint()
+
+        # Cmd+click → selection (takes priority over everything)
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self._do_selection(event.position().toPoint())
+            self._do_selection(pos)
             return
-        self._last_mouse = event.position().toPoint()
+
+        # Gizmo drag start (T tool active, gizmo visible, axis hit)
+        if (self._active_tool == 0
+                and self._renderer.show_gizmo
+                and self._renderer.selected_id is not None):
+            axis = self._renderer.pick_gizmo_axis(pos.x(), pos.y(),
+                                                   self.width(), self.height())
+            if axis >= 0:
+                self._start_gizmo_drag(pos, axis)
+                return
+
+        self._last_mouse = pos
         self._mouse_button = event.button()
 
-    def _do_selection(self, pos: QPoint):
-        import numpy as np
-        w, h = self.width(), self.height()
-        ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
-        orig_id = self._renderer.ray_cast(ray_origin, ray_dir)
-        self._renderer.selected_id = orig_id
-        self.update()
-        self.selection_changed.emit(orig_id if orig_id is not None else -1)
-
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self._gizmo_drag_axis >= 0:
+            self._commit_gizmo_drag()
+            return
         self._last_mouse = None
         self._mouse_button = None
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        pos = event.position().toPoint()
+
+        # Gizmo drag update
+        if self._gizmo_drag_axis >= 0:
+            self._update_gizmo_drag(pos)
+            return
+
+        # Highlight which gizmo axis the cursor is over
+        if (self._active_tool == 0
+                and self._renderer.show_gizmo
+                and self._renderer.selected_id is not None
+                and self._last_mouse is None):   # not orbiting
+            axis = self._renderer.pick_gizmo_axis(pos.x(), pos.y(),
+                                                   self.width(), self.height())
+            if axis != self._renderer.active_gizmo_axis:
+                self._renderer.active_gizmo_axis = axis
+                self.update()
+
         if self._last_mouse is None:
             return
-        pos = event.position().toPoint()
         dx = pos.x() - self._last_mouse.x()
         dy = pos.y() - self._last_mouse.y()
         self._last_mouse = pos
 
         cam = self._renderer.camera
         if self._mouse_button == Qt.MouseButton.LeftButton:
-            # Orbit
             cam.azimuth -= dx * 0.5
             cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
         elif self._mouse_button == Qt.MouseButton.RightButton:
-            # Pan — move target in view-right and view-up directions
-            import numpy as np, math
-            az = math.radians(cam.azimuth)
-            el = math.radians(cam.elevation)
-            right = np.array([-math.sin(az), math.cos(az), 0], dtype=np.float32)
+            az = np.radians(cam.azimuth)
+            el = np.radians(cam.elevation)
+            right = np.array([-np.sin(az), np.cos(az), 0], dtype=np.float32)
             up_approx = np.array([
-                -math.sin(el) * math.cos(az),
-                -math.sin(el) * math.sin(az),
-                math.cos(el),
+                -np.sin(el) * np.cos(az),
+                -np.sin(el) * np.sin(az),
+                np.cos(el),
             ], dtype=np.float32)
             scale = cam.distance * 0.001
             cam.target -= right * dx * scale
@@ -168,3 +216,110 @@ class Viewport(QOpenGLWidget):
         factor = 1.03 if delta < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
         self.update()
+
+    # ------------------------------------------------------------------
+    # Selection
+    # ------------------------------------------------------------------
+
+    def _do_selection(self, pos: QPoint):
+        w, h = self.width(), self.height()
+        ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
+        orig_id = self._renderer.ray_cast(ray_origin, ray_dir)
+        self._renderer.selected_id = orig_id
+        self.update()
+        self.selection_changed.emit(orig_id if orig_id is not None else -1)
+
+    # ------------------------------------------------------------------
+    # Gizmo drag
+    # ------------------------------------------------------------------
+
+    _AXIS_DIRS = [
+        np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        np.array([0.0, 0.0, 1.0], dtype=np.float32),
+    ]
+
+    def _start_gizmo_drag(self, pos: QPoint, axis: int):
+        bbox = self._renderer._selected_buffer_bbox()
+        if bbox is None:
+            return
+        center, _ = bbox
+        self._drag_gizmo_center = center.copy()
+        self._drag_axis_world = self._AXIS_DIRS[axis].copy()
+        self._gizmo_drag_axis = axis
+        self._renderer.active_gizmo_axis = axis
+
+        t = self._axis_plane_hit(pos.x(), pos.y())
+        if t is None:
+            self._gizmo_drag_axis = -1
+            return
+        self._drag_start_1d = t
+
+    def _update_gizmo_drag(self, pos: QPoint):
+        t = self._axis_plane_hit(pos.x(), pos.y())
+        if t is None:
+            return
+        delta = round(t - self._drag_start_1d, 1)
+        self._renderer.drag_offset = self._drag_axis_world * delta
+        self._show_delta(delta)
+        self.update()
+
+    def _show_delta(self, delta: float):
+        axis_name = ["X", "Y", "Z"][self._gizmo_drag_axis]
+        self._delta_label.setText(f"{axis_name}  {delta:+.1f}")
+        self._delta_label.adjustSize()
+        x = (self.width() - self._delta_label.width()) // 2
+        y = self.height() - self._delta_label.height() - 24
+        self._delta_label.move(x, y)
+        self._delta_label.show()
+
+    def _commit_gizmo_drag(self):
+        offset = self._renderer.drag_offset.copy()
+        self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
+        self._renderer.active_gizmo_axis = -1
+        self._gizmo_drag_axis = -1
+        self._delta_label.hide()
+        self.update()
+        dx = round(float(offset[0]), 1)
+        dy = round(float(offset[1]), 1)
+        dz = round(float(offset[2]), 1)
+        if abs(dx) + abs(dy) + abs(dz) > 1e-4:
+            self.translate_committed.emit(dx, dy, dz)
+
+    def _axis_plane_hit(self, px: float, py: float) -> float | None:
+        """
+        Intersect camera ray with the plane that contains the drag axis
+        and faces the camera. Returns the 1-D position along the axis.
+        """
+        w, h = self.width(), self.height()
+        ray_o, ray_d = self._renderer.camera_ray(px, py, w, h)
+
+        axis = self._drag_axis_world
+        cam_dir = (self._renderer.camera.eye_position()
+                   - self._renderer.camera.target).astype(np.float64)
+        cam_norm = np.linalg.norm(cam_dir)
+        if cam_norm < 1e-8:
+            return None
+        cam_dir /= cam_norm
+
+        # Plane normal: component of camera direction perpendicular to axis
+        n = cam_dir - np.dot(cam_dir, axis.astype(np.float64)) * axis.astype(np.float64)
+        n_len = np.linalg.norm(n)
+        if n_len < 1e-6:
+            # Camera looking along axis — pick any perpendicular plane
+            ref = np.array([0, 1, 0], dtype=np.float64)
+            if abs(np.dot(axis, ref)) > 0.9:
+                ref = np.array([1, 0, 0], dtype=np.float64)
+            n = np.cross(axis.astype(np.float64), ref)
+            n /= np.linalg.norm(n)
+        else:
+            n /= n_len
+
+        denom = float(np.dot(ray_d.astype(np.float64), n))
+        if abs(denom) < 1e-8:
+            return None
+
+        center = self._drag_gizmo_center.astype(np.float64)
+        t_plane = float(np.dot(center - ray_o.astype(np.float64), n)) / denom
+        hit = ray_o.astype(np.float64) + t_plane * ray_d.astype(np.float64)
+        return float(np.dot(hit - center, axis.astype(np.float64)))

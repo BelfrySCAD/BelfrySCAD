@@ -3,11 +3,50 @@ from PySide6.QtWidgets import (
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
 )
-from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon
+from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
 from PySide6.QtCore import Qt, QSize
 
 from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
+
+import re
+
+
+class _GizmoCmd(QUndoCommand):
+    _MERGE_ID = 1001
+
+    def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn):
+        super().__init__("Translate")
+        self._tab = tab
+        self._editor = editor
+        self._before = before
+        self._after = after
+        self._render = render_fn
+        self._new_node_start = new_node_start
+        self._restore = restore_fn
+
+    def id(self):
+        return self._MERGE_ID
+
+    def mergeWith(self, other):
+        if not isinstance(other, _GizmoCmd) or other._tab is not self._tab:
+            return False
+        self._after = other._after
+        self._render = other._render
+        self._new_node_start = other._new_node_start
+        return True
+
+    def undo(self):
+        self._editor.setPlainText(self._before)
+        self._render()
+        self._tab.viewport._renderer.selected_id = None
+        self._tab.editor.clear_selection()
+        self._tab.viewport.update()
+
+    def redo(self):
+        self._editor.setPlainText(self._after)
+        self._render()
+        self._restore(self._tab, self._new_node_start)
 
 
 class DocumentTab(QWidget):
@@ -74,6 +113,7 @@ class DocumentTab(QWidget):
 
     def _on_tool_toggled(self, tool_id: int, checked: bool):
         self.active_tool = tool_id if checked else None
+        self.viewport.set_active_tool(tool_id if checked else -1)
 
     def display_name(self):
         if self.file_path:
@@ -155,10 +195,12 @@ class MainWindow(QMainWindow):
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
         self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
         self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
         self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_redo)
 
         return tb
@@ -309,6 +351,9 @@ class MainWindow(QMainWindow):
         tab.viewport.selection_changed.connect(
             lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
         )
+        tab.viewport.translate_committed.connect(
+            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
+        )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -376,6 +421,9 @@ class MainWindow(QMainWindow):
         )
         tab.viewport.selection_changed.connect(
             lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
+        )
+        tab.viewport.translate_committed.connect(
+            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -655,6 +703,67 @@ class MainWindow(QMainWindow):
             tab.editor.clear_selection()
             return
         tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+
+    # ------------------------------------------------------------------
+    # Translate gizmo commit
+    # ------------------------------------------------------------------
+
+    def _on_translate_committed(self, tab, dx: float, dy: float, dz: float):
+        orig_id = tab.viewport._renderer.selected_id
+        if orig_id is None:
+            return
+        node = tab.id_to_node.get(orig_id)
+        if node is None:
+            return
+
+        source = tab.editor.toPlainText()
+        start = node.position.start_offset
+
+        def _fmt(v: float) -> str:
+            return f"{v:.4g}"
+
+        # Detect an existing translate([x, y, z]) immediately before this node
+        prefix = source[:start]
+        m = re.search(
+            r'translate\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
+            prefix
+        )
+
+        merged = False
+        if m:
+            try:
+                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                merged = True
+            except ValueError:
+                pass
+
+        if merged:
+            nx, ny, nz = ex + dx, ey + dy, ez + dz
+            new_translate = f"translate([{_fmt(nx)}, {_fmt(ny)}, {_fmt(nz)}]) "
+            match_start = m.start()
+            new_source = source[:match_start] + new_translate + source[start:]
+            new_node_start = match_start + len(new_translate)
+        else:
+            insert = f"translate([{_fmt(dx)}, {_fmt(dy)}, {_fmt(dz)}]) "
+            new_source = source[:start] + insert + source[start:]
+            new_node_start = start + len(insert)
+
+        cmd = _GizmoCmd(
+            tab, tab.editor, source, new_source, self._render,
+            new_node_start, self._restore_selection_after_translate,
+        )
+        self._undo_stack.push(cmd)
+
+    def _restore_selection_after_translate(self, tab, new_node_start: int):
+        for orig_id, node in tab.id_to_node.items():
+            if node.position.start_offset == new_node_start:
+                tab.viewport._renderer.selected_id = orig_id
+                tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+                tab.viewport.update()
+                return
+        tab.viewport._renderer.selected_id = None
+        tab.editor.clear_selection()
+        tab.viewport.update()
 
     # ------------------------------------------------------------------
     # Coordinate display
