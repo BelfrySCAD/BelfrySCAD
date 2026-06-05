@@ -95,7 +95,7 @@ Render triggers: explicit Render action, file open, file save, gizmo commit. The
 
 ## 4.2 Error display
 
-Parse errors are indicated in the editor with a squiggly underline at the error location (QScintilla `INDIC_SQUIGGLE`). Errors are also reported in the console.
+Parse errors are indicated in the editor with a squiggly underline at the error location (`QTextCharFormat` with `SpellCheckUnderline` style, applied as an extra selection on `QPlainTextEdit`). Errors are also reported in the console.
 
 ## 4.3 Key architectural constraint
 
@@ -118,14 +118,14 @@ Fallback behavior:
 
 ### Technology:
 
-* QScintilla
+* `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins)
 
 ### Responsibilities:
 
 * text editing
-* syntax highlighting
-* line numbering
-* code folding (basic or default)
+* syntax highlighting (via `QSyntaxHighlighter` subclass)
+* line numbers (via custom `LineNumberArea` widget)
+* error underlines (via `QTextCharFormat` with `SpellCheckUnderline` style)
 * user input surface
 
 ### Non-responsibilities:
@@ -243,7 +243,7 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 
 ### Undo/Redo:
 
-Both code edits and gizmo drags are undo/redo-able via a unified app-level undo stack. Code edit entries call through to QScintilla's native undo; gizmo op entries wrap their source rewrite in QScintilla's `beginUndoAction()` / `endUndoAction()` to mark it as a single unit. All Cmd+Z / Cmd+Shift+Z goes through the app stack.
+Both code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Code edits are `TextEditCommand` instances; gizmo ops are `GizmoCommand` instances. `QPlainTextEdit`'s built-in undo is disabled (`setUndoRedoEnabled(False)`); all Cmd+Z / Cmd+Shift+Z routes through `QUndoStack`.
 
 ### Console output:
 

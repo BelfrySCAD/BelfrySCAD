@@ -11,7 +11,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 ## Planned Technology Stack
 
 - **UI Framework**: PySide6 (Qt)
-- **Code Editor**: QScintilla (text layer only — not semantically aware)
+- **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
 - **Parser**: openscad_parser (strict PEG-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions or modules — the evaluator layer implements all built-ins)
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
@@ -29,7 +29,7 @@ Source Code → QScintilla Editor → openscad_parser (AST) → Evaluator → Ma
 
 ### Error Display
 
-Parse errors are indicated in the editor with a squiggly underline at the error location. QScintilla supports this natively via its indicator API (`INDIC_SQUIGGLE`). Errors are also reported in the console.
+Parse errors are indicated in the editor with a squiggly underline at the error location, implemented via `QTextCharFormat` with `SpellCheckUnderline` style applied as an extra selection on the `QPlainTextEdit`. Errors are also reported in the console.
 
 ### Critical Constraint: Strict Parser
 
@@ -267,12 +267,12 @@ The viewport always shows the result of the last render. While the user edits co
 
 ## Undo/Redo
 
-Both code edits and gizmo drags are undo/redo-able via a unified app-level undo stack. Each entry is either a "code edit" or a "gizmo op":
+Both code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Each operation is a `QUndoCommand` subclass:
 
-- **Code edits**: QScintilla manages the text history natively. The app stack holds a pointer to the corresponding QScintilla undo unit; undoing calls through to QScintilla.
-- **Gizmo ops**: The commit wraps its source text rewrite in QScintilla's `beginUndoAction()` / `endUndoAction()` to mark it as a single undo unit. The app stack entry stores enough state to revert both the code change and the gizmo parameters.
+- **Code edits**: a `TextEditCommand` that stores the before/after document state and calls `QPlainTextEdit.setPlainText()` on undo/redo
+- **Gizmo ops**: a `GizmoCommand` that stores the before/after source text and re-triggers a render on redo
 
-All Cmd+Z / Cmd+Shift+Z goes through the app stack, never directly to QScintilla's native undo.
+All Cmd+Z / Cmd+Shift+Z routes through `QUndoStack`, which disables `QPlainTextEdit`'s built-in undo (`setUndoRedoEnabled(False)`).
 
 ## Console Output
 

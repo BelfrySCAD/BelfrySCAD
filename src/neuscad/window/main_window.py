@@ -1,0 +1,641 @@
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QSplitter,
+    QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
+    QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
+)
+from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon
+from PySide6.QtCore import Qt, QSize
+
+from neuscad.window.editor import CodeEditor
+from neuscad.window.viewport import Viewport
+
+
+class DocumentTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self.editor = CodeEditor()
+        self.viewport = Viewport()
+        self.tools_strip = self._make_tools_strip()
+
+        right_splitter = QSplitter(Qt.Orientation.Horizontal)
+        right_splitter.addWidget(self.viewport)
+        right_splitter.addWidget(self.tools_strip)
+        right_splitter.setStretchFactor(0, 1)
+        right_splitter.setStretchFactor(1, 0)
+        right_splitter.setSizes([800, 48])
+
+        splitter.addWidget(self.editor)
+        splitter.addWidget(right_splitter)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([400, 800])
+
+        layout.addWidget(splitter)
+
+        self.file_path = None
+        self.is_modified = False
+
+    def _make_tools_strip(self):
+        strip = QWidget()
+        strip.setFixedWidth(48)
+        strip.setObjectName("ToolsStrip")
+
+        layout = QVBoxLayout(strip)
+        layout.setContentsMargins(4, 8, 4, 8)
+        layout.setSpacing(4)
+
+        self._tool_group = QButtonGroup(strip)
+        self._tool_group.setExclusive(True)
+
+        for tool_id, label, tooltip in (
+            (0, "T", "Translate"),
+            (1, "R", "Rotate"),
+            (2, "S", "Scale"),
+        ):
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setToolTip(tooltip)
+            btn.setCheckable(True)
+            btn.setFixedSize(36, 36)
+            btn.setFont(QFont("Helvetica", 13, QFont.Weight.Bold))
+            self._tool_group.addButton(btn, tool_id)
+            layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        layout.addStretch()
+        self.active_tool: int | None = None
+        self._tool_group.idToggled.connect(self._on_tool_toggled)
+
+        return strip
+
+    def _on_tool_toggled(self, tool_id: int, checked: bool):
+        self.active_tool = tool_id if checked else None
+
+    def display_name(self):
+        if self.file_path:
+            import os
+            name = os.path.basename(self.file_path)
+        else:
+            name = "Untitled"
+        return name + ("*" if self.is_modified else "")
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("NeuSCAD")
+        self.resize(1400, 900)
+
+        self._undo_stack = self._create_undo_stack()
+        self._setup_ui()
+        self._setup_menus()
+        self._setup_shortcuts()
+        self._new_document()
+
+    def _create_undo_stack(self):
+        from PySide6.QtGui import QUndoStack
+        return QUndoStack(self)
+
+    # ------------------------------------------------------------------
+    # UI assembly
+    # ------------------------------------------------------------------
+
+    def _setup_ui(self):
+        self._toolbar = self._make_toolbar()
+        self.addToolBar(self._toolbar)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._tabs = QTabWidget()
+        self._tabs.setTabsClosable(True)
+        self._tabs.setMovable(True)
+        self._tabs.tabCloseRequested.connect(self._close_tab)
+        self._tabs.currentChanged.connect(self._tab_changed)
+
+        self._console = QPlainTextEdit()
+        self._console.setReadOnly(True)
+        self._console.setMaximumHeight(160)
+        self._console.setFont(QFont("Menlo", 11))
+        self._console.setObjectName("Console")
+
+        layout.addWidget(self._tabs, stretch=1)
+        layout.addWidget(self._console)
+
+        self._status_bar = QStatusBar()
+        self.setStatusBar(self._status_bar)
+        self._coord_label = QLabel("")
+        self._status_bar.addWidget(self._coord_label)
+
+    def _make_toolbar(self):
+        tb = QToolBar("Main")
+        tb.setIconSize(QSize(20, 20))
+        tb.setMovable(False)
+
+        self._act_open = QAction("Open", self)
+        self._act_open.triggered.connect(self._open_file)
+        tb.addAction(self._act_open)
+
+        self._act_export = QAction("Export", self)
+        self._act_export.triggered.connect(self._export)
+        tb.addAction(self._act_export)
+
+        self._act_render = QAction("Render", self)
+        self._act_render.triggered.connect(self._render)
+        tb.addAction(self._act_render)
+
+        tb.addSeparator()
+
+        self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
+        self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        tb.addAction(self._act_undo)
+
+        self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
+        self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        tb.addAction(self._act_redo)
+
+        return tb
+
+    # ------------------------------------------------------------------
+    # Menus
+    # ------------------------------------------------------------------
+
+    def _setup_menus(self):
+        mb = self.menuBar()
+
+        # File
+        file_menu = mb.addMenu("File")
+        self._add_action(file_menu, "New", self._new_document, QKeySequence.StandardKey.New)
+        self._add_action(file_menu, "Open…", self._open_file, QKeySequence.StandardKey.Open)
+        self._recent_menu = file_menu.addMenu("Open Recent")
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
+        self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
+        self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Export…", self._export)
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Quit", self.close, QKeySequence.StandardKey.Quit)
+
+        # Edit
+        edit_menu = mb.addMenu("Edit")
+        edit_menu.addAction(self._act_undo)
+        edit_menu.addAction(self._act_redo)
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Cut", self._edit_cut, QKeySequence.StandardKey.Cut)
+        self._add_action(edit_menu, "Copy", self._edit_copy, QKeySequence.StandardKey.Copy)
+        self._add_action(edit_menu, "Paste", self._edit_paste, QKeySequence.StandardKey.Paste)
+        self._add_action(edit_menu, "Select All", self._edit_select_all, QKeySequence.StandardKey.SelectAll)
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Expand Selection", self._selection_expand)
+        self._add_action(edit_menu, "Contract Selection", self._selection_contract)
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Indent", self._indent, QKeySequence("Tab"))
+        self._add_action(edit_menu, "Undent", self._undent, QKeySequence("Shift+Tab"))
+        self._add_action(edit_menu, "Comment", self._comment, QKeySequence("Ctrl+/"))
+        self._add_action(edit_menu, "Uncomment", self._uncomment, QKeySequence("Ctrl+Shift+/"))
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
+        self._add_action(edit_menu, "Find & Replace…", self._find_replace, QKeySequence.StandardKey.Replace)
+
+        # Design
+        design_menu = mb.addMenu("Design")
+        self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
+        design_menu.addSeparator()
+        insert_menu = design_menu.addMenu("Insert Primitive")
+        for prim in ("Cube", "Sphere", "Cylinder", "Cone"):
+            insert_menu.addAction(prim)
+        bool_menu = design_menu.addMenu("Boolean Operation")
+        for op in ("Union", "Difference", "Intersection"):
+            bool_menu.addAction(op)
+
+        # View
+        view_menu = mb.addMenu("View")
+        self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
+        self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
+        self._act_show_editor = self._add_checkable(view_menu, "Show Code Editor", True, self._toggle_editor)
+        self._act_show_tools = self._add_checkable(view_menu, "Show Tools Strip", True, self._toggle_tools_strip)
+        self._act_show_console = self._add_checkable(view_menu, "Show Console", True, self._console.setVisible)
+        view_menu.addSeparator()
+        for label, slot in (
+            ("Top", lambda: self._set_view("top")),
+            ("Bottom", lambda: self._set_view("bottom")),
+            ("Left", lambda: self._set_view("left")),
+            ("Right", lambda: self._set_view("right")),
+            ("Front", lambda: self._set_view("front")),
+            ("Back", lambda: self._set_view("back")),
+            ("Isometric", lambda: self._set_view("iso")),
+            ("View All", lambda: self._set_view("all")),
+        ):
+            view_menu.addAction(label, slot)
+        view_menu.addSeparator()
+        self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
+        self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
+        self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
+        self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
+        self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
+
+        # Window
+        window_menu = mb.addMenu("Window")
+        self._add_action(window_menu, "Minimize", self.showMinimized, QKeySequence("Ctrl+M"))
+        self._add_action(window_menu, "Zoom", self.showMaximized)
+        window_menu.addSeparator()
+        self._add_action(window_menu, "Move Tab to New Window", self._tear_off_tab)
+        window_menu.addSeparator()
+        self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
+
+    def _add_action(self, menu, label, slot=None, shortcut=None):
+        act = QAction(label, self)
+        if shortcut:
+            act.setShortcut(shortcut)
+        if slot:
+            act.triggered.connect(slot)
+        menu.addAction(act)
+        return act
+
+    def _add_checkable(self, menu, label, checked, slot):
+        act = QAction(label, self)
+        act.setCheckable(True)
+        act.setChecked(checked)
+        if slot:
+            act.toggled.connect(slot)
+        menu.addAction(act)
+        return act
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def _setup_shortcuts(self):
+        from PySide6.QtGui import QShortcut
+
+        def shortcut(key, slot):
+            s = QShortcut(QKeySequence(key), self)
+            s.activated.connect(slot)
+
+        shortcut("Ctrl+1", lambda: self._act_show_edges.toggle())
+        shortcut("Ctrl+2", lambda: self._act_show_axes.toggle())
+        shortcut("Ctrl+3", lambda: self._act_show_cross.toggle())
+        shortcut("Ctrl+4", lambda: self._set_view("top"))
+        shortcut("Ctrl+5", lambda: self._set_view("bottom"))
+        shortcut("Ctrl+6", lambda: self._set_view("left"))
+        shortcut("Ctrl+7", lambda: self._set_view("right"))
+        shortcut("Ctrl+8", lambda: self._set_view("front"))
+        shortcut("Ctrl+9", lambda: self._set_view("back"))
+        shortcut("Ctrl+0", lambda: self._set_view("iso"))
+        shortcut("Ctrl++", self._font_size_increase)
+        shortcut("Ctrl+-", self._font_size_decrease)
+        shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
+        shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
+        shortcut("Shift+Ctrl+V", lambda: self._set_view("all"))
+
+    # ------------------------------------------------------------------
+    # Tab management
+    # ------------------------------------------------------------------
+
+    def _new_document(self):
+        tab = DocumentTab()
+        tab.editor.document().contentsChanged.connect(
+            lambda t=tab: self._on_editor_changed(t)
+        )
+        idx = self._tabs.addTab(tab, tab.display_name())
+        self._tabs.setCurrentIndex(idx)
+
+    def _current_tab(self):
+        return self._tabs.currentWidget()
+
+    def _tab_changed(self, index):
+        pass
+
+    def _close_tab(self, index):
+        tab = self._tabs.widget(index)
+        if tab and tab.is_modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                f"Save changes to {tab.display_name()}?",
+                QMessageBox.StandardButton.Save |
+                QMessageBox.StandardButton.Discard |
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            if reply == QMessageBox.StandardButton.Save:
+                self._tabs.setCurrentIndex(index)
+                if not self._save_file():
+                    return
+        self._tabs.removeTab(index)
+        if self._tabs.count() == 0:
+            self._new_document()
+
+    def _close_current_tab(self):
+        self._close_tab(self._tabs.currentIndex())
+
+    def _tear_off_tab(self):
+        pass  # TODO: detach tab into separate window
+
+    def _on_editor_changed(self, tab):
+        tab.is_modified = True
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.setTabText(idx, tab.display_name())
+
+    # ------------------------------------------------------------------
+    # File operations
+    # ------------------------------------------------------------------
+
+    def _open_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "", "OpenSCAD Files (*.scad);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.critical(self, "Open Error", str(e))
+            return
+        tab = DocumentTab()
+        tab.file_path = path
+        tab.editor.setPlainText(text)
+        tab.is_modified = False
+        tab.editor.document().contentsChanged.connect(
+            lambda t=tab: self._on_editor_changed(t)
+        )
+        idx = self._tabs.addTab(tab, tab.display_name())
+        self._tabs.setCurrentIndex(idx)
+
+    def _save_file(self):
+        tab = self._current_tab()
+        if not tab:
+            return False
+        if not tab.file_path:
+            return self._save_file_as()
+        return self._write_file(tab, tab.file_path)
+
+    def _save_file_as(self):
+        tab = self._current_tab()
+        if not tab:
+            return False
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save File", "", "OpenSCAD Files (*.scad);;All Files (*)"
+        )
+        if not path:
+            return False
+        return self._write_file(tab, path)
+
+    def _write_file(self, tab, path):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(tab.editor.toPlainText())
+        except OSError as e:
+            QMessageBox.critical(self, "Save Error", str(e))
+            return False
+        tab.file_path = path
+        tab.is_modified = False
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.setTabText(idx, tab.display_name())
+        return True
+
+    def _export(self):
+        pass  # TODO: implement export (STL/OBJ/3MF)
+
+    # ------------------------------------------------------------------
+    # Render
+    # ------------------------------------------------------------------
+
+    def _render(self):
+        tab = self._current_tab()
+        if not tab:
+            return
+        source = tab.editor.toPlainText()
+        if not source.strip():
+            return
+
+        # Clear console for this render run
+        self._console.clear()
+
+        from openscad_parser.ast import getASTfromString, build_scopes
+        from neuscad.engine.evaluator import Evaluator, EvalError
+        import numpy as np
+        import io, sys as _sys, time as _time
+
+        _t0 = _time.perf_counter()
+
+        # --- Parse ---
+        try:
+            buf = io.StringIO()
+            old_stdout = _sys.stdout
+            _sys.stdout = buf
+            nodes = getASTfromString(source, origin="<editor>")
+            _sys.stdout = old_stdout
+            captured = buf.getvalue()
+        except Exception as e:
+            _sys.stdout = old_stdout
+            self.log(f"Parse error: {e}")
+            return
+
+        if captured:
+            self.log(captured.rstrip())
+
+        if nodes is None:
+            self._parse_error_to_editor(tab, captured)
+            return
+
+        tab.editor.clear_errors()
+        root_scope = build_scopes(nodes)
+
+        # --- Evaluate ---
+        evaluator = Evaluator()
+        try:
+            bodies = evaluator.evaluate(nodes, root_scope)
+        except EvalError as e:
+            self.log(f"Eval error: {e}")
+            return
+        except Exception as e:
+            import traceback
+            self.log(f"Runtime error: {e}\n{traceback.format_exc()}")
+            return
+
+        if not bodies:
+            self.log("Render: no geometry produced.")
+            return
+
+        # --- Upload to viewport ---
+        try:
+            tab.viewport.load_geometry(bodies)
+        except Exception as e:
+            import traceback
+            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
+            return
+
+        # Frame camera and report bounds
+        try:
+            import manifold3d as m3d
+            all_bodies = [b.body for b in bodies if not b.body.is_empty()]
+            if all_bodies:
+                composed = m3d.Manifold.compose(all_bodies)
+                bb = composed.bounding_box()   # returns (xmin,ymin,zmin,xmax,ymax,zmax)
+                bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
+                bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
+                tab.viewport.frame_scene(bb_min, bb_max)
+                extent = float(np.linalg.norm(bb_max - bb_min))
+                elapsed_ms = (_time.perf_counter() - _t0) * 1000
+                self.log(
+                    f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
+                    f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  size {extent:.2f}  "
+                    f"({elapsed_ms:.0f} ms)"
+                )
+        except Exception as e:
+            import traceback
+            self.log(f"Post-render error: {e}\n{traceback.format_exc()}")
+
+    def _parse_error_to_editor(self, tab, captured: str):
+        """Parse the error text from openscad_parser and mark the editor."""
+        import re
+        m = re.search(r"at line (\d+), column (\d+)", captured)
+        if m:
+            line, col = int(m.group(1)), int(m.group(2))
+            tab.editor.set_error_location(line, col)
+
+    def log(self, text):
+        self._console.appendPlainText(text)
+
+    # ------------------------------------------------------------------
+    # Edit operations
+    # ------------------------------------------------------------------
+
+    def _edit_cut(self):
+        if e := self._current_editor():
+            e.cut()
+
+    def _edit_copy(self):
+        if e := self._current_editor():
+            e.copy()
+
+    def _edit_paste(self):
+        if e := self._current_editor():
+            e.paste()
+
+    def _edit_select_all(self):
+        if e := self._current_editor():
+            e.selectAll()
+
+    def _selection_expand(self):
+        pass  # TODO: walk selection up AST
+
+    def _selection_contract(self):
+        pass  # TODO: walk selection down AST
+
+    def _indent(self):
+        if e := self._current_editor():
+            cursor = e.textCursor()
+            cursor.insertText("    ")
+
+    def _undent(self):
+        pass  # TODO: remove leading spaces
+
+    def _comment(self):
+        if e := self._current_editor():
+            self._toggle_line_comment(e, add=True)
+
+    def _uncomment(self):
+        if e := self._current_editor():
+            self._toggle_line_comment(e, add=False)
+
+    def _toggle_line_comment(self, editor, add):
+        cursor = editor.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        cursor.setPosition(start)
+        cursor.movePosition(cursor.MoveOperation.StartOfLine)
+        cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
+        cursor.movePosition(cursor.MoveOperation.EndOfLine, cursor.MoveMode.KeepAnchor)
+        text = cursor.selectedText()
+        lines = text.split(" ")  # Qt paragraph separator
+        if add:
+            lines = ["// " + l for l in lines]
+        else:
+            lines = [l[3:] if l.startswith("// ") else l for l in lines]
+        cursor.insertText(" ".join(lines))
+
+    def _find(self):
+        pass  # TODO: find bar
+
+    def _find_replace(self):
+        pass  # TODO: find & replace dialog
+
+    def _current_editor(self):
+        tab = self._current_tab()
+        return tab.editor if tab else None
+
+    # ------------------------------------------------------------------
+    # View operations
+    # ------------------------------------------------------------------
+
+    def _toggle_editor(self, visible):
+        tab = self._current_tab()
+        if tab:
+            tab.editor.setVisible(visible)
+
+    def _toggle_tools_strip(self, visible):
+        tab = self._current_tab()
+        if tab:
+            tab.tools_strip.setVisible(visible)
+
+    def _toggle_axes(self, visible):
+        pass  # TODO: pass to renderer
+
+    def _toggle_edges(self, visible):
+        pass  # TODO: pass to renderer
+
+    def _toggle_scale_markers(self, visible):
+        pass  # TODO: pass to renderer
+
+    def _toggle_crosshairs(self, visible):
+        pass  # TODO: pass to renderer
+
+    def _set_view(self, preset):
+        tab = self._current_tab()
+        if tab:
+            tab.viewport.set_view_preset(preset)
+
+    def _font_size_increase(self):
+        if e := self._current_editor():
+            f = e.font()
+            f.setPointSize(f.pointSize() + 1)
+            e.setFont(f)
+
+    def _font_size_decrease(self):
+        if e := self._current_editor():
+            f = e.font()
+            if f.pointSize() > 6:
+                f.setPointSize(f.pointSize() - 1)
+                e.setFont(f)
+
+    def _zoom_viewport(self, direction):
+        tab = self._current_tab()
+        if tab:
+            tab.viewport.zoom(direction)
+
+    # ------------------------------------------------------------------
+    # Window
+    # ------------------------------------------------------------------
+
+    def _bring_all_to_front(self):
+        self.raise_()
+
+    # ------------------------------------------------------------------
+    # Coordinate display
+    # ------------------------------------------------------------------
+
+    def show_clicked_coords(self, x, y, z):
+        self._coord_label.setText(f"x: {x:.3f}  y: {y:.3f}  z: {z:.3f}")
