@@ -221,6 +221,9 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 | Key | Action |
 |---|---|
+| Cmd+1 | Toggle Show Edges |
+| Cmd+2 | Toggle Show Axes |
+| Cmd+3 | Toggle Show Crosshairs |
 | Cmd+4 | Top view |
 | Cmd+5 | Bottom view |
 | Cmd+6 | Left view |
@@ -228,6 +231,11 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+8 | Front view |
 | Cmd+9 | Back view |
 | Cmd+0 | Isometric view |
+| Cmd++ | Increase editor font size |
+| Cmd+- | Decrease editor font size |
+| Cmd+[ | Zoom Out |
+| Cmd+] | Zoom In |
+| Shift+Cmd+V | View All |
 | F6 | Render |
 
 ### Application Preferences:
