@@ -204,7 +204,12 @@ The viewport always shows the result of the last render. While the user edits co
 
 ## Undo/Redo
 
-Both code edits and gizmo drags are undo/redo-able. QScintilla handles code edit history natively; gizmo commits must be pushed to a separate application-level undo stack. Undo/redo applies across both.
+Both code edits and gizmo drags are undo/redo-able via a unified app-level undo stack. Each entry is either a "code edit" or a "gizmo op":
+
+- **Code edits**: QScintilla manages the text history natively. The app stack holds a pointer to the corresponding QScintilla undo unit; undoing calls through to QScintilla.
+- **Gizmo ops**: The commit wraps its source text rewrite in QScintilla's `beginUndoAction()` / `endUndoAction()` to mark it as a single undo unit. The app stack entry stores enough state to revert both the code change and the gizmo parameters.
+
+All Cmd+Z / Cmd+Shift+Z goes through the app stack, never directly to QScintilla's native undo.
 
 ## Console Output
 

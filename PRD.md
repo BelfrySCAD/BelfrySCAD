@@ -208,7 +208,7 @@ Each geometry-producing AST node is assigned a unique `originalID`. Manifold pre
 
 ### Undo/Redo:
 
-Both code edits and gizmo drags are undo/redo-able. QScintilla handles code edit history natively; gizmo commits must be pushed to a separate application-level undo stack that covers both.
+Both code edits and gizmo drags are undo/redo-able via a unified app-level undo stack. Code edit entries call through to QScintilla's native undo; gizmo op entries wrap their source rewrite in QScintilla's `beginUndoAction()` / `endUndoAction()` to mark it as a single unit. All Cmd+Z / Cmd+Shift+Z goes through the app stack.
 
 ### Console output:
 
