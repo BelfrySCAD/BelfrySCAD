@@ -478,6 +478,51 @@ class TestTransforms:
         # after 90° z-rotation, x extent of translated cube maps to y axis
         assert abs(bb[1]) == approx(5, rel=0.01)
 
+    def test_rotate_axis_angle(self):
+        # rotate(90, v=[0,0,1]) is equivalent to rotate([0,0,90])
+        bodies_euler, _ = run("rotate([0,0,90]) translate([5,0,0]) cube(1);")
+        bodies_axis,  _ = run("rotate(90, v=[0,0,1]) translate([5,0,0]) cube(1);")
+        bb_e = bodies_euler[0].body.bounding_box()
+        bb_a = bodies_axis[0].body.bounding_box()
+        assert bb_a[0] == approx(bb_e[0], rel=0.01)
+        assert bb_a[3] == approx(bb_e[3], rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Modifiers (#, %, !, *)
+# ---------------------------------------------------------------------------
+
+class TestModifiers:
+    def test_highlight_produces_geometry(self):
+        # # (highlight) passes through the child geometry
+        bodies, _ = run("#cube(2);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
+
+    def test_showonly_produces_geometry(self):
+        # ! (show-only) passes through the child geometry
+        bodies, _ = run("!cube(3);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(3)
+
+    def test_background_suppressed(self):
+        # % (background) produces no geometry
+        bodies, _ = run("%cube(1);")
+        assert bodies == []
+
+    def test_disable_suppressed(self):
+        # * (disable) produces no geometry
+        bodies, _ = run("*cube(1);")
+        assert bodies == []
+
+    def test_highlight_with_other_geometry(self):
+        # only the non-highlighted cube should survive if % suppresses the other
+        src = "cube(1); %cube([10,10,10]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[3] - bb[0] == approx(1)
+
 
 # ---------------------------------------------------------------------------
 # CSG operations
