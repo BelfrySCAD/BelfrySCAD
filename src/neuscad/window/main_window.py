@@ -236,12 +236,19 @@ class MainWindow(QMainWindow):
 
         self._console = QPlainTextEdit()
         self._console.setReadOnly(True)
-        self._console.setMaximumHeight(160)
         self._console.setFont(QFont("Menlo", 11))
         self._console.setObjectName("Console")
 
-        layout.addWidget(self._tabs, stretch=1)
-        layout.addWidget(self._console)
+        self._main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._main_splitter.addWidget(self._tabs)
+        self._main_splitter.addWidget(self._console)
+        self._main_splitter.setStretchFactor(0, 1)
+        self._main_splitter.setStretchFactor(1, 0)
+        self._main_splitter.setSizes([600, 150])
+        self._main_splitter.setCollapsible(0, False)
+        self._main_splitter.setCollapsible(1, True)
+
+        layout.addWidget(self._main_splitter)
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -338,7 +345,8 @@ class MainWindow(QMainWindow):
         self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
         self._act_show_editor = self._add_checkable(view_menu, "Show Code Editor", True, self._toggle_editor)
         self._act_show_tools = self._add_checkable(view_menu, "Show Tools Strip", True, self._toggle_tools_strip)
-        self._act_show_console = self._add_checkable(view_menu, "Show Console", True, self._console.setVisible)
+        self._act_show_console = self._add_checkable(view_menu, "Show Console", True, self._toggle_console)
+        self._console_height = 150
         view_menu.addSeparator()
         for label, slot in (
             ("Top", lambda: self._set_view("top")),
@@ -788,6 +796,18 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if tab:
             tab.tools_strip.setVisible(visible)
+
+    def _toggle_console(self, visible):
+        if visible:
+            self._main_splitter.setSizes([
+                self._main_splitter.height() - self._console_height,
+                self._console_height,
+            ])
+        else:
+            sizes = self._main_splitter.sizes()
+            if sizes[1] > 0:
+                self._console_height = sizes[1]
+            self._main_splitter.setSizes([self._main_splitter.height(), 0])
 
     def _toggle_axes(self, visible):
         tab = self._current_tab()
