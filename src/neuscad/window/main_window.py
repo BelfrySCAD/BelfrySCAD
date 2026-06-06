@@ -272,35 +272,47 @@ class MainWindow(QMainWindow):
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
 
+    @staticmethod
+    def _toolbar_icon(name: str) -> QIcon:
+        path = _ICONS_DIR / f"toolbar-{name}.svg"
+        return QIcon(str(path)) if path.exists() else QIcon()
+
     def _make_toolbar(self):
         tb = QToolBar("Main")
         tb.setIconSize(QSize(20, 20))
         tb.setMovable(False)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self._act_open = QAction("Open", self)
+        self._act_open = QAction(self._toolbar_icon("open"), "Open", self)
+        self._act_open.setToolTip("Open (Ctrl+O)")
         self._act_open.triggered.connect(self._open_file)
         tb.addAction(self._act_open)
 
-        self._act_export = QAction("Export", self)
+        self._act_export = QAction(self._toolbar_icon("export"), "Export", self)
+        self._act_export.setToolTip("Export…")
         self._act_export.triggered.connect(self._export)
         tb.addAction(self._act_export)
 
-        self._act_render = QAction("Render", self)
+        self._act_render = QAction(self._toolbar_icon("render"), "Render", self)
+        self._act_render.setToolTip("Render (F6)")
         self._act_render.triggered.connect(self._render)
         tb.addAction(self._act_render)
 
-        self._act_debug_run = QAction("Debug", self)
+        self._act_debug_run = QAction(self._toolbar_icon("debug"), "Debug", self)
+        self._act_debug_run.setToolTip("Debug (F5)")
         self._act_debug_run.triggered.connect(self._start_debug)
         tb.addAction(self._act_debug_run)
 
         tb.addSeparator()
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
+        self._act_undo.setIcon(self._toolbar_icon("undo"))
         self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
         self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
+        self._act_redo.setIcon(self._toolbar_icon("redo"))
         self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_redo)

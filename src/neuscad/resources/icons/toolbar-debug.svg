@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- body -->
+  <ellipse cx="16" cy="20" rx="7" ry="9" fill="none" stroke="#444" stroke-width="2.5"/>
+  <!-- head -->
+  <circle cx="16" cy="10" r="4" fill="none" stroke="#444" stroke-width="2.5"/>
+  <!-- antennae -->
+  <line x1="13" y1="7" x2="10" y2="3" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="19" y1="7" x2="22" y2="3" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <!-- legs -->
+  <line x1="9" y1="17" x2="3" y2="14" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="9" y1="21" x2="3" y2="21" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="9" y1="25" x2="3" y2="28" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="23" y1="17" x2="29" y2="14" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="23" y1="21" x2="29" y2="21" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+  <line x1="23" y1="25" x2="29" y2="28" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+</svg>
