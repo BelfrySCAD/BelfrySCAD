@@ -136,6 +136,10 @@ class TestExpressions:
         _, lines = run("echo([0:2:6]);")
         assert lines == ["ECHO: [0, 2, 4, 6]"]
 
+    def test_range_descending(self):
+        _, lines = run("echo([5:-1:3]);")
+        assert lines == ["ECHO: [5, 4, 3]"]
+
 
 # ---------------------------------------------------------------------------
 # Variables and scoping
@@ -455,6 +459,29 @@ class TestPrimitives:
         bodies, _ = run("x = 5;")
         assert bodies == []
 
+    def test_sphere_diameter(self):
+        bodies, _ = run("sphere(d=4, $fn=32);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(4, rel=0.02)
+
+    def test_cylinder_diameter(self):
+        bodies, _ = run("cylinder(h=5, d=6, $fn=32);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(6, rel=0.02)
+
+    def test_cylinder_r1_r2(self):
+        bodies, _ = run("cylinder(h=10, r1=3, r2=1, $fn=32);")
+        bb = bbox(bodies)
+        assert bb[5] - bb[2] == approx(10, rel=0.01)
+        # base diameter = 6
+        assert bb[3] - bb[0] == approx(6, rel=0.02)
+
+    def test_cylinder_d1_d2(self):
+        bodies, _ = run("cylinder(h=10, d1=6, d2=2, $fn=32);")
+        bb = bbox(bodies)
+        assert bb[5] - bb[2] == approx(10, rel=0.01)
+        assert bb[3] - bb[0] == approx(6, rel=0.02)
+
 
 # ---------------------------------------------------------------------------
 # Transforms
@@ -471,6 +498,13 @@ class TestTransforms:
         bodies, _ = run("scale([2, 1, 1]) cube(1);")
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(2)
+
+    def test_scale_uniform(self):
+        # scalar argument scales all three axes uniformly
+        bodies, _ = run("scale(3) cube(1);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(3)
+        assert bb[4] - bb[1] == approx(3)
 
     def test_rotate(self):
         bodies, _ = run("rotate([0, 0, 90]) translate([5, 0, 0]) cube(1);")
@@ -730,6 +764,15 @@ class TestUserModules:
         """
         bodies, _ = run(src)
         assert bodies  # produces geometry
+
+    def test_children_indexed(self):
+        src = """
+        module first_only() { children(0); }
+        first_only() { cube(2); cube(5); }
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
 
     def test_module_default_param(self):
         src = "module box(s=2) { cube(s); } box();"
