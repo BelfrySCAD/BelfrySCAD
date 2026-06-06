@@ -66,13 +66,37 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self):
+    def __init__(self, echo_fn=None):
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
+        self._echo_fn = echo_fn or (lambda msg: print(msg))
 
     def error(self, msg: str):
         self._errors.append(msg)
         raise EvalError(msg)
+
+    def _fmt_val(self, v) -> str:
+        if v is None:
+            return "undef"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, float):
+            return f"{v:g}"
+        if isinstance(v, list):
+            return "[" + ", ".join(self._fmt_val(x) for x in v) + "]"
+        if isinstance(v, str):
+            return f'"{v}"'
+        return str(v)
+
+    def _do_echo(self, arguments, ctx: "EvalContext"):
+        parts = []
+        for arg in arguments:
+            val = self._eval_expr(arg.expr, ctx)
+            if isinstance(arg, NamedArgument):
+                parts.append(f"{arg.name.name} = {self._fmt_val(val)}")
+            else:
+                parts.append(self._fmt_val(val))
+        self._echo_fn("ECHO: " + ", ".join(parts))
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -114,7 +138,10 @@ class Evaluator:
             return self._eval_for(node, ctx)
         if isinstance(node, ModularLet):
             return self._eval_let_block(node, ctx)
-        if isinstance(node, (ModularEcho, ModularAssert)):
+        if isinstance(node, ModularEcho):
+            self._do_echo(node.arguments, ctx)
+            return []
+        if isinstance(node, ModularAssert):
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
             return self._eval_statement(node.child, ctx)
@@ -203,7 +230,10 @@ class Evaluator:
             return self._builtin_csg("intersection", node, ctx)
         if name == "hull":
             return self._builtin_hull(node, ctx)
-        if name in ("echo", "assert"):
+        if name == "echo":
+            self._do_echo(node.arguments, ctx)
+            return None
+        if name == "assert":
             return None
         if name == "children":
             return self._builtin_children(args, ctx)
@@ -734,7 +764,7 @@ class Evaluator:
             ],
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": len,
-            "str": str,
+            "str": lambda *a: "".join(self._fmt_val(x) for x in a),
             "chr": chr,
             "ord": ord,
             "is_undef": lambda x: x is None,

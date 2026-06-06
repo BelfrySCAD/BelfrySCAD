@@ -614,7 +614,7 @@ class MainWindow(QMainWindow):
         root_scope = build_scopes(nodes)
 
         # --- Evaluate ---
-        evaluator = Evaluator()
+        evaluator = Evaluator(echo_fn=self.log)
         try:
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
             tab.id_to_node = id_to_node
