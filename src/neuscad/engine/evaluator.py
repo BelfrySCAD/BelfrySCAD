@@ -26,7 +26,7 @@ from openscad_parser.ast.nodes import (
     ModularEcho, ModularAssert,
     ModularModifierShowOnly, ModularModifierHighlight,
     ModularModifierBackground, ModularModifierDisable,
-    ModuleDeclaration, FunctionDeclaration,
+    ModuleDeclaration, FunctionDeclaration, ParameterDeclaration,
     VectorElement,
     LetOp, EchoOp, AssertOp,
     FunctionLiteral,
@@ -70,10 +70,21 @@ class Evaluator:
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
+        self._call_stack: list[str] = []  # function name frames
 
     def error(self, msg: str):
-        self._errors.append(msg)
-        raise EvalError(msg)
+        if self._call_stack:
+            lines = []
+            for fname, pos in reversed(self._call_stack):
+                if pos is not None:
+                    lines.append(f"  in {fname}() at {pos.origin}:{pos.line}")
+                else:
+                    lines.append(f"  in {fname}()")
+            full = f"{msg}\nTraceback:\n" + "\n".join(lines)
+        else:
+            full = msg
+        self._errors.append(full)
+        raise EvalError(full)
 
     def _fmt_val(self, v) -> str:
         if v is None:
@@ -104,6 +115,7 @@ class Evaluator:
 
     def evaluate(self, nodes: list[ASTNode], root_scope) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
         """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
+        self._call_stack.clear()
         ctx = EvalContext(scope=root_scope)
         result = []
         for node in nodes:
@@ -127,13 +139,13 @@ class Evaluator:
         if isinstance(node, ModularIf):
             cond = self._eval_expr(node.condition, ctx)
             if cond:
-                return self._eval_children(node.children, ctx)
+                return self._eval_children(node.true_branch, ctx)
             return []
         if isinstance(node, ModularIfElse):
             cond = self._eval_expr(node.condition, ctx)
             if cond:
-                return self._eval_children(node.if_children, ctx)
-            return self._eval_children(node.else_children, ctx)
+                return self._eval_children(node.true_branch, ctx)
+            return self._eval_children(node.false_branch, ctx)
         if isinstance(node, ModularFor):
             return self._eval_for(node, ctx)
         if isinstance(node, ModularLet):
@@ -181,12 +193,17 @@ class Evaluator:
             scope=child_scope,
             children_bodies=caller_bodies,
         )
-        # Override dyn vars with any $-prefixed args
+        # Bind all args; $-prefixed go into dyn directly, others as __let_
         for k, v in args.items():
             if k.startswith("$"):
                 child_ctx.dyn[k] = v
+            else:
+                child_ctx.dyn[f"__let_{k}"] = v
+        # Apply defaults for missing params
+        self._apply_defaults(params, child_ctx, ctx)
 
-        bodies = self._eval_children(decl.body if hasattr(decl, 'body') else [], child_ctx)
+        module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
+        bodies = self._eval_children(module_body, child_ctx)
         if not bodies:
             return None
         return self._combine(bodies)
@@ -610,7 +627,7 @@ class Evaluator:
             return self._eval_expr(node.left, ctx) <= self._eval_expr(node.right, ctx)
         if isinstance(node, TernaryOp):
             cond = self._eval_expr(node.condition, ctx)
-            return self._eval_expr(node.if_true, ctx) if cond else self._eval_expr(node.if_false, ctx)
+            return self._eval_expr(node.true_expr, ctx) if cond else self._eval_expr(node.false_expr, ctx)
         if isinstance(node, PrimaryCall):
             return self._eval_function_call(node, ctx)
         if isinstance(node, PrimaryIndex):
@@ -659,6 +676,9 @@ class Evaluator:
         decl = ctx.scope.lookup_variable(name)
         if decl is None:
             return None
+        if isinstance(decl, ParameterDeclaration):
+            # Params are bound via __let_ above; reaching here means no value was provided and no default
+            return None
         return self._eval_expr(decl.expr, ctx)
 
     def _eval_list_comp(self, node: ListComprehension, ctx: EvalContext) -> list:
@@ -689,6 +709,10 @@ class Evaluator:
     def _eval_list_comp_body(self, body, ctx: EvalContext) -> list:
         if isinstance(body, ListComprehension):
             return self._eval_list_comp(body, ctx)
+        if isinstance(body, ListCompIf):
+            if self._eval_expr(body.condition, ctx):
+                return self._eval_list_comp_body(body.true_expr, ctx)
+            return []
         v = self._eval_expr(body, ctx)
         return [v] if v is not None else []
 
@@ -769,7 +793,7 @@ class Evaluator:
             ],
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": len,
-            "str": lambda *a: "".join(self._fmt_val(x) for x in a),
+            "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
             "chr": chr,
             "ord": ord,
             "is_undef": lambda x: x is None,
@@ -789,14 +813,33 @@ class Evaluator:
         if name:
             decl = ctx.scope.lookup_function(name)
             if decl is not None:
-                return self._eval_user_function(decl, node.arguments, ctx)
+                return self._eval_user_function(name, decl, node.arguments, ctx, node)
+            if func_node is None:
+                pos = getattr(node, 'position', None)
+                loc = f" at {pos.origin}:{pos.line}" if pos else ""
+                self.error(f"undefined function '{name}'{loc}")
 
         return None
 
-    def _eval_user_function(self, decl: FunctionDeclaration, arguments, ctx: EvalContext) -> Any:
+    def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
+        """Bind default values for any params not already set in child_ctx.dyn."""
+        for param in params:
+            pname = param.name.name if hasattr(param, 'name') else None
+            if pname and f"__let_{pname}" not in child_ctx.dyn:
+                default = getattr(param, 'default', None)
+                if default is not None:
+                    child_ctx.dyn[f"__let_{pname}"] = self._eval_expr(default, caller_ctx)
+
+    def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
         params = decl.parameters if hasattr(decl, 'parameters') else []
         bound = self._bind_args(params, arguments, ctx)
         child_ctx = ctx.child_ctx(scope=decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope)
         for k, v in bound.items():
             child_ctx.dyn[f"__let_{k}"] = v
-        return self._eval_expr(decl.expr, child_ctx)
+        self._apply_defaults(params, child_ctx, ctx)
+        pos = getattr(call_node, 'position', None)
+        self._call_stack.append((name, pos))
+        try:
+            return self._eval_expr(decl.expr, child_ctx)
+        finally:
+            self._call_stack.pop()
