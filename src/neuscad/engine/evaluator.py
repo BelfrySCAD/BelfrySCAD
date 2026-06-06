@@ -637,9 +637,10 @@ class Evaluator:
                 child_ctx.dyn[f"__let_{assign.name.name}"] = v
             return self._eval_expr(node.expr, child_ctx)
         if isinstance(node, EchoOp):
-            return self._eval_expr(node.expr, ctx)
+            self._do_echo(node.arguments, ctx)
+            return self._eval_expr(node.body, ctx)
         if isinstance(node, AssertOp):
-            return self._eval_expr(node.expr, ctx)
+            return self._eval_expr(node.body, ctx)
         if isinstance(node, FunctionLiteral):
             return node  # lambda — store for later call
         # Unknown — return None
@@ -674,9 +675,13 @@ class Evaluator:
             elif isinstance(elem, ListCompLet):
                 pass  # TODO: let in list comp
             elif isinstance(elem, ListCompEach):
-                v = self._eval_expr(elem.expr, ctx)
+                v = self._eval_expr(elem.body, ctx)
                 if isinstance(v, list):
-                    result.extend(v)
+                    for item in v:
+                        if isinstance(item, list):
+                            result.extend(item)
+                        else:
+                            result.append(item)
             else:
                 result.append(self._eval_expr(elem, ctx))
         return result
