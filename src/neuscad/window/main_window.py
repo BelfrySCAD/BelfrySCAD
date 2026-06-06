@@ -704,28 +704,28 @@ class MainWindow(QMainWindow):
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "",
-            "STL Files (*.stl);;OBJ Files (*.obj)"
+            "STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf)"
         )
         if not path:
             return
 
-        import manifold3d as m3d
-        all_bodies = [b.body for b in bodies if not b.body.is_empty()]
-        if not all_bodies:
-            QMessageBox.warning(self, "Export", "No geometry to export.")
-            return
-
-        composed = m3d.Manifold.compose(all_bodies)
-        mesh = composed.to_mesh()
-
         ext = Path(path).suffix.lower()
         try:
-            if ext == ".obj":
-                self._write_obj(path, mesh)
+            if ext == ".3mf":
+                self._write_3mf(path, bodies)
             else:
-                if not path.endswith(".stl"):
-                    path += ".stl"
-                self._write_stl(path, mesh)
+                import manifold3d as m3d
+                all_manifolds = [b.body for b in bodies if not b.body.is_empty()]
+                if not all_manifolds:
+                    QMessageBox.warning(self, "Export", "No geometry to export.")
+                    return
+                mesh = m3d.Manifold.compose(all_manifolds).to_mesh()
+                if ext == ".obj":
+                    self._write_obj(path, mesh)
+                else:
+                    if not path.endswith(".stl"):
+                        path += ".stl"
+                    self._write_stl(path, mesh)
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
@@ -777,6 +777,75 @@ class MainWindow(QMainWindow):
             f.write("\n")
             for tri in tris:
                 f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
+
+    @staticmethod
+    def _write_3mf(path: str, bodies):
+        import lib3mf
+        import numpy as np
+
+        _FA3 = type(lib3mf.Position().Coordinates)
+        _UI3 = type(lib3mf.Triangle().Indices)
+
+        def _identity_transform():
+            t = lib3mf.Transform()
+            _col = type(t.Fields[0])
+            t.Fields[0] = _col(1, 0, 0)
+            t.Fields[1] = _col(0, 1, 0)
+            t.Fields[2] = _col(0, 0, 1)
+            t.Fields[3] = _col(0, 0, 0)
+            return t
+
+        wrapper = lib3mf.Wrapper()
+        model = wrapper.CreateModel()
+
+        for colored_body in bodies:
+            if colored_body.body.is_empty():
+                continue
+
+            mesh3d = colored_body.body.to_mesh()
+            verts = np.asarray(mesh3d.vert_properties[:, :3], dtype=np.float32)
+            tris  = np.asarray(mesh3d.tri_verts, dtype=np.int32)
+            if len(tris) == 0:
+                continue
+
+            mesh_obj = model.AddMeshObject()
+
+            positions = []
+            for v in verts:
+                p = lib3mf.Position()
+                p.Coordinates = _FA3(float(v[0]), float(v[1]), float(v[2]))
+                positions.append(p)
+
+            triangles = []
+            for t in tris:
+                tri = lib3mf.Triangle()
+                tri.Indices = _UI3(int(t[0]), int(t[1]), int(t[2]))
+                triangles.append(tri)
+
+            mesh_obj.SetGeometry(positions, triangles)
+
+            rgba = colored_body.color or (0.8, 0.8, 0.8, 1.0)
+            cg = model.AddColorGroup()
+            c = lib3mf.Color()
+            c.Red   = max(0, min(255, int(rgba[0] * 255)))
+            c.Green = max(0, min(255, int(rgba[1] * 255)))
+            c.Blue  = max(0, min(255, int(rgba[2] * 255)))
+            c.Alpha = max(0, min(255, int(rgba[3] * 255)))
+            color_id = cg.AddColor(c)
+            cg_uid   = cg.GetUniqueResourceID()
+
+            props = []
+            for _ in range(len(tris)):
+                tp = lib3mf.TriangleProperties()
+                tp.ResourceID  = cg_uid
+                tp.PropertyIDs = _UI3(color_id, color_id, color_id)
+                props.append(tp)
+            mesh_obj.SetAllTriangleProperties(props)
+
+            model.AddBuildItem(mesh_obj, _identity_transform())
+
+        writer = model.QueryWriter("3mf")
+        writer.WriteToFile(path)
 
     # ------------------------------------------------------------------
     # Render
