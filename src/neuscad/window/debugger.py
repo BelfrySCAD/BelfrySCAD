@@ -180,13 +180,13 @@ class DebuggerPane(QWidget):
         self._btn_continue = QPushButton("▶")
         self._btn_continue.setToolTip("Continue (F5)")
         self._btn_continue.setFixedSize(28, 24)
+        self._btn_step_over = QPushButton("↷")
+        self._btn_step_over.setFont(QFont("Arial Unicode MS"))
+        self._btn_step_over.setToolTip("Step Over (F10)")
+        self._btn_step_over.setFixedSize(28, 24)
         self._btn_step_into = QPushButton("↓")
         self._btn_step_into.setToolTip("Step Into (F11)")
         self._btn_step_into.setFixedSize(28, 24)
-        self._btn_step_over = QPushButton("↷")
-        self._btn_step_over.setFont(QFont("Arial"))
-        self._btn_step_over.setToolTip("Step Over (F10)")
-        self._btn_step_over.setFixedSize(28, 24)
         self._btn_step_out = QPushButton("↑")
         self._btn_step_out.setToolTip("Step Out (F12)")
         self._btn_step_out.setFixedSize(28, 24)
@@ -194,7 +194,7 @@ class DebuggerPane(QWidget):
         self._btn_stop.setToolTip("Stop")
         self._btn_stop.setFixedSize(28, 24)
 
-        for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
+        for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
                     self._btn_step_out, self._btn_stop):
             header.addWidget(btn)
             btn.setEnabled(False)
