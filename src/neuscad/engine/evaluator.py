@@ -81,6 +81,16 @@ class Evaluator:
         if line is None:
             return
         locals_dict = {k[6:]: v for k, v in ctx.dyn.items() if k.startswith('__let_')}
+        # Also include lexical variables visible at the current scope
+        scope = ctx.scope
+        while scope is not None:
+            for name, decl in scope.variables.items():
+                if name not in locals_dict and isinstance(decl, Assignment):
+                    try:
+                        locals_dict[name] = self._eval_expr(decl.expr, ctx)
+                    except Exception:
+                        pass
+            scope = scope.parent
         cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack))
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v

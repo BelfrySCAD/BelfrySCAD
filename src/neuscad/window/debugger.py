@@ -212,7 +212,7 @@ class DebuggerPane(QWidget):
             btn.setEnabled(False)
         layout.addLayout(header)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         mono = QFont("Menlo", 10)
 

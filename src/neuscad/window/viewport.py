@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor, QSurfaceFormat
 
 from neuscad.engine.renderer import SceneRenderer
 
@@ -28,6 +28,9 @@ class Viewport(QOpenGLWidget):
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
 
     def __init__(self, parent=None):
+        fmt = QSurfaceFormat()
+        fmt.setSamples(4)
+        self.setFormat(fmt)
         super().__init__(parent)
         self.setMinimumSize(400, 300)
         self._ctx = None
