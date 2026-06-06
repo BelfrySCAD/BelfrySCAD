@@ -693,8 +693,90 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
 
     def _export(self):
-        self._render()  # ensure geometry is current before exporting
-        pass  # TODO: implement export (STL/OBJ/3MF)
+        tab = self._current_tab()
+        if not tab:
+            return
+        self._render()
+        bodies = getattr(tab, '_bodies', None)
+        if not bodies:
+            QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export", "",
+            "STL Files (*.stl);;OBJ Files (*.obj)"
+        )
+        if not path:
+            return
+
+        import manifold3d as m3d
+        all_bodies = [b.body for b in bodies if not b.body.is_empty()]
+        if not all_bodies:
+            QMessageBox.warning(self, "Export", "No geometry to export.")
+            return
+
+        composed = m3d.Manifold.compose(all_bodies)
+        mesh = composed.to_mesh()
+
+        ext = Path(path).suffix.lower()
+        try:
+            if ext == ".obj":
+                self._write_obj(path, mesh)
+            else:
+                if not path.endswith(".stl"):
+                    path += ".stl"
+                self._write_stl(path, mesh)
+            self.log(f"Exported to {path}")
+        except OSError as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+
+    @staticmethod
+    def _write_stl(path: str, mesh):
+        import struct
+        import numpy as np
+
+        verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
+        tris = np.asarray(mesh.tri_verts, dtype=np.int32)
+
+        v0 = verts[tris[:, 0]]
+        v1 = verts[tris[:, 1]]
+        v2 = verts[tris[:, 2]]
+
+        normals = np.cross(v1 - v0, v2 - v0).astype(np.float32)
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals /= np.where(lengths > 0, lengths, 1.0)
+
+        dtype = np.dtype([
+            ("normal", np.float32, (3,)),
+            ("v0",     np.float32, (3,)),
+            ("v1",     np.float32, (3,)),
+            ("v2",     np.float32, (3,)),
+            ("attr",   np.uint16),
+        ])
+        data = np.zeros(len(tris), dtype=dtype)
+        data["normal"] = normals
+        data["v0"] = v0
+        data["v1"] = v1
+        data["v2"] = v2
+
+        with open(path, "wb") as f:
+            f.write(b"\0" * 80)
+            f.write(struct.pack("<I", len(tris)))
+            f.write(data.tobytes())
+
+    @staticmethod
+    def _write_obj(path: str, mesh):
+        import numpy as np
+
+        verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
+        tris = np.asarray(mesh.tri_verts, dtype=np.int32)
+
+        with open(path, "w", encoding="utf-8") as f:
+            for v in verts:
+                f.write(f"v {v[0]:.6g} {v[1]:.6g} {v[2]:.6g}\n")
+            f.write("\n")
+            for tri in tris:
+                f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
 
     # ------------------------------------------------------------------
     # Render
@@ -802,6 +884,8 @@ class MainWindow(QMainWindow):
             import traceback
             self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
+
+        tab._bodies = bodies
 
         # Frame camera and report bounds
         try:
