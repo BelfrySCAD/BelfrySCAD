@@ -543,7 +543,12 @@ class Evaluator:
     # --- let ---
 
     def _eval_let_block(self, node: ModularLet, ctx: EvalContext) -> list[ColoredBody]:
-        return self._eval_children(node.body if hasattr(node, 'body') else [], ctx)
+        child_ctx = ctx.child_ctx()
+        for assign in node.assignments:
+            v = self._eval_expr(assign.expr, ctx)
+            child_ctx.dyn[f"__let_{assign.name.name}"] = v
+        body = getattr(node, 'children', None) or getattr(node, 'body', None) or []
+        return self._eval_children(body, child_ctx)
 
     # ------------------------------------------------------------------
     # Utility
@@ -652,7 +657,7 @@ class Evaluator:
             for assign in node.assignments:
                 v = self._eval_expr(assign.expr, ctx)
                 child_ctx.dyn[f"__let_{assign.name.name}"] = v
-            return self._eval_expr(node.expr, child_ctx)
+            return self._eval_expr(node.body, child_ctx)
         if isinstance(node, EchoOp):
             self._do_echo(node.arguments, ctx)
             return self._eval_expr(node.body, ctx)
@@ -688,9 +693,9 @@ class Evaluator:
                 result.extend(self._eval_listcomp_for(elem, ctx))
             elif isinstance(elem, ListCompIf):
                 if self._eval_expr(elem.condition, ctx):
-                    result.extend(self._eval_list_comp_body(elem.body, ctx))
+                    result.extend(self._eval_list_comp_body(elem.true_expr, ctx))
             elif isinstance(elem, ListCompIfElse):
-                branch = elem.if_body if self._eval_expr(elem.condition, ctx) else elem.else_body
+                branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
                 result.extend(self._eval_list_comp_body(branch, ctx))
             elif isinstance(elem, ListCompLet):
                 pass  # TODO: let in list comp
@@ -713,6 +718,9 @@ class Evaluator:
             if self._eval_expr(body.condition, ctx):
                 return self._eval_list_comp_body(body.true_expr, ctx)
             return []
+        if isinstance(body, ListCompIfElse):
+            branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
+            return self._eval_list_comp_body(branch, ctx)
         if isinstance(body, ListCompEach):
             v = self._eval_expr(body.body, ctx)
             if isinstance(v, list):
@@ -799,8 +807,8 @@ class Evaluator:
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": len,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
-            "chr": chr,
-            "ord": ord,
+            "chr": lambda x: chr(int(x)),
+            "ord": lambda s: ord(s) if isinstance(s, str) and len(s) == 1 else None,
             "is_undef": lambda x: x is None,
             "is_num": lambda x: isinstance(x, (int, float)),
             "is_bool": lambda x: isinstance(x, bool),

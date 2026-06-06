@@ -36,6 +36,46 @@ def approx(v, rel=1e-4):
 # ---------------------------------------------------------------------------
 
 class TestExpressions:
+    def test_not_equal(self):
+        _, lines = run("echo(1 != 2);")
+        assert lines == ["ECHO: true"]
+
+    def test_greater_than_or_equal(self):
+        _, lines = run("echo(3 >= 3);")
+        assert lines == ["ECHO: true"]
+
+    def test_vector_add(self):
+        _, lines = run("echo([1,2,3] + [4,5,6]);")
+        assert lines == ["ECHO: [5, 7, 9]"]
+
+    def test_vector_subtract(self):
+        _, lines = run("echo([5,7,9] - [4,5,6]);")
+        assert lines == ["ECHO: [1, 2, 3]"]
+
+    def test_vector_scale_right(self):
+        _, lines = run("echo([1,2,3] * 2);")
+        assert lines == ["ECHO: [2, 4, 6]"]
+
+    def test_vector_scale_left(self):
+        _, lines = run("echo(3 * [1,2,3]);")
+        assert lines == ["ECHO: [3, 6, 9]"]
+
+    def test_unary_minus_vector(self):
+        _, lines = run("echo(-[1,2,3]);")
+        assert lines == ["ECHO: [-1, -2, -3]"]
+
+    def test_member_x(self):
+        _, lines = run("v = [10,20,30]; echo(v.x);")
+        assert lines == ["ECHO: 10"]
+
+    def test_member_y(self):
+        _, lines = run("v = [10,20,30]; echo(v.y);")
+        assert lines == ["ECHO: 20"]
+
+    def test_member_z(self):
+        _, lines = run("v = [10,20,30]; echo(v.z);")
+        assert lines == ["ECHO: 30"]
+
     def test_arithmetic(self):
         _, lines = run("echo(2 + 3 * 4);")
         assert lines == ["ECHO: 14"]
@@ -122,6 +162,15 @@ class TestVariables:
         _, lines = run("a = 3; b = a * 2; echo(b);")
         assert lines == ["ECHO: 6"]
 
+    def test_special_var_assignment(self):
+        # $fn at top level goes into dynamic context
+        bodies, _ = run("$fn = 8; sphere(r=1);")
+        assert bodies
+
+    def test_special_var_lookup(self):
+        _, lines = run("$fn = 64; echo($fn);")
+        assert lines == ["ECHO: 64"]
+
 
 # ---------------------------------------------------------------------------
 # Built-in functions
@@ -191,6 +240,66 @@ class TestBuiltinFunctions:
     def test_is_undef(self):
         _, lines = run("echo(is_undef(undef));")
         assert lines == ["ECHO: true"]
+
+    def test_is_bool(self):
+        _, lines = run("echo(is_bool(true));")
+        assert lines == ["ECHO: true"]
+
+    def test_is_string(self):
+        _, lines = run('echo(is_string("hi"));')
+        assert lines == ["ECHO: true"]
+
+    def test_tan(self):
+        _, lines = run("echo(tan(45));")
+        assert float(lines[0].split(": ")[1]) == approx(1.0)
+
+    def test_asin(self):
+        _, lines = run("echo(asin(1));")
+        assert float(lines[0].split(": ")[1]) == approx(90.0)
+
+    def test_acos(self):
+        _, lines = run("echo(acos(1));")
+        assert float(lines[0].split(": ")[1]) == approx(0.0)
+
+    def test_atan(self):
+        _, lines = run("echo(atan(1));")
+        assert float(lines[0].split(": ")[1]) == approx(45.0)
+
+    def test_atan2(self):
+        _, lines = run("echo(atan2(1, 1));")
+        assert float(lines[0].split(": ")[1]) == approx(45.0)
+
+    def test_ln(self):
+        _, lines = run("echo(ln(1));")
+        assert lines == ["ECHO: 0"]
+
+    def test_log(self):
+        _, lines = run("echo(log(100));")
+        assert lines == ["ECHO: 2"]
+
+    def test_exp(self):
+        _, lines = run("echo(exp(0));")
+        assert lines == ["ECHO: 1"]
+
+    def test_pow(self):
+        _, lines = run("echo(pow(3, 3));")
+        assert lines == ["ECHO: 27"]
+
+    def test_norm(self):
+        _, lines = run("echo(norm([3, 4]));")
+        assert float(lines[0].split(": ")[1]) == approx(5.0)
+
+    def test_cross(self):
+        _, lines = run("echo(cross([1,0,0],[0,1,0]));")
+        assert lines == ["ECHO: [0, 0, 1]"]
+
+    def test_chr(self):
+        _, lines = run("echo(chr(65));")
+        assert lines == ['ECHO: "A"']
+
+    def test_ord(self):
+        _, lines = run('echo(ord("A"));')
+        assert lines == ["ECHO: 65"]
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +398,15 @@ class TestListComprehensions:
         _, lines = run("a = [[1,2,3],[4,5,6]]; b = [each a]; echo(b);")
         assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
 
+    def test_listcompif_direct(self):
+        # ListCompIf as a direct element (not nested in for)
+        _, lines = run("x = [if (true) 1, if (false) 2, if (true) 3]; echo(x);")
+        assert lines == ["ECHO: [1, 3]"]
+
+    def test_listcompifelse_direct(self):
+        _, lines = run("x = [if (true) 1 else 9, if (false) 2 else 8]; echo(x);")
+        assert lines == ["ECHO: [1, 8]"]
+
     def test_for_each_flatten(self):
         src = """
         function flatten(list) = [for (x=list) each x];
@@ -385,6 +503,88 @@ class TestCSG:
 
 
 # ---------------------------------------------------------------------------
+# More transforms
+# ---------------------------------------------------------------------------
+
+class TestMoreTransforms:
+    def test_mirror_x(self):
+        bodies, _ = run("mirror([1,0,0]) translate([3,0,0]) cube(1);")
+        bb = bbox(bodies)
+        # cube was at x=[3,4]; after mirroring on YZ plane it lands at x=[-4,-3]
+        assert bb[3] <= 0.01
+
+    def test_resize(self):
+        bodies, _ = run("resize([6,6,6]) cube(2);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(6, rel=0.01)
+
+    def test_multmatrix_identity(self):
+        # identity matrix should leave the cube unchanged
+        src = """
+        multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+            cube(2);
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
+
+    def test_multmatrix_translate(self):
+        # translation via multmatrix
+        src = """
+        multmatrix([[1,0,0,5],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+            cube(1);
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[0] == approx(5)
+
+
+# ---------------------------------------------------------------------------
+# for loop producing geometry
+# ---------------------------------------------------------------------------
+
+class TestForGeometry:
+    def test_for_produces_multiple_bodies(self):
+        src = "for (i=[0:2:4]) { translate([i,0,0]) cube(1); }"
+        bodies, _ = run(src)
+        # three cubes (i=0,2,4) produced as separate bodies
+        assert len(bodies) == 3
+        xmax = max(b.body.bounding_box()[3] for b in bodies)
+        assert xmax == approx(5)
+
+    def test_for_vector_geometry(self):
+        src = "for (x=[0,10]) { translate([x,0,0]) cube(1); }"
+        bodies, _ = run(src)
+        assert bodies
+
+
+# ---------------------------------------------------------------------------
+# let blocks
+# ---------------------------------------------------------------------------
+
+class TestLetBlocks:
+    def test_let_expression(self):
+        _, lines = run("echo(let(x=5, y=3) x + y);")
+        assert lines == ["ECHO: 8"]
+
+    def test_let_scoping(self):
+        _, lines = run("x = 1; echo(let(x=99) x);")
+        assert lines == ["ECHO: 99"]
+
+    def test_let_block_geometry(self):
+        src = "let(s=3) { cube(s); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(3)
+
+    def test_let_block_shadowing(self):
+        src = "s = 1; let(s=5) { cube(s); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(5)
+
+
+# ---------------------------------------------------------------------------
 # User-defined modules
 # ---------------------------------------------------------------------------
 
@@ -394,6 +594,19 @@ class TestUserModules:
         bodies, _ = run(src)
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(3)
+
+    def test_module_named_args(self):
+        src = "module box(w, h) { cube([w, h, 1]); } box(h=3, w=5);"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(5)
+        assert bb[4] - bb[1] == approx(3)
+
+    def test_if_else_geometry_true_branch(self):
+        src = "if (true) { cube(2); } else { cube(5); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
 
     def test_module_with_children(self):
         src = """
