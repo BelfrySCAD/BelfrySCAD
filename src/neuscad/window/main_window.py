@@ -583,7 +583,8 @@ class MainWindow(QMainWindow):
         # Clear console for this render run
         self._console.clear()
 
-        from openscad_parser.ast import getASTfromString, build_scopes
+        from openscad_parser.ast import getASTfromString, getASTfromFile, getASTfromLibraryFile, build_scopes
+        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
         from neuscad.engine.evaluator import Evaluator, EvalError
         import numpy as np
         import io, sys as _sys, time as _time
@@ -591,17 +592,36 @@ class MainWindow(QMainWindow):
         _t0 = _time.perf_counter()
 
         # --- Parse ---
+        import tempfile
+        _tmp = None
         try:
             buf = io.StringIO()
             old_stdout = _sys.stdout
             _sys.stdout = buf
-            nodes = getASTfromString(source, origin="<editor>")
+            if tab.file_path:
+                parse_path = tab.file_path
+            else:
+                # Write to a temp file so openscad_parser can resolve system library paths
+                _tmp = tempfile.NamedTemporaryFile(
+                    suffix=".scad", mode="w", encoding="utf-8", delete=False
+                )
+                _tmp.write(source)
+                _tmp.close()
+                parse_path = _tmp.name
+            nodes = getASTfromFile(parse_path)
             _sys.stdout = old_stdout
             captured = buf.getvalue()
         except Exception as e:
             _sys.stdout = old_stdout
             self.log(f"Parse error: {e}")
             return
+        finally:
+            if _tmp is not None:
+                import os as _os
+                try:
+                    _os.unlink(_tmp.name)
+                except OSError:
+                    pass
 
         if captured:
             self.log(captured.rstrip())
@@ -609,6 +629,23 @@ class MainWindow(QMainWindow):
         if nodes is None:
             self._parse_error_to_editor(tab, captured)
             return
+
+        # Resolve `use` statements: prepend module/function declarations from used files
+        current_file = tab.file_path or parse_path
+        injected = []
+        for node in nodes:
+            if isinstance(node, UseStatement):
+                try:
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, node.filepath)
+                    if lib_nodes:
+                        injected.extend(
+                            n for n in lib_nodes
+                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
+                        )
+                except Exception as e:
+                    self.log(f"use error: {e}")
+        if injected:
+            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
 
         tab.editor.clear_errors()
         root_scope = build_scopes(nodes)
