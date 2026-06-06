@@ -289,6 +289,15 @@ class TestListComprehensions:
         _, lines = run("a = [[1,2,3],[4,5,6]]; b = [each a]; echo(b);")
         assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
 
+    def test_for_each_flatten(self):
+        src = """
+        function flatten(list) = [for (x=list) each x];
+        grid = [[1,2,3],[4,5,6]];
+        echo(flatten(grid));
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
+
 
 # ---------------------------------------------------------------------------
 # Primitives and geometry

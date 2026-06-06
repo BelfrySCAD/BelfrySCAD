@@ -713,6 +713,11 @@ class Evaluator:
             if self._eval_expr(body.condition, ctx):
                 return self._eval_list_comp_body(body.true_expr, ctx)
             return []
+        if isinstance(body, ListCompEach):
+            v = self._eval_expr(body.body, ctx)
+            if isinstance(v, list):
+                return v
+            return [v] if v is not None else []
         v = self._eval_expr(body, ctx)
         return [v] if v is not None else []
 
