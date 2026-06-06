@@ -382,17 +382,19 @@ class MainWindow(QMainWindow):
         self._act_show_debugger = self._add_checkable(view_menu, "Show Debugger", False, self._toggle_debugger)
         self._console_height = 150
         view_menu.addSeparator()
-        for label, slot in (
-            ("Top", lambda: self._set_view("top")),
-            ("Bottom", lambda: self._set_view("bottom")),
-            ("Left", lambda: self._set_view("left")),
-            ("Right", lambda: self._set_view("right")),
-            ("Front", lambda: self._set_view("front")),
-            ("Back", lambda: self._set_view("back")),
-            ("Isometric", lambda: self._set_view("iso")),
-            ("View All", lambda: self._set_view("all")),
+        for label, preset, key in (
+            ("Top",       "top",    "Ctrl+4"),
+            ("Bottom",    "bottom", "Ctrl+5"),
+            ("Left",      "left",   "Ctrl+6"),
+            ("Right",     "right",  "Ctrl+7"),
+            ("Front",     "front",  "Ctrl+8"),
+            ("Back",      "back",   "Ctrl+9"),
+            ("Isometric", "iso",    "Ctrl+0"),
+            ("View All",  "all",    "Shift+Ctrl+V"),
         ):
-            view_menu.addAction(label, slot)
+            self._add_action(view_menu, label,
+                             lambda p=preset: self._set_view(p),
+                             QKeySequence(key))
         view_menu.addSeparator()
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
@@ -414,7 +416,7 @@ class MainWindow(QMainWindow):
         if shortcut:
             act.setShortcut(shortcut)
         if slot:
-            act.triggered.connect(slot)
+            act.triggered.connect(lambda checked=False, s=slot: s())
         menu.addAction(act)
         return act
 
@@ -441,18 +443,10 @@ class MainWindow(QMainWindow):
         shortcut("Ctrl+1", lambda: self._act_show_edges.toggle())
         shortcut("Ctrl+2", lambda: self._act_show_axes.toggle())
         shortcut("Ctrl+3", lambda: self._act_show_cross.toggle())
-        shortcut("Ctrl+4", lambda: self._set_view("top"))
-        shortcut("Ctrl+5", lambda: self._set_view("bottom"))
-        shortcut("Ctrl+6", lambda: self._set_view("left"))
-        shortcut("Ctrl+7", lambda: self._set_view("right"))
-        shortcut("Ctrl+8", lambda: self._set_view("front"))
-        shortcut("Ctrl+9", lambda: self._set_view("back"))
-        shortcut("Ctrl+0", lambda: self._set_view("iso"))
         shortcut("Ctrl++", self._font_size_increase)
         shortcut("Ctrl+-", self._font_size_decrease)
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
         shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
-        shortcut("Shift+Ctrl+V", lambda: self._set_view("all"))
         shortcut("F5", self._start_debug)
         shortcut("F10", self._on_debug_step_over)
         shortcut("F11", self._on_debug_step_into)

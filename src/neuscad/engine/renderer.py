@@ -334,7 +334,11 @@ class SceneRenderer:
         L       = self.camera.distance * 2.5
         spacing = _nice_spacing(L)
         black   = np.zeros(3, dtype=np.float32)
-        light   = np.array([0.65, 0.65, 0.65], dtype=np.float32)
+        red   = np.array([0.3, 0.0, 0.0], dtype=np.float32)
+        green   = np.array([0.0, 0.3, 0.0], dtype=np.float32)
+        blue   = np.array([0.0, 0.0, 0.5], dtype=np.float32)
+        gray    = np.array([0.2, 0.2, 0.2], dtype=np.float32)
+        axis_colors = [red, green, blue];
 
         # Tick sizes: minor ~8 px half-length, major exactly 2×
         w, h = self._viewport
@@ -351,16 +355,16 @@ class SceneRenderer:
             p0 = np.zeros(3, dtype=np.float32)
             p1 = np.zeros(3, dtype=np.float32)
             p1[i] = float(L)
-            rows.append(np.concatenate([p0, black]))
-            rows.append(np.concatenate([p1, black]))
+            rows.append(np.concatenate([p0, axis_colors[i]]))
+            rows.append(np.concatenate([p1, axis_colors[i]]))
 
         # Negative axes — solid, light gray
         for i in range(3):
             p0 = np.zeros(3, dtype=np.float32)
             p1 = np.zeros(3, dtype=np.float32)
             p1[i] = -float(L)
-            rows.append(np.concatenate([p0, light]))
-            rows.append(np.concatenate([p1, light]))
+            rows.append(np.concatenate([p0, gray]))
+            rows.append(np.concatenate([p1, gray]))
 
         # Tick marks:
         #   X-axis → perpendicular in Y
@@ -387,8 +391,9 @@ class SceneRenderer:
                     p1[ai] = float(pos)
                     p0[pi] = -float(half)
                     p1[pi] =  float(half)
-                    rows.append(np.concatenate([p0, black]))
-                    rows.append(np.concatenate([p1, black]))
+                    color = black if sign == 1.0 else gray
+                    rows.append(np.concatenate([p0, color]))
+                    rows.append(np.concatenate([p1, color]))
             k += 1
 
         geo = np.array(rows, dtype=np.float32)
@@ -831,7 +836,7 @@ def _nice_spacing(L: float) -> float:
     """Return a round tick spacing giving ~5-10 ticks along an axis of length L."""
     raw = max(L, 1e-9) / 14
     mag = 10 ** math.floor(math.log10(raw))
-    for f in (1, 2, 5, 10):
+    for f in (1, 5, 10):
         if f * mag >= raw:
             return float(f * mag)
     return mag * 10.0

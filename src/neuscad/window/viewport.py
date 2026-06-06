@@ -135,18 +135,35 @@ class Viewport(QOpenGLWidget):
         elif preset == "bottom":
             cam.azimuth, cam.elevation = 0, -90
         elif preset == "front":
-            cam.azimuth, cam.elevation = 0, 0
-        elif preset == "back":
-            cam.azimuth, cam.elevation = 180, 0
-        elif preset == "left":
             cam.azimuth, cam.elevation = 270, 0
-        elif preset == "right":
+        elif preset == "back":
             cam.azimuth, cam.elevation = 90, 0
+        elif preset == "left":
+            cam.azimuth, cam.elevation = 180, 0
+        elif preset == "right":
+            cam.azimuth, cam.elevation = 0, 0
         elif preset == "iso":
             cam.azimuth, cam.elevation = 295, 35
         elif preset == "all":
             cam.azimuth, cam.elevation = 295, 35
+            self._frame_all(cam)
+            self.update()
+            return
+        cam.target = [0, 0, 0]
         self.update()
+
+    def _frame_all(self, cam):
+        import numpy as np
+        buffers = self._renderer._buffers
+        if not buffers:
+            return
+        all_verts = np.concatenate([
+            np.concatenate([b.cpu_v0, b.cpu_v1, b.cpu_v2], axis=0)
+            for b in buffers
+        ], axis=0)
+        bb_min = all_verts.min(axis=0)
+        bb_max = all_verts.max(axis=0)
+        cam.frame_bounds(bb_min, bb_max)
 
     def zoom(self, direction: int):
         cam = self._renderer.camera
