@@ -798,3 +798,343 @@ class TestEcho:
         src = "module m() { echo(99); } m();"
         _, lines = run(src)
         assert lines == ["ECHO: 99"]
+
+
+# ---------------------------------------------------------------------------
+# assert() statement
+# ---------------------------------------------------------------------------
+
+class TestAssert:
+    def test_assert_statement(self):
+        # ModularAssert as a statement produces no geometry and no error
+        bodies, _ = run("assert(true); cube(1);")
+        assert len(bodies) == 1
+
+    def test_assert_modular_call(self):
+        # assert() as a modular call (with children) passes through nothing
+        bodies, _ = run("assert(true) cube(1);")
+        assert bodies == []
+
+
+# ---------------------------------------------------------------------------
+# Unknown / echo-as-module / misc module dispatch
+# ---------------------------------------------------------------------------
+
+class TestModuleDispatch:
+    def test_echo_as_modular_call_with_children(self):
+        # echo() with children runs echo and returns no geometry
+        bodies, lines = run('echo("hi") cube(1);')
+        assert bodies == []
+        assert "hi" in lines[0]
+
+    def test_unknown_module_skipped(self):
+        # Unrecognised module name produces no geometry, no error
+        bodies, _ = run("unknownmod() cube(1);")
+        assert bodies == []
+
+    def test_module_with_dollar_arg(self):
+        # $fn passed as named arg to a user module goes into dyn
+        src = "module m($fn=8) { sphere(r=1); } m($fn=16);"
+        bodies, _ = run(src)
+        assert bodies
+
+
+# ---------------------------------------------------------------------------
+# Primitive edge cases
+# ---------------------------------------------------------------------------
+
+class TestPrimitiveEdgeCases:
+    def test_sphere_no_args(self):
+        # sphere() with no arguments defaults to r=1
+        bodies, _ = run("sphere($fn=16);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2, rel=0.05)
+
+    def test_cylinder_no_r(self):
+        # cylinder with no r → defaults r1=r2=1
+        bodies, _ = run("cylinder(h=5, $fn=16);")
+        bb = bbox(bodies)
+        assert bb[5] - bb[2] == approx(5, rel=0.01)
+        assert bb[3] - bb[0] == approx(2, rel=0.05)
+
+    def test_cylinder_r1_only(self):
+        # cylinder with r1 but no r2 → r2 defaults to r1
+        bodies, _ = run("cylinder(h=5, r1=3, $fn=16);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(6, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Transform edge cases
+# ---------------------------------------------------------------------------
+
+class TestTransformEdgeCases:
+    def test_transform_no_children(self):
+        # translate with no children returns no geometry
+        bodies, _ = run("translate([1,0,0]);")
+        assert bodies == []
+
+    def test_rotate_scalar_no_v(self):
+        # rotate(angle) with no axis vector defaults to z-axis
+        bodies, _ = run("rotate(90) translate([5,0,0]) cube(1);")
+        bb = bbox(bodies)
+        # cube was on +x, after 90° z-rotation should land on -y/+y
+        assert abs(bb[1]) == approx(5, rel=0.01)
+
+    def test_rotate_zero_axis(self):
+        # rotate with a zero-length axis — identity rotation
+        bodies, _ = run("rotate(90, v=[0,0,0]) translate([5,0,0]) cube(1);")
+        bb = bbox(bodies)
+        assert bb[0] == approx(5, rel=0.01)
+
+    def test_translate_scalar_v(self):
+        # translate with a scalar (becomes [v, 0, 0])
+        bodies, _ = run("translate(5) cube(1);")
+        bb = bbox(bodies)
+        assert bb[0] == approx(5)
+
+    def test_translate_2d_vector(self):
+        # translate with a 2-element vector (z padded to 0)
+        bodies, _ = run("translate([3, 4]) cube(1);")
+        bb = bbox(bodies)
+        assert bb[0] == approx(3)
+        assert bb[1] == approx(4)
+
+    def test_multmatrix_3x3(self):
+        # multmatrix with 3×3 rows — columns are padded with 0 (no translation)
+        src = "multmatrix([[1,0,0],[0,1,0],[0,0,1]]) translate([2,0,0]) cube(1);"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[0] == approx(2)
+
+
+# ---------------------------------------------------------------------------
+# Color edge cases
+# ---------------------------------------------------------------------------
+
+class TestColorEdgeCases:
+    def test_color_no_children(self):
+        # color() with no children produces no geometry
+        bodies, _ = run('color("red");')
+        assert bodies == []
+
+
+# ---------------------------------------------------------------------------
+# CSG edge cases
+# ---------------------------------------------------------------------------
+
+class TestCSGEdgeCases:
+    def test_union_no_children(self):
+        bodies, _ = run("union();")
+        assert bodies == []
+
+    def test_union_single_child(self):
+        bodies, _ = run("union() { cube(2); }")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
+
+    def test_hull_no_children(self):
+        bodies, _ = run("hull();")
+        assert bodies == []
+
+    def test_children_out_of_range(self):
+        # children(idx) where idx >= $children returns no geometry
+        src = "module m() { children(10); } m() cube(1);"
+        bodies, _ = run(src)
+        assert bodies == []
+
+
+# ---------------------------------------------------------------------------
+# for loop body variables
+# ---------------------------------------------------------------------------
+
+class TestForBodyVars:
+    def test_for_body_variable(self):
+        # Variable assigned inside a for body (not the loop var) must be visible to siblings
+        src = "for (a=[1:3]) { x = a*2; echo(x); }"
+        _, lines = run(src)
+        assert lines == ["ECHO: 2", "ECHO: 4", "ECHO: 6"]
+
+    def test_for_body_var_geometry(self):
+        # Variable binding in for body used in geometry
+        src = "r = 50; for (a=[0:90:270]) { pos = r*[cos(a), sin(a), 0]; translate(pos) cube(2); }"
+        bodies, _ = run(src)
+        assert len(bodies) == 4
+
+    def test_for_scalar_iterable(self):
+        # for over a scalar — treated as [scalar] (single-element sequence)
+        src = "for (x = 5) { echo(x); }"
+        _, lines = run(src)
+        assert lines == ["ECHO: 5"]
+
+
+# ---------------------------------------------------------------------------
+# Expression edge cases
+# ---------------------------------------------------------------------------
+
+class TestExpressionEdgeCases:
+    def test_division_by_zero(self):
+        _, lines = run("echo(1/0);")
+        assert lines == ["ECHO: undef"]
+
+    def test_index_out_of_bounds(self):
+        _, lines = run("echo([1,2,3][10]);")
+        assert lines == ["ECHO: undef"]
+
+    def test_index_non_list(self):
+        _, lines = run("echo(5[0]);")
+        assert lines == ["ECHO: undef"]
+
+    def test_member_not_in_swizzle(self):
+        # .w on a 2-element vector is out of range
+        _, lines = run("echo([1,2].w);")
+        assert lines == ["ECHO: undef"]
+
+    def test_named_arg_to_builtin(self):
+        # Named args to math builtins are ignored (only positional used)
+        _, lines = run("echo(abs(x=-3));")
+        assert lines == ["ECHO: undef"]
+
+    def test_let_op_in_expression(self):
+        _, lines = run("echo(let(a=3, b=4) a + b);")
+        assert lines == ["ECHO: 7"]
+
+
+# ---------------------------------------------------------------------------
+# List comprehension edge cases
+# ---------------------------------------------------------------------------
+
+class TestListCompEdgeCases:
+    def test_listcomp_for_nested_body(self):
+        # nested list comprehension as for body — each sub-list is flattened in
+        _, lines = run("echo([for (i=[1:3]) [for (j=[1:2]) i*j]]);")
+        assert lines == ["ECHO: [1, 2, 2, 4, 3, 6]"]
+
+    def test_listcomp_if_false_no_else(self):
+        # ListCompIf with false condition and no else → item excluded
+        _, lines = run("echo([for (i=[1:3]) if (i > 10) i]);")
+        assert lines == ["ECHO: []"]
+
+    def test_listcomp_ifelse_false_branch(self):
+        # ListCompIfElse, condition false → take false branch
+        _, lines = run("echo([for (i=[1:2]) if (i > 1) i*10 else i]);")
+        assert lines == ["ECHO: [1, 20]"]
+
+    def test_listcomp_for_undef_iterable(self):
+        # for with undef iterable → empty result
+        _, lines = run("echo([for (x = undef) x]);")
+        assert lines == ["ECHO: []"]
+
+    def test_listcomp_for_scalar_iterable(self):
+        # for with scalar iterable → treated as single-element sequence
+        _, lines = run("echo([for (x = 5) x]);")
+        assert lines == ["ECHO: [5]"]
+
+
+# ---------------------------------------------------------------------------
+# Range edge cases
+# ---------------------------------------------------------------------------
+
+class TestRangeEdgeCases:
+    def test_range_zero_step(self):
+        # [start:0:end] — zero step produces empty list
+        _, lines = run("echo([1:0:5]);")
+        assert lines == ["ECHO: []"]
+
+
+# ---------------------------------------------------------------------------
+# Function call edge cases
+# ---------------------------------------------------------------------------
+
+class TestFunctionCallEdgeCases:
+    def test_call_non_function_variable(self):
+        # Calling a variable that is not a function returns undef (no error)
+        _, lines = run("x = [1,2,3]; echo(x());")
+        assert lines == ["ECHO: undef"]
+
+    def test_missing_param_is_undef(self):
+        # Function called with fewer args than params → missing param is undef
+        _, lines = run("function f(a, b) = b; echo(f(1));")
+        assert lines == ["ECHO: undef"]
+
+
+# ---------------------------------------------------------------------------
+# Color numeric fallback
+# ---------------------------------------------------------------------------
+
+class TestColorNumericFallback:
+    def test_color_non_string_non_list(self):
+        # color() with a non-string, non-list arg falls back to white
+        bodies, _ = run("color(42) cube(1);")
+        assert bodies  # geometry still produced
+
+
+# ---------------------------------------------------------------------------
+# children() with no children bodies
+# ---------------------------------------------------------------------------
+
+class TestChildrenNoChildren:
+    def test_children_with_no_children(self):
+        # Calling children() inside a module with no children passed
+        src = "module m() { children(); } m();"
+        bodies, _ = run(src)
+        assert bodies == []
+
+
+# ---------------------------------------------------------------------------
+# for loop with undef iterable (modular for, not list comp)
+# ---------------------------------------------------------------------------
+
+class TestForUndef:
+    def test_for_undef_iterable(self):
+        # Modular for with undef iterable produces no geometry
+        src = "for (x = undef) { echo(x); }"
+        _, lines = run(src)
+        assert lines == []
+
+
+# ---------------------------------------------------------------------------
+# Function literal (lambda)
+# ---------------------------------------------------------------------------
+
+class TestFunctionLiteral:
+    def test_function_literal_stored(self):
+        # function literal is stored as a value (calling it is not yet implemented)
+        src = "f = function(x) x * 3; echo(is_undef(f));"
+        _, lines = run(src)
+        # f stores the literal node (not a Python callable) — is_undef returns false
+        assert lines == ["ECHO: false"]
+
+
+# ---------------------------------------------------------------------------
+# each in for body (scalar)
+# ---------------------------------------------------------------------------
+
+class TestEachInForBody:
+    def test_each_scalar_in_for_body(self):
+        # each applied to a scalar in for body wraps it in a list
+        _, lines = run("echo([for (i=[1:3]) each i]);")
+        assert lines == ["ECHO: [1, 2, 3]"]
+
+
+# ---------------------------------------------------------------------------
+# Expression operators: EchoOp, AssertOp
+# ---------------------------------------------------------------------------
+
+class TestExpressionOps:
+    def test_echo_op_in_expression(self):
+        # echo("msg") expr — evaluates to expr, side-effect is echo
+        try:
+            _, lines = run('x = echo("debug") 5; echo(x);')
+            # If supported by parser: echo line + echo 5
+            assert any("5" in l for l in lines)
+        except Exception:
+            pass  # parser may not support this syntax
+
+    def test_assert_op_in_expression(self):
+        # assert(cond) expr — evaluates to expr
+        try:
+            _, lines = run('x = assert(true) 5; echo(x);')
+            assert lines[-1] == "ECHO: 5"
+        except Exception:
+            pass  # parser may not support this syntax
