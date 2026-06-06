@@ -1,10 +1,9 @@
 from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
-    QPainter, QTextFormat, QPainterPath,
+    QPainter, QTextFormat, QPainterPath, QKeySequence,
 )
-from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal
 
 
 def _compute_fold_regions(doc) -> dict[int, int]:
@@ -42,21 +41,31 @@ class LineNumberArea(QWidget):
         self._editor.line_number_area_paint_event(event)
 
     def mousePressEvent(self, event):
-        fold_x = self.width() - 14
-        if event.position().x() < fold_x:
-            return
+        x = event.position().x()
         y = int(event.position().y())
+        fold_x = self.width() - 14
         ed = self._editor
-        block = ed.firstVisibleBlock()
-        top = round(ed.blockBoundingGeometry(block).translated(ed.contentOffset()).top())
-        while block.isValid():
-            if block.isVisible():
-                h = round(ed.blockBoundingRect(block).height())
-                if top <= y < top + h:
-                    ed.toggle_fold(block.blockNumber())
-                    return
-                top += h
-            block = block.next()
+
+        def _block_at_y(y):
+            block = ed.firstVisibleBlock()
+            top = round(ed.blockBoundingGeometry(block).translated(ed.contentOffset()).top())
+            while block.isValid():
+                if block.isVisible():
+                    h = round(ed.blockBoundingRect(block).height())
+                    if top <= y < top + h:
+                        return block
+                    top += h
+                block = block.next()
+            return None
+
+        if x >= fold_x:
+            block = _block_at_y(y)
+            if block:
+                ed.toggle_fold(block.blockNumber())
+        elif x < 14:
+            block = _block_at_y(y)
+            if block:
+                ed.toggle_breakpoint(block.blockNumber())
 
 
 class OpenSCADHighlighter(QSyntaxHighlighter):
@@ -129,6 +138,8 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
 
 
 class CodeEditor(QPlainTextEdit):
+    breakpoints_changed = Signal(object)  # emits set[int] of 0-indexed block numbers
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._line_number_area = LineNumberArea(self)
@@ -145,6 +156,9 @@ class CodeEditor(QPlainTextEdit):
 
         self._error_selections: list = []
         self._selection_extra: list = []
+        self._exec_selection: list = []
+
+        self._breakpoints: set[int] = set()  # 0-indexed block numbers
 
         self._fold_regions: dict[int, int] = {}
         self._folded: set[int] = set()
@@ -156,9 +170,11 @@ class CodeEditor(QPlainTextEdit):
         self.document().contentsChanged.connect(self._on_doc_changed)
         self._update_line_number_area_width()
 
+    _BP_W = 14  # breakpoint column width (left gutter)
+
     def line_number_area_width(self):
         digits = max(1, len(str(self.blockCount())))
-        return 6 + self.fontMetrics().horizontalAdvance("9") * digits + 14
+        return 6 + self._BP_W + self.fontMetrics().horizontalAdvance("9") * digits + 14
 
     def _update_line_number_area_width(self):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
@@ -196,20 +212,32 @@ class CodeEditor(QPlainTextEdit):
         bottom = top + round(self.blockBoundingRect(block).height())
 
         lh = self.fontMetrics().height()
-        num_w = self._line_number_area.width() - 16
+        bp_w = self._BP_W
+        num_w = self._line_number_area.width() - 16 - bp_w
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
+                # Breakpoint dot
+                if block_number in self._breakpoints:
+                    r = min(bp_w, lh) // 2 - 2
+                    if r > 0:
+                        cx = bp_w // 2
+                        cy = top + lh // 2
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QColor("#E06C75"))
+                        painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
+
+                # Line number
                 painter.setPen(QColor("#000000"))
                 painter.drawText(
-                    0, top, num_w, lh,
+                    bp_w, top, num_w, lh,
                     Qt.AlignmentFlag.AlignRight,
                     str(block_number + 1),
                 )
 
                 if block_number in self._fold_regions:
                     mid_y = top + lh / 2
-                    tx = float(num_w + 2)
+                    tx = float(bp_w + num_w + 2)
                     tw, th = 8.0, 5.0
                     path = QPainterPath()
                     if block_number in self._folded:
@@ -353,9 +381,39 @@ class CodeEditor(QPlainTextEdit):
                 cursor.removeSelectedText()
         super().keyPressEvent(event)
 
+    def toggle_breakpoint(self, block_number: int):
+        if block_number in self._breakpoints:
+            self._breakpoints.discard(block_number)
+        else:
+            self._breakpoints.add(block_number)
+        self._line_number_area.update()
+        self.breakpoints_changed.emit(self._breakpoints)
+
+    def set_execution_line(self, line: int):
+        """Highlight the currently executing line (1-indexed)."""
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor("#FFFF88"))
+        fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        block = self.document().findBlockByLineNumber(line - 1)
+        if not block.isValid():
+            return
+        sel = QTextEdit.ExtraSelection()
+        sel.format = fmt
+        sel.cursor = self.textCursor()
+        sel.cursor.setPosition(block.position())
+        sel.cursor.clearSelection()
+        self._exec_selection = [sel]
+        self._refresh_extra_selections()
+        self.setTextCursor(sel.cursor)
+        self.ensureCursorVisible()
+
+    def clear_execution_line(self):
+        self._exec_selection = []
+        self._refresh_extra_selections()
+
     def clear_selection(self):
         self._selection_extra = []
         self._refresh_extra_selections()
 
     def _refresh_extra_selections(self):
-        self.setExtraSelections(self._error_selections + self._selection_extra)
+        self.setExtraSelections(self._error_selections + self._selection_extra + self._exec_selection)

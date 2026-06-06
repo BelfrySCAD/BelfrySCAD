@@ -9,6 +9,7 @@ import time
 
 from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
+from neuscad.window.debugger import DebuggerPane, DebugSession
 
 import re
 from pathlib import Path
@@ -239,9 +240,25 @@ class MainWindow(QMainWindow):
         self._console.setFont(QFont("Menlo", 11))
         self._console.setObjectName("Console")
 
+        self._debugger_pane = DebuggerPane()
+        self._debugger_pane.hide()
+        self._debug_session: DebugSession | None = None
+
+        self._debugger_pane.continue_requested.connect(self._on_debug_continue)
+        self._debugger_pane.step_into_requested.connect(self._on_debug_step_into)
+        self._debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        self._debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        self._debugger_pane.stop_requested.connect(self._on_debug_stop)
+
+        self._bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._bottom_splitter.addWidget(self._console)
+        self._bottom_splitter.addWidget(self._debugger_pane)
+        self._bottom_splitter.setStretchFactor(0, 1)
+        self._bottom_splitter.setStretchFactor(1, 0)
+
         self._main_splitter = QSplitter(Qt.Orientation.Vertical)
         self._main_splitter.addWidget(self._tabs)
-        self._main_splitter.addWidget(self._console)
+        self._main_splitter.addWidget(self._bottom_splitter)
         self._main_splitter.setStretchFactor(0, 1)
         self._main_splitter.setStretchFactor(1, 0)
         self._main_splitter.setSizes([600, 150])
@@ -271,6 +288,10 @@ class MainWindow(QMainWindow):
         self._act_render = QAction("Render", self)
         self._act_render.triggered.connect(self._render)
         tb.addAction(self._act_render)
+
+        self._act_debug_run = QAction("Debug", self)
+        self._act_debug_run.triggered.connect(self._start_debug)
+        tb.addAction(self._act_debug_run)
 
         tb.addSeparator()
 
@@ -346,6 +367,7 @@ class MainWindow(QMainWindow):
         self._act_show_editor = self._add_checkable(view_menu, "Show Code Editor", True, self._toggle_editor)
         self._act_show_tools = self._add_checkable(view_menu, "Show Tools Strip", True, self._toggle_tools_strip)
         self._act_show_console = self._add_checkable(view_menu, "Show Console", True, self._toggle_console)
+        self._act_show_debugger = self._add_checkable(view_menu, "Show Debugger", False, self._toggle_debugger)
         self._console_height = 150
         view_menu.addSeparator()
         for label, slot in (
@@ -419,6 +441,10 @@ class MainWindow(QMainWindow):
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
         shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
         shortcut("Shift+Ctrl+V", lambda: self._set_view("all"))
+        shortcut("F5", self._start_debug)
+        shortcut("F10", self._on_debug_step_over)
+        shortcut("F11", self._on_debug_step_into)
+        shortcut("F12", self._on_debug_step_out)
 
     # ------------------------------------------------------------------
     # Tab management
@@ -808,6 +834,205 @@ class MainWindow(QMainWindow):
             if sizes[1] > 0:
                 self._console_height = sizes[1]
             self._main_splitter.setSizes([self._main_splitter.height(), 0])
+
+    def _toggle_debugger(self, visible):
+        self._debugger_pane.setVisible(visible)
+        if visible:
+            # Ensure the bottom section is visible
+            sizes = self._main_splitter.sizes()
+            if sizes[1] == 0:
+                h = self._console_height
+                self._main_splitter.setSizes([self._main_splitter.height() - h, h])
+
+    # ------------------------------------------------------------------
+    # Debug session
+    # ------------------------------------------------------------------
+
+    def _start_debug(self):
+        tab = self._current_tab()
+        if not tab:
+            return
+        # While paused, F5 acts as Continue
+        if self._debug_session and self._debug_session.is_running():
+            self._on_debug_continue()
+            return
+
+        source = tab.editor.toPlainText()
+        if not source.strip():
+            return
+
+        self._console.clear()
+
+        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
+        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+        import tempfile, io, sys as _sys
+
+        _tmp = None
+        try:
+            buf = io.StringIO()
+            old_stdout = _sys.stdout
+            _sys.stdout = buf
+            if tab.file_path:
+                parse_path = tab.file_path
+            else:
+                _tmp = tempfile.NamedTemporaryFile(
+                    suffix=".scad", mode="w", encoding="utf-8", delete=False
+                )
+                _tmp.write(source)
+                _tmp.close()
+                parse_path = _tmp.name
+            nodes = getASTfromFile(parse_path)
+            _sys.stdout = old_stdout
+            captured = buf.getvalue()
+        except Exception as e:
+            _sys.stdout = old_stdout
+            self.log(f"Parse error: {e}")
+            return
+        finally:
+            if _tmp is not None:
+                import os as _os
+                try:
+                    _os.unlink(_tmp.name)
+                except OSError:
+                    pass
+
+        if captured:
+            self.log(captured.rstrip())
+        if nodes is None:
+            self._parse_error_to_editor(tab, captured)
+            return
+
+        current_file = tab.file_path or parse_path
+        injected = []
+        for node in nodes:
+            if isinstance(node, UseStatement):
+                try:
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, node.filepath)
+                    if lib_nodes:
+                        injected.extend(
+                            n for n in lib_nodes
+                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
+                        )
+                except Exception as e:
+                    self.log(f"use error: {e}")
+        if injected:
+            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
+
+        tab.editor.clear_errors()
+        root_scope = build_scopes(nodes)
+
+        # Convert 0-indexed block numbers to 1-indexed line numbers
+        breakpoints = {bn + 1 for bn in tab.editor._breakpoints}
+
+        # Show the debugger pane
+        self._debugger_pane.show()
+        self._act_show_debugger.setChecked(True)
+        sizes = self._main_splitter.sizes()
+        if sizes[1] == 0:
+            h = self._console_height
+            self._main_splitter.setSizes([self._main_splitter.height() - h, h])
+
+        self._debug_session = DebugSession(self)
+        self._debug_session.paused.connect(
+            lambda line, loc, stk, t=tab: self._on_debug_paused(t, line, loc, stk)
+        )
+        self._debug_session.finished.connect(
+            lambda bodies, id2node, t=tab: self._on_debug_finished(t, bodies, id2node)
+        )
+        self._debug_session.errored.connect(self._on_debug_error)
+
+        self._debugger_pane.set_running()
+        self._debug_session.start(nodes, root_scope, breakpoints, self.log)
+
+    def _on_debug_paused(self, tab, line: int, locals_dict: dict, call_stack: list):
+        self._debugger_pane.set_paused(line, locals_dict, call_stack)
+        tab.editor.set_execution_line(line)
+
+    def _on_debug_finished(self, tab, bodies, id_to_node):
+        tab.id_to_node = id_to_node
+        tab.editor.clear_execution_line()
+        self._debugger_pane.set_idle()
+        self._debug_session = None
+        if not bodies:
+            self.log("Debug: no geometry produced.")
+            return
+        try:
+            tab.viewport.load_geometry(bodies)
+        except Exception as e:
+            import traceback
+            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
+            return
+        try:
+            import manifold3d as m3d
+            import numpy as np
+            all_bodies = [b.body for b in bodies if not b.body.is_empty()]
+            if all_bodies:
+                composed = m3d.Manifold.compose(all_bodies)
+                bb = composed.bounding_box()
+                bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
+                bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
+                tab.viewport.frame_scene(bb_min, bb_max)
+                self.log("Debug: completed.")
+        except Exception:
+            pass
+
+    def _on_debug_error(self, msg: str):
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debugger_pane.set_idle()
+        self._debug_session = None
+        self.log(f"Debug error: {msg}")
+
+    def _on_debug_continue(self):
+        if not self._debug_session:
+            return
+        mods = self._debugger_pane.get_modifications()
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("continue", mods)
+
+    def _on_debug_step_into(self):
+        if not self._debug_session:
+            return
+        mods = self._debugger_pane.get_modifications()
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_into", mods)
+
+    def _on_debug_step_over(self):
+        if not self._debug_session:
+            return
+        mods = self._debugger_pane.get_modifications()
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_over", mods)
+
+    def _on_debug_step_out(self):
+        if not self._debug_session:
+            return
+        mods = self._debugger_pane.get_modifications()
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_out", mods)
+
+    def _on_debug_stop(self):
+        if not self._debug_session:
+            return
+        tab = self._current_tab()
+        if tab:
+            tab.editor.clear_execution_line()
+        self._debug_session.stop()
+        self._debug_session = None
+        self._debugger_pane.set_idle()
 
     def _toggle_axes(self, visible):
         tab = self._current_tab()

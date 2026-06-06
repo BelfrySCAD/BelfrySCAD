@@ -66,11 +66,26 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self, echo_fn=None):
+    def __init__(self, echo_fn=None, debug_hook=None):
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
         self._call_stack: list[str] = []  # function name frames
+        self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack) -> (cmd, mods)
+
+    def _check_debug(self, node: ASTNode, ctx: EvalContext):
+        if self._debug_hook is None:
+            return
+        pos = getattr(node, 'position', None)
+        line = getattr(pos, 'line', None) if pos else None
+        if line is None:
+            return
+        locals_dict = {k[6:]: v for k, v in ctx.dyn.items() if k.startswith('__let_')}
+        cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack))
+        for k, v in mods.items():
+            ctx.dyn[f'__let_{k}'] = v
+        if cmd == "stop":
+            raise EvalError("Debugging stopped.")
 
     def error(self, msg: str):
         if self._call_stack:
@@ -128,6 +143,8 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
+        if not isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
+            self._check_debug(node, ctx)
         if isinstance(node, Assignment):
             # $-prefixed assignments update the dynamic context so child calls inherit them
             if node.name.name.startswith("$"):
@@ -166,7 +183,18 @@ class Evaluator:
     def _eval_children(self, children, ctx: EvalContext) -> list[ColoredBody]:
         result = []
         for child in children:
-            result.extend(self._eval_statement(child, ctx))
+            # Use the node's own scope from build_scopes when available so that
+            # variables defined as siblings in the same block are visible.
+            if hasattr(child, 'scope') and child.scope is not None:
+                child_ctx = EvalContext(
+                    scope=child.scope,
+                    dyn=dict(ctx.dyn),
+                    color=ctx.color,
+                    children_bodies=ctx.children_bodies,
+                )
+            else:
+                child_ctx = ctx
+            result.extend(self._eval_statement(child, child_ctx))
         return result
 
     # ------------------------------------------------------------------
@@ -510,9 +538,14 @@ class Evaluator:
     # --- for loops ---
 
     def _eval_for(self, node: ModularFor, ctx: EvalContext) -> list[ColoredBody]:
-        # Collect (name, [values]) for each assignment
+        # The parser puts body-level assignments into node.assignments alongside the actual
+        # loop variables. Skip any assignment that also appears as a body node — those are
+        # per-iteration let-like definitions, not loop variables.
+        body_ids = {id(b) for b in node.body}
         var_seqs: list[tuple[str, list]] = []
         for assign in node.assignments:
+            if id(assign) in body_ids:
+                continue
             name = assign.name.name
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
