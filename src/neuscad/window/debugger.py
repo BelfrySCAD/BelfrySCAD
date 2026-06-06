@@ -183,7 +183,7 @@ class DebuggerPane(QWidget):
         self._btn_step_into = QPushButton("↓")
         self._btn_step_into.setToolTip("Step Into (F11)")
         self._btn_step_into.setFixedSize(28, 24)
-        self._btn_step_over = QPushButton("→")
+        self._btn_step_over = QPushButton("↷")
         self._btn_step_over.setToolTip("Step Over (F10)")
         self._btn_step_over.setFixedSize(28, 24)
         self._btn_step_out = QPushButton("↑")
