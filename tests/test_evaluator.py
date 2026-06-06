@@ -489,6 +489,76 @@ class TestTransforms:
 
 
 # ---------------------------------------------------------------------------
+# color()
+# ---------------------------------------------------------------------------
+
+class TestColor:
+    def _color(self, bodies):
+        assert bodies
+        return bodies[0].color
+
+    def test_color_rgb_list(self):
+        bodies, _ = run("color([1,0,0]) cube(1);")
+        c = self._color(bodies)
+        assert c[0] == approx(1.0)
+        assert c[1] == approx(0.0)
+        assert c[2] == approx(0.0)
+
+    def test_color_rgba_list(self):
+        bodies, _ = run("color([0,1,0,0.5]) cube(1);")
+        c = self._color(bodies)
+        assert c[1] == approx(1.0)
+        assert c[3] == approx(0.5)
+
+    def test_color_css_name(self):
+        bodies, _ = run('color("red") cube(1);')
+        c = self._color(bodies)
+        assert c[0] == approx(1.0)
+        assert c[1] == approx(0.0)
+
+    def test_color_hex6(self):
+        bodies, _ = run('color("#ff0000") cube(1);')
+        c = self._color(bodies)
+        assert c[0] == approx(1.0)
+        assert c[1] == approx(0.0)
+
+    def test_color_hex3(self):
+        bodies, _ = run('color("#f00") cube(1);')
+        c = self._color(bodies)
+        assert c[0] == approx(1.0)
+        assert c[1] == approx(0.0)
+
+    def test_color_alpha_arg(self):
+        bodies, _ = run('color("blue", alpha=0.25) cube(1);')
+        c = self._color(bodies)
+        assert c[2] == approx(1.0)
+        assert c[3] == approx(0.25)
+
+    def test_color_geometry_preserved(self):
+        bodies, _ = run("color([0,0,1]) cube([2,3,4]);")
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(2)
+
+
+# ---------------------------------------------------------------------------
+# hull()
+# ---------------------------------------------------------------------------
+
+class TestHull:
+    def test_hull_two_cubes(self):
+        src = "hull() { cube(1); translate([5,0,0]) cube(1); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(6)
+
+    def test_hull_contains_children(self):
+        src = "hull() { sphere(r=1, $fn=16); translate([4,0,0]) sphere(r=1, $fn=16); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(6, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
 # Modifiers (#, %, !, *)
 # ---------------------------------------------------------------------------
 
