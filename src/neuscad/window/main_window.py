@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QSettings
 import time
 
 from neuscad.window.editor import CodeEditor
@@ -331,6 +331,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "New", self._new_document, QKeySequence.StandardKey.New)
         self._add_action(file_menu, "Open…", self._open_file, QKeySequence.StandardKey.Open)
         self._recent_menu = file_menu.addMenu("Open Recent")
+        self._rebuild_recent_menu()
         file_menu.addSeparator()
         self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
         self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
@@ -571,6 +572,8 @@ class MainWindow(QMainWindow):
         )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
+        self._update_recent_files(path)
+        self._render()
 
     def _save_file(self):
         tab = self._current_tab()
@@ -603,9 +606,94 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._tabs.setTabText(idx, tab.display_name())
+        self._update_recent_files(path)
+        self._render()
         return True
 
+    # ------------------------------------------------------------------
+    # Recent files
+    # ------------------------------------------------------------------
+
+    _MAX_RECENT = 10
+
+    def _update_recent_files(self, path: str):
+        settings = QSettings("NeuSCAD", "NeuSCAD")
+        recents = settings.value("recentFiles", [], type=list)
+        path = str(Path(path).resolve())
+        if path in recents:
+            recents.remove(path)
+        recents.insert(0, path)
+        recents = recents[: self._MAX_RECENT]
+        settings.setValue("recentFiles", recents)
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self):
+        self._recent_menu.clear()
+        settings = QSettings("NeuSCAD", "NeuSCAD")
+        recents = settings.value("recentFiles", [], type=list)
+        if not recents:
+            placeholder = QAction("(empty)", self)
+            placeholder.setEnabled(False)
+            self._recent_menu.addAction(placeholder)
+            return
+        for path in recents:
+            act = QAction(Path(path).name, self)
+            act.setToolTip(path)
+            act.triggered.connect(lambda checked=False, p=path: self._open_recent(p))
+            self._recent_menu.addAction(act)
+        self._recent_menu.addSeparator()
+        clear_act = QAction("Clear Menu", self)
+        clear_act.triggered.connect(self._clear_recent_files)
+        self._recent_menu.addAction(clear_act)
+
+    def _open_recent(self, path: str):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.critical(self, "Open Error", str(e))
+            settings = QSettings("NeuSCAD", "NeuSCAD")
+            recents = settings.value("recentFiles", [], type=list)
+            if path in recents:
+                recents.remove(path)
+            settings.setValue("recentFiles", recents)
+            self._rebuild_recent_menu()
+            return
+        tab = DocumentTab()
+        tab.id_to_node = {}
+        tab.file_path = path
+        tab._last_text = text
+        tab._last_cursor = 0
+        tab._suppress_text_undo = False
+        tab.editor.setPlainText(text)
+        tab.is_modified = False
+        tab.editor.document().contentsChanged.connect(
+            lambda t=tab: self._on_editor_changed(t)
+        )
+        tab.viewport.selection_changed.connect(
+            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
+        )
+        tab.viewport.translate_committed.connect(
+            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
+        )
+        tab.viewport.rotate_committed.connect(
+            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
+        )
+        tab.viewport.scale_committed.connect(
+            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
+        )
+        idx = self._tabs.addTab(tab, tab.display_name())
+        self._tabs.setCurrentIndex(idx)
+        self._update_recent_files(path)
+        self._render()
+
+    def _clear_recent_files(self):
+        settings = QSettings("NeuSCAD", "NeuSCAD")
+        settings.setValue("recentFiles", [])
+        self._rebuild_recent_menu()
+
     def _export(self):
+        self._render()  # ensure geometry is current before exporting
         pass  # TODO: implement export (STL/OBJ/3MF)
 
     # ------------------------------------------------------------------
