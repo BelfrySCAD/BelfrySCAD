@@ -9,7 +9,7 @@ def _configure_gl_format():
     fmt.setVersion(3, 3)
     fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
     fmt.setDepthBufferSize(24)
-    fmt.setSamples(4)
+    fmt.setSamples(8)
     QSurfaceFormat.setDefaultFormat(fmt)
 
 

@@ -249,6 +249,7 @@ class SceneRenderer:
 
         self._ctx.clear(*bg_color[:3])
         self._ctx.enable(mgl.DEPTH_TEST)
+        self._ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
         L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
         L_world = (view[:3, :3].T @ L_view).astype(np.float32)
@@ -403,7 +404,11 @@ class SceneRenderer:
         )
 
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._ctx.enable(mgl.BLEND)
+        self._ctx.enable_direct(0x0B20)  # GL_LINE_SMOOTH
         self._axes_vao.render(mgl.LINES)
+        self._ctx.disable_direct(0x0B20)  # GL_LINE_SMOOTH
+        self._ctx.disable(mgl.BLEND)
 
     def _ray_blocked(self, ray_o: np.ndarray, ray_d: np.ndarray, max_t: float) -> bool:
         """Return True if any triangle intersects the ray at t < max_t."""
