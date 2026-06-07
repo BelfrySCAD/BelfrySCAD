@@ -70,6 +70,18 @@ void main() {
 }
 """
 
+_EDGE_VERT = """
+#version 330 core
+in vec3 in_position;
+in vec3 in_color;
+uniform mat4 mvp;
+out vec3 v_color;
+void main() {
+    gl_Position = mvp * vec4(in_position, 1.0);
+    v_color = in_color;
+}
+"""
+
 
 class Camera:
     """Spherical-coordinate orbit camera."""
@@ -118,7 +130,9 @@ class MeshBuffer:
     def __init__(self, ctx: mgl.Context, vbo: mgl.Buffer, ibo: Optional[mgl.Buffer],
                  vao: mgl.VertexArray, num_indices: int, color: tuple,
                  cpu_v0: np.ndarray, cpu_v1: np.ndarray, cpu_v2: np.ndarray,
-                 tri_ids: np.ndarray):
+                 tri_ids: np.ndarray,
+                 edge_vbo: Optional[mgl.Buffer] = None,
+                 edge_vao: Optional[mgl.VertexArray] = None):
         self.ctx = ctx
         self.vbo = vbo
         self.ibo = ibo
@@ -130,6 +144,8 @@ class MeshBuffer:
         self.cpu_v2 = cpu_v2
         self.tri_ids = tri_ids
         self.original_ids: set[int] = set(int(x) for x in tri_ids)
+        self.edge_vbo = edge_vbo
+        self.edge_vao = edge_vao
 
 
 class SceneRenderer:
@@ -137,6 +153,7 @@ class SceneRenderer:
         self._ctx: Optional[mgl.Context] = None
         self._prog: Optional[mgl.Program] = None
         self._gizmo_prog: Optional[mgl.Program] = None
+        self._edge_prog: Optional[mgl.Program] = None
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._buffers: list[MeshBuffer] = []
@@ -154,6 +171,7 @@ class SceneRenderer:
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
         self.show_axes: bool = True
+        self.show_edges: bool = False
         self.show_crosshairs: bool = False
         self._axes_vbo: Optional[mgl.Buffer] = None
         self._axes_vao: Optional[mgl.VertexArray] = None
@@ -162,6 +180,7 @@ class SceneRenderer:
         self._ctx = ctx
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
+        self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
 
     def set_viewport(self, w: int, h: int):
         self._viewport = (w, h)
@@ -191,6 +210,10 @@ class SceneRenderer:
             buf.vbo.release()
             if buf.ibo is not None:
                 buf.ibo.release()
+            if buf.edge_vao is not None:
+                buf.edge_vao.release()
+            if buf.edge_vbo is not None:
+                buf.edge_vbo.release()
         self._buffers.clear()
 
     def _upload_body(self, cb: ColoredBody) -> Optional[MeshBuffer]:
@@ -232,10 +255,26 @@ class SceneRenderer:
             self._prog,
             [(vbo, "3f 3f", "in_position", "in_normal")],
         )
+
+        # Build edge line geometry: all 3 edges per triangle (full triangulation wireframe)
+        T = len(tris)
+        ec = np.array([0.15, 0.15, 0.15], dtype=np.float32)
+        starts = np.concatenate([v0, v1, v2], axis=0)   # (3T, 3)
+        ends   = np.concatenate([v1, v2, v0], axis=0)   # (3T, 3)
+        cols   = np.tile(ec, (3 * T, 1))                 # (3T, 3)
+        edge_rows = np.empty((6 * T, 6), dtype=np.float32)
+        edge_rows[0::2] = np.concatenate([starts, cols], axis=1)
+        edge_rows[1::2] = np.concatenate([ends,   cols], axis=1)
+        edge_vbo = self._ctx.buffer(edge_rows.tobytes())
+        edge_vao = self._ctx.vertex_array(
+            self._edge_prog,
+            [(edge_vbo, "3f 3f", "in_position", "in_color")],
+        )
+
         color = cb.color if cb.color is not None else self._default_color
         return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
-                          tri_ids=tri_ids)
+                          tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao)
 
     def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0):
         if self._ctx is None or self._prog is None:
@@ -277,6 +316,13 @@ class SceneRenderer:
             if bbox is not None:
                 scale_center, _ = bbox
 
+        # When showing edges, push solid surfaces slightly away from camera so that
+        # coplanar edge lines at true depth pass the depth test without z-fighting.
+        if self.show_edges:
+            self._ctx.polygon_offset = (2.0, 2.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
+
+        buf_models: list[np.ndarray] = []
         for buf in self._buffers:
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
             color = _highlight_color(buf.color) if is_selected else buf.color
@@ -296,6 +342,17 @@ class SceneRenderer:
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
             buf.vao.render()
+            buf_models.append(buf_model)
+
+        if self.show_edges:
+            self._ctx.disable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
+            if self._edge_prog is not None:
+                for buf, buf_model in zip(self._buffers, buf_models):
+                    if buf.edge_vao is not None:
+                        self._edge_prog["mvp"].write(
+                            (proj @ view @ buf_model).T.astype(np.float32).tobytes()
+                        )
+                        buf.edge_vao.render(mgl.LINES)
 
         if self.show_axes and self._gizmo_prog is not None:
             self._render_axes(mvp)

@@ -1288,7 +1288,10 @@ class MainWindow(QMainWindow):
             tab.viewport.update()
 
     def _toggle_edges(self, visible):
-        pass  # TODO: pass to renderer
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.show_edges = visible
+            tab.viewport.update()
 
     def _toggle_scale_markers(self, visible):
         pass  # TODO: pass to renderer
