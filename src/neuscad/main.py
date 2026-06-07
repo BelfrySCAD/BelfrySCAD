@@ -14,6 +14,7 @@ def _configure_gl_format():
 
 
 def main():
+    sys.setrecursionlimit(10000)
     _configure_gl_format()
     app = QApplication(sys.argv)
     app.setApplicationName("NeuSCAD")

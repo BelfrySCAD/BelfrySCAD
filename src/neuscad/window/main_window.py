@@ -940,13 +940,20 @@ class MainWindow(QMainWindow):
             nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
 
         tab.editor.clear_errors()
-        root_scope = build_scopes(nodes)
+        try:
+            root_scope = build_scopes(nodes)
+        except RecursionError:
+            self.log("Error: AST too deeply nested (recursion limit exceeded during scope build).")
+            return
 
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self.log)
         try:
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
             tab.id_to_node = id_to_node
+        except RecursionError:
+            self.log("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
+            return
         except EvalError as e:
             self.log(f"Eval error: {e}")
             return
