@@ -171,6 +171,7 @@ class SceneRenderer:
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
         self.show_axes: bool = True
+        self.show_scale_markers: bool = True
         self.show_edges: bool = False
         self.show_crosshairs: bool = False
         self._axes_vbo: Optional[mgl.Buffer] = None

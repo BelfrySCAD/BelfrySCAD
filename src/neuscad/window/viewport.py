@@ -78,7 +78,7 @@ class Viewport(QOpenGLWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
-        if self._ctx is not None and self._renderer.show_axes:
+        if self._ctx is not None and self._renderer.show_axes and self._renderer.show_scale_markers:
             self._draw_axis_labels()
 
     def closeEvent(self, event):

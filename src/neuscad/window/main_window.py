@@ -206,6 +206,7 @@ class MainWindow(QMainWindow):
         self._setup_menus()
         self._setup_shortcuts()
         self._new_document()
+        self._restore_settings()
 
     def _create_undo_stack(self):
         from PySide6.QtGui import QUndoStack
@@ -1275,6 +1276,21 @@ class MainWindow(QMainWindow):
         self._debug_session = None
         self._debugger_pane.set_idle()
 
+    def _restore_settings(self):
+        s = QSettings("NeuSCAD", "NeuSCAD")
+        state = s.value("windowState")
+        if state is not None:
+            self.restoreState(state)
+        perspective = s.value("perspective", True, type=bool)
+        self._act_perspective.setChecked(perspective)
+        self._toggle_perspective(perspective)
+
+    def closeEvent(self, event):
+        s = QSettings("NeuSCAD", "NeuSCAD")
+        s.setValue("windowState", self.saveState())
+        s.setValue("perspective", self._act_perspective.isChecked())
+        super().closeEvent(event)
+
     def _toggle_perspective(self, perspective: bool):
         tab = self._current_tab()
         if tab:
@@ -1294,7 +1310,10 @@ class MainWindow(QMainWindow):
             tab.viewport.update()
 
     def _toggle_scale_markers(self, visible):
-        pass  # TODO: pass to renderer
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.show_scale_markers = visible
+            tab.viewport.update()
 
     def _toggle_crosshairs(self, visible):
         tab = self._current_tab()
