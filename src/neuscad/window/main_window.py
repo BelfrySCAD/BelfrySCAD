@@ -400,6 +400,7 @@ class MainWindow(QMainWindow):
                              lambda p=preset: self._set_view(p),
                              QKeySequence(key))
         view_menu.addSeparator()
+        self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
@@ -1273,6 +1274,12 @@ class MainWindow(QMainWindow):
         self._debug_session.stop()
         self._debug_session = None
         self._debugger_pane.set_idle()
+
+    def _toggle_perspective(self, perspective: bool):
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.camera.orthographic = not perspective
+            tab.viewport.update()
 
     def _toggle_axes(self, visible):
         tab = self._current_tab()

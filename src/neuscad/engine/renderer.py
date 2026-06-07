@@ -80,6 +80,7 @@ class Camera:
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         self.fov = 45.0
+        self.orthographic = False
 
     def view_matrix(self) -> np.ndarray:
         az = math.radians(self.azimuth)
@@ -92,6 +93,9 @@ class Camera:
         return _look_at(eye, self.target, np.array([0, 0, 1], dtype=np.float32))
 
     def projection_matrix(self, aspect: float) -> np.ndarray:
+        if self.orthographic:
+            half_h = self.distance * math.tan(math.radians(self.fov / 2))
+            return _ortho(half_h * aspect, half_h, -10000.0, 10000.0)
         return _perspective(math.radians(self.fov), aspect, 0.1, 10000.0)
 
     def eye_position(self) -> np.ndarray:
@@ -903,4 +907,14 @@ def _perspective(fov_rad: float, aspect: float, near: float, far: float) -> np.n
     m[2, 2] = (far + near) / (near - far)
     m[2, 3] = (2 * far * near) / (near - far)
     m[3, 2] = -1
+    return m
+
+
+def _ortho(half_w: float, half_h: float, near: float, far: float) -> np.ndarray:
+    m = np.zeros((4, 4), dtype=np.float32)
+    m[0, 0] =  1.0 / half_w
+    m[1, 1] =  1.0 / half_h
+    m[2, 2] = -2.0 / (far - near)
+    m[2, 3] = -(far + near) / (far - near)
+    m[3, 3] =  1.0
     return m
