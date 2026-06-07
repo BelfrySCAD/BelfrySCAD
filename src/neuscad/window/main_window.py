@@ -933,7 +933,9 @@ class MainWindow(QMainWindow):
                             if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
                         )
                 except Exception as e:
-                    self.log(f"use error: {e}")
+                    msg = str(e)
+                    if "not found" not in msg and "No such file" not in msg:
+                        self.log(f"use error: {e}")
         if injected:
             nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
 
@@ -1147,7 +1149,9 @@ class MainWindow(QMainWindow):
                             if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
                         )
                 except Exception as e:
-                    self.log(f"use error: {e}")
+                    msg = str(e)
+                    if "not found" not in msg and "No such file" not in msg:
+                        self.log(f"use error: {e}")
         if injected:
             nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
 
