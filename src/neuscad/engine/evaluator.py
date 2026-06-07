@@ -757,6 +757,8 @@ class Evaluator:
     def _eval_list_comp_body(self, body, ctx: EvalContext) -> list:
         if isinstance(body, ListComprehension):
             return self._eval_list_comp(body, ctx)
+        if isinstance(body, ListCompFor):
+            return self._eval_listcomp_for(body, ctx)
         if isinstance(body, ListCompIf):
             if self._eval_expr(body.condition, ctx):
                 return self._eval_list_comp_body(body.true_expr, ctx)
@@ -788,7 +790,11 @@ class Evaluator:
             loop_ctx = ctx.child_ctx()
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
-            result.extend(self._eval_list_comp_body(node.body, loop_ctx))
+            if isinstance(node.body, ListComprehension):
+                # Bracketed inner comprehension — yields one list element per iteration.
+                result.append(self._eval_list_comp(node.body, loop_ctx))
+            else:
+                result.extend(self._eval_list_comp_body(node.body, loop_ctx))
         return result
 
     def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> list:
