@@ -332,7 +332,7 @@ class SceneRenderer:
 
     def _render_axes(self, mvp: np.ndarray):
         L       = self.camera.distance * 2.5
-        spacing = _nice_spacing(L)
+        _label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
         red   = np.array([0.3, 0.1, 0.1], dtype=np.float32)
         green   = np.array([0.1, 0.3, 0.1], dtype=np.float32)
         blue   = np.array([0.2, 0.2, 0.5], dtype=np.float32)
@@ -370,15 +370,15 @@ class SceneRenderer:
         #   Y-axis → perpendicular in X
         #   Z-axis → perpendicular in Y
         perp_axis = [1, 0, 1]   # which axis the tick extends along
-        minor_spacing = spacing / 10
         minor_half = tick_half * 0.5
+        major_steps = max(1, round(major_spacing / minor_spacing))
 
         k = 1
         while True:
             t = k * minor_spacing
             if t > L + 1e-9:
                 break
-            is_major = (k % 10 == 0)
+            is_major = (k % major_steps == 0)
             half = tick_half if is_major else minor_half
             for sign in (1.0, -1.0):
                 pos = sign * t
@@ -427,7 +427,7 @@ class SceneRenderer:
     def axis_tick_labels(self, w: int, h: int) -> list[tuple[float, float, str]]:
         """Return (screen_x, screen_y, text) for every unoccluded tick label."""
         L = self.camera.distance * 2.5
-        spacing = _nice_spacing(L)
+        spacing, _, _ = _nice_spacings(L)
         aspect = w / h if h > 0 else 1.0
         vp = (self.camera.projection_matrix(aspect) @ self.camera.view_matrix()).astype(np.float64)
         eye = self.camera.eye_position().astype(np.float64)
@@ -831,14 +831,29 @@ def _moller_trumbore_batch(ray_origin: np.ndarray, ray_dir: np.ndarray,
     return hit_idx, float(t_vals[hit_idx])
 
 
-def _nice_spacing(L: float) -> float:
-    """Return a round tick spacing giving ~5-10 ticks along an axis of length L."""
+def _nice_spacings(L: float) -> tuple[float, float, float]:
+    """Return (label_spacing, major_spacing, minor_spacing).
+
+    major_spacing is the largest round subdivision below the label interval,
+    so e.g. when labels are every 2 there is a major tick at every 1.
+    """
     raw = max(L, 1e-9) / 14
     mag = 10 ** math.floor(math.log10(raw))
     for f in (1, 2, 5, 10):
         if f * mag >= raw:
-            return float(f * mag)
-    return mag * 10.0
+            spacing = float(f * mag)
+            minor   = spacing / 10
+            if f == 1:
+                major = spacing        # labelled ticks are already the majors
+            elif f == 2:
+                major = spacing / 2    # 1 between labels  (e.g. 1 when labels at 2)
+            elif f == 5:
+                major = spacing / 5    # 4 between labels  (e.g. 1–4 when labels at 5)
+            else:                      # f == 10
+                major = spacing / 2    # 1 between labels  (e.g. 5 when labels at 10)
+            return spacing, major, minor
+    spacing = mag * 10.0
+    return spacing, spacing / 2, spacing / 10
 
 
 def _fmt_tick(val: float, spacing: float) -> str:
