@@ -1294,7 +1294,10 @@ class MainWindow(QMainWindow):
         pass  # TODO: pass to renderer
 
     def _toggle_crosshairs(self, visible):
-        pass  # TODO: pass to renderer
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.show_crosshairs = visible
+            tab.viewport.update()
 
     def _set_view(self, preset):
         tab = self._current_tab()

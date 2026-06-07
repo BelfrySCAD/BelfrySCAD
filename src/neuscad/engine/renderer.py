@@ -154,6 +154,7 @@ class SceneRenderer:
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
         self.show_axes: bool = True
+        self.show_crosshairs: bool = False
         self._axes_vbo: Optional[mgl.Buffer] = None
         self._axes_vao: Optional[mgl.VertexArray] = None
 
@@ -299,6 +300,9 @@ class SceneRenderer:
         if self.show_axes and self._gizmo_prog is not None:
             self._render_axes(mvp)
 
+        if self.show_crosshairs and self._gizmo_prog is not None:
+            self._render_crosshairs(mvp)
+
         # Draw gizmo on top (no depth test so it's always visible)
         if self.show_gizmo and self.selected_id is not None and self._gizmo_prog is not None:
             self._render_gizmo(mvp)
@@ -417,6 +421,39 @@ class SceneRenderer:
         self._axes_vao.render(mgl.LINES)
         self._ctx.disable_direct(0x0B20)  # GL_LINE_SMOOTH
         self._ctx.disable(mgl.BLEND)
+
+    def _render_crosshairs(self, mvp: np.ndarray):
+        half = self.camera.distance * 2.5 / 12.0
+        s = 1.0 / math.sqrt(3.0)
+        dirs = [
+            np.array([ s,  s,  s], dtype=np.float32),
+            np.array([-s,  s,  s], dtype=np.float32),
+            np.array([-s, -s,  s], dtype=np.float32),
+            np.array([ s, -s,  s], dtype=np.float32),
+        ]
+        c = self.camera.target
+        white = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        rows = []
+        for d in dirs:
+            p0 = c - d * half
+            p1 = c + d * half
+            rows.append(np.concatenate([p0, white]))
+            rows.append(np.concatenate([p1, white]))
+
+        geo = np.array(rows, dtype=np.float32)
+        vbo = self._ctx.buffer(geo.tobytes())
+        vao = self._ctx.vertex_array(
+            self._gizmo_prog,
+            [(vbo, "3f 3f", "in_position", "in_color")],
+        )
+        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._ctx.enable(mgl.BLEND)
+        self._ctx.enable_direct(0x0B20)  # GL_LINE_SMOOTH
+        vao.render(mgl.LINES)
+        self._ctx.disable_direct(0x0B20)
+        self._ctx.disable(mgl.BLEND)
+        vao.release()
+        vbo.release()
 
     def _ray_blocked(self, ray_o: np.ndarray, ray_d: np.ndarray, max_t: float) -> bool:
         """Return True if any triangle intersects the ray at t < max_t."""
