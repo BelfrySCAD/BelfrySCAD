@@ -925,7 +925,8 @@ class MainWindow(QMainWindow):
         for node in nodes:
             if isinstance(node, UseStatement):
                 try:
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, node.filepath)
+                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
                     if lib_nodes:
                         injected.extend(
                             n for n in lib_nodes
@@ -1138,7 +1139,8 @@ class MainWindow(QMainWindow):
         for node in nodes:
             if isinstance(node, UseStatement):
                 try:
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, node.filepath)
+                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
                     if lib_nodes:
                         injected.extend(
                             n for n in lib_nodes
