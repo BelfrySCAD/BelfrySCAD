@@ -481,8 +481,8 @@ class MainWindow(QMainWindow):
         tab.viewport.scale_committed.connect(
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
-        idx = self._tabs.addTab(tab, tab.display_name())
         self._editor_stack.addWidget(tab.editor)
+        idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
     def _current_tab(self):
@@ -578,8 +578,8 @@ class MainWindow(QMainWindow):
         tab.viewport.scale_committed.connect(
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
-        idx = self._tabs.addTab(tab, tab.display_name())
         self._editor_stack.addWidget(tab.editor)
+        idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
         self._render()
@@ -691,8 +691,8 @@ class MainWindow(QMainWindow):
         tab.viewport.scale_committed.connect(
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
-        idx = self._tabs.addTab(tab, tab.display_name())
         self._editor_stack.addWidget(tab.editor)
+        idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
         self._render()
