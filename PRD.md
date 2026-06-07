@@ -280,6 +280,12 @@ Standard platform conventions apply throughout. Custom shortcuts:
 * **Viewport background color**: background color of the 3D display
 * **Editor theme**: syntax highlighting color scheme for QScintilla
 
+### Persistent settings (survives restart):
+
+* Perspective/orthographic toggle state
+* Dock panel positions and visibility
+* Recent files list
+
 ### Startup:
 
 Opens with a single blank untitled document.
@@ -314,7 +320,7 @@ Opens with a single blank untitled document.
 * **Console**: pane at the bottom
 * **Status bar**: thin strip at the very bottom; displays the 3D coordinates of the last clicked point on the mesh
 
-All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console, status bar) are individually hideable via the View menu. Scale markers are tick marks along the viewport axes showing distance units.
+The code editor, console, and debugger panels are dockable `QDockWidget` instances — they can be moved to any side of the window, floated, or hidden. Their positions and visibility are persisted across sessions. Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers toggles the tick labels). Show Edges renders the full triangle mesh wireframe over the solid geometry. Show Crosshairs draws four diagonal lines (the space diagonals of a unit cube) crossing at the camera target.
 
 ### Menus:
 
@@ -328,6 +334,8 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 * Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console
 * —
 * Top / Bottom / Left / Right / Front / Back / Isometric / View All
+* —
+* Perspective (toggle perspective/orthographic projection)
 * —
 * Show Axes / Show Edges / Show Scale Markers / Show Crosshairs / Show Status Bar
 

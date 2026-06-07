@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-based modeling with live WYSIWYG 3D interaction. The defining feature is **bidirectional synchronization** between source code and 3D geometry — users can edit code or drag geometry, and both views stay in sync.
 
-**Status**: Pre-development (specification phase). The full design is in `PRD.md`.
+**Status**: In active development. Core pipeline, rendering, editor, and several WYSIWYG features are implemented. The full design is in `PRD.md`.
 
-## Planned Technology Stack
+## Technology Stack
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
@@ -191,6 +191,12 @@ Follows OpenSCAD semantics exactly:
 - `include <file.scad>` — brings all declarations and top-level geometry into the current scope
 - `use <file.scad>` — brings only functions and modules (top-level geometry is ignored)
 
+### Implementation quirks
+
+- `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — always use `.filepath.val` to get the actual path string.
+- "file not found" errors from library resolution (e.g. internal BOSL2 files already handled by the parser) are suppressed in the console to avoid noise.
+- `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` is caught around `build_scopes()` and `evaluate()` calls and treated as a runtime error (shows last-valid geometry).
+
 ## Manifold API: Geometry Provenance
 
 Manifold tracks geometry provenance through CSG operations via the `MeshGL` output structure. The key fields after any boolean op:
@@ -343,7 +349,9 @@ Opens with a single blank untitled document.
 - **Console**: pane at the bottom
 - **Status bar**: thin strip at the very bottom; displays the 3D coordinates of the last clicked point on the mesh
 
-All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, console, status bar) are individually hideable via the View menu. Scale markers are tick marks along the viewport axes showing distance units.
+The code editor, console, and debugger are `QDockWidget` instances — they can be docked to any side of the window or floated, and their positions and visibility are persisted via `QSettings("NeuSCAD", "NeuSCAD")` using `saveState()`/`restoreState()`. The dock widgets have object names "EditorDock", "ConsoleDock", "DebuggerDock" for state serialization.
+
+Scale markers are tick marks along the viewport axes showing distance units (toggled by Show Scale Markers). Show Edges renders the full triangulation wireframe using `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera) and then draws edges at true depth in a second pass — this avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12` in each direction. Perspective/orthographic toggle uses `camera.orthographic`; the current state is persisted in QSettings.
 
 ## Menu Structure
 
@@ -357,6 +365,8 @@ All panels except the 3D viewport (toolbar, tabs, code editor, tools strip, cons
 - Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console
 - —
 - Top / Bottom / Left / Right / Front / Back / Isometric / View All
+- —
+- Perspective (toggle perspective/orthographic projection)
 - —
 - Show Axes / Show Edges / Show Scale Markers / Show Crosshairs / Show Status Bar
 
