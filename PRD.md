@@ -60,6 +60,7 @@ Core principle:
 * **File format**: `.scad` (OpenSCAD-compatible plain text)
 * **Language**: Full OpenSCAD language — variables, functions, modules, loops, conditionals, all built-in primitives and transforms
 * **Export formats**: STL, OBJ, 3MF
+* **3MF color**: 3MF export must preserve per-object color. Each geometry-producing body is exported as a separate 3MF object with its `color()` value encoded as a `m:colorgroup` resource and referenced via `m:color` on each triangle run. STL and OBJ export the composed mesh only (no color).
 * **STEP**: under investigation — Manifold produces triangle meshes; STEP is a B-rep format, so any STEP output would be a faceted solid with limited downstream CAD value
 * **Export workflow**: if no current render exists, Export triggers a render automatically before exporting
 

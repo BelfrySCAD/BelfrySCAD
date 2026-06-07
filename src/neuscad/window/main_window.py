@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
+    QDockWidget, QStackedWidget,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
 from PySide6.QtCore import Qt, QSize, QSettings
@@ -125,24 +126,19 @@ class DocumentTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
+        # Editor lives in the editor dock, not here — kept as an attribute so
+        # the rest of MainWindow can access it via tab.editor.
         self.editor = CodeEditor()
+
         self.viewport = Viewport()
         self.tools_strip = self._make_tools_strip()
 
-        right_splitter = QSplitter(Qt.Orientation.Horizontal)
-        right_splitter.addWidget(self.viewport)
-        right_splitter.addWidget(self.tools_strip)
-        right_splitter.setStretchFactor(0, 1)
-        right_splitter.setStretchFactor(1, 0)
-        right_splitter.setSizes([800, 48])
-
-        splitter.addWidget(self.editor)
-        splitter.addWidget(right_splitter)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.viewport)
+        splitter.addWidget(self.tools_strip)
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([400, 800])
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([800, 48])
 
         layout.addWidget(splitter)
 
@@ -223,49 +219,46 @@ class MainWindow(QMainWindow):
         self._toolbar = self._make_toolbar()
         self.addToolBar(self._toolbar)
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
+        # Viewport tabs are the central widget; all panels live in dock widgets.
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(True)
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(self._tab_changed)
+        self.setCentralWidget(self._tabs)
 
+        # --- Editor dock (left by default) ---
+        self._editor_stack = QStackedWidget()
+        self._editor_dock = QDockWidget("Editor", self)
+        self._editor_dock.setObjectName("EditorDock")
+        self._editor_dock.setWidget(self._editor_stack)
+        self._editor_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._editor_dock)
+
+        # --- Console dock (bottom) ---
         self._console = QPlainTextEdit()
         self._console.setReadOnly(True)
         self._console.setFont(QFont("Menlo", 11))
-        self._console.setObjectName("Console")
+        self._console_dock = QDockWidget("Console", self)
+        self._console_dock.setObjectName("ConsoleDock")
+        self._console_dock.setWidget(self._console)
+        self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
+        # --- Debugger dock (bottom, beside console) ---
         self._debugger_pane = DebuggerPane()
-        self._debugger_pane.hide()
         self._debug_session: DebugSession | None = None
-
         self._debugger_pane.continue_requested.connect(self._on_debug_continue)
         self._debugger_pane.step_into_requested.connect(self._on_debug_step_into)
         self._debugger_pane.step_over_requested.connect(self._on_debug_step_over)
         self._debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         self._debugger_pane.stop_requested.connect(self._on_debug_stop)
-
-        self._bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._bottom_splitter.addWidget(self._console)
-        self._bottom_splitter.addWidget(self._debugger_pane)
-        self._bottom_splitter.setStretchFactor(0, 1)
-        self._bottom_splitter.setStretchFactor(1, 0)
-
-        self._main_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._main_splitter.addWidget(self._tabs)
-        self._main_splitter.addWidget(self._bottom_splitter)
-        self._main_splitter.setStretchFactor(0, 1)
-        self._main_splitter.setStretchFactor(1, 0)
-        self._main_splitter.setSizes([600, 150])
-        self._main_splitter.setCollapsible(0, False)
-        self._main_splitter.setCollapsible(1, True)
-
-        layout.addWidget(self._main_splitter)
+        self._debugger_dock = QDockWidget("Debugger", self)
+        self._debugger_dock.setObjectName("DebuggerDock")
+        self._debugger_dock.setWidget(self._debugger_pane)
+        self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
+        self._debugger_dock.hide()
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -377,11 +370,21 @@ class MainWindow(QMainWindow):
         view_menu = mb.addMenu("View")
         self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
         self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
-        self._act_show_editor = self._add_checkable(view_menu, "Show Code Editor", True, self._toggle_editor)
+
+        self._act_show_editor = self._editor_dock.toggleViewAction()
+        self._act_show_editor.setText("Show Code Editor")
+        view_menu.addAction(self._act_show_editor)
+
         self._act_show_tools = self._add_checkable(view_menu, "Show Tools Strip", True, self._toggle_tools_strip)
-        self._act_show_console = self._add_checkable(view_menu, "Show Console", True, self._toggle_console)
-        self._act_show_debugger = self._add_checkable(view_menu, "Show Debugger", False, self._toggle_debugger)
-        self._console_height = 150
+
+        self._act_show_console = self._console_dock.toggleViewAction()
+        self._act_show_console.setText("Show Console")
+        view_menu.addAction(self._act_show_console)
+
+        self._act_show_debugger = self._debugger_dock.toggleViewAction()
+        self._act_show_debugger.setText("Show Debugger")
+        view_menu.addAction(self._act_show_debugger)
+
         view_menu.addSeparator()
         for label, preset, key in (
             ("Top",       "top",    "Ctrl+4"),
@@ -479,13 +482,16 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
+        self._editor_stack.addWidget(tab.editor)
         self._tabs.setCurrentIndex(idx)
 
     def _current_tab(self):
         return self._tabs.currentWidget()
 
     def _tab_changed(self, index):
-        pass
+        tab = self._tabs.widget(index)
+        if tab:
+            self._editor_stack.setCurrentWidget(tab.editor)
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -503,6 +509,8 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(index)
                 if not self._save_file():
                     return
+        if tab:
+            self._editor_stack.removeWidget(tab.editor)
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
             self._new_document()
@@ -571,6 +579,7 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
+        self._editor_stack.addWidget(tab.editor)
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
         self._render()
@@ -683,6 +692,7 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         idx = self._tabs.addTab(tab, tab.display_name())
+        self._editor_stack.addWidget(tab.editor)
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
         self._render()
@@ -1060,36 +1070,10 @@ class MainWindow(QMainWindow):
     # View operations
     # ------------------------------------------------------------------
 
-    def _toggle_editor(self, visible):
-        tab = self._current_tab()
-        if tab:
-            tab.editor.setVisible(visible)
-
     def _toggle_tools_strip(self, visible):
         tab = self._current_tab()
         if tab:
             tab.tools_strip.setVisible(visible)
-
-    def _toggle_console(self, visible):
-        if visible:
-            self._main_splitter.setSizes([
-                self._main_splitter.height() - self._console_height,
-                self._console_height,
-            ])
-        else:
-            sizes = self._main_splitter.sizes()
-            if sizes[1] > 0:
-                self._console_height = sizes[1]
-            self._main_splitter.setSizes([self._main_splitter.height(), 0])
-
-    def _toggle_debugger(self, visible):
-        self._debugger_pane.setVisible(visible)
-        if visible:
-            # Ensure the bottom section is visible
-            sizes = self._main_splitter.sizes()
-            if sizes[1] == 0:
-                h = self._console_height
-                self._main_splitter.setSizes([self._main_splitter.height() - h, h])
 
     # ------------------------------------------------------------------
     # Debug session
@@ -1171,13 +1155,9 @@ class MainWindow(QMainWindow):
         # Convert 0-indexed block numbers to 1-indexed line numbers
         breakpoints = {bn + 1 for bn in tab.editor._breakpoints}
 
-        # Show the debugger pane
-        self._debugger_pane.show()
-        self._act_show_debugger.setChecked(True)
-        sizes = self._main_splitter.sizes()
-        if sizes[1] == 0:
-            h = self._console_height
-            self._main_splitter.setSizes([self._main_splitter.height() - h, h])
+        # Show the debugger dock and bring it to the front
+        self._debugger_dock.show()
+        self._debugger_dock.raise_()
 
         self._debug_session = DebugSession(self)
         self._debug_session.paused.connect(

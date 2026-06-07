@@ -333,10 +333,9 @@ class SceneRenderer:
     def _render_axes(self, mvp: np.ndarray):
         L       = self.camera.distance * 2.5
         spacing = _nice_spacing(L)
-        black   = np.zeros(3, dtype=np.float32)
-        red   = np.array([0.3, 0.0, 0.0], dtype=np.float32)
-        green   = np.array([0.0, 0.3, 0.0], dtype=np.float32)
-        blue   = np.array([0.0, 0.0, 0.5], dtype=np.float32)
+        red   = np.array([0.3, 0.1, 0.1], dtype=np.float32)
+        green   = np.array([0.1, 0.3, 0.1], dtype=np.float32)
+        blue   = np.array([0.2, 0.2, 0.5], dtype=np.float32)
         gray    = np.array([0.2, 0.2, 0.2], dtype=np.float32)
         axis_colors = [red, green, blue];
 
@@ -391,7 +390,7 @@ class SceneRenderer:
                     p1[ai] = float(pos)
                     p0[pi] = -float(half)
                     p1[pi] =  float(half)
-                    color = black if sign == 1.0 else gray
+                    color = axis_colors[ai] if sign > 0.0 else gray
                     rows.append(np.concatenate([p0, color]))
                     rows.append(np.concatenate([p1, color]))
             k += 1
@@ -836,7 +835,7 @@ def _nice_spacing(L: float) -> float:
     """Return a round tick spacing giving ~5-10 ticks along an axis of length L."""
     raw = max(L, 1e-9) / 14
     mag = 10 ** math.floor(math.log10(raw))
-    for f in (1, 5, 10):
+    for f in (1, 2, 5, 10):
         if f * mag >= raw:
             return float(f * mag)
     return mag * 10.0
