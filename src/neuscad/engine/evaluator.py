@@ -1287,6 +1287,9 @@ class Evaluator:
         }
         if name and name in math_fns:
             positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
+            if not positional:
+                # OpenSCAD: named args fall back to positional order for built-ins
+                positional = [args[k] for k in args if isinstance(k, str)]
             try:
                 return math_fns[name](*positional)
             except Exception:
@@ -1335,8 +1338,15 @@ class Evaluator:
                 return matches[:num_returns]
 
         if isinstance(match, str):
-            # String → character array: search for each char independently
-            return [_result_for(c) for c in match]
+            # String → character array: search for each char independently.
+            # With num_returns=1: not-found chars are dropped (not included as []).
+            # With num_returns=0: all chars included, not-found → [].
+            results = []
+            for c in match:
+                r = _result_for(c)
+                if num_returns != 1 or r != []:
+                    results.append(r)
+            return results
         elif isinstance(match, list):
             return [_result_for(m) for m in match]
         else:

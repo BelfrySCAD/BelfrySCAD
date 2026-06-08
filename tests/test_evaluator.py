@@ -1031,9 +1031,9 @@ class TestExpressionEdgeCases:
         assert lines == ["ECHO: undef"]
 
     def test_named_arg_to_builtin(self):
-        # Named args to math builtins are ignored (only positional used)
+        # OpenSCAD maps named args to positional for built-ins
         _, lines = run("echo(abs(x=-3));")
-        assert lines == ["ECHO: undef"]
+        assert lines == ["ECHO: 3"]
 
     def test_let_op_in_expression(self):
         _, lines = run("echo(let(a=3, b=4) a + b);")
@@ -1307,9 +1307,9 @@ class TestNewBuiltins:
         assert lines == ["ECHO: [1]"]
 
     def test_search_string_single_char_not_found(self):
-        # Not found → [] per char, wrapped in outer list
+        # Not found with num_returns=1 → dropped from outer list → []
         _, lines = run('echo(search("z", "abc"));')
-        assert lines == ["ECHO: [[]]"]
+        assert lines == ["ECHO: []"]
 
     def test_search_list(self):
         _, lines = run('echo(search(["b","a"], ["a","b","c"]));')
