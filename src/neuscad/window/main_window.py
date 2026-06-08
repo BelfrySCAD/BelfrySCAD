@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QDockWidget, QStackedWidget,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
-from PySide6.QtCore import Qt, QSize, QSettings
+from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, Signal, Slot
+import threading
 import time
 
 from neuscad.window.editor import CodeEditor
@@ -195,6 +196,162 @@ class DocumentTab(QWidget):
         return name + ("*" if self.is_modified else "")
 
 
+class _RenderCallback(QObject):
+    """Lives in the main thread; receives cross-thread signals from _RenderWorker.
+
+    Because this object is never moved to the worker thread, Qt auto-detects the
+    thread boundary and uses QueuedConnection, routing all slots to the main thread.
+    """
+
+    def __init__(self, main_window, tab, render_id: int, parent=None):
+        super().__init__(parent)
+        self._mw = main_window
+        self._tab = tab
+        self._render_id = render_id
+
+    @Slot(str)
+    def on_logged(self, msg: str):
+        if self._render_id == self._mw._render_id:
+            self._mw.log(msg)
+
+    @Slot(str)
+    def on_parse_errored(self, captured: str):
+        if self._render_id == self._mw._render_id:
+            self._mw._parse_error_to_editor(self._tab, captured)
+
+    @Slot(object, object, float)
+    def on_finished(self, bodies, id_to_node, elapsed_ms: float):
+        self._mw._on_render_done(self._tab, bodies, id_to_node, elapsed_ms, self._render_id)
+
+
+class _RenderWorker(QObject):
+    """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
+    logged = Signal(str)
+    parse_errored = Signal(str)          # captured stdout; triggers editor error marking
+    finished = Signal(object, object, float)  # (bodies, id_to_node, elapsed_ms)
+    done = Signal()                      # always emitted at end of run(), for thread cleanup
+
+    def __init__(self, source: str, file_path, cancel: threading.Event):
+        super().__init__()
+        self._source = source
+        self._file_path = file_path
+        self._cancel = cancel
+
+    @Slot()
+    def run(self):
+        import io, sys as _sys, time as _time, os as _os, tempfile, traceback
+        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
+        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+        from neuscad.engine.evaluator import Evaluator, EvalError
+        try:
+            self._do_render()
+        finally:
+            self.done.emit()
+
+    def _do_render(self):
+        import io, sys as _sys, time as _time, os as _os, tempfile, traceback
+        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
+        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+        from neuscad.engine.evaluator import Evaluator, EvalError
+
+        _t0 = _time.perf_counter()
+
+        # --- Parse ---
+        _tmp = None
+        try:
+            buf = io.StringIO()
+            old_stdout = _sys.stdout
+            _sys.stdout = buf
+            if self._file_path:
+                parse_path = self._file_path
+            else:
+                _tmp = tempfile.NamedTemporaryFile(
+                    suffix=".scad", mode="w", encoding="utf-8", delete=False
+                )
+                _tmp.write(self._source)
+                _tmp.close()
+                parse_path = _tmp.name
+            nodes = getASTfromFile(parse_path)
+            _sys.stdout = old_stdout
+            captured = buf.getvalue()
+        except Exception as e:
+            _sys.stdout = old_stdout
+            self.logged.emit(f"Parse error: {e}")
+            return
+        finally:
+            if _tmp is not None:
+                try:
+                    _os.unlink(_tmp.name)
+                except OSError:
+                    pass
+
+        if captured:
+            self.logged.emit(captured.rstrip())
+
+        if nodes is None:
+            self.parse_errored.emit(captured)
+            return
+
+        if self._cancel.is_set():
+            return
+
+        # Resolve `use` statements
+        current_file = self._file_path or parse_path
+        injected = []
+        for node in nodes:
+            if isinstance(node, UseStatement):
+                try:
+                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
+                    if lib_nodes:
+                        injected.extend(
+                            n for n in lib_nodes
+                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
+                        )
+                except Exception as e:
+                    msg = str(e)
+                    if "not found" not in msg and "No such file" not in msg:
+                        self.logged.emit(f"use error: {e}")
+        if injected:
+            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
+
+        if self._cancel.is_set():
+            return
+
+        try:
+            root_scope = build_scopes(nodes)
+        except RecursionError:
+            self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during scope build).")
+            return
+
+        if self._cancel.is_set():
+            return
+
+        # --- Evaluate ---
+        evaluator = Evaluator(echo_fn=self.logged.emit)
+        try:
+            bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
+        except RecursionError:
+            self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
+            return
+        except EvalError as e:
+            self.logged.emit(f"Eval error: {e}")
+            return
+        except Exception as e:
+            self.logged.emit(f"Runtime error: {e}\n{traceback.format_exc()}")
+            return
+
+        if self._cancel.is_set():
+            return
+
+        if not bodies:
+            self.logged.emit("Render: no geometry produced.")
+            return
+
+        elapsed_ms = (_time.perf_counter() - _t0) * 1000
+        self.finished.emit(bodies, id_to_node, elapsed_ms)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -202,6 +359,8 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self._undo_stack = self._create_undo_stack()
+        self._render_cancel: threading.Event | None = None
+        self._render_id: int = 0
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -871,104 +1030,42 @@ class MainWindow(QMainWindow):
         if not source.strip():
             return
 
-        # Clear console for this render run
-        self._console.clear()
+        # Cancel any in-progress render (cooperative: worker checks the event between steps)
+        if self._render_cancel is not None:
+            self._render_cancel.set()
 
-        from openscad_parser.ast import getASTfromString, getASTfromFile, getASTfromLibraryFile, build_scopes
-        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
-        from neuscad.engine.evaluator import Evaluator, EvalError
-        import numpy as np
-        import io, sys as _sys, time as _time
-
-        _t0 = _time.perf_counter()
-
-        # --- Parse ---
-        import tempfile
-        _tmp = None
-        try:
-            buf = io.StringIO()
-            old_stdout = _sys.stdout
-            _sys.stdout = buf
-            if tab.file_path:
-                parse_path = tab.file_path
-            else:
-                # Write to a temp file so openscad_parser can resolve system library paths
-                _tmp = tempfile.NamedTemporaryFile(
-                    suffix=".scad", mode="w", encoding="utf-8", delete=False
-                )
-                _tmp.write(source)
-                _tmp.close()
-                parse_path = _tmp.name
-            nodes = getASTfromFile(parse_path)
-            _sys.stdout = old_stdout
-            captured = buf.getvalue()
-        except Exception as e:
-            _sys.stdout = old_stdout
-            self.log(f"Parse error: {e}")
-            return
-        finally:
-            if _tmp is not None:
-                import os as _os
-                try:
-                    _os.unlink(_tmp.name)
-                except OSError:
-                    pass
-
-        if captured:
-            self.log(captured.rstrip())
-
-        if nodes is None:
-            self._parse_error_to_editor(tab, captured)
-            return
-
-        # Resolve `use` statements: prepend module/function declarations from used files
-        current_file = tab.file_path or parse_path
-        injected = []
-        for node in nodes:
-            if isinstance(node, UseStatement):
-                try:
-                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
-                    if lib_nodes:
-                        injected.extend(
-                            n for n in lib_nodes
-                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
-                        )
-                except Exception as e:
-                    msg = str(e)
-                    if "not found" not in msg and "No such file" not in msg:
-                        self.log(f"use error: {e}")
-        if injected:
-            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
-
+        self._render_id += 1
+        render_id = self._render_id
         tab.editor.clear_errors()
-        try:
-            root_scope = build_scopes(nodes)
-        except RecursionError:
-            self.log("Error: AST too deeply nested (recursion limit exceeded during scope build).")
-            return
+        self._console.clear()
+        self.log("Rendering…")
 
-        # --- Evaluate ---
-        evaluator = Evaluator(echo_fn=self.log)
-        try:
-            bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
-            tab.id_to_node = id_to_node
-        except RecursionError:
-            self.log("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
-            return
-        except EvalError as e:
-            self.log(f"Eval error: {e}")
-            return
-        except Exception as e:
-            import traceback
-            self.log(f"Runtime error: {e}\n{traceback.format_exc()}")
-            return
+        cancel = threading.Event()
+        self._render_cancel = cancel
 
-        if not bodies:
-            self.log("Render: no geometry produced.")
-            return
+        worker = _RenderWorker(source, tab.file_path, cancel)
+        self._render_worker = worker  # keep alive while thread runs
+        callback = _RenderCallback(self, tab, render_id, parent=self)
+        self._render_callback = callback  # keep alive while thread runs
+        thread = QThread(self)
+        worker.moveToThread(thread)
 
-        # --- Upload to viewport ---
+        # callback lives in the main thread; Qt auto-uses QueuedConnection for all
+        # of these cross-thread connections, so all slots run on the main thread.
+        thread.started.connect(worker.run)
+        worker.logged.connect(callback.on_logged)
+        worker.parse_errored.connect(callback.on_parse_errored)
+        worker.finished.connect(callback.on_finished)
+        worker.done.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+
+        thread.start()
+
+    def _on_render_done(self, tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
+        if render_id != self._render_id:
+            return  # superseded by a later render; discard
+
+        tab.id_to_node = id_to_node
         try:
             tab.viewport.load_geometry(bodies)
         except Exception as e:
@@ -978,18 +1075,17 @@ class MainWindow(QMainWindow):
 
         tab._bodies = bodies
 
-        # Frame camera and report bounds
         try:
             import manifold3d as m3d
+            import numpy as np
             all_bodies = [b.body for b in bodies if not b.body.is_empty()]
             if all_bodies:
                 composed = m3d.Manifold.compose(all_bodies)
-                bb = composed.bounding_box()   # returns (xmin,ymin,zmin,xmax,ymax,zmax)
+                bb = composed.bounding_box()
                 bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
                 tab.viewport.frame_scene(bb_min, bb_max)
                 extent = float(np.linalg.norm(bb_max - bb_min))
-                elapsed_ms = (_time.perf_counter() - _t0) * 1000
                 self.log(
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
                     f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  size {extent:.2f}  "
