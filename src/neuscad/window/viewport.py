@@ -145,7 +145,6 @@ class Viewport(QOpenGLWidget):
         elif preset == "iso":
             cam.azimuth, cam.elevation = 295, 35
         elif preset == "all":
-            cam.azimuth, cam.elevation = 295, 35
             self._frame_all(cam)
             self.update()
             return
