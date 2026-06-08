@@ -400,7 +400,7 @@ class TestListComprehensions:
 
     def test_each_nested(self):
         _, lines = run("a = [[1,2,3],[4,5,6]]; b = [each a]; echo(b);")
-        assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
+        assert lines == ["ECHO: [[1, 2, 3], [4, 5, 6]]"]
 
     def test_listcompif_direct(self):
         # ListCompIf as a direct element (not nested in for)
@@ -1006,9 +1006,9 @@ class TestExpressionEdgeCases:
 
 class TestListCompEdgeCases:
     def test_listcomp_for_nested_body(self):
-        # nested list comprehension as for body — each sub-list is flattened in
+        # bracketed sub-comprehension in for body → each iteration yields one list
         _, lines = run("echo([for (i=[1:3]) [for (j=[1:2]) i*j]]);")
-        assert lines == ["ECHO: [1, 2, 2, 4, 3, 6]"]
+        assert lines == ["ECHO: [[1, 2], [2, 4], [3, 6]]"]
 
     def test_listcomp_if_false_no_else(self):
         # ListCompIf with false condition and no else → item excluded
@@ -1122,19 +1122,87 @@ class TestEachInForBody:
 # ---------------------------------------------------------------------------
 
 class TestExpressionOps:
-    def test_echo_op_in_expression(self):
-        # echo("msg") expr — evaluates to expr, side-effect is echo
-        try:
-            _, lines = run('x = echo("debug") 5; echo(x);')
-            # If supported by parser: echo line + echo 5
-            assert any("5" in l for l in lines)
-        except Exception:
-            pass  # parser may not support this syntax
+    def test_echo_op_passthrough(self):
+        # echo("msg") expr — evaluates to expr, side-effect logs the args
+        _, lines = run('x = echo("debug") 5; echo(x);')
+        assert lines[-1] == "ECHO: 5"
 
-    def test_assert_op_in_expression(self):
-        # assert(cond) expr — evaluates to expr
-        try:
-            _, lines = run('x = assert(true) 5; echo(x);')
-            assert lines[-1] == "ECHO: 5"
-        except Exception:
-            pass  # parser may not support this syntax
+    def test_echo_op_side_effect(self):
+        # the echo side-effect fires before the enclosing expression is used
+        _, lines = run('x = echo("side") 42; echo(x);')
+        assert 'ECHO: "side"' in lines
+        assert "ECHO: 42" in lines
+
+    def test_assert_op_passthrough(self):
+        # assert(true) expr — evaluates to expr when condition holds
+        _, lines = run('x = assert(true) 5; echo(x);')
+        assert lines[-1] == "ECHO: 5"
+
+    def test_assert_op_fails_on_false(self):
+        # assert(false) should raise an error
+        import pytest
+        with pytest.raises(Exception):
+            run('x = assert(false) 5; echo(x);')
+
+    def test_assert_op_message(self):
+        # assert(false, "msg") — error message included in EvalError
+        import pytest
+        with pytest.raises(Exception, match="Assertion failed"):
+            run('x = assert(false, "msg") 5; echo(x);')
+
+
+# ---------------------------------------------------------------------------
+# List comprehension: let bindings
+# ---------------------------------------------------------------------------
+
+class TestListCompLet:
+    def test_let_in_listcomp(self):
+        # let inside list comprehension introduces a local binding
+        _, lines = run("echo([for (i=[1:3]) let(j=i*2) j]);")
+        assert lines == ["ECHO: [2, 4, 6]"]
+
+    def test_let_multiple_bindings(self):
+        _, lines = run("echo([for (i=[1:2]) let(a=i+1, b=i*3) [a, b]]);")
+        assert lines == ["ECHO: [[2, 3], [3, 6]]"]
+
+    def test_nested_let_in_listcomp(self):
+        # let can shadow outer variable
+        _, lines = run("x = 10; echo([for (i=[1:2]) let(x=i) x]);")
+        assert lines == ["ECHO: [1, 2]"]
+
+    def test_let_in_listcomp_with_if(self):
+        # let combined with if filter
+        _, lines = run("echo([for (i=[1:4]) let(j=i*2) if (j > 4) j]);")
+        assert lines == ["ECHO: [6, 8]"]
+
+    def test_grid_let_comprehension(self):
+        # the original bug report: nested for with outer let binding
+        _, lines = run("grid = [for(h=[0:2]) [let(b=h) for(a=[0:2]) a+b]]; echo(grid);")
+        assert lines == ["ECHO: [[0, 1, 2], [1, 2, 3], [2, 3, 4]]"]
+
+
+# ---------------------------------------------------------------------------
+# List comprehension: each with nested lists
+# ---------------------------------------------------------------------------
+
+class TestListCompEach:
+    def test_each_splices_list(self):
+        # each over a list splices its elements into the parent
+        _, lines = run("echo([each [1,2,3]]);")
+        assert lines == ["ECHO: [1, 2, 3]"]
+
+    def test_each_nested_list_not_flattened(self):
+        # each over a list of lists keeps sub-lists intact
+        _, lines = run("a = [[1,2],[3,4]]; echo([each a]);")
+        assert lines == ["ECHO: [[1, 2], [3, 4]]"]
+
+    def test_each_in_for_body(self):
+        # each inside a for body splices one level
+        _, lines = run("echo([for (i=[[1,2],[3,4]]) each i]);")
+        assert lines == ["ECHO: [1, 2, 3, 4]"]
+
+    def test_each_preserves_inner_structure(self):
+        # each splices exactly one level — inner nesting is preserved
+        # a has one element: [[1,2],[3,4]]; each a yields that element as-is
+        _, lines = run("a = [[[1,2],[3,4]]]; echo([each a]);")
+        assert lines == ["ECHO: [[[1, 2], [3, 4]]]"]
