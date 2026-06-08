@@ -127,9 +127,15 @@ class DocumentTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Editor lives in the editor dock, not here — kept as an attribute so
-        # the rest of MainWindow can access it via tab.editor.
+        # Editor, console, and debugger pane live in dock stacks, not here —
+        # kept as attributes so MainWindow can access them via tab.editor /
+        # tab.console / tab.debugger_pane.
         self.editor = CodeEditor()
+        self.console = QPlainTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setFont(QFont("Menlo", 11))
+        self.debugger_pane = DebuggerPane()
+        self.debug_session: DebugSession | None = None
 
         self.viewport = Viewport()
         self.tools_strip = self._make_tools_strip()
@@ -212,11 +218,12 @@ class _RenderCallback(QObject):
     @Slot(str)
     def on_logged(self, msg: str):
         if self._render_id == self._mw._render_id:
-            self._mw.log(msg)
+            self._mw.log_to_tab(self._tab, msg)
 
     @Slot(str)
     def on_parse_errored(self, captured: str):
         if self._render_id == self._mw._render_id:
+            self._mw.log_to_tab(self._tab, captured.rstrip())
             self._mw._parse_error_to_editor(self._tab, captured)
 
     @Slot(object, object, float)
@@ -400,26 +407,18 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._editor_dock)
 
         # --- Console dock (bottom) ---
-        self._console = QPlainTextEdit()
-        self._console.setReadOnly(True)
-        self._console.setFont(QFont("Menlo", 11))
+        self._console_stack = QStackedWidget()
         self._console_dock = QDockWidget("Console", self)
         self._console_dock.setObjectName("ConsoleDock")
-        self._console_dock.setWidget(self._console)
+        self._console_dock.setWidget(self._console_stack)
         self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
         # --- Debugger dock (bottom, beside console) ---
-        self._debugger_pane = DebuggerPane()
-        self._debug_session: DebugSession | None = None
-        self._debugger_pane.continue_requested.connect(self._on_debug_continue)
-        self._debugger_pane.step_into_requested.connect(self._on_debug_step_into)
-        self._debugger_pane.step_over_requested.connect(self._on_debug_step_over)
-        self._debugger_pane.step_out_requested.connect(self._on_debug_step_out)
-        self._debugger_pane.stop_requested.connect(self._on_debug_stop)
+        self._debugger_stack = QStackedWidget()
         self._debugger_dock = QDockWidget("Debugger", self)
         self._debugger_dock.setObjectName("DebuggerDock")
-        self._debugger_dock.setWidget(self._debugger_pane)
+        self._debugger_dock.setWidget(self._debugger_stack)
         self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
         self._debugger_dock.hide()
@@ -655,6 +654,13 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        self._console_stack.addWidget(tab.console)
+        self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
+        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -667,6 +673,8 @@ class MainWindow(QMainWindow):
         tab = self._tabs.widget(index)
         if tab:
             self._editor_stack.setCurrentWidget(tab.editor)
+            self._console_stack.setCurrentWidget(tab.console)
+            self._debugger_stack.setCurrentWidget(tab.debugger_pane)
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -686,6 +694,8 @@ class MainWindow(QMainWindow):
                     return
         if tab:
             self._editor_stack.removeWidget(tab.editor)
+            self._console_stack.removeWidget(tab.console)
+            self._debugger_stack.removeWidget(tab.debugger_pane)
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
             self._new_document()
@@ -754,6 +764,13 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        self._console_stack.addWidget(tab.console)
+        self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
+        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -868,6 +885,13 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        self._console_stack.addWidget(tab.console)
+        self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
+        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -1053,8 +1077,8 @@ class MainWindow(QMainWindow):
         self._render_id += 1
         render_id = self._render_id
         tab.editor.clear_errors()
-        self._console.clear()
-        self.log("Rendering…")
+        tab.console.clear()
+        self.log_to_tab(tab, "Rendering…")
 
         cancel = threading.Event()
         self._render_cancel = cancel
@@ -1096,7 +1120,7 @@ class MainWindow(QMainWindow):
             tab.viewport.load_geometry(bodies)
         except Exception as e:
             import traceback
-            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
+            self.log_to_tab(tab, f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
 
         tab._bodies = bodies
@@ -1112,14 +1136,15 @@ class MainWindow(QMainWindow):
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
                 tab.viewport.frame_scene(bb_min, bb_max)
                 extent = float(np.linalg.norm(bb_max - bb_min))
-                self.log(
+                self.log_to_tab(
+                    tab,
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
                     f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  size {extent:.2f}  "
                     f"({elapsed_ms:.0f} ms)"
                 )
         except Exception as e:
             import traceback
-            self.log(f"Post-render error: {e}\n{traceback.format_exc()}")
+            self.log_to_tab(tab, f"Post-render error: {e}\n{traceback.format_exc()}")
 
     def _parse_error_to_editor(self, tab, captured: str):
         """Parse the error text from openscad_parser and mark the editor."""
@@ -1129,8 +1154,13 @@ class MainWindow(QMainWindow):
             line, col = int(m.group(1)), int(m.group(2))
             tab.editor.set_error_location(line, col)
 
-    def log(self, text):
-        self._console.appendPlainText(text)
+    def log(self, text: str):
+        tab = self._current_tab()
+        if tab:
+            tab.console.appendPlainText(text)
+
+    def log_to_tab(self, tab, text: str):
+        tab.console.appendPlainText(text)
 
     # ------------------------------------------------------------------
     # Edit operations
@@ -1218,7 +1248,7 @@ class MainWindow(QMainWindow):
         if not tab:
             return
         # While paused, F5 acts as Continue
-        if self._debug_session and self._debug_session.is_running():
+        if tab.debug_session and tab.debug_session.is_running():
             self._on_debug_continue()
             return
 
@@ -1226,7 +1256,7 @@ class MainWindow(QMainWindow):
         if not source.strip():
             return
 
-        self._console.clear()
+        tab.console.clear()
 
         from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
         from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
@@ -1296,35 +1326,36 @@ class MainWindow(QMainWindow):
         self._debugger_dock.show()
         self._debugger_dock.raise_()
 
-        self._debug_session = DebugSession(self)
-        self._debug_session.paused.connect(
+        tab.debug_session = DebugSession(self)
+        tab.debug_session.paused.connect(
             lambda line, loc, stk, t=tab: self._on_debug_paused(t, line, loc, stk)
         )
-        self._debug_session.finished.connect(
+        tab.debug_session.finished.connect(
             lambda bodies, id2node, t=tab: self._on_debug_finished(t, bodies, id2node)
         )
-        self._debug_session.errored.connect(self._on_debug_error)
+        tab.debug_session.errored.connect(self._on_debug_error)
 
-        self._debugger_pane.set_running()
-        self._debug_session.start(nodes, root_scope, breakpoints, self.log)
+        tab.debugger_pane.set_running()
+        tab.debug_session.start(nodes, root_scope, breakpoints,
+                                lambda msg, t=tab: self.log_to_tab(t, msg))
 
     def _on_debug_paused(self, tab, line: int, locals_dict: dict, call_stack: list):
-        self._debugger_pane.set_paused(line, locals_dict, call_stack)
+        tab.debugger_pane.set_paused(line, locals_dict, call_stack)
         tab.editor.set_execution_line(line)
 
     def _on_debug_finished(self, tab, bodies, id_to_node):
         tab.id_to_node = id_to_node
         tab.editor.clear_execution_line()
-        self._debugger_pane.set_idle()
-        self._debug_session = None
+        tab.debugger_pane.set_idle()
+        tab.debug_session = None
         if not bodies:
-            self.log("Debug: no geometry produced.")
+            self.log_to_tab(tab, "Debug: no geometry produced.")
             return
         try:
             tab.viewport.load_geometry(bodies)
         except Exception as e:
             import traceback
-            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
+            self.log_to_tab(tab, f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
         try:
             import manifold3d as m3d
@@ -1336,7 +1367,7 @@ class MainWindow(QMainWindow):
                 bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
                 tab.viewport.frame_scene(bb_min, bb_max)
-                self.log("Debug: completed.")
+                self.log_to_tab(tab, "Debug: completed.")
         except Exception:
             pass
 
@@ -1344,59 +1375,54 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if tab:
             tab.editor.clear_execution_line()
-        self._debugger_pane.set_idle()
-        self._debug_session = None
+            tab.debugger_pane.set_idle()
+            tab.debug_session = None
         self.log(f"Debug error: {msg}")
 
     def _on_debug_continue(self):
-        if not self._debug_session:
-            return
-        mods = self._debugger_pane.get_modifications()
         tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-        self._debugger_pane.set_running()
-        self._debug_session.resume("continue", mods)
+        if not tab or not tab.debug_session:
+            return
+        mods = tab.debugger_pane.get_modifications()
+        tab.editor.clear_execution_line()
+        tab.debugger_pane.set_running()
+        tab.debug_session.resume("continue", mods)
 
     def _on_debug_step_into(self):
-        if not self._debug_session:
-            return
-        mods = self._debugger_pane.get_modifications()
         tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-        self._debugger_pane.set_running()
-        self._debug_session.resume("step_into", mods)
+        if not tab or not tab.debug_session:
+            return
+        mods = tab.debugger_pane.get_modifications()
+        tab.editor.clear_execution_line()
+        tab.debugger_pane.set_running()
+        tab.debug_session.resume("step_into", mods)
 
     def _on_debug_step_over(self):
-        if not self._debug_session:
-            return
-        mods = self._debugger_pane.get_modifications()
         tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-        self._debugger_pane.set_running()
-        self._debug_session.resume("step_over", mods)
+        if not tab or not tab.debug_session:
+            return
+        mods = tab.debugger_pane.get_modifications()
+        tab.editor.clear_execution_line()
+        tab.debugger_pane.set_running()
+        tab.debug_session.resume("step_over", mods)
 
     def _on_debug_step_out(self):
-        if not self._debug_session:
-            return
-        mods = self._debugger_pane.get_modifications()
         tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-        self._debugger_pane.set_running()
-        self._debug_session.resume("step_out", mods)
+        if not tab or not tab.debug_session:
+            return
+        mods = tab.debugger_pane.get_modifications()
+        tab.editor.clear_execution_line()
+        tab.debugger_pane.set_running()
+        tab.debug_session.resume("step_out", mods)
 
     def _on_debug_stop(self):
-        if not self._debug_session:
-            return
         tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-        self._debug_session.stop()
-        self._debug_session = None
-        self._debugger_pane.set_idle()
+        if not tab or not tab.debug_session:
+            return
+        tab.editor.clear_execution_line()
+        tab.debug_session.stop()
+        tab.debug_session = None
+        tab.debugger_pane.set_idle()
 
     def _restore_settings(self):
         s = QSettings("NeuSCAD", "NeuSCAD")
