@@ -93,23 +93,28 @@ class Evaluator:
                     except Exception:
                         pass
             scope = scope.parent
+        # _call_stack entries are (kind, name, pos) tuples
         cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack))
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
             raise EvalError("Debugging stopped.")
 
-    def error(self, msg: str):
-        if self._call_stack:
-            lines = []
-            for fname, pos in reversed(self._call_stack):
-                if pos is not None:
-                    lines.append(f"  in {fname}() at {pos.origin}:{pos.line}")
-                else:
-                    lines.append(f"  in {fname}()")
-            full = f"{msg}\nTraceback:\n" + "\n".join(lines)
+    def error(self, msg: str, node=None):
+        # Attach source location of the failing node if available
+        pos = getattr(node, 'position', None) if node is not None else None
+        if pos is not None:
+            loc = f" at {pos.origin}:{pos.line}"
         else:
-            full = msg
+            loc = ""
+        header = f"ERROR: {msg}{loc}"
+        lines = [header]
+        for kind, fname, call_pos in reversed(self._call_stack):
+            if call_pos is not None:
+                lines.append(f"  called by {kind} {fname}() at {call_pos.origin}:{call_pos.line}")
+            else:
+                lines.append(f"  called by {kind} {fname}()")
+        full = "\n".join(lines)
         self._errors.append(full)
         raise EvalError(full)
 
@@ -189,7 +194,7 @@ class Evaluator:
             cond = self._get_arg(args, 0, "condition", True)
             if not cond:
                 msg = self._get_arg(args, 1, "message", "")
-                self.error(f"Assertion failed: {msg}")
+                self.error(f"Assertion failed: {msg}", node)
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
             return self._eval_statement(node.child, ctx)
@@ -250,11 +255,17 @@ class Evaluator:
         # Apply defaults for missing params
         self._apply_defaults(params, child_ctx, ctx)
 
-        module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
-        bodies = self._eval_children(module_body, child_ctx)
-        if not bodies:
-            return None
-        return self._combine(bodies)
+        name = call.name.name
+        pos = getattr(call, 'position', None)
+        self._call_stack.append(("module", name, pos))
+        try:
+            module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
+            bodies = self._eval_children(module_body, child_ctx)
+            if not bodies:
+                return None
+            return self._combine(bodies)
+        finally:
+            self._call_stack.pop()
 
     def _bind_args(self, params, arguments, ctx: EvalContext) -> dict[str, Any]:
         result = {}
@@ -595,7 +606,7 @@ class Evaluator:
         points = self._get_arg(args, 0, "points", None)
         faces = self._get_arg(args, 1, "faces", None)
         if points is None or faces is None:
-            self.error("polyhedron: 'points' and 'faces' are required")
+            self.error("polyhedron: 'points' and 'faces' are required", node)
             return None
         try:
             verts = np.array([[float(c) for c in p] for p in points], dtype=np.float32)
@@ -610,7 +621,7 @@ class Evaluator:
             body = m3d.Manifold(mesh)
             return self._tag(body, node, ctx)
         except Exception as e:
-            self.error(f"polyhedron: {e}")
+            self.error(f"polyhedron: {e}", node)
             return None
 
     def _builtin_offset(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -648,7 +659,7 @@ class Evaluator:
                 cs = m3d.CrossSection(polys, m3d.FillRule.Positive) if polys else raw
             return ColoredBody(section=cs, color=bodies_3d[0].color)
         except Exception as e:
-            self.error(f"projection: {e}")
+            self.error(f"projection: {e}", node)
             return None
 
     def _builtin_2d(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -672,7 +683,7 @@ class Evaluator:
                 points = self._get_arg(args, 0, "points", None)
                 paths = self._get_arg(args, 1, "paths", None)
                 if points is None:
-                    self.error("polygon: 'points' is required")
+                    self.error("polygon: 'points' is required", node)
                     return None
                 pts = [[float(p[0]), float(p[1])] for p in points]
                 if paths is None:
@@ -685,7 +696,7 @@ class Evaluator:
                 return None
             return ColoredBody(section=cs, color=ctx.color)
         except Exception as e:
-            self.error(f"{name}: {e}")
+            self.error(f"{name}: {e}", node)
             return None
 
     def _builtin_linear_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -710,7 +721,7 @@ class Evaluator:
                 body = body.translate([0, 0, -height / 2])
             return self._tag(body, node, ctx)
         except Exception as e:
-            self.error(f"linear_extrude: {e}")
+            self.error(f"linear_extrude: {e}", node)
             return None
 
     def _builtin_rotate_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -724,7 +735,7 @@ class Evaluator:
             body = cs.revolve(segs, angle)
             return self._tag(body, node, ctx)
         except Exception as e:
-            self.error(f"rotate_extrude: {e}")
+            self.error(f"rotate_extrude: {e}", node)
             return None
 
     def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -740,7 +751,7 @@ class Evaluator:
                 result = result.minkowski_sum(c.body)
             return ColoredBody(body=result, color=bodies_3d[0].color)
         except Exception as e:
-            self.error(f"minkowski: {e}")
+            self.error(f"minkowski: {e}", node)
             return None
 
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -977,7 +988,7 @@ class Evaluator:
             condition = args[0] if args else True
             if not condition:
                 msg = args[1] if len(args) > 1 else ""
-                raise EvalError(f"Assertion failed: {msg}")
+                self.error(f"Assertion failed: {msg}", node)
             return self._eval_expr(node.body, ctx)
         if isinstance(node, FunctionLiteral):
             return node  # lambda — store for later call
@@ -1174,9 +1185,7 @@ class Evaluator:
             if decl is not None:
                 return self._eval_user_function(name, decl, node.arguments, ctx, node)
             if func_node is None:
-                pos = getattr(node, 'position', None)
-                loc = f" at {pos.origin}:{pos.line}" if pos else ""
-                self.error(f"undefined function '{name}'{loc}")
+                self.error(f"undefined function '{name}'", node)
 
         return None
 
@@ -1235,7 +1244,7 @@ class Evaluator:
             child_ctx.dyn[f"__let_{k}"] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
-        self._call_stack.append((name, pos))
+        self._call_stack.append(("function", name, pos))
         try:
             return self._eval_expr(decl.expr, child_ctx)
         finally:

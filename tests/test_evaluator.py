@@ -341,8 +341,7 @@ class TestUserFunctions:
             run(src)
         msg = str(exc_info.value)
         assert "undefined function 'inner'" in msg
-        assert "Traceback" in msg
-        assert "in outer()" in msg
+        assert "called by function outer()" in msg
 
 
 # ---------------------------------------------------------------------------
