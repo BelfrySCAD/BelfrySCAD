@@ -366,6 +366,16 @@ The code editor, console, and debugger are `QDockWidget` instances — they can 
 
 Scale markers are tick marks along the viewport axes showing distance units (toggled by Show Scale Markers). Show Edges renders the full triangulation wireframe using `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera) and then draws edges at true depth in a second pass — this avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12` in each direction. Perspective/orthographic toggle uses `camera.orthographic`; the current state is persisted in QSettings.
 
+**Restoring settings to checkable actions**: Always use `blockSignals(True/False)` around `setChecked()` when restoring from QSettings, then call the handler explicitly. This avoids double-invocation (signal + explicit call) and ensures the handler fires even if the stored value matches the action's default. Example pattern used in `_restore_settings`:
+```python
+self._act_perspective.blockSignals(True)
+self._act_perspective.setChecked(perspective)
+self._act_perspective.blockSignals(False)
+self._toggle_perspective(perspective)
+```
+
+**New tabs must inherit viewport settings**: Every new `DocumentTab` is created with a fresh `Viewport` and `Camera` at their defaults. After connecting signals and before adding to the tab widget, call `_apply_perspective_to_tab(tab)` (and any future per-viewport settings) to match the current UI state. The `hasattr(self, '_act_perspective')` guard handles the one case where `_new_document()` is called during `__init__` before `_setup_menus()` finishes — but in practice the order is `_setup_menus()` then `_new_document()`, so the guard is defensive only.
+
 ## Menu Structure
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
