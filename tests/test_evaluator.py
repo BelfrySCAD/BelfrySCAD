@@ -129,16 +129,17 @@ class TestExpressions:
         assert lines == ["ECHO: 20"]
 
     def test_range(self):
+        # Ranges echo as lazy [start : step : end], not expanded
         _, lines = run("echo([1:3]);")
-        assert lines == ["ECHO: [1, 2, 3]"]
+        assert lines == ["ECHO: [1 : 1 : 3]"]
 
     def test_range_step(self):
         _, lines = run("echo([0:2:6]);")
-        assert lines == ["ECHO: [0, 2, 4, 6]"]
+        assert lines == ["ECHO: [0 : 2 : 6]"]
 
     def test_range_descending(self):
         _, lines = run("echo([5:-1:3]);")
-        assert lines == ["ECHO: [5, 4, 3]"]
+        assert lines == ["ECHO: [5 : -1 : 3]"]
 
 
 # ---------------------------------------------------------------------------
@@ -1036,8 +1037,13 @@ class TestListCompEdgeCases:
 
 class TestRangeEdgeCases:
     def test_range_zero_step(self):
-        # [start:0:end] — zero step produces empty list
+        # [start:0:end] echoes as a lazy range object (iteration yields nothing)
         _, lines = run("echo([1:0:5]);")
+        assert lines == ["ECHO: [1 : 0 : 5]"]
+
+    def test_range_zero_step_iteration(self):
+        # iterating a zero-step range produces no values
+        _, lines = run("echo([for (i=[1:0:5]) i]);")
         assert lines == ["ECHO: []"]
 
 
@@ -1256,13 +1262,13 @@ class TestNewBuiltins:
         assert lines == ["ECHO: false"]
 
     def test_search_string_single_char(self):
-        # Single-char string treated as char array → returns list with one result
-        _, lines = run('echo(search("b", ["a","b","c"]));')
+        # String match in string vector → char-by-char; single char in string
+        _, lines = run('echo(search("b", "abc"));')
         assert lines == ["ECHO: [1]"]
 
     def test_search_string_single_char_not_found(self):
         # Not found → [] per char, wrapped in outer list
-        _, lines = run('echo(search("z", ["a","b","c"]));')
+        _, lines = run('echo(search("z", "abc"));')
         assert lines == ["ECHO: [[]]"]
 
     def test_search_list(self):
@@ -1270,8 +1276,8 @@ class TestNewBuiltins:
         assert lines == ["ECHO: [1, 0]"]
 
     def test_search_string_as_char_array(self):
-        # Multi-char string: each char searched independently
-        _, lines = run('echo(search("ba", ["a","b","c"]));')
+        # Multi-char string: each char searched independently in a string vector
+        _, lines = run('echo(search("ba", "abcd"));')
         assert lines == ["ECHO: [1, 0]"]
 
     def test_search_string_num_returns_zero(self):
@@ -1715,6 +1721,7 @@ class TestSpecialVariables:
         _, lines = run('echo(is_num(version_num()));')
         assert lines == ["ECHO: true"]
 
-    def test_parent_module_returns_string(self):
-        _, lines = run('echo(is_string(parent_module()));')
+    def test_parent_module_at_toplevel(self):
+        # At top level, parent_module() returns undef (no parent)
+        _, lines = run('echo(is_undef(parent_module()));')
         assert lines == ["ECHO: true"]

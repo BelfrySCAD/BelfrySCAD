@@ -38,6 +38,36 @@ class EvalError(Exception):
     pass
 
 
+class OscRange:
+    """Lazy OpenSCAD range value — echoes as [start : step : end], iterable, indexable."""
+    __slots__ = ("start", "step", "end")
+
+    def __init__(self, start: float, step: float, end: float):
+        self.start = start
+        self.step = step
+        self.end = end
+
+    def __iter__(self):
+        if self.step == 0:
+            return
+        v = self.start
+        if self.step > 0:
+            while v <= self.end + 1e-10:
+                yield v
+                v += self.step
+        else:
+            while v >= self.end - 1e-10:
+                yield v
+                v += self.step
+
+    def __getitem__(self, idx: int):
+        items = list(self)
+        return items[idx] if 0 <= idx < len(items) else None
+
+    def __repr__(self):
+        return f"OscRange({self.start}, {self.step}, {self.end})"
+
+
 @dataclass
 class ColoredBody:
     """A Manifold body (3D) or CrossSection (2D) paired with an optional RGBA color."""
@@ -123,6 +153,8 @@ class Evaluator:
             return "undef"
         if isinstance(v, bool):
             return "true" if v else "false"
+        if isinstance(v, OscRange):
+            return f"[{v.start:g} : {v.step:g} : {v.end:g}]"
         if isinstance(v, float):
             return f"{v:g}"
         if isinstance(v, list):
@@ -809,6 +841,8 @@ class Evaluator:
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
                 values = []
+            elif isinstance(values, OscRange):
+                values = list(values)
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -839,7 +873,9 @@ class Evaluator:
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
                 return []
-            if not isinstance(values, list):
+            if isinstance(values, OscRange):
+                values = list(values)
+            elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
 
@@ -989,6 +1025,8 @@ class Evaluator:
         if isinstance(node, PrimaryIndex):
             obj = self._eval_expr(node.left, ctx)
             idx = self._eval_expr(node.index, ctx)
+            if isinstance(obj, OscRange) and isinstance(idx, (int, float)):
+                return obj[int(idx)]
             if isinstance(obj, (list, str)) and isinstance(idx, (int, float)):
                 try:
                     return obj[int(idx)]
@@ -1110,6 +1148,8 @@ class Evaluator:
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
                 values = []
+            elif isinstance(values, OscRange):
+                values = list(values)
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -1126,7 +1166,7 @@ class Evaluator:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
         return result
 
-    def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> list:
+    def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> OscRange:
         start = self._eval_expr(node.start, ctx)
 
         # Detect 2-part [start:end] vs 3-part [start:increment:end]:
@@ -1141,23 +1181,10 @@ class Evaluator:
             stop = self._eval_expr(node.end, ctx)
             increment = self._eval_expr(node.step, ctx)   # default 1.0
 
-        if increment is None or increment == 0:
-            return []
         start = float(start) if start is not None else 0.0
         stop = float(stop) if stop is not None else 0.0
-        increment = float(increment)
-
-        result = []
-        v = start
-        if increment > 0:
-            while v <= stop + 1e-10:
-                result.append(v)
-                v += increment
-        else:
-            while v >= stop - 1e-10:
-                result.append(v)
-                v += increment
-        return result
+        increment = float(increment) if increment is not None else 1.0
+        return OscRange(start, increment, stop)
 
     def _eval_function_call(self, node: PrimaryCall, ctx: EvalContext) -> Any:
         func_node = self._eval_expr(node.left, ctx)
@@ -1199,7 +1226,7 @@ class Evaluator:
             "lookup": self._builtin_lookup,
             "version": lambda: [2025, 1, 1],
             "version_num": lambda: 20250101,
-            "parent_module": lambda idx=0: "",
+            "parent_module": lambda idx=0: None,
         }
         if name and name in math_fns:
             positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
