@@ -265,6 +265,19 @@ There is no live preview. Full Manifold CSG processing runs when:
 
 The viewport always shows the result of the last render. While the user edits code, the viewport is static.
 
+## Threaded Rendering
+
+Parse + evaluate runs in a background `QThread` so the GUI stays responsive. The implementation uses two helper classes in `main_window.py`:
+
+- **`_RenderWorker(QObject)`** — moved to the worker thread via `moveToThread`; does the parse/evaluate work; emits `logged`, `parse_errored`, `finished`, and `done` signals
+- **`_RenderCallback(QObject)`** — stays in the main thread; has `@Slot` methods that receive the worker signals; Qt auto-detects the cross-thread boundary and uses `QueuedConnection`, so all callbacks run on the main thread
+
+**Do not connect worker signals to Python lambdas** — lambdas have no thread affinity, so Qt cannot determine which event loop to post to. Always route through a `QObject` slot with known thread affinity.
+
+**Cancellation**: `_render()` passes a `threading.Event` to the worker; the worker checks `cancel.is_set()` between major steps. A `render_id` integer is incremented on each new render; the callback discards results whose `render_id` no longer matches the current one.
+
+**Progress indicator**: an indeterminate `QProgressBar` in the status bar is shown while rendering and hidden when the worker's `done` signal fires. A `WaitCursor` override is set/restored at the same time.
+
 ## V1 Scope Boundaries
 
 **In scope**: Script editing, real-time 3D rendering, basic WYSIWYG drag interaction, CSG operations, graceful invalid-code handling.

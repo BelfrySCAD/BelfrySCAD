@@ -355,6 +355,8 @@ Parse → full Manifold CSG evaluation → watertight mesh → ModernGL viewport
 
 There is no live preview. The viewport shows the last render result while the user edits code.
 
+Parse + evaluate runs in a background thread so the GUI stays responsive during rendering. An indeterminate progress bar in the status bar and a wait cursor indicate that a render is in progress. If a new render is triggered while one is running, the previous render is cancelled cooperatively (checked between major pipeline steps).
+
 ---
 
 ## 6.2 WYSIWYG interaction
