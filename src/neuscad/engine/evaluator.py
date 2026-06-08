@@ -431,38 +431,67 @@ class Evaluator:
             return None
         body = self._combine(children)
 
+        if body.section is not None:
+            body.section = self._apply_transform_2d(name, args, body.section)
+        else:
+            body.body = self._apply_transform_3d(name, args, body.body)
+
+        return body
+
+    def _apply_transform_2d(self, name: str, args: dict, cs: "m3d.CrossSection") -> "m3d.CrossSection":
+        if name == "translate":
+            v = self._get_arg(args, 0, "v", [0, 0])
+            cs = cs.translate([float(v[0]), float(v[1])])
+        elif name == "rotate":
+            a = self._get_arg(args, 0, "a", 0)
+            # 2D rotation: scalar angle (Z), or [x,y,z] list → use Z component
+            if isinstance(a, list):
+                angle = float(a[2]) if len(a) > 2 else 0.0
+            else:
+                angle = float(a)
+            cs = cs.rotate(angle)
+        elif name == "scale":
+            v = self._get_arg(args, 0, "v", [1, 1])
+            if isinstance(v, (int, float)):
+                v = [float(v), float(v)]
+            cs = cs.scale([float(v[0]), float(v[1])])
+        elif name == "mirror":
+            v = self._get_arg(args, 0, "v", [1, 0])
+            cs = cs.mirror([float(v[0]), float(v[1])])
+        return cs
+
+    def _apply_transform_3d(self, name: str, args: dict, body: "m3d.Manifold") -> "m3d.Manifold":
         if name == "translate":
             v = self._get_arg(args, 0, "v", [0, 0, 0])
             v = self._to_vec3(v)
-            body.body = body.body.translate(v)
+            body = body.translate(v)
         elif name == "rotate":
             a = self._get_arg(args, 0, "a", 0)
             v = self._get_arg(args, 1, "v", None)
-            body.body = self._apply_rotate(body.body, a, v)
+            body = self._apply_rotate(body, a, v)
         elif name == "scale":
             v = self._get_arg(args, 0, "v", [1, 1, 1])
             if isinstance(v, (int, float)):
                 v = [v, v, v]
             v = [float(x) for x in v]
-            body.body = body.body.scale(v)
+            body = body.scale(v)
         elif name == "mirror":
             v = self._get_arg(args, 0, "v", [1, 0, 0])
             v = self._to_vec3(v)
-            body.body = body.body.mirror(v)
+            body = body.mirror(v)
         elif name == "resize":
             newsize = self._get_arg(args, 0, "newsize", [0, 0, 0])
             newsize = [float(x) for x in newsize]
-            bb = body.body.bounding_box()  # (xmin,ymin,zmin,xmax,ymax,zmax)
+            bb = body.bounding_box()  # (xmin,ymin,zmin,xmax,ymax,zmax)
             sx = newsize[0] / (bb[3] - bb[0]) if newsize[0] != 0 and (bb[3]-bb[0]) != 0 else 1
             sy = newsize[1] / (bb[4] - bb[1]) if newsize[1] != 0 and (bb[4]-bb[1]) != 0 else 1
             sz = newsize[2] / (bb[5] - bb[2]) if newsize[2] != 0 and (bb[5]-bb[2]) != 0 else 1
-            body.body = body.body.scale([sx, sy, sz])
+            body = body.scale([sx, sy, sz])
         elif name == "multmatrix":
             m = self._get_arg(args, 0, "m", None)
             if m is not None:
                 mat = self._to_matrix4x3(m)
-                body.body = body.body.transform(mat)
-
+                body = body.transform(mat)
         return body
 
     def _apply_rotate(self, body: m3d.Manifold, a, v) -> m3d.Manifold:

@@ -1521,3 +1521,200 @@ class Test2DCSG:
         bodies, _ = run(src)
         assert bodies[0].body is not None
         assert bodies[0].body.volume() > 0
+
+
+# ---------------------------------------------------------------------------
+# Error call chain — module errors
+# ---------------------------------------------------------------------------
+
+class TestModuleErrorCallChain:
+    def test_module_appears_in_chain(self):
+        src = """
+        module bad() { echo(undefined_fn()); }
+        bad();
+        """
+        with pytest.raises(EvalError) as exc_info:
+            run(src)
+        msg = str(exc_info.value)
+        assert "undefined function 'undefined_fn'" in msg
+        assert "called by module bad()" in msg
+
+    def test_nested_modules_in_chain(self):
+        src = """
+        module inner() { echo(nope()); }
+        module outer() { inner(); }
+        outer();
+        """
+        with pytest.raises(EvalError) as exc_info:
+            run(src)
+        msg = str(exc_info.value)
+        assert "called by module inner()" in msg
+        assert "called by module outer()" in msg
+
+    def test_function_inside_module_in_chain(self):
+        src = """
+        function bad() = nope();
+        module m() { echo(bad()); }
+        m();
+        """
+        with pytest.raises(EvalError) as exc_info:
+            run(src)
+        msg = str(exc_info.value)
+        assert "called by function bad()" in msg
+        assert "called by module m()" in msg
+
+
+# ---------------------------------------------------------------------------
+# Recursive user modules
+# ---------------------------------------------------------------------------
+
+class TestRecursiveModule:
+    def test_recursive_module_echo(self):
+        src = """
+        module countdown(n) {
+            if (n > 0) {
+                echo(n);
+                countdown(n - 1);
+            }
+        }
+        countdown(3);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 3", "ECHO: 2", "ECHO: 1"]
+
+    def test_recursive_module_geometry(self):
+        src = """
+        module stack(n, h=1) {
+            cube([1, 1, h]);
+            if (n > 1) { translate([0, 0, h]) stack(n - 1, h); }
+        }
+        stack(3);
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[5] == approx(3.0)  # max z = 3
+
+
+# ---------------------------------------------------------------------------
+# Scoping: last-wins and hoisting
+# ---------------------------------------------------------------------------
+
+class TestScoping:
+    def test_last_wins_in_block(self):
+        _, lines = run("x = 1; x = 7; echo(x);")
+        assert lines == ["ECHO: 7"]
+
+    def test_forward_reference_function(self):
+        src = "echo(double(5)); function double(x) = x * 2;"
+        _, lines = run(src)
+        assert lines == ["ECHO: 10"]
+
+    def test_forward_reference_module(self):
+        src = "box(3); module box(s) { cube(s); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(3)
+
+    def test_module_scope_isolates_variable(self):
+        src = """
+        x = 10;
+        module m() { x = 20; echo(x); }
+        m();
+        echo(x);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 20", "ECHO: 10"]
+
+
+# ---------------------------------------------------------------------------
+# Hull 2D
+# ---------------------------------------------------------------------------
+
+class TestHull2D:
+    def test_hull_two_circles_yields_section(self):
+        src = "hull() { circle(r=1, $fn=32); translate([4,0]) circle(r=1, $fn=32); }"
+        bodies, _ = run(src)
+        assert bodies[0].section is not None
+        assert bodies[0].body is None
+
+    def test_hull_2d_larger_than_parts(self):
+        import math
+        # Hull of two unit circles separated by 5 units, extruded to measure area
+        src = "linear_extrude(1) hull() { circle(r=1, $fn=64); translate([5,0]) circle(r=1, $fn=64); }"
+        bodies, _ = run(src)
+        vol = bodies[0].body.volume()
+        # Two separate circles would give ~2*pi ≈ 6.28; hull is strictly larger
+        assert vol > 2 * math.pi * 0.95
+
+
+# ---------------------------------------------------------------------------
+# str() and concat() edge cases
+# ---------------------------------------------------------------------------
+
+class TestStrEdgeCases:
+    def test_str_bool_true(self):
+        _, lines = run('echo(str(true));')
+        assert lines == ['ECHO: "true"']
+
+    def test_str_bool_false(self):
+        _, lines = run('echo(str(false));')
+        assert lines == ['ECHO: "false"']
+
+    def test_str_undef(self):
+        _, lines = run('echo(str(undef));')
+        assert lines == ['ECHO: "undef"']
+
+    def test_str_list(self):
+        _, lines = run('echo(str([1, 2, 3]));')
+        assert lines == ['ECHO: "[1, 2, 3]"']
+
+    def test_str_multi_arg_concatenates(self):
+        _, lines = run('echo(str(1, "+", 2, "=", 3));')
+        assert lines == ['ECHO: "1+2=3"']
+
+    def test_concat_two_lists(self):
+        _, lines = run('echo(concat([1, 2], [3, 4]));')
+        assert lines == ["ECHO: [1, 2, 3, 4]"]
+
+    def test_concat_list_and_scalar(self):
+        _, lines = run('echo(concat([1, 2], 3));')
+        assert lines == ["ECHO: [1, 2, 3]"]
+
+    def test_concat_three_lists(self):
+        _, lines = run('echo(concat([1], [2], [3]));')
+        assert lines == ["ECHO: [1, 2, 3]"]
+
+
+# ---------------------------------------------------------------------------
+# Special variables and stub built-ins
+# ---------------------------------------------------------------------------
+
+class TestSpecialVariables:
+    def test_fa_default(self):
+        _, lines = run('echo($fa);')
+        assert lines == ["ECHO: 12"]
+
+    def test_fs_default(self):
+        _, lines = run('echo($fs);')
+        assert lines == ["ECHO: 2"]
+
+    def test_fn_default(self):
+        _, lines = run('echo($fn);')
+        assert lines == ["ECHO: 0"]
+
+    def test_fn_override_via_named_arg(self):
+        # $fn set as named arg on a built-in should not crash
+        bodies, _ = run("sphere(r=1, $fn=8);")
+        assert bodies[0].body.volume() > 0
+
+    def test_version_returns_list(self):
+        _, lines = run('echo(is_list(version()));')
+        assert lines == ["ECHO: true"]
+
+    def test_version_num_returns_number(self):
+        _, lines = run('echo(is_num(version_num()));')
+        assert lines == ["ECHO: true"]
+
+    def test_parent_module_returns_string(self):
+        _, lines = run('echo(is_string(parent_module()));')
+        assert lines == ["ECHO: true"]
