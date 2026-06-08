@@ -975,6 +975,46 @@ class TestForBodyVars:
 class TestExpressionEdgeCases:
     def test_division_by_zero(self):
         _, lines = run("echo(1/0);")
+        assert lines == ["ECHO: inf"]
+
+    def test_neg_division_by_zero(self):
+        _, lines = run("echo(-1/0);")
+        assert lines == ["ECHO: -inf"]
+
+    def test_zero_division_by_zero(self):
+        _, lines = run("echo(0/0);")
+        assert lines == ["ECHO: nan"]
+
+    def test_bool_arithmetic_is_undef(self):
+        _, lines = run("echo(true + 1);")
+        assert lines == ["ECHO: undef"]
+
+    def test_bool_mul_is_undef(self):
+        _, lines = run("echo(true * 5);")
+        assert lines == ["ECHO: undef"]
+
+    def test_undef_comparison_lt(self):
+        _, lines = run("echo(undef < 1);")
+        assert lines == ["ECHO: undef"]
+
+    def test_sqrt_negative_is_nan(self):
+        _, lines = run("echo(sqrt(-1));")
+        assert lines == ["ECHO: nan"]
+
+    def test_ln_zero_is_neg_inf(self):
+        _, lines = run("echo(ln(0));")
+        assert lines == ["ECHO: -inf"]
+
+    def test_ln_negative_is_nan(self):
+        _, lines = run("echo(ln(-1));")
+        assert lines == ["ECHO: nan"]
+
+    def test_asin_out_of_range_is_nan(self):
+        _, lines = run("echo(asin(2));")
+        assert lines == ["ECHO: nan"]
+
+    def test_string_negative_index_is_undef(self):
+        _, lines = run('echo("hello"[-1]);')
         assert lines == ["ECHO: undef"]
 
     def test_index_out_of_bounds(self):

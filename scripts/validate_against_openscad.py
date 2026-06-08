@@ -170,14 +170,82 @@ CASES = [
     ("module_scope_isolation",  'x=10; module m() { x=20; echo(x); } m(); echo(x);'),
 
     # version / parent_module stubs
-    ("version_is_list",     'echo(is_list(version()));'),
-    ("version_num_is_num",  'echo(is_num(version_num()));'),
-    ("parent_module_str",   'echo(is_string(parent_module()));'),
+    ("version_is_list",         'echo(is_list(version()));'),
+    ("version_num_is_num",      'echo(is_num(version_num()));'),
+    ("parent_module_at_toplevel", 'echo(is_undef(parent_module()));'),
+
+    # Number edge cases
+    ("div_by_zero",         'echo(1/0);'),
+    ("neg_div_by_zero",     'echo(-1/0);'),
+    ("zero_div_zero",       'echo(0/0);'),
+    ("sqrt_negative",       'echo(sqrt(-1));'),
+    ("ln_zero",             'echo(ln(0));'),
+    ("ln_negative",         'echo(ln(-1));'),
+    ("asin_out_of_range",   'echo(asin(2));'),
+    ("float_precision",     'echo(1/3);'),
+    ("float_precision2",    'echo(100/3);'),
+    ("large_num",           'echo(1e15);'),
+    ("pow_zero_zero",       'echo(pow(0,0));'),
+
+    # Boolean arithmetic → undef
+    ("bool_add_undef",  'echo(is_undef(true + 1));'),
+    ("bool_mul_undef",  'echo(is_undef(true * 5));'),
+
+    # undef comparisons
+    ("undef_eq_undef",  'echo(undef == undef);'),
+    ("undef_eq_num",    'echo(undef == 1);'),
+    ("undef_lt_undef",  'echo(is_undef(undef < 1));'),
+
+    # String operations
+    ("string_len",          'echo(len("hello"));'),
+    ("string_index",        'echo("hello"[1]);'),
+    ("string_index_last",   'echo("hello"[4]);'),
+    ("string_neg_index",    'echo(is_undef("hello"[-1]));'),
+    ("string_lt",           'echo("a" < "b");'),
+    ("string_eq",           'echo("a" == "a");'),
+
+    # Range as variable
+    ("range_as_var",        'r=[1:3]; echo(r);'),
+    ("range_index",         'r=[1:3]; echo(r[0]);'),
+    ("range_index2",        'r=[1:3]; echo(r[2]);'),
+    ("range_is_not_list",   'echo(is_list([1:3]));'),
+    ("range_len_undef",     'echo(is_undef(len([1:3])));'),
+    ("range_zero_step",     'echo([1:0:5]);'),
+
+    # len edge cases
+    ("len_undef",   'echo(is_undef(len(undef)));'),
+    ("len_num",     'echo(is_undef(len(42)));'),
+    ("len_nested",  'echo(len([[1,2],[3,4]]));'),
+
+    # min/max with single list arg
+    ("min_list",    'echo(min([3,1,4,1,5]));'),
+    ("max_list",    'echo(max([3,1,4,1,5]));'),
+
+    # concat with strings (produces list, not concatenation)
+    ("concat_strings",  'echo(concat("ab","cd"));'),
+
+    # Nested list echo
+    ("nested_list",         'echo([[1,2],[3,4]]);'),
+    ("deeply_nested_list",  'echo([[[1]]]);'),
+
+    # each in listcomp
+    ("each_in_listcomp",    'echo([for (i=[[1,2],[3,4]]) each i]);'),
+
+    # nested for in listcomp
+    ("nested_for_listcomp", 'echo([for (i=[1:3]) for (j=[1:2]) [i,j]]);'),
+
+    # $children in module
+    ("dollar_children_zero",  'module m() { echo($children); } m();'),
+    ("dollar_children_one",   'module m() { echo($children); } m() sphere(1);'),
+    ("dollar_children_two",   'module m() { echo($children); } m() { sphere(1); cube(1); }'),
+
+    # search: list match for string-in-list
+    ("search_list_match",       'echo(search(["b"], ["a","b","c"]));'),
+    ("search_list_not_found",   'echo(search(["zzz"], ["a","b","c"]));'),
 
     # intersection_for
     ("intersection_for",
      'intersection_for(i=[0:2]) { translate([i,0,0]) cube([2,2,2]); }'
-     # geometry only — skip echo check
     ),
 ]
 

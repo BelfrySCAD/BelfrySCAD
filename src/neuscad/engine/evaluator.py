@@ -970,35 +970,72 @@ class Evaluator:
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
             if isinstance(a, list) and isinstance(b, list):
                 return [x + y for x, y in zip(a, b)]
-            return a + b
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            try:
+                return a + b
+            except TypeError:
+                return None
         if isinstance(node, SubtractionOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
             if isinstance(a, list) and isinstance(b, list):
                 return [x - y for x, y in zip(a, b)]
-            return a - b
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            try:
+                return a - b
+            except TypeError:
+                return None
         if isinstance(node, MultiplicationOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, list) and isinstance(b, (int, float)):
+            if isinstance(a, list) and isinstance(b, (int, float)) and not isinstance(b, bool):
                 return [x * b for x in a]
-            if isinstance(b, list) and isinstance(a, (int, float)):
+            if isinstance(b, list) and isinstance(a, (int, float)) and not isinstance(a, bool):
                 return [a * x for x in b]
-            return a * b
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            try:
+                return a * b
+            except TypeError:
+                return None
         if isinstance(node, DivisionOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if b == 0:
+            if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
                 return None
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            if b == 0:
+                if a == 0:
+                    return float('nan')
+                return math.copysign(float('inf'), a)
             return a / b
         if isinstance(node, ModuloOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return a % b
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            try:
+                return a % b
+            except (TypeError, ZeroDivisionError):
+                return None
         if isinstance(node, ExponentOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return a ** b
+            if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            try:
+                result = a ** b
+                return float('nan') if isinstance(result, complex) else result
+            except (TypeError, ZeroDivisionError):
+                return None
         if isinstance(node, UnaryMinusOp):
             v = self._eval_expr(node.expr, ctx)
             if isinstance(v, list):
                 return [-x for x in v]
-            return -v
+            if isinstance(v, bool):
+                return None
+            try:
+                return -v
+            except TypeError:
+                return None
         if isinstance(node, LogicalAndOp):
             return bool(self._eval_expr(node.left, ctx)) and bool(self._eval_expr(node.right, ctx))
         if isinstance(node, LogicalOrOp):
@@ -1006,17 +1043,31 @@ class Evaluator:
         if isinstance(node, LogicalNotOp):
             return not bool(self._eval_expr(node.expr, ctx))
         if isinstance(node, EqualityOp):
-            return self._eval_expr(node.left, ctx) == self._eval_expr(node.right, ctx)
+            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+            return a == b
         if isinstance(node, InequalityOp):
-            return self._eval_expr(node.left, ctx) != self._eval_expr(node.right, ctx)
+            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+            return a != b
         if isinstance(node, GreaterThanOp):
-            return self._eval_expr(node.left, ctx) > self._eval_expr(node.right, ctx)
+            try:
+                return self._eval_expr(node.left, ctx) > self._eval_expr(node.right, ctx)
+            except TypeError:
+                return None
         if isinstance(node, GreaterThanOrEqualOp):
-            return self._eval_expr(node.left, ctx) >= self._eval_expr(node.right, ctx)
+            try:
+                return self._eval_expr(node.left, ctx) >= self._eval_expr(node.right, ctx)
+            except TypeError:
+                return None
         if isinstance(node, LessThanOp):
-            return self._eval_expr(node.left, ctx) < self._eval_expr(node.right, ctx)
+            try:
+                return self._eval_expr(node.left, ctx) < self._eval_expr(node.right, ctx)
+            except TypeError:
+                return None
         if isinstance(node, LessThanOrEqualOp):
-            return self._eval_expr(node.left, ctx) <= self._eval_expr(node.right, ctx)
+            try:
+                return self._eval_expr(node.left, ctx) <= self._eval_expr(node.right, ctx)
+            except TypeError:
+                return None
         if isinstance(node, TernaryOp):
             cond = self._eval_expr(node.condition, ctx)
             return self._eval_expr(node.true_expr, ctx) if cond else self._eval_expr(node.false_expr, ctx)
@@ -1028,8 +1079,11 @@ class Evaluator:
             if isinstance(obj, OscRange) and isinstance(idx, (int, float)):
                 return obj[int(idx)]
             if isinstance(obj, (list, str)) and isinstance(idx, (int, float)):
+                i = int(idx)
+                if i < 0:
+                    return None  # OpenSCAD does not support negative indexing
                 try:
-                    return obj[int(idx)]
+                    return obj[i]
                 except IndexError:
                     return None
             return None
@@ -1195,24 +1249,27 @@ class Evaluator:
         math_fns = {
             "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
             "ceil": math.ceil, "floor": math.floor,
-            "round": round, "sqrt": math.sqrt, "ln": math.log,
-            "log": math.log10, "exp": math.exp,
+            "round": round,
+            "sqrt": lambda x: float('nan') if x < 0 else math.sqrt(x),
+            "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
+            "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),
+            "exp": math.exp,
             "sin": lambda x: math.sin(math.radians(x)),
             "cos": lambda x: math.cos(math.radians(x)),
             "tan": lambda x: math.tan(math.radians(x)),
-            "asin": lambda x: math.degrees(math.asin(x)),
-            "acos": lambda x: math.degrees(math.acos(x)),
+            "asin": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.asin(x)),
+            "acos": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.acos(x)),
             "atan": lambda x: math.degrees(math.atan(x)),
             "atan2": lambda y, x: math.degrees(math.atan2(y, x)),
             "max": max, "min": min,
-            "pow": pow,
+            "pow": lambda a, b: float('nan') if a < 0 and not float(b).is_integer() else pow(a, b),
             "norm": lambda v: math.sqrt(sum(x*x for x in v)),
             "cross": lambda a, b: [
                 a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]
             ],
             "rands": self._builtin_rands,
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
-            "len": len,
+            "len": lambda x: len(x) if isinstance(x, (list, str)) else None,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
             "chr": lambda x: chr(int(x)),
             "ord": lambda s: ord(s) if isinstance(s, str) and len(s) == 1 else None,
