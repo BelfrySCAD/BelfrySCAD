@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QStackedWidget,
+    QDockWidget, QStackedWidget, QProgressBar, QApplication,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, Signal, Slot
@@ -223,6 +223,10 @@ class _RenderCallback(QObject):
     def on_finished(self, bodies, id_to_node, elapsed_ms: float):
         self._mw._on_render_done(self._tab, bodies, id_to_node, elapsed_ms, self._render_id)
 
+    @Slot()
+    def on_done(self):
+        self._mw._set_render_busy(False)
+
 
 class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
@@ -424,6 +428,13 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
+
+        self._render_progress = QProgressBar()
+        self._render_progress.setRange(0, 0)  # indeterminate / busy mode
+        self._render_progress.setFixedWidth(120)
+        self._render_progress.setTextVisible(False)
+        self._render_progress.hide()
+        self._status_bar.addPermanentWidget(self._render_progress)
 
     @staticmethod
     def _toolbar_icon(name: str) -> QIcon:
@@ -1042,6 +1053,7 @@ class MainWindow(QMainWindow):
 
         cancel = threading.Event()
         self._render_cancel = cancel
+        self._set_render_busy(True)
 
         worker = _RenderWorker(source, tab.file_path, cancel)
         self._render_worker = worker  # keep alive while thread runs
@@ -1056,10 +1068,19 @@ class MainWindow(QMainWindow):
         worker.logged.connect(callback.on_logged)
         worker.parse_errored.connect(callback.on_parse_errored)
         worker.finished.connect(callback.on_finished)
+        worker.done.connect(callback.on_done)
         worker.done.connect(thread.quit)
         thread.finished.connect(thread.deleteLater)
 
         thread.start()
+
+    def _set_render_busy(self, busy: bool):
+        if busy:
+            self._render_progress.show()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        else:
+            self._render_progress.hide()
+            QApplication.restoreOverrideCursor()
 
     def _on_render_done(self, tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
         if render_id != self._render_id:
