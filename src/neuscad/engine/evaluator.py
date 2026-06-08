@@ -40,9 +40,10 @@ class EvalError(Exception):
 
 @dataclass
 class ColoredBody:
-    """A Manifold body paired with an optional RGBA color."""
-    body: m3d.Manifold
+    """A Manifold body (3D) or CrossSection (2D) paired with an optional RGBA color."""
+    body: Optional[m3d.Manifold] = None
     color: Optional[tuple[float, float, float, float]] = None  # RGBA 0-1
+    section: Optional[m3d.CrossSection] = None  # set for 2D primitives
 
 
 @dataclass
@@ -267,6 +268,10 @@ class Evaluator:
 
     def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         args = self._resolve_args(node.arguments, ctx)
+        # $-prefixed named args (e.g. $fn=32) override the dynamic context for this call
+        dyn_overrides = {k: v for k, v in args.items() if isinstance(k, str) and k.startswith("$")}
+        if dyn_overrides:
+            ctx = ctx.child_ctx(dyn={**ctx.dyn, **dyn_overrides})
 
         if name == "cube":
             return self._builtin_cube(args, node, ctx)
@@ -286,8 +291,16 @@ class Evaluator:
             return self._builtin_csg("intersection", node, ctx)
         if name == "hull":
             return self._builtin_hull(node, ctx)
+        if name == "minkowski":
+            return self._builtin_minkowski(node, ctx)
         if name == "polyhedron":
             return self._builtin_polyhedron(args, node, ctx)
+        if name in ("circle", "square", "polygon"):
+            return self._builtin_2d(name, args, node, ctx)
+        if name == "linear_extrude":
+            return self._builtin_linear_extrude(args, node, ctx)
+        if name == "rotate_extrude":
+            return self._builtin_rotate_extrude(args, node, ctx)
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return None
@@ -533,9 +546,15 @@ class Evaluator:
         children = self._eval_children(node.children, ctx)
         if not children:
             return None
-        bodies = [c.body for c in children]
-        result = m3d.Manifold.batch_hull(bodies)
-        return ColoredBody(body=result, color=children[0].color)
+        bodies_3d = [c.body for c in children if c.body is not None]
+        if bodies_3d:
+            result = m3d.Manifold.batch_hull(bodies_3d)
+            return ColoredBody(body=result, color=children[0].color)
+        sections = [c.section for c in children if c.section is not None]
+        if sections:
+            result = m3d.CrossSection.batch_hull(sections)
+            return ColoredBody(section=result, color=children[0].color)
+        return None
 
     def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         points = self._get_arg(args, 0, "points", None)
@@ -557,6 +576,98 @@ class Evaluator:
             return self._tag(body, node, ctx)
         except Exception as e:
             self.error(f"polyhedron: {e}")
+            return None
+
+    def _builtin_2d(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        segs = self._fn(ctx)
+        try:
+            if name == "circle":
+                r = self._get_arg(args, 0, "r", None)
+                d = self._get_arg(args, None, "d", None)
+                if d is not None:
+                    r = d / 2
+                if r is None:
+                    r = 1.0
+                cs = m3d.CrossSection.circle(float(r), segs)
+            elif name == "square":
+                size = self._get_arg(args, 0, "size", 1.0)
+                center = bool(self._get_arg(args, 1, "center", False))
+                if isinstance(size, (int, float)):
+                    size = [size, size]
+                cs = m3d.CrossSection.square([float(size[0]), float(size[1])], center)
+            elif name == "polygon":
+                points = self._get_arg(args, 0, "points", None)
+                paths = self._get_arg(args, 1, "paths", None)
+                if points is None:
+                    self.error("polygon: 'points' is required")
+                    return None
+                pts = [[float(p[0]), float(p[1])] for p in points]
+                if paths is None:
+                    contour = np.array(pts, dtype=np.float64)
+                    cs = m3d.CrossSection([contour])
+                else:
+                    contours = [np.array([pts[int(i)] for i in path], dtype=np.float64) for path in paths]
+                    cs = m3d.CrossSection(contours, m3d.FillRule.EvenOdd)
+            else:
+                return None
+            return ColoredBody(section=cs, color=ctx.color)
+        except Exception as e:
+            self.error(f"{name}: {e}")
+            return None
+
+    def _builtin_linear_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        cs = self._to_cross_section(children)
+        if cs is None:
+            return None
+        height = float(self._get_arg(args, 0, "height", 1.0))
+        center = bool(self._get_arg(args, None, "center", False))
+        twist = float(self._get_arg(args, None, "twist", 0.0))
+        slices = int(self._get_arg(args, None, "slices", 0))
+        scale = self._get_arg(args, None, "scale", None)
+        if scale is None:
+            scale_top = (1.0, 1.0)
+        elif isinstance(scale, (int, float)):
+            scale_top = (float(scale), float(scale))
+        else:
+            scale_top = (float(scale[0]), float(scale[1]))
+        try:
+            body = m3d.Manifold.extrude(cs, height, slices, twist, scale_top)
+            if center:
+                body = body.translate([0, 0, -height / 2])
+            return self._tag(body, node, ctx)
+        except Exception as e:
+            self.error(f"linear_extrude: {e}")
+            return None
+
+    def _builtin_rotate_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        cs = self._to_cross_section(children)
+        if cs is None:
+            return None
+        angle = float(self._get_arg(args, 0, "angle", 360.0))
+        segs = self._fn(ctx)
+        try:
+            body = cs.revolve(segs, angle)
+            return self._tag(body, node, ctx)
+        except Exception as e:
+            self.error(f"rotate_extrude: {e}")
+            return None
+
+    def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        bodies_3d = [c for c in children if c.body is not None]
+        if not bodies_3d:
+            return None
+        if len(bodies_3d) == 1:
+            return bodies_3d[0]
+        try:
+            result = bodies_3d[0].body
+            for c in bodies_3d[1:]:
+                result = result.minkowski_sum(c.body)
+            return ColoredBody(body=result, color=bodies_3d[0].color)
+        except Exception as e:
+            self.error(f"minkowski: {e}")
             return None
 
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -623,10 +734,30 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _combine(self, bodies: list[ColoredBody]) -> ColoredBody:
-        if len(bodies) == 1:
-            return bodies[0]
-        composed = m3d.Manifold.compose([b.body for b in bodies])
-        return ColoredBody(body=composed, color=bodies[0].color)
+        bodies_3d = [b for b in bodies if b.body is not None]
+        if bodies_3d:
+            if len(bodies_3d) == 1:
+                return bodies_3d[0]
+            composed = m3d.Manifold.compose([b.body for b in bodies_3d])
+            return ColoredBody(body=composed, color=bodies_3d[0].color)
+        # Pure 2D — union all cross sections
+        sections = [b.section for b in bodies if b.section is not None]
+        if not sections:
+            return ColoredBody(body=m3d.Manifold())
+        cs = sections[0]
+        for s in sections[1:]:
+            cs = cs + s
+        return ColoredBody(section=cs, color=bodies[0].color)
+
+    def _to_cross_section(self, children: list[ColoredBody]) -> Optional[m3d.CrossSection]:
+        """Union all 2D children into a single CrossSection. Returns None if no 2D children."""
+        sections = [c.section for c in children if c.section is not None]
+        if not sections:
+            return None
+        cs = sections[0]
+        for s in sections[1:]:
+            cs = cs + s
+        return cs
 
     # ------------------------------------------------------------------
     # Expression evaluator

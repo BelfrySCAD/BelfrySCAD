@@ -1291,3 +1291,94 @@ class TestNewBuiltins:
         bodies, _ = run(src)
         assert len(bodies) == 1
         assert abs(bodies[0].body.volume() - 1.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# 2D primitives, linear_extrude, rotate_extrude, minkowski
+# ---------------------------------------------------------------------------
+
+class Test2DAndExtrusion:
+    def test_circle_produces_section(self):
+        bodies, _ = run("circle(r=5);")
+        assert len(bodies) == 1
+        assert bodies[0].section is not None
+        assert bodies[0].section.area() > 0
+
+    def test_square_produces_section(self):
+        bodies, _ = run("square([3, 4]);")
+        assert len(bodies) == 1
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 12.0) < 0.01
+
+    def test_square_centered(self):
+        bodies, _ = run("square(2, center=true);")
+        bounds = bodies[0].section.bounds()
+        assert abs(bounds[0] - (-1.0)) < 1e-6  # min_x
+        assert abs(bounds[2] - 1.0) < 1e-6     # max_x
+
+    def test_polygon_triangle(self):
+        bodies, _ = run("polygon([[0,0],[1,0],[0,1]]);")
+        assert len(bodies) == 1
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 0.5) < 0.01
+
+    def test_polygon_with_hole(self):
+        # outer square minus inner square hole
+        src = "polygon(points=[[0,0],[4,0],[4,4],[0,4],[1,1],[3,1],[3,3],[1,3]], paths=[[0,1,2,3],[4,5,6,7]]);"
+        bodies, _ = run(src)
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 12.0) < 0.1  # 16 - 4
+
+    def test_linear_extrude_circle(self):
+        # Use $fn=64 to get close to analytic volume; 2% tolerance
+        src = "linear_extrude(height=5) circle(r=2, $fn=64);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].body is not None
+        import math
+        expected = math.pi * 4 * 5  # pi*r^2*h
+        assert abs(bodies[0].body.volume() - expected) / expected < 0.02
+
+    def test_linear_extrude_center(self):
+        src = "linear_extrude(height=4, center=true) square([2,2]);"
+        bodies, _ = run(src)
+        bb = bodies[0].body.bounding_box()  # (min_x, min_y, min_z, max_x, max_y, max_z)
+        assert abs(bb[2] - (-2.0)) < 0.01   # min_z
+        assert abs(bb[5] - 2.0) < 0.01      # max_z
+
+    def test_linear_extrude_twist(self):
+        src = "linear_extrude(height=10, twist=90, slices=20) square([2,2]);"
+        bodies, _ = run(src)
+        assert bodies[0].body.volume() > 0
+
+    def test_linear_extrude_scale(self):
+        # scale=0 at top → cone shape, volume less than full cylinder
+        src = "linear_extrude(height=3, scale=0) circle(r=1);"
+        bodies, _ = run(src)
+        assert bodies[0].body.volume() > 0
+
+    def test_rotate_extrude_full(self):
+        # revolve a 1x1 square at x=2 → torus-like; volume ≈ 2π²Rr² = 2π²*2.5*0.25
+        src = "rotate_extrude($fn=64) square([1,1], center=true);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].body is not None
+        assert bodies[0].body.volume() > 0
+
+    def test_rotate_extrude_partial(self):
+        src = "rotate_extrude(angle=180, $fn=32) square([1,1]);"
+        bodies, _ = run(src)
+        assert bodies[0].body.volume() > 0
+
+    def test_minkowski_inflates_cube(self):
+        # cube + sphere → rounded cube; volume > cube alone
+        src = "minkowski() { cube([2,2,2]); sphere(r=0.5, $fn=16); }"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() > 8.0  # more than the original cube
+
+    def test_minkowski_single_child(self):
+        # single child — just returns the child unchanged
+        src = "minkowski() { cube(2); }"
+        bodies, _ = run(src)
+        assert abs(bodies[0].body.volume() - 8.0) < 0.01
