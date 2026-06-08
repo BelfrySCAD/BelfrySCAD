@@ -443,6 +443,7 @@ class MainWindow(QMainWindow):
 
     def _make_toolbar(self):
         tb = QToolBar("Main")
+        tb.setObjectName("MainToolBar")
         tb.setIconSize(QSize(20, 20))
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
