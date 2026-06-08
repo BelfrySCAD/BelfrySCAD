@@ -236,10 +236,17 @@ Follows OpenSCAD semantics exactly:
 - `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — always use `.filepath.val` to get the actual path string.
 - "file not found" errors from library resolution (e.g. internal BOSL2 files already handled by the parser) are suppressed in the console to avoid noise.
 - `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` is caught around `build_scopes()` and `evaluate()` calls and treated as a runtime error (shows last-valid geometry).
+- **Ranges** are represented as an `OscRange(start, step, end)` object, not an expanded list. `echo([1:3])` prints `[1 : 1 : 3]`, not `[1, 2, 3]`. Ranges are expanded to a list only when iterated (in `for`, list comprehensions, `intersection_for`) or indexed with `[i]`. A zero-step range echoes as `[1 : 0 : 5]` and iterates to nothing.
+- **Boolean arithmetic** returns `undef` (`None`), not a number. OpenSCAD does not coerce `true`/`false` in arithmetic: `true + 1` → `undef`. The evaluator checks `isinstance(a, bool) or isinstance(b, bool)` before any arithmetic op.
+- **Division by zero** returns IEEE 754 values: `1/0` → `inf`, `-1/0` → `-inf`, `0/0` → `nan`. Math domain errors follow the same convention: `sqrt(-1)` → `nan`, `ln(0)` → `-inf`, `asin(2)` → `nan`.
+- **Negative string/list indexing** returns `undef` (`None`), not Python-style wraparound. `"hello"[-1]` → `undef`. The `PrimaryIndex` handler rejects any `i < 0`.
+- **Named args to built-in math functions** are mapped to positional order as a fallback (e.g. `abs(x=-3)` → `3`). The evaluator tries positional args first; if none, uses named args in declaration order.
+- **`parent_module()`** returns `undef` at the top level (not `""`).
 - `search()` has two distinct match modes based on the first argument's type:
-  - **String match**: treated as a character array — each character is searched independently; result has one entry per character. Only valid when the vector is also a string (char array). Searching a string against a list of strings gives `[]` + a warning in OpenSCAD (it tries to use `index_col` numerically and fails on string entries).
+  - **String match**: treated as a character array — each character is searched independently. With `num_returns=1` (default), not-found characters are **dropped** from the result list entirely (not included as `[]`). With `num_returns=0`, not-found characters are included as `[]`. Only valid when the vector is also a string.
   - **List match**: does direct equality comparison against each vector entry (or `vector[i][index_col]`). This is the correct idiom for finding a string in a list of strings: `search(["foo"], ["foo","bar","baz"])` → `[0]`.
   - **Scalar match**: returns a list of up to `num_returns` matching indices (`[]` if not found). `num_returns=0` returns all matches.
+- **Assert message format**: `to_openscad([cond_expr]).strip()` is used to recover the condition source text for the `Assertion 'expr' failed` message. This requires `from openscad_parser.ast import to_openscad`.
 
 ## Manifold API: Geometry Provenance
 
