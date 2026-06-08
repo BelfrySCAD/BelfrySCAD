@@ -1459,3 +1459,40 @@ class TestRemainingBuiltins:
         bodies, _ = run("render() cube(2);")
         assert len(bodies) == 1
         assert abs(bodies[0].body.volume() - 8.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# 2D CSG: union, difference, intersection on CrossSection children
+# ---------------------------------------------------------------------------
+
+class Test2DCSG:
+    def test_2d_union(self):
+        bodies, _ = run("union() { square([3,1]); square([1,3]); }")
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 5.0) < 0.01  # 3+3-1 overlap
+
+    def test_2d_difference(self):
+        bodies, _ = run("difference() { square([4,4]); square([2,2]); }")
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 12.0) < 0.01  # 16-4
+
+    def test_2d_intersection(self):
+        bodies, _ = run("intersection() { square([3,3]); circle(r=2, $fn=64); }")
+        assert bodies[0].section is not None
+        # intersection of 3x3 square and r=2 circle (area ~12.57) — circle wins in corners
+        import math
+        assert bodies[0].section.area() < math.pi * 4  # less than full circle
+
+    def test_2d_difference_with_circle(self):
+        # square with circle punched out
+        bodies, _ = run("difference() { square([4,4], center=true); circle(r=1, $fn=64); }")
+        import math
+        expected = 16.0 - math.pi
+        assert abs(bodies[0].section.area() - expected) / expected < 0.01
+
+    def test_2d_csg_then_extrude(self):
+        # 2D boolean then extrude to 3D
+        src = "linear_extrude(height=5) difference() { square([4,4]); circle(r=1, $fn=32); }"
+        bodies, _ = run(src)
+        assert bodies[0].body is not None
+        assert bodies[0].body.volume() > 0

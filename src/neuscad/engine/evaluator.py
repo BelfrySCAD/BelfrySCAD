@@ -550,16 +550,32 @@ class Evaluator:
         if len(children) == 1:
             return children[0]
 
-        result = children[0].body
-        for child in children[1:]:
-            if op == "union":
-                result = result + child.body
-            elif op == "difference":
-                result = result - child.body
-            elif op == "intersection":
-                result = result ^ child.body
+        bodies_3d = [c for c in children if c.body is not None]
+        sections_2d = [c for c in children if c.section is not None]
 
-        return ColoredBody(body=result, color=children[0].color)
+        if bodies_3d:
+            result = bodies_3d[0].body
+            for c in bodies_3d[1:]:
+                if op == "union":
+                    result = result + c.body
+                elif op == "difference":
+                    result = result - c.body
+                elif op == "intersection":
+                    result = result ^ c.body
+            return ColoredBody(body=result, color=bodies_3d[0].color)
+
+        if sections_2d:
+            result = sections_2d[0].section
+            for c in sections_2d[1:]:
+                if op == "union":
+                    result = result + c.section
+                elif op == "difference":
+                    result = result - c.section
+                elif op == "intersection":
+                    result = result ^ c.section
+            return ColoredBody(section=result, color=sections_2d[0].color)
+
+        return None
 
     def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         children = self._eval_children(node.children, ctx)
