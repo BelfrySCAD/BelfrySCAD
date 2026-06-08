@@ -163,7 +163,7 @@ Recursive AST walker with a built-ins dispatch table:
 
 **Extrusion** (2D → 3D): `linear_extrude`, `rotate_extrude`
 
-**Transforms** (apply to child geometry): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `offset`
+**Transforms** (apply to child geometry, 3D and 2D): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `offset`
 
 **Booleans** (3D or 2D, dispatched by child type): `union`, `difference`, `intersection`
 
@@ -194,6 +194,8 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 `ColoredBody` carries either a 3D `body: Manifold` or a 2D `section: CrossSection` (not both). 2D primitives (`circle`, `square`, `polygon`) return a `ColoredBody` with only `section` set. `linear_extrude` and `rotate_extrude` consume 2D children via `_to_cross_section()` (which unions all child sections) and return a 3D body. Boolean ops (`union`, `difference`, `intersection`) dispatch on whether children carry 3D bodies or 2D sections. `_combine()` is robust to mixed children — it uses 3D bodies if any are present, otherwise unions sections.
 
 `manifold3d.CrossSection` supports full 2D CSG: `+` (union), `-` (difference), `^` (intersection), `offset`, `hull`, `batch_hull`, `revolve`, `extrude`, and all 2D transforms. `CrossSection.to_polygons()` returns the contours for polygon construction.
+
+`_builtin_transform` dispatches on the child type: `_apply_transform_2d` handles `CrossSection` children (using `cs.translate`, `cs.rotate`, `cs.scale`, `cs.mirror`); `_apply_transform_3d` handles `Manifold` children. `resize` and `multmatrix` are 3D-only — 2D children are passed through unchanged for those two. This means `translate([4,0]) circle(r=1)` and similar 2D transform chains work correctly, including as inputs to `hull()`.
 
 ### Color propagation
 
@@ -229,6 +231,7 @@ Follows OpenSCAD semantics exactly:
 - `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — always use `.filepath.val` to get the actual path string.
 - "file not found" errors from library resolution (e.g. internal BOSL2 files already handled by the parser) are suppressed in the console to avoid noise.
 - `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` is caught around `build_scopes()` and `evaluate()` calls and treated as a runtime error (shows last-valid geometry).
+- `search()` treats a string first argument as a **character array** — each character is searched independently and the result is always a list with one entry per character (e.g. `search("ab", v)` → `[idx_a, idx_b]`). A scalar non-string `match` returns a list of up to `num_returns` indices (or `[]` if not found). `num_returns=0` returns all matches. This matches OpenSCAD semantics exactly.
 
 ## Manifold API: Geometry Provenance
 
