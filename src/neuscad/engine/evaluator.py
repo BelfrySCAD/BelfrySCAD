@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import manifold3d as m3d
 import numpy as np
 
+from openscad_parser.ast import to_openscad
 from openscad_parser.ast.nodes import (
     ASTNode, Assignment, Identifier,
     NumberLiteral, BooleanLiteral, StringLiteral, UndefinedLiteral,
@@ -102,7 +103,8 @@ class Evaluator:
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
-        self._call_stack: list[str] = []  # function name frames
+        # Module frames: ("module", name, call_pos, decl_pos); function frames: ("function", name, call_pos)
+        self._call_stack: list = []
         self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack) -> (cmd, mods)
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
@@ -123,27 +125,40 @@ class Evaluator:
                     except Exception:
                         pass
             scope = scope.parent
-        # _call_stack entries are (kind, name, pos) tuples
         cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack))
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
             raise EvalError("Debugging stopped.")
 
-    def error(self, msg: str, node=None):
-        # Attach source location of the failing node if available
-        pos = getattr(node, 'position', None) if node is not None else None
-        if pos is not None:
-            loc = f" at {pos.origin}:{pos.line}"
-        else:
-            loc = ""
-        header = f"ERROR: {msg}{loc}"
-        lines = [header]
-        for kind, fname, call_pos in reversed(self._call_stack):
-            if call_pos is not None:
-                lines.append(f"  called by {kind} {fname}() at {call_pos.origin}:{call_pos.line}")
+    @staticmethod
+    def _loc(pos) -> str:
+        if pos is None:
+            return ""
+        return f" in file {pos.origin}, line {pos.line}"
+
+    def _trace_lines(self, node=None, innermost_frame: str | None = None) -> list[str]:
+        """Build TRACE lines matching OpenSCAD's error/warning format."""
+        lines = []
+        node_pos = getattr(node, 'position', None) if node is not None else None
+        if innermost_frame:
+            lines.append(f"TRACE: called by '{innermost_frame}'{self._loc(node_pos)}")
+        for entry in reversed(self._call_stack):
+            kind = entry[0]
+            fname = entry[1]
+            call_pos = entry[2]
+            if kind == "module":
+                decl_pos = entry[3] if len(entry) > 3 else None
+                lines.append(f"TRACE: call of '{fname}()'{self._loc(decl_pos)}")
+                lines.append(f"TRACE: called by '{fname}'{self._loc(call_pos)}")
             else:
-                lines.append(f"  called by {kind} {fname}()")
+                lines.append(f"TRACE: called by '{fname}'{self._loc(call_pos)}")
+        return lines
+
+    def error(self, msg: str, node=None, innermost_frame: str | None = None):
+        pos = getattr(node, 'position', None) if node is not None else None
+        header = f"ERROR: {msg}{self._loc(pos)}"
+        lines = [header] + self._trace_lines(node, innermost_frame)
         full = "\n".join(lines)
         self._errors.append(full)
         raise EvalError(full)
@@ -225,8 +240,11 @@ class Evaluator:
             args = self._resolve_args(node.arguments, ctx)
             cond = self._get_arg(args, 0, "condition", True)
             if not cond:
-                msg = self._get_arg(args, 1, "message", "")
-                self.error(f"Assertion failed: {msg}", node)
+                raw = node.arguments
+                cond_text = to_openscad([raw[0].expr]).strip() if raw else "false"
+                msg = self._get_arg(args, 1, "message", None)
+                err = f"Assertion '{cond_text}' failed" + (f': "{msg}"' if msg is not None else "")
+                self.error(err, node, innermost_frame="assert")
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
             return self._eval_statement(node.child, ctx)
@@ -288,8 +306,9 @@ class Evaluator:
         self._apply_defaults(params, child_ctx, ctx)
 
         name = call.name.name
-        pos = getattr(call, 'position', None)
-        self._call_stack.append(("module", name, pos))
+        call_pos = getattr(call, 'position', None)
+        decl_pos = getattr(decl, 'position', None)
+        self._call_stack.append(("module", name, call_pos, decl_pos))
         try:
             module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
             bodies = self._eval_children(module_body, child_ctx)
@@ -370,7 +389,11 @@ class Evaluator:
             return None
         if name == "children":
             return self._builtin_children(args, ctx)
-        # Unknown — skip silently
+        # Unknown module — warn with call stack, matching OpenSCAD's WARNING format
+        pos = getattr(node, 'position', None)
+        warn = f"WARNING: Ignoring unknown module '{name}'{self._loc(pos)}"
+        trace = self._trace_lines(node)
+        self._echo_fn("\n".join([warn] + trace))
         return None
 
     def _resolve_args(self, arguments, ctx: EvalContext) -> dict:
@@ -1105,11 +1128,13 @@ class Evaluator:
             self._do_echo(node.arguments, ctx)
             return self._eval_expr(node.body, ctx)
         if isinstance(node, AssertOp):
-            args = [self._eval_expr(a.expr, ctx) for a in node.arguments]
-            condition = args[0] if args else True
+            raw = node.arguments
+            condition = self._eval_expr(raw[0].expr, ctx) if raw else True
             if not condition:
-                msg = args[1] if len(args) > 1 else ""
-                self.error(f"Assertion failed: {msg}", node)
+                cond_text = to_openscad([raw[0].expr]).strip() if raw else "false"
+                msg = self._eval_expr(raw[1].expr, ctx) if len(raw) > 1 else None
+                err = f"Assertion '{cond_text}' failed" + (f': "{msg}"' if msg is not None else "")
+                self.error(err, node, innermost_frame="assert")
             return self._eval_expr(node.body, ctx)
         if isinstance(node, FunctionLiteral):
             return node  # lambda — store for later call

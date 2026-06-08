@@ -342,7 +342,7 @@ class TestUserFunctions:
             run(src)
         msg = str(exc_info.value)
         assert "undefined function 'inner'" in msg
-        assert "called by function outer()" in msg
+        assert "called by 'outer'" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -1192,7 +1192,7 @@ class TestExpressionOps:
     def test_assert_op_message(self):
         # assert(false, "msg") — error message included in EvalError
         import pytest
-        with pytest.raises(Exception, match="Assertion failed"):
+        with pytest.raises(Exception, match="Assertion 'false' failed"):
             run('x = assert(false, "msg") 5; echo(x);')
 
 
@@ -1522,7 +1522,7 @@ class TestRemainingBuiltins:
 
     def test_modular_assert_fails(self):
         import pytest
-        with pytest.raises(Exception, match="Assertion failed"):
+        with pytest.raises(Exception, match="Assertion 'false' failed"):
             run("assert(false, \"bad\") cube(1);")
 
     def test_render_passthrough(self):
@@ -1583,7 +1583,7 @@ class TestModuleErrorCallChain:
             run(src)
         msg = str(exc_info.value)
         assert "undefined function 'undefined_fn'" in msg
-        assert "called by module bad()" in msg
+        assert "called by 'bad'" in msg
 
     def test_nested_modules_in_chain(self):
         src = """
@@ -1594,8 +1594,8 @@ class TestModuleErrorCallChain:
         with pytest.raises(EvalError) as exc_info:
             run(src)
         msg = str(exc_info.value)
-        assert "called by module inner()" in msg
-        assert "called by module outer()" in msg
+        assert "called by 'inner'" in msg
+        assert "called by 'outer'" in msg
 
     def test_function_inside_module_in_chain(self):
         src = """
@@ -1606,8 +1606,8 @@ class TestModuleErrorCallChain:
         with pytest.raises(EvalError) as exc_info:
             run(src)
         msg = str(exc_info.value)
-        assert "called by function bad()" in msg
-        assert "called by module m()" in msg
+        assert "called by 'bad'" in msg
+        assert "called by 'm'" in msg
 
 
 # ---------------------------------------------------------------------------

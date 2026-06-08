@@ -205,14 +205,19 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 Runtime errors raise `EvalError` and are reported to the console; the last-valid geometry is kept in the viewport.
 
-Error format:
+Error format matches OpenSCAD's output exactly:
 ```
-ERROR: <message> at <file>:<line>
-  called by module foo() at <file>:<line>
-  called by function bar() at <file>:<line>
+ERROR: Assertion 'false' failed: "message" in file foo.scad, line 5
+TRACE: called by 'assert' in file foo.scad, line 5
+TRACE: call of 'inner()' in file foo.scad, line 4
+TRACE: called by 'inner' in file foo.scad, line 2
+TRACE: call of 'outer()' in file foo.scad, line 1
+TRACE: called by 'outer' in file foo.scad, line 7
 ```
 
-`_call_stack` entries are `(kind, name, pos)` tuples where `kind` is `"module"` or `"function"`. Both user module calls and user function calls push/pop the stack. `error(msg, node=None)` accepts the failing AST node to extract its source position.
+Unknown modules emit `WARNING: Ignoring unknown module 'name' in file ..., line n` followed by the same TRACE lines, without raising an exception.
+
+`_call_stack` entries: modules use 4-tuples `("module", name, call_pos, decl_pos)` where `call_pos` is the call site and `decl_pos` is where the module declaration starts; functions use 3-tuples `("function", name, call_pos)`. `error(msg, node=None, innermost_frame=None)` accepts the failing AST node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line.
 
 ### Special variable scoping (`$variables`)
 
