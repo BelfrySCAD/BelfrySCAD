@@ -1255,17 +1255,43 @@ class TestNewBuiltins:
         _, lines = run("echo(is_num(true));")
         assert lines == ["ECHO: false"]
 
-    def test_search_scalar_found(self):
+    def test_search_string_single_char(self):
+        # Single-char string treated as char array → returns list with one result
         _, lines = run('echo(search("b", ["a","b","c"]));')
-        assert lines == ["ECHO: 1"]
+        assert lines == ["ECHO: [1]"]
 
-    def test_search_scalar_not_found(self):
+    def test_search_string_single_char_not_found(self):
+        # Not found → [] per char, wrapped in outer list
         _, lines = run('echo(search("z", ["a","b","c"]));')
-        assert lines == ["ECHO: []"]
+        assert lines == ["ECHO: [[]]"]
 
     def test_search_list(self):
         _, lines = run('echo(search(["b","a"], ["a","b","c"]));')
         assert lines == ["ECHO: [1, 0]"]
+
+    def test_search_string_as_char_array(self):
+        # Multi-char string: each char searched independently
+        _, lines = run('echo(search("ba", ["a","b","c"]));')
+        assert lines == ["ECHO: [1, 0]"]
+
+    def test_search_string_num_returns_zero(self):
+        # num_returns=0 → all matches per char
+        _, lines = run('echo(search("a", "abcdabcd", 0));')
+        assert lines == ["ECHO: [[0, 4]]"]
+
+    def test_search_string_in_string(self):
+        # Single char in string vector
+        _, lines = run('echo(search("a", "abcdabcd"));')
+        assert lines == ["ECHO: [0]"]
+
+    def test_search_numeric_scalar(self):
+        # Numeric (non-string) scalar: returns list of up to num_returns matches
+        _, lines = run('echo(search(2, [1,2,3,2]));')
+        assert lines == ["ECHO: [1]"]
+
+    def test_search_numeric_not_found(self):
+        _, lines = run('echo(search(9, [1,2,3]));')
+        assert lines == ["ECHO: []"]
 
     def test_polyhedron_tetrahedron(self):
         # Simple tetrahedron — should produce a valid mesh with non-zero volume

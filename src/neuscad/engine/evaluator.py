@@ -1195,20 +1195,46 @@ class Evaluator:
         return [random.uniform(float(minval), float(maxval)) for _ in range(int(n))]
 
     def _builtin_search(self, match, vector, num_returns=1, index_col=0):
-        """OpenSCAD search(): find positions of match value(s) in vector."""
-        def _find(val, vec, col):
+        """OpenSCAD search(): find positions of match value(s) in vector.
+
+        Strings are treated as character arrays — each character is searched
+        independently, mirroring OpenSCAD semantics.
+        """
+        num_returns = int(num_returns)
+        col = int(index_col)
+
+        def _find_all(val):
             results = []
-            for i, item in enumerate(vec):
+            for i, item in enumerate(vector):
                 target = item[col] if isinstance(item, list) else item
                 if target == val:
                     results.append(i)
-                    if num_returns != 0 and len(results) >= int(num_returns):
-                        break
-            return results[0] if num_returns == 1 and results else results
+            return results
 
-        if isinstance(match, list):
-            return [_find(m, vector, int(index_col)) for m in match]
-        return _find(match, vector, int(index_col))
+        def _result_for(val):
+            """Result for one element in a list/string match context."""
+            matches = _find_all(val)
+            if num_returns == 1:
+                return matches[0] if matches else []
+            elif num_returns == 0:
+                return matches
+            else:
+                return matches[:num_returns]
+
+        if isinstance(match, str):
+            # String → character array: search for each char independently
+            return [_result_for(c) for c in match]
+        elif isinstance(match, list):
+            return [_result_for(m) for m in match]
+        else:
+            # Scalar number: always return a list of matching indices
+            matches = _find_all(match)
+            if num_returns == 1:
+                return matches[:1]      # [idx] or []
+            elif num_returns == 0:
+                return matches
+            else:
+                return matches[:num_returns]
 
     def _builtin_lookup(self, key, table):
         """Linear interpolation lookup in a [[key, value], ...] table."""
