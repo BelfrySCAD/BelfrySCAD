@@ -231,7 +231,10 @@ Follows OpenSCAD semantics exactly:
 - `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — always use `.filepath.val` to get the actual path string.
 - "file not found" errors from library resolution (e.g. internal BOSL2 files already handled by the parser) are suppressed in the console to avoid noise.
 - `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` is caught around `build_scopes()` and `evaluate()` calls and treated as a runtime error (shows last-valid geometry).
-- `search()` treats a string first argument as a **character array** — each character is searched independently and the result is always a list with one entry per character (e.g. `search("ab", v)` → `[idx_a, idx_b]`). A scalar non-string `match` returns a list of up to `num_returns` indices (or `[]` if not found). `num_returns=0` returns all matches. This matches OpenSCAD semantics exactly.
+- `search()` has two distinct match modes based on the first argument's type:
+  - **String match**: treated as a character array — each character is searched independently; result has one entry per character. Only valid when the vector is also a string (char array). Searching a string against a list of strings gives `[]` + a warning in OpenSCAD (it tries to use `index_col` numerically and fails on string entries).
+  - **List match**: does direct equality comparison against each vector entry (or `vector[i][index_col]`). This is the correct idiom for finding a string in a list of strings: `search(["foo"], ["foo","bar","baz"])` → `[0]`.
+  - **Scalar match**: returns a list of up to `num_returns` matching indices (`[]` if not found). `num_returns=0` returns all matches.
 
 ## Manifold API: Geometry Provenance
 
