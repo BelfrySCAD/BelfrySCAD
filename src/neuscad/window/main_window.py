@@ -655,6 +655,8 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        if hasattr(self, '_act_perspective'):
+            self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -752,6 +754,7 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
@@ -865,6 +868,7 @@ class MainWindow(QMainWindow):
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
         self._editor_stack.addWidget(tab.editor)
+        self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         self._update_recent_files(path)
@@ -1400,7 +1404,9 @@ class MainWindow(QMainWindow):
         if state is not None:
             self.restoreState(state)
         perspective = s.value("perspective", True, type=bool)
+        self._act_perspective.blockSignals(True)
         self._act_perspective.setChecked(perspective)
+        self._act_perspective.blockSignals(False)
         self._toggle_perspective(perspective)
 
     def closeEvent(self, event):
@@ -1408,6 +1414,9 @@ class MainWindow(QMainWindow):
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
         super().closeEvent(event)
+
+    def _apply_perspective_to_tab(self, tab):
+        tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()
 
     def _toggle_perspective(self, perspective: bool):
         tab = self._current_tab()
