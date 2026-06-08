@@ -151,25 +151,49 @@ Recursive AST walker with a built-ins dispatch table:
 1. For each `ModularCall` node: look up via `scope.lookup_module(name)`
    - If `None` (not user-defined) → dispatch to built-ins table
    - If found → recursively evaluate the module body in a new child scope
-2. For each `Identifier` in an expression: call `scope.lookup_variable(name)` then evaluate the bound value
+2. For each `Identifier` in an expression: call `scope.lookup_variable(name)` then evaluate the bound value; if not found in variable namespace, fall back to `scope.lookup_function(name)` — this allows passing named functions as values (required for `is_function()`)
 3. For each function call: look up via `scope.lookup_function(name)`, evaluate args in caller's scope, evaluate body in new scope
 4. Default parameter values are evaluated in the **caller's** scope, not the callee's
 
-### Built-ins the evaluator must implement
+### Built-ins implemented
 
-**Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`
+**3D Primitives** (→ `ColoredBody.body`): `cube`, `sphere`, `cylinder`, `polyhedron`
 
-**Transforms** (→ apply to child geometry): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
+**2D Primitives** (→ `ColoredBody.section`): `circle`, `square`, `polygon`
 
-**Booleans** (→ Manifold CSG ops): `union`, `difference`, `intersection`
+**Extrusion** (2D → 3D): `linear_extrude`, `rotate_extrude`
 
-**Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
+**Transforms** (apply to child geometry): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `offset`
 
-**Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution for curved surfaces. OpenSCAD defaults: `$fn=0`, `$fa=12`, `$fs=2`.
+**Booleans** (3D or 2D, dispatched by child type): `union`, `difference`, `intersection`
+
+**Topology**: `hull`, `minkowski`, `projection`
+
+**Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`
+
+**Math functions**: `abs`, `sign`, `ceil`, `floor`, `round`, `sqrt`, `ln`, `log`, `exp`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `min`, `max`, `pow`, `norm`, `cross`, `rands`, `lookup`
+
+**String / list functions**: `str`, `chr`, `ord`, `concat`, `len`, `search`
+
+**Type checks**: `is_undef`, `is_bool`, `is_num`, `is_string`, `is_list`, `is_function`
+
+**Constants**: `PI`
+
+**Other**: `version`, `version_num`, `parent_module` (stub)
+
+**Not yet implemented**: `text`, `surface`, `import` (warn and return None)
+
+**Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` is set to the child count when entering a user module body. `$`-prefixed named arguments in any call (e.g. `sphere(r=2, $fn=64)`) are merged into the dynamic context for that call and its children.
 
 ### originalID assignment
 
 Each geometry-producing node (primitives and their transform/boolean ancestors) is assigned a unique Manifold `originalID` via `ReserveIDs`. The evaluator builds and returns the `originalID → AST node` lookup table alongside the Manifold mesh.
+
+### 2D geometry
+
+`ColoredBody` carries either a 3D `body: Manifold` or a 2D `section: CrossSection` (not both). 2D primitives (`circle`, `square`, `polygon`) return a `ColoredBody` with only `section` set. `linear_extrude` and `rotate_extrude` consume 2D children via `_to_cross_section()` (which unions all child sections) and return a 3D body. Boolean ops (`union`, `difference`, `intersection`) dispatch on whether children carry 3D bodies or 2D sections. `_combine()` is robust to mixed children — it uses 3D bodies if any are present, otherwise unions sections.
+
+`manifold3d.CrossSection` supports full 2D CSG: `+` (union), `-` (difference), `^` (intersection), `offset`, `hull`, `batch_hull`, `revolve`, `extrude`, and all 2D transforms. `CrossSection.to_polygons()` returns the contours for polygon construction.
 
 ### Color propagation
 
@@ -177,7 +201,16 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 ### Error handling
 
-Runtime errors (undefined variable, wrong argument count, type mismatch, etc.) are reported to the console and evaluation is aborted — the last-valid geometry is kept in the viewport. This mirrors the same fallback behavior used for parse errors.
+Runtime errors raise `EvalError` and are reported to the console; the last-valid geometry is kept in the viewport.
+
+Error format:
+```
+ERROR: <message> at <file>:<line>
+  called by module foo() at <file>:<line>
+  called by function bar() at <file>:<line>
+```
+
+`_call_stack` entries are `(kind, name, pos)` tuples where `kind` is `"module"` or `"function"`. Both user module calls and user function calls push/pop the stack. `error(msg, node=None)` accepts the failing AST node to extract its source position.
 
 ### Special variable scoping (`$variables`)
 
@@ -199,7 +232,7 @@ Follows OpenSCAD semantics exactly:
 
 ## Manifold API: Geometry Provenance
 
-Manifold tracks geometry provenance through CSG operations via the `MeshGL` output structure. The key fields after any boolean op:
+Manifold tracks geometry provenance through CSG operations via the `Mesh` output structure (the Python bindings use `m3d.Mesh`, not `MeshGL`). The key fields after any boolean op:
 
 | Field | Meaning |
 |---|---|
@@ -207,7 +240,7 @@ Manifold tracks geometry provenance through CSG operations via the `MeshGL` outp
 | `run_index` | Boundaries of runs in the triangle array |
 | `face_id` | Which source triangle each output triangle derives from |
 
-Each Manifold body constructed from scratch receives a unique auto-incremented `originalID`. After a CSG boolean (e.g., `body1 - body2`), output triangles are organized into **runs** tagged with the `originalID` of their contributing input body. Use `ReserveIDs(n)` to pre-allocate a contiguous block of IDs for complex sub-assemblies.
+Each Manifold body constructed from scratch receives a unique auto-incremented `originalID`. After a CSG boolean (e.g., `body1 - body2`), output triangles are organized into **runs** tagged with the `originalID` of their contributing input body.
 
 ### AST ↔ Geometry ID Mapping Pattern
 
@@ -230,10 +263,18 @@ import manifold3d as m3d
 body = m3d.Manifold.cube()          # primitives auto-get an originalID
 result = body1 - body2              # CSG ops preserve provenance
 
-mesh = result.to_mesh()             # MeshGL output
+mesh = result.to_mesh()             # Mesh output (not MeshGL)
 mesh.run_original_id                # numpy array: source ID per run
 mesh.run_index                      # numpy array: run boundaries
-mesh.face_id                        # numpy array: source face per triangle (optional)
+
+# 2D
+cs = m3d.CrossSection.circle(r, segs)   # 2D primitive
+cs2 = cs1 + cs2                         # union; - = difference; ^ = intersection
+cs.offset(delta, m3d.JoinType.Round)    # morphological offset
+body = m3d.Manifold.extrude(cs, height) # 2D → 3D
+body = cs.revolve(segs, angle)          # revolve around Y axis (→ Z in output)
+cs = body.project()                     # 3D → 2D outline
+cs = body.slice(z)                      # cross-section at height z
 ```
 
 ## Color Support
