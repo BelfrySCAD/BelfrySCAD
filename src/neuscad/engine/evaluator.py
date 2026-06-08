@@ -24,7 +24,7 @@ from openscad_parser.ast.nodes import (
     PrimaryCall, PrimaryIndex, PrimaryMember,
     RangeLiteral,
     ModularCall, ModularIf, ModularIfElse, ModularFor, ModularLet,
-    ModularEcho, ModularAssert,
+    ModularEcho, ModularAssert, ModularIntersectionFor,
     ModularModifierShowOnly, ModularModifierHighlight,
     ModularModifierBackground, ModularModifierDisable,
     ModuleDeclaration, FunctionDeclaration, ParameterDeclaration,
@@ -177,12 +177,19 @@ class Evaluator:
             return self._eval_children(node.false_branch, ctx)
         if isinstance(node, ModularFor):
             return self._eval_for(node, ctx)
+        if isinstance(node, ModularIntersectionFor):
+            return self._eval_intersection_for(node, ctx)
         if isinstance(node, ModularLet):
             return self._eval_let_block(node, ctx)
         if isinstance(node, ModularEcho):
             self._do_echo(node.arguments, ctx)
             return []
         if isinstance(node, ModularAssert):
+            args = self._resolve_args(node.arguments, ctx)
+            cond = self._get_arg(args, 0, "condition", True)
+            if not cond:
+                msg = self._get_arg(args, 1, "message", "")
+                self.error(f"Assertion failed: {msg}")
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
             return self._eval_statement(node.child, ctx)
@@ -233,6 +240,7 @@ class Evaluator:
             scope=child_scope,
             children_bodies=caller_bodies,
         )
+        child_ctx.dyn["$children"] = len(caller_bodies)
         # Bind all args; $-prefixed go into dyn directly, others as __let_
         for k, v in args.items():
             if k.startswith("$"):
@@ -297,10 +305,21 @@ class Evaluator:
             return self._builtin_polyhedron(args, node, ctx)
         if name in ("circle", "square", "polygon"):
             return self._builtin_2d(name, args, node, ctx)
+        if name == "offset":
+            return self._builtin_offset(args, node, ctx)
+        if name == "projection":
+            return self._builtin_projection(args, node, ctx)
         if name == "linear_extrude":
             return self._builtin_linear_extrude(args, node, ctx)
         if name == "rotate_extrude":
             return self._builtin_rotate_extrude(args, node, ctx)
+        if name == "render":
+            # render() is a display hint; just pass through children
+            children = self._eval_children(node.children, ctx)
+            return self._combine(children) if children else None
+        if name in ("text", "surface", "import"):
+            self._echo_fn(f"WARNING: {name}() is not yet implemented")
+            return None
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return None
@@ -578,6 +597,44 @@ class Evaluator:
             self.error(f"polyhedron: {e}")
             return None
 
+    def _builtin_offset(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        cs = self._to_cross_section(children)
+        if cs is None:
+            return None
+        r = self._get_arg(args, None, "r", None)
+        delta = self._get_arg(args, None, "delta", None)
+        chamfer = bool(self._get_arg(args, None, "chamfer", False))
+        segs = self._fn(ctx)
+        if r is not None:
+            result = cs.offset(float(r), m3d.JoinType.Round, circular_segments=segs)
+        elif delta is not None:
+            jt = m3d.JoinType.Miter if chamfer else m3d.JoinType.Square
+            result = cs.offset(float(delta), jt)
+        else:
+            return children[0] if children else None
+        return ColoredBody(section=result, color=ctx.color)
+
+    def _builtin_projection(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        bodies_3d = [c for c in children if c.body is not None]
+        if not bodies_3d:
+            return None
+        combined = self._combine(bodies_3d).body
+        cut = bool(self._get_arg(args, None, "cut", False))
+        try:
+            if cut:
+                cs = combined.slice(0.0)
+            else:
+                raw = combined.project()
+                # project() may produce self-intersecting polygons; re-fill to clean up
+                polys = raw.to_polygons()
+                cs = m3d.CrossSection(polys, m3d.FillRule.Positive) if polys else raw
+            return ColoredBody(section=cs, color=bodies_3d[0].color)
+        except Exception as e:
+            self.error(f"projection: {e}")
+            return None
+
     def _builtin_2d(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         segs = self._fn(ctx)
         try:
@@ -718,6 +775,45 @@ class Evaluator:
         for v in values:
             for tail in self._cartesian(rest):
                 yield [(name, v)] + tail
+
+    def _eval_intersection_for(self, node: ModularIntersectionFor, ctx: EvalContext) -> list[ColoredBody]:
+        var_seqs: list[tuple[str, list]] = []
+        for assign in node.assignments:
+            name = assign.name.name
+            values = self._eval_expr(assign.expr, ctx)
+            if values is None:
+                return []
+            if not isinstance(values, list):
+                values = [values]
+            var_seqs.append((name, values))
+
+        body_node = node.body if isinstance(node.body, list) else [node.body]
+        iterations = []
+        for combo in self._cartesian(var_seqs):
+            loop_ctx = ctx.child_ctx()
+            for vname, val in combo:
+                loop_ctx.dyn[f"__let_{vname}"] = val
+            children = self._eval_children(body_node, loop_ctx)
+            if children:
+                iterations.append(self._combine(children))
+
+        if not iterations:
+            return []
+        # Intersect all iteration results
+        bodies_3d = [c for c in iterations if c.body is not None]
+        if bodies_3d:
+            result = bodies_3d[0].body
+            for c in bodies_3d[1:]:
+                result = result ^ c.body  # intersection
+            return [ColoredBody(body=result, color=bodies_3d[0].color)]
+        # 2D intersection
+        sections = [c.section for c in iterations if c.section is not None]
+        if sections:
+            result = sections[0]
+            for s in sections[1:]:
+                result = result ^ s
+            return [ColoredBody(section=result, color=iterations[0].color)]
+        return []
 
     # --- let ---
 
@@ -1044,8 +1140,10 @@ class Evaluator:
             "is_list": lambda x: isinstance(x, list),
             "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
             "search": self._builtin_search,
+            "lookup": self._builtin_lookup,
             "version": lambda: [2025, 1, 1],
             "version_num": lambda: 20250101,
+            "parent_module": lambda idx=0: "",
         }
         if name and name in math_fns:
             positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
@@ -1086,6 +1184,23 @@ class Evaluator:
         if isinstance(match, list):
             return [_find(m, vector, int(index_col)) for m in match]
         return _find(match, vector, int(index_col))
+
+    def _builtin_lookup(self, key, table):
+        """Linear interpolation lookup in a [[key, value], ...] table."""
+        if not table:
+            return 0
+        pairs = sorted(table, key=lambda p: p[0])
+        if key <= pairs[0][0]:
+            return pairs[0][1]
+        if key >= pairs[-1][0]:
+            return pairs[-1][1]
+        for i in range(len(pairs) - 1):
+            k0, v0 = pairs[i]
+            k1, v1 = pairs[i + 1]
+            if k0 <= key <= k1:
+                t = (key - k0) / (k1 - k0)
+                return v0 + t * (v1 - v0)
+        return 0
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
         """Bind default values for any params not already set in child_ctx.dyn."""

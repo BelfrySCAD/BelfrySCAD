@@ -1382,3 +1382,80 @@ class Test2DAndExtrusion:
         src = "minkowski() { cube(2); }"
         bodies, _ = run(src)
         assert abs(bodies[0].body.volume() - 8.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# offset, projection, intersection_for, lookup, $children, ModularAssert
+# ---------------------------------------------------------------------------
+
+class TestRemainingBuiltins:
+    def test_offset_r_expands(self):
+        # round offset of unit square by 1 should have area > 1
+        bodies, _ = run("offset(r=1) square([2,2]);")
+        assert bodies[0].section is not None
+        assert bodies[0].section.area() > 4.0
+
+    def test_offset_negative_shrinks(self):
+        bodies, _ = run("offset(r=-0.5) square([4,4]);")
+        assert bodies[0].section.area() < 16.0
+
+    def test_offset_delta_square_corners(self):
+        bodies, _ = run("offset(delta=1) square([2,2]);")
+        assert bodies[0].section.area() > 4.0
+
+    def test_projection_cut_false(self):
+        # project a cube → roughly square cross section
+        bodies, _ = run("projection() cube([3,4,5]);")
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 12.0) < 0.1
+
+    def test_projection_cut_true(self):
+        # cut at z=0 through a cube starting at z=-1 → cross section at z=0
+        bodies, _ = run("projection(cut=true) translate([0,0,-1]) cube([3,4,2]);")
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 12.0) < 0.1
+
+    def test_intersection_for(self):
+        # intersection of three rotated cubes → rounded shape with less volume than a single cube
+        src = "intersection_for(i=[0:2]) rotate([0,0,i*60]) cube([10,2,10], center=true);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert 0 < bodies[0].body.volume() < 200
+
+    def test_lookup_interpolates(self):
+        _, lines = run("echo(lookup(0.5, [[0,0],[1,10]]));")
+        assert lines == ["ECHO: 5"]
+
+    def test_lookup_clamps_low(self):
+        _, lines = run("echo(lookup(-1, [[0,0],[1,10]]));")
+        assert lines == ["ECHO: 0"]
+
+    def test_lookup_clamps_high(self):
+        _, lines = run("echo(lookup(5, [[0,0],[1,10]]));")
+        assert lines == ["ECHO: 10"]
+
+    def test_children_count(self):
+        src = "module m() { echo($children); } m() { cube(1); sphere(1); }"
+        _, lines = run(src)
+        assert lines == ["ECHO: 2"]
+
+    def test_children_count_zero(self):
+        src = "module m() { echo($children); } m();"
+        _, lines = run(src)
+        assert lines == ["ECHO: 0"]
+
+    def test_modular_assert_passes(self):
+        # assert with true condition — children pass through, no error
+        bodies, _ = run("assert(true) cube(1);")
+        assert len(bodies) == 0  # modular assert has no geometry of its own
+
+    def test_modular_assert_fails(self):
+        import pytest
+        with pytest.raises(Exception, match="Assertion failed"):
+            run("assert(false, \"bad\") cube(1);")
+
+    def test_render_passthrough(self):
+        # render() is a display hint — just passes through children
+        bodies, _ = run("render() cube(2);")
+        assert len(bodies) == 1
+        assert abs(bodies[0].body.volume() - 8.0) < 0.01
