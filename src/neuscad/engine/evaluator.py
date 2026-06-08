@@ -741,7 +741,10 @@ class Evaluator:
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
                 result.extend(self._eval_list_comp_body(branch, ctx))
             elif isinstance(elem, ListCompLet):
-                pass  # TODO: let in list comp
+                let_ctx = ctx.child_ctx()
+                for assign in elem.assignments:
+                    let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+                result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
                 v = self._eval_expr(elem.body, ctx)
                 if isinstance(v, list):
@@ -759,6 +762,11 @@ class Evaluator:
             return self._eval_list_comp(body, ctx)
         if isinstance(body, ListCompFor):
             return self._eval_listcomp_for(body, ctx)
+        if isinstance(body, ListCompLet):
+            let_ctx = ctx.child_ctx()
+            for assign in body.assignments:
+                let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+            return self._eval_list_comp_body(body.body, let_ctx)
         if isinstance(body, ListCompIf):
             if self._eval_expr(body.condition, ctx):
                 return self._eval_list_comp_body(body.true_expr, ctx)
