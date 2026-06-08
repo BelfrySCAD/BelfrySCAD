@@ -705,6 +705,11 @@ class Evaluator:
             self._do_echo(node.arguments, ctx)
             return self._eval_expr(node.body, ctx)
         if isinstance(node, AssertOp):
+            args = [self._eval_expr(a.expr, ctx) for a in node.arguments]
+            condition = args[0] if args else True
+            if not condition:
+                msg = args[1] if len(args) > 1 else ""
+                raise EvalError(f"Assertion failed: {msg}")
             return self._eval_expr(node.body, ctx)
         if isinstance(node, FunctionLiteral):
             return node  # lambda — store for later call
@@ -748,18 +753,17 @@ class Evaluator:
             elif isinstance(elem, ListCompEach):
                 v = self._eval_expr(elem.body, ctx)
                 if isinstance(v, list):
-                    for item in v:
-                        if isinstance(item, list):
-                            result.extend(item)
-                        else:
-                            result.append(item)
+                    result.extend(v)
+                elif v is not None:
+                    result.append(v)
             else:
                 result.append(self._eval_expr(elem, ctx))
         return result
 
     def _eval_list_comp_body(self, body, ctx: EvalContext) -> list:
         if isinstance(body, ListComprehension):
-            return self._eval_list_comp(body, ctx)
+            # Bracketed body is a single element — wrap so caller's extend adds it as one item.
+            return [self._eval_list_comp(body, ctx)]
         if isinstance(body, ListCompFor):
             return self._eval_listcomp_for(body, ctx)
         if isinstance(body, ListCompLet):
