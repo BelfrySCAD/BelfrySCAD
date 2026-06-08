@@ -4,6 +4,7 @@ Returns (manifold_body, id_to_node, colored_meshes) or raises EvalError.
 """
 from __future__ import annotations
 import math
+import random
 from typing import Any, Optional
 from dataclasses import dataclass, field
 
@@ -285,6 +286,8 @@ class Evaluator:
             return self._builtin_csg("intersection", node, ctx)
         if name == "hull":
             return self._builtin_hull(node, ctx)
+        if name == "polyhedron":
+            return self._builtin_polyhedron(args, node, ctx)
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return None
@@ -534,6 +537,28 @@ class Evaluator:
         result = m3d.Manifold.batch_hull(bodies)
         return ColoredBody(body=result, color=children[0].color)
 
+    def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        points = self._get_arg(args, 0, "points", None)
+        faces = self._get_arg(args, 1, "faces", None)
+        if points is None or faces is None:
+            self.error("polyhedron: 'points' and 'faces' are required")
+            return None
+        try:
+            verts = np.array([[float(c) for c in p] for p in points], dtype=np.float32)
+            # Triangulate faces (fan triangulation for convex polygons)
+            tris = []
+            for face in faces:
+                face = list(face)
+                for i in range(1, len(face) - 1):
+                    tris.append([face[0], face[i], face[i + 1]])
+            tri_arr = np.array(tris, dtype=np.uint32)
+            mesh = m3d.Mesh(vert_properties=verts, tri_verts=tri_arr)
+            body = m3d.Manifold(mesh)
+            return self._tag(body, node, ctx)
+        except Exception as e:
+            self.error(f"polyhedron: {e}")
+            return None
+
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
         if not ctx.children_bodies:
             return None
@@ -716,8 +741,13 @@ class Evaluator:
         # Unknown — return None
         return None
 
+    _CONSTANTS = {"PI": math.pi}
+
     def _eval_identifier(self, node: Identifier, ctx: EvalContext) -> Any:
         name = node.name
+        # Built-in constants
+        if name in self._CONSTANTS:
+            return self._CONSTANTS[name]
         # Dynamic variable ($fn etc.)
         if name.startswith("$") and name in ctx.dyn:
             return ctx.dyn[name]
@@ -728,6 +758,10 @@ class Evaluator:
         # Lexical variable
         decl = ctx.scope.lookup_variable(name)
         if decl is None:
+            # Fall back to function namespace — allows is_function(f) and passing functions as values
+            fn_decl = ctx.scope.lookup_function(name)
+            if fn_decl is not None:
+                return fn_decl
             return None
         if isinstance(decl, ParameterDeclaration):
             # Params are bound via __let_ above; reaching here means no value was provided and no default
@@ -849,7 +883,8 @@ class Evaluator:
 
         # Built-in math functions
         math_fns = {
-            "abs": abs, "ceil": math.ceil, "floor": math.floor,
+            "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
+            "ceil": math.ceil, "floor": math.floor,
             "round": round, "sqrt": math.sqrt, "ln": math.log,
             "log": math.log10, "exp": math.exp,
             "sin": lambda x: math.sin(math.radians(x)),
@@ -865,16 +900,21 @@ class Evaluator:
             "cross": lambda a, b: [
                 a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]
             ],
+            "rands": self._builtin_rands,
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": len,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
             "chr": lambda x: chr(int(x)),
             "ord": lambda s: ord(s) if isinstance(s, str) and len(s) == 1 else None,
             "is_undef": lambda x: x is None,
-            "is_num": lambda x: isinstance(x, (int, float)),
+            "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool),
             "is_bool": lambda x: isinstance(x, bool),
             "is_string": lambda x: isinstance(x, str),
             "is_list": lambda x: isinstance(x, list),
+            "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
+            "search": self._builtin_search,
+            "version": lambda: [2025, 1, 1],
+            "version_num": lambda: 20250101,
         }
         if name and name in math_fns:
             positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
@@ -894,6 +934,27 @@ class Evaluator:
                 self.error(f"undefined function '{name}'{loc}")
 
         return None
+
+    def _builtin_rands(self, minval, maxval, n, seed=None):
+        if seed is not None:
+            random.seed(int(seed))
+        return [random.uniform(float(minval), float(maxval)) for _ in range(int(n))]
+
+    def _builtin_search(self, match, vector, num_returns=1, index_col=0):
+        """OpenSCAD search(): find positions of match value(s) in vector."""
+        def _find(val, vec, col):
+            results = []
+            for i, item in enumerate(vec):
+                target = item[col] if isinstance(item, list) else item
+                if target == val:
+                    results.append(i)
+                    if num_returns != 0 and len(results) >= int(num_returns):
+                        break
+            return results[0] if num_returns == 1 and results else results
+
+        if isinstance(match, list):
+            return [_find(m, vector, int(index_col)) for m in match]
+        return _find(match, vector, int(index_col))
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
         """Bind default values for any params not already set in child_ctx.dyn."""

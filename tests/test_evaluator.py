@@ -1206,3 +1206,88 @@ class TestListCompEach:
         # a has one element: [[1,2],[3,4]]; each a yields that element as-is
         _, lines = run("a = [[[1,2],[3,4]]]; echo([each a]);")
         assert lines == ["ECHO: [[[1, 2], [3, 4]]]"]
+
+
+# ---------------------------------------------------------------------------
+# New built-ins: sign, rands, PI, is_function, search, polyhedron
+# ---------------------------------------------------------------------------
+
+class TestNewBuiltins:
+    def test_sign_positive(self):
+        _, lines = run("echo(sign(5));")
+        assert lines == ["ECHO: 1"]
+
+    def test_sign_negative(self):
+        _, lines = run("echo(sign(-3));")
+        assert lines == ["ECHO: -1"]
+
+    def test_sign_zero(self):
+        _, lines = run("echo(sign(0));")
+        assert lines == ["ECHO: 0"]
+
+    def test_PI_constant(self):
+        _, lines = run("echo(PI);")
+        assert len(lines) == 1
+        assert abs(float(lines[0].replace("ECHO: ", "")) - 3.14159265) < 1e-5
+
+    def test_rands_length(self):
+        _, lines = run("v = rands(0, 1, 5); echo(len(v));")
+        assert lines == ["ECHO: 5"]
+
+    def test_rands_range(self):
+        _, lines = run("v = rands(10, 20, 3, 42); echo(v[0] >= 10 && v[0] <= 20);")
+        assert lines == ["ECHO: true"]
+
+    def test_rands_seeded_deterministic(self):
+        _, lines1 = run("v = rands(0, 100, 4, 123); echo(v);")
+        _, lines2 = run("v = rands(0, 100, 4, 123); echo(v);")
+        assert lines1 == lines2
+
+    def test_is_function_true(self):
+        _, lines = run("function f(x) = x*2; echo(is_function(f));")
+        assert lines == ["ECHO: true"]
+
+    def test_is_function_false_on_num(self):
+        _, lines = run("echo(is_function(42));")
+        assert lines == ["ECHO: false"]
+
+    def test_is_num_excludes_bool(self):
+        # bool is not a number in OpenSCAD
+        _, lines = run("echo(is_num(true));")
+        assert lines == ["ECHO: false"]
+
+    def test_search_scalar_found(self):
+        _, lines = run('echo(search("b", ["a","b","c"]));')
+        assert lines == ["ECHO: 1"]
+
+    def test_search_scalar_not_found(self):
+        _, lines = run('echo(search("z", ["a","b","c"]));')
+        assert lines == ["ECHO: []"]
+
+    def test_search_list(self):
+        _, lines = run('echo(search(["b","a"], ["a","b","c"]));')
+        assert lines == ["ECHO: [1, 0]"]
+
+    def test_polyhedron_tetrahedron(self):
+        # Simple tetrahedron — should produce a valid mesh with non-zero volume
+        src = """
+        polyhedron(
+          points=[[0,0,0],[1,0,0],[0,1,0],[0,0,1]],
+          faces=[[0,2,1],[0,1,3],[0,3,2],[1,2,3]]
+        );
+        """
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() > 0
+
+    def test_polyhedron_cube_equiv(self):
+        # 6-face polyhedron matching a unit cube at origin should have volume ~1
+        src = """
+        polyhedron(
+          points=[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]],
+          faces=[[0,3,2,1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]
+        );
+        """
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert abs(bodies[0].body.volume() - 1.0) < 0.01
