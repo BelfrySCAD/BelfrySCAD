@@ -55,8 +55,9 @@ class DebugSession(QObject):
     """Runs the evaluator in a daemon worker thread, pausing at breakpoints."""
 
     # All emitted from the worker thread — PySide6 queues these to the main thread.
-    paused = Signal(int, object, object)   # line (1-indexed), locals dict, call_stack list
-    finished = Signal(object, object)      # bodies, id_to_node
+    paused = Signal(int, object, object)        # line, all_frame_locals (list, innermost first), call_stack
+    assert_failed = Signal(int, object, object) # line, all_frame_locals, call_stack
+    finished = Signal(object, object)           # bodies, id_to_node
     errored = Signal(str)
 
     def __init__(self, parent=None):
@@ -87,7 +88,7 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        def hook(line: int, locals_dict: dict, call_stack: list) -> tuple[str, dict]:
+        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -109,7 +110,7 @@ class DebugSession(QObject):
             self._step_over_depth = None
             self._step_out_depth = None
 
-            self.paused.emit(line, dict(locals_dict), list(call_stack))
+            self.paused.emit(line, list(all_frame_locals), list(call_stack))
             self._pause_event.clear()
             self._pause_event.wait()
 
@@ -131,9 +132,20 @@ class DebugSession(QObject):
             return ("continue", mods)   # evaluator only needs to know about "stop"
         return hook
 
+    def _assert_break(self, line: int, all_frame_locals: list, call_stack: list):
+        """Called by the evaluator when an assert fails in debug mode.
+        Pauses so the user can inspect state; returns when the user resumes.
+        The EvalError is raised by the evaluator after this returns.
+        """
+        if self._stopped:
+            return
+        self.assert_failed.emit(line, list(all_frame_locals), list(call_stack))
+        self._pause_event.clear()
+        self._pause_event.wait()
+
     def _run(self, nodes, root_scope, echo_fn):
         from neuscad.engine.evaluator import Evaluator, EvalError
-        ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook())
+        ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook(), assert_break_fn=self._assert_break)
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope)
             if not self._stopped:
@@ -173,6 +185,7 @@ class DebuggerPane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._original_locals: dict[str, str] = {}
+        self._all_frame_locals: list[dict] = []
         self._setup_ui()
         self.setMinimumWidth(180)
 
@@ -251,14 +264,17 @@ class DebuggerPane(QWidget):
         self._btn_step_over.clicked.connect(self.step_over_requested)
         self._btn_step_out.clicked.connect(self.step_out_requested)
         self._btn_stop.clicked.connect(self.stop_requested)
+        self._stack_list.currentRowChanged.connect(self._on_frame_selected)
 
     def get_modifications(self) -> dict:
-        """Return any variable values the user edited in the table."""
+        """Return variable values the user edited in the innermost-frame vars table."""
         mods = {}
         for row in range(self._vars_table.rowCount()):
             name_item = self._vars_table.item(row, 0)
             val_item = self._vars_table.item(row, 1)
             if name_item and val_item:
+                if not (val_item.flags() & Qt.ItemFlag.ItemIsEditable):
+                    continue  # parent-frame rows are read-only; skip
                 name = name_item.text()
                 new_str = val_item.text()
                 if new_str != self._original_locals.get(name, ""):
@@ -267,17 +283,19 @@ class DebuggerPane(QWidget):
                         mods[name] = parsed
         return mods
 
-    def set_paused(self, line: int, locals_dict: dict, call_stack: list):
-        self._status.setText(f"Paused at line {line}")
-        self._original_locals = {k: _fmt(v) for k, v in locals_dict.items()}
-
+    def _populate_stack(self, call_stack: list):
+        self._stack_list.blockSignals(True)
         self._stack_list.clear()
-        for fname, pos in reversed(call_stack):
-            if pos is not None:
-                self._stack_list.addItem(f"{fname}()  line {getattr(pos, 'line', '?')}")
-            else:
-                self._stack_list.addItem(f"{fname}()")
+        for entry in reversed(call_stack):
+            name = entry[1]
+            call_pos = entry[2]
+            line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
+            self._stack_list.addItem(f"{name}()  line {line_str}")
+        self._stack_list.blockSignals(False)
+        if self._stack_list.count() > 0:
+            self._stack_list.setCurrentRow(0)
 
+    def _populate_vars(self, locals_dict: dict, editable: bool = True):
         self._vars_table.setRowCount(0)
         for name in sorted(locals_dict):
             row = self._vars_table.rowCount()
@@ -285,11 +303,41 @@ class DebuggerPane(QWidget):
             name_item = QTableWidgetItem(name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 0, name_item)
-            self._vars_table.setItem(row, 1, QTableWidgetItem(_fmt(locals_dict[name])))
+            val_item = QTableWidgetItem(_fmt(locals_dict[name]))
+            if not editable:
+                val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._vars_table.setItem(row, 1, val_item)
 
+    def _on_frame_selected(self, row: int):
+        if row < 0 or row >= len(self._all_frame_locals):
+            return
+        # Row 0 is the innermost (current) frame — editable. Others are read-only.
+        self._populate_vars(self._all_frame_locals[row], editable=(row == 0))
+
+    def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
+        self._status.setText(f"Paused at line {line}")
+        self._all_frame_locals = all_frame_locals
+        innermost = all_frame_locals[0] if all_frame_locals else {}
+        self._original_locals = {k: _fmt(v) for k, v in innermost.items()}
+        self._populate_stack(call_stack)
+        self._populate_vars(innermost, editable=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_out, self._btn_stop):
             btn.setEnabled(True)
+
+    def set_assert_failed(self, line: int, all_frame_locals: list, call_stack: list):
+        self._status.setText(f"Assert failed at line {line}")
+        self._all_frame_locals = all_frame_locals
+        innermost = all_frame_locals[0] if all_frame_locals else {}
+        self._original_locals = {}  # no modifications allowed after assert failure
+        self._populate_stack(call_stack)
+        self._populate_vars(innermost, editable=False)
+        # Only Continue and Stop make sense — step buttons don't apply
+        self._btn_continue.setEnabled(True)
+        self._btn_step_into.setEnabled(False)
+        self._btn_step_over.setEnabled(False)
+        self._btn_step_out.setEnabled(False)
+        self._btn_stop.setEnabled(True)
 
     def set_running(self):
         self._status.setText("Running…")

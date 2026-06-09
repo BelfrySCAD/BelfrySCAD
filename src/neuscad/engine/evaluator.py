@@ -99,13 +99,22 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self, echo_fn=None, debug_hook=None):
+    def __init__(self, echo_fn=None, debug_hook=None, assert_break_fn=None):
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
         # Module frames: ("module", name, call_pos, decl_pos); function frames: ("function", name, call_pos)
         self._call_stack: list = []
-        self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack) -> (cmd, mods)
+        # EvalContext for each live call-stack frame (parallel to _call_stack)
+        self._frame_ctxs: list = []
+        self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack, all_frame_locals) -> (cmd, mods)
+        self._assert_break_fn = assert_break_fn  # callable(line, all_frame_locals, call_stack); raises or returns
+        self._last_locals: dict = {}
+        self._last_all_frame_locals: list = []
+
+    def _extract_frame_locals(self, frame_ctx) -> dict:
+        """Extract named locals from a frame context's dynamic bindings."""
+        return {k[6:]: v for k, v in frame_ctx.dyn.items() if k.startswith('__let_')}
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
         if self._debug_hook is None:
@@ -125,7 +134,16 @@ class Evaluator:
                     except Exception:
                         pass
             scope = scope.parent
-        cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack))
+
+        # Build per-frame locals list: innermost first (row 0 = current frame)
+        all_frame_locals = [dict(locals_dict)]
+        for frame_ctx in reversed(self._frame_ctxs[:-1]):   # parent frames, inner→outer
+            all_frame_locals.append(self._extract_frame_locals(frame_ctx))
+
+        self._last_locals = dict(locals_dict)
+        self._last_all_frame_locals = all_frame_locals
+
+        cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack), all_frame_locals)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
@@ -161,6 +179,9 @@ class Evaluator:
         lines = [header] + self._trace_lines(node, innermost_frame)
         full = "\n".join(lines)
         self._errors.append(full)
+        if innermost_frame == "assert" and self._assert_break_fn is not None:
+            line = getattr(pos, 'line', 0) if pos else 0
+            self._assert_break_fn(int(line), self._last_all_frame_locals, list(self._call_stack))
         raise EvalError(full)
 
     def _fmt_val(self, v) -> str:
@@ -195,6 +216,7 @@ class Evaluator:
     def evaluate(self, nodes: list[ASTNode], root_scope) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
         """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
         self._call_stack.clear()
+        self._frame_ctxs.clear()
         ctx = EvalContext(scope=root_scope)
         result = []
         for node in nodes:
@@ -309,6 +331,7 @@ class Evaluator:
         call_pos = getattr(call, 'position', None)
         decl_pos = getattr(decl, 'position', None)
         self._call_stack.append(("module", name, call_pos, decl_pos))
+        self._frame_ctxs.append(child_ctx)
         try:
             module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
             bodies = self._eval_children(module_body, child_ctx)
@@ -317,6 +340,7 @@ class Evaluator:
             return self._combine(bodies)
         finally:
             self._call_stack.pop()
+            self._frame_ctxs.pop()
 
     def _bind_args(self, params, arguments, ctx: EvalContext) -> dict[str, Any]:
         result = {}
@@ -1419,7 +1443,9 @@ class Evaluator:
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
         self._call_stack.append(("function", name, pos))
+        self._frame_ctxs.append(child_ctx)
         try:
             return self._eval_expr(decl.expr, child_ctx)
         finally:
             self._call_stack.pop()
+            self._frame_ctxs.pop()
