@@ -1,4 +1,5 @@
 import sys
+import setproctitle
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 from neuscad.window.main_window import MainWindow
@@ -14,6 +15,7 @@ def _configure_gl_format():
 
 
 def main():
+    setproctitle.setproctitle("NeuSCAD")
     sys.setrecursionlimit(10000)
     _configure_gl_format()
     app = QApplication(sys.argv)
