@@ -352,24 +352,37 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
 
-`all_frame_locals` is a list of categorized-variable dicts, **innermost first** — `all_frame_locals[0]` matches row 0 (innermost) in the call-stack list. Each entry has four keys:
+`all_frame_locals` is a list of frame dicts, **innermost first**, with one extra `<toplevel>` entry appended when inside a call. `all_frame_locals[0]` matches row 0 (innermost) in the call-stack list. Each entry has three keys:
 
 | Key | Contents |
 |---|---|
-| `"local"` | Parameters and `let`/`for`-bound vars (from `dyn` `__let_*`) plus plain-named assignments in the current scope |
-| `"special"` | `$`-prefixed vars: from `dyn` directly or from `$`-prefixed assignments in the current scope |
-| `"hidden"` | `_`-prefixed vars: `__let__*` in `dyn` or `_`-prefixed assignments in the current scope |
-| `"inherited"` | All other assignments from enclosing (parent) scopes not already in local/special/hidden |
+| `"local_scope"` | Vars belonging to this call frame: `dyn` `__let_*` bindings (params, `for`/`let`) + current scope's own `Assignment` declarations (when inside a call) |
+| `"outer_scope"` | Vars from enclosing/parent scopes (innermost frame only; parent frames get `{}`) |
+| `"dyn_names"` | `set` of names from `dyn` — the only vars that can be modified via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` contains only the local vars (used for `mods` return). The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` = dyn-bound locals only (used for `mods`). `call_stack` = the real call stack (used for step-depth math). The hook emits a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting the `paused` signal. The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
 
 **Error break** — `Evaluator(error_break_fn=self._error_break)` intercepts every `error()` call before it raises `EvalError`. `_error_break` emits `error_break` and blocks until the user resumes. After the user presses Continue, `EvalError` propagates normally (caught by `_run`, triggers `errored`).
 
+### Call stack display
+
+The call-stack list always ends with a `<toplevel>` entry. When inside a call, a corresponding `<toplevel>` frame (whose `local_scope` = the global scope vars) is appended to `all_frame_locals`. Clicking `<toplevel>` and selecting Locals shows the file's global variable declarations.
+
 ### Per-frame variable inspection
 
-The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `_categorize_ctx(dyn)` splits a frame's dynamic bindings into `(local, special, hidden)`. Then the current scope's own `Assignment` declarations are merged in by name convention (`$` → special, `_` → hidden, plain → local). Finally, parent scopes are walked to build `inherited` (any name not already in local/special/hidden). Parent frames get `"inherited": {}`.
+The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `local_scope` is built from `dyn` (`__let_*` + `$*`) plus the current scope's own assignments (when inside a call). Parent scopes fill `outer_scope`. A `<toplevel>` frame with `local_scope = outer_scope` is appended when `_call_stack` is non-empty.
 
-The Variables panel has a **filter dropdown** (Local vars / Inherited vars / Special $vars / Hidden _vars) that selects which category to display. Changing the filter or clicking a different call-stack row calls `_populate_vars(frame_data, is_innermost)`, which reads `frame_data[combo.currentData()]`. Only the Local category of the innermost frame is editable; all other combinations are read-only. `get_modifications()` skips non-editable rows.
+The Variables panel has:
+- A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
+- A **Hiddens checkbox**: when unchecked, variables whose name starts with `_` or `$_` are hidden from all filters
+
+Categorization (applied after the hidden check):
+- `$`-prefix → $Specials
+- ALL_UPPERCASE with at least one letter → CONSTANTS
+- Name in `local_scope` → Locals
+- Otherwise → Globals
+
+`_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
 ### DebuggerPane states
 
