@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QTableWidget, QTableWidgetItem, QPushButton,
-    QLabel, QHeaderView, QAbstractItemView,
+    QLabel, QHeaderView, QAbstractItemView, QComboBox,
 )
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Qt, QObject, Signal
@@ -241,7 +241,16 @@ class DebuggerPane(QWidget):
         vars_widget = QWidget()
         vv = QVBoxLayout(vars_widget)
         vv.setContentsMargins(0, 0, 0, 0)
-        vv.addWidget(QLabel("Variables"))
+        vars_header = QHBoxLayout()
+        vars_header.addWidget(QLabel("Variables"))
+        vars_header.addStretch()
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem("Local",     "local")
+        self._filter_combo.addItem("Special ($)", "special")
+        self._filter_combo.addItem("Inherited", "inherited")
+        self._filter_combo.setCurrentIndex(0)
+        vars_header.addWidget(self._filter_combo)
+        vv.addLayout(vars_header)
         self._vars_table = QTableWidget(0, 2)
         self._vars_table.setFont(mono)
         self._vars_table.setHorizontalHeaderLabels(["Name", "Value"])
@@ -264,6 +273,7 @@ class DebuggerPane(QWidget):
         self._btn_step_out.clicked.connect(self.step_out_requested)
         self._btn_stop.clicked.connect(self.stop_requested)
         self._stack_list.currentRowChanged.connect(self._on_frame_selected)
+        self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
 
     def get_modifications(self) -> dict:
         """Return variable values the user edited in the innermost-frame vars table."""
@@ -290,19 +300,22 @@ class DebuggerPane(QWidget):
             call_pos = entry[2]
             line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
             self._stack_list.addItem(f"{name}()  line {line_str}")
-        self._stack_list.blockSignals(False)
         if self._stack_list.count() > 0:
             self._stack_list.setCurrentRow(0)
+        self._stack_list.blockSignals(False)
 
-    def _populate_vars(self, locals_dict: dict, editable: bool = True):
+    def _populate_vars(self, frame_data: dict, is_innermost: bool = False):
+        category = self._filter_combo.currentData()
+        data = frame_data.get(category, {}) if isinstance(frame_data, dict) else {}
+        editable = is_innermost and category == "local"
         self._vars_table.setRowCount(0)
-        for name in sorted(locals_dict):
+        for name in sorted(data):
             row = self._vars_table.rowCount()
             self._vars_table.insertRow(row)
             name_item = QTableWidgetItem(name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 0, name_item)
-            val_item = QTableWidgetItem(_fmt(locals_dict[name]))
+            val_item = QTableWidgetItem(_fmt(data[name]))
             if not editable:
                 val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 1, val_item)
@@ -310,32 +323,36 @@ class DebuggerPane(QWidget):
     def _on_frame_selected(self, row: int):
         if row < 0 or row >= len(self._all_frame_locals):
             return
-        # Row 0 is the innermost (current) frame — editable. Others are read-only.
-        self._populate_vars(self._all_frame_locals[row], editable=(row == 0))
+        self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
+
+    def _on_filter_changed(self, _index: int):
+        row = self._stack_list.currentRow()
+        if row < 0:
+            row = 0
+        if row < len(self._all_frame_locals):
+            self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
         self._status.setText(f"Paused at line {line}")
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
-        self._original_locals = {k: _fmt(v) for k, v in innermost.items()}
+        self._original_locals = {k: _fmt(v) for k, v in innermost.get("local", {}).items()}
         self._populate_stack(call_stack)
-        self._populate_vars(innermost, editable=True)
+        self._populate_vars(innermost, is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_out, self._btn_stop):
             btn.setEnabled(True)
 
     def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
-        # Strip the "ERROR: " prefix for the status label; truncate if long
         display = msg.removeprefix("ERROR: ")
         if len(display) > 80:
             display = display[:77] + "…"
         self._status.setText(f"Line {line}: {display}")
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
-        self._original_locals = {}  # no modifications allowed after an error break
+        self._original_locals = {}
         self._populate_stack(call_stack)
-        self._populate_vars(innermost, editable=False)
-        # Only Continue and Stop make sense — cannot step forward from an error site
+        self._populate_vars(innermost, is_innermost=False)
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
         self._btn_step_over.setEnabled(False)

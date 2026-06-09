@@ -112,9 +112,20 @@ class Evaluator:
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
 
-    def _extract_frame_locals(self, frame_ctx) -> dict:
-        """Extract named locals from a frame context's dynamic bindings."""
-        return {k[6:]: v for k, v in frame_ctx.dyn.items() if k.startswith('__let_')}
+    @staticmethod
+    def _categorize_ctx(dyn: dict) -> tuple[dict, dict]:
+        """Split a dyn dict into (local, special).
+        local:   __let_* bindings whose name does not start with $
+        special: $ keys directly in dyn, plus __let_$* bindings
+        """
+        local, special = {}, {}
+        for k, v in dyn.items():
+            if k.startswith('__let_'):
+                name = k[6:]
+                (special if name.startswith('$') else local)[name] = v
+            elif k.startswith('$'):
+                special[k] = v
+        return local, special
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
         if self._debug_hook is None:
@@ -123,27 +134,33 @@ class Evaluator:
         line = getattr(pos, 'line', None) if pos else None
         if line is None:
             return
-        locals_dict = {k[6:]: v for k, v in ctx.dyn.items() if k.startswith('__let_')}
-        # Also include lexical variables visible at the current scope
+
+        local, special = self._categorize_ctx(ctx.dyn)
+
+        # Inherited: lexical scope vars not already in local
+        inherited: dict = {}
         scope = ctx.scope
         while scope is not None:
             for name, decl in scope.variables.items():
-                if name not in locals_dict and isinstance(decl, Assignment):
+                if name not in local and name not in inherited and isinstance(decl, Assignment):
                     try:
-                        locals_dict[name] = self._eval_expr(decl.expr, ctx)
+                        inherited[name] = self._eval_expr(decl.expr, ctx)
                     except Exception:
                         pass
             scope = scope.parent
 
-        # Build per-frame locals list: innermost first (row 0 = current frame)
-        all_frame_locals = [dict(locals_dict)]
+        # all_frame_locals: list of {"local","special","inherited"} dicts, innermost first
+        current_frame = {"local": local, "special": special, "inherited": inherited}
+        all_frame_locals = [current_frame]
         for frame_ctx in reversed(self._frame_ctxs[:-1]):   # parent frames, inner→outer
-            all_frame_locals.append(self._extract_frame_locals(frame_ctx))
+            p_local, p_special = self._categorize_ctx(frame_ctx.dyn)
+            all_frame_locals.append({"local": p_local, "special": p_special, "inherited": {}})
 
-        self._last_locals = dict(locals_dict)
+        self._last_locals = dict(local)
         self._last_all_frame_locals = all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), locals_dict, list(self._call_stack), all_frame_locals)
+        # Pass local vars as mods dict (only local vars are user-modifiable)
+        cmd, mods = self._debug_hook(int(line), local, list(self._call_stack), all_frame_locals)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
