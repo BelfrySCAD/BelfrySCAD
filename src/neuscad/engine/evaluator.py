@@ -113,19 +113,25 @@ class Evaluator:
         self._last_all_frame_locals: list = []
 
     @staticmethod
-    def _categorize_ctx(dyn: dict) -> tuple[dict, dict]:
-        """Split a dyn dict into (local, special).
-        local:   __let_* bindings whose name does not start with $
+    def _categorize_ctx(dyn: dict) -> tuple[dict, dict, dict]:
+        """Split a dyn dict into (local, special, hidden).
+        local:   __let_* bindings whose name is a plain identifier
         special: $ keys directly in dyn, plus __let_$* bindings
+        hidden:  __let_* bindings whose name starts with _
         """
-        local, special = {}, {}
+        local, special, hidden = {}, {}, {}
         for k, v in dyn.items():
             if k.startswith('__let_'):
                 name = k[6:]
-                (special if name.startswith('$') else local)[name] = v
+                if name.startswith('$'):
+                    special[name] = v
+                elif name.startswith('_'):
+                    hidden[name] = v
+                else:
+                    local[name] = v
             elif k.startswith('$'):
                 special[k] = v
-        return local, special
+        return local, special, hidden
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
         if self._debug_hook is None:
@@ -135,26 +141,26 @@ class Evaluator:
         if line is None:
             return
 
-        local, special = self._categorize_ctx(ctx.dyn)
+        local, special, hidden = self._categorize_ctx(ctx.dyn)
 
-        # Inherited: lexical scope vars not already in local
+        # Inherited: lexical scope vars not already in local or hidden
         inherited: dict = {}
         scope = ctx.scope
         while scope is not None:
             for name, decl in scope.variables.items():
-                if name not in local and name not in inherited and isinstance(decl, Assignment):
+                if name not in local and name not in hidden and name not in inherited and isinstance(decl, Assignment):
                     try:
                         inherited[name] = self._eval_expr(decl.expr, ctx)
                     except Exception:
                         pass
             scope = scope.parent
 
-        # all_frame_locals: list of {"local","special","inherited"} dicts, innermost first
-        current_frame = {"local": local, "special": special, "inherited": inherited}
+        # all_frame_locals: list of {"local","special","hidden","inherited"} dicts, innermost first
+        current_frame = {"local": local, "special": special, "hidden": hidden, "inherited": inherited}
         all_frame_locals = [current_frame]
         for frame_ctx in reversed(self._frame_ctxs[:-1]):   # parent frames, inner→outer
-            p_local, p_special = self._categorize_ctx(frame_ctx.dyn)
-            all_frame_locals.append({"local": p_local, "special": p_special, "inherited": {}})
+            p_local, p_special, p_hidden = self._categorize_ctx(frame_ctx.dyn)
+            all_frame_locals.append({"local": p_local, "special": p_special, "hidden": p_hidden, "inherited": {}})
 
         self._last_locals = dict(local)
         self._last_all_frame_locals = all_frame_locals
