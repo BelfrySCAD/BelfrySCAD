@@ -352,17 +352,24 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
 
-`all_frame_locals` is a list of dicts, **innermost first** — `all_frame_locals[0]` matches row 0 (innermost) in the call-stack list.
+`all_frame_locals` is a list of categorized-variable dicts, **innermost first** — `all_frame_locals[0]` matches row 0 (innermost) in the call-stack list. Each entry has four keys:
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
+| Key | Contents |
+|---|---|
+| `"local"` | `__let_*` bindings whose name is a plain identifier — parameters and `let`-bound vars |
+| `"special"` | `$`-prefixed dynamic-scope vars (`$fn`, `$fa`, `$children`, …) |
+| `"inherited"` | Lexical-scope vars from enclosing scopes (scope walk; innermost frame only) |
+| `"hidden"` | `__let_*` bindings whose name starts with `_` |
+
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` contains only the local vars (used for `mods` return). The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
 
 **Error break** — `Evaluator(error_break_fn=self._error_break)` intercepts every `error()` call before it raises `EvalError`. `_error_break` emits `error_break` and blocks until the user resumes. After the user presses Continue, `EvalError` propagates normally (caught by `_run`, triggers `errored`).
 
 ### Per-frame variable inspection
 
-The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `all_frame_locals` is built: innermost frame uses the comprehensive `locals_dict` (scope-walked); parent frames extract `__let_*` bindings from their stored `EvalContext.dyn`.
+The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `_categorize_ctx(dyn)` splits a frame's dynamic bindings into `(local, special, hidden)`; the inherited category is added via a scope walk on the current ctx (innermost frame only; parent frames get `"inherited": {}`).
 
-Clicking a row in the Call Stack list fires `_on_frame_selected(row)`, which repopulates the Variables table from `_all_frame_locals[row]`. Row 0 (innermost) is editable; parent frames are read-only. `get_modifications()` skips non-editable rows.
+The Variables panel has a **filter dropdown** (Local / Special ($) / Inherited / Hidden (_)) that selects which category to display. Changing the filter or clicking a different call-stack row calls `_populate_vars(frame_data, is_innermost)`, which reads `frame_data[combo.currentData()]`. Only the Local category of the innermost frame is editable; all other combinations are read-only. `get_modifications()` skips non-editable rows.
 
 ### DebuggerPane states
 
