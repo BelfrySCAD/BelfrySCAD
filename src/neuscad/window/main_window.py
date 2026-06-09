@@ -1330,8 +1330,8 @@ class MainWindow(QMainWindow):
         tab.debug_session.paused.connect(
             lambda line, frames, stk, t=tab: self._on_debug_paused(t, line, frames, stk)
         )
-        tab.debug_session.assert_failed.connect(
-            lambda line, frames, stk, t=tab: self._on_debug_assert_failed(t, line, frames, stk)
+        tab.debug_session.error_break.connect(
+            lambda line, msg, frames, stk, t=tab: self._on_debug_error_break(t, line, msg, frames, stk)
         )
         tab.debug_session.finished.connect(
             lambda bodies, id2node, t=tab: self._on_debug_finished(t, bodies, id2node)
@@ -1346,8 +1346,8 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
         tab.editor.set_execution_line(line)
 
-    def _on_debug_assert_failed(self, tab, line: int, all_frame_locals: list, call_stack: list):
-        tab.debugger_pane.set_assert_failed(line, all_frame_locals, call_stack)
+    def _on_debug_error_break(self, tab, line: int, msg: str, all_frame_locals: list, call_stack: list):
+        tab.debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack)
         tab.editor.set_execution_line(line)
 
     def _on_debug_finished(self, tab, bodies, id_to_node):

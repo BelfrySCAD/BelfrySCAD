@@ -55,9 +55,9 @@ class DebugSession(QObject):
     """Runs the evaluator in a daemon worker thread, pausing at breakpoints."""
 
     # All emitted from the worker thread — PySide6 queues these to the main thread.
-    paused = Signal(int, object, object)        # line, all_frame_locals (list, innermost first), call_stack
-    assert_failed = Signal(int, object, object) # line, all_frame_locals, call_stack
-    finished = Signal(object, object)           # bodies, id_to_node
+    paused = Signal(int, object, object)       # line, all_frame_locals (list, innermost first), call_stack
+    error_break = Signal(int, str, object, object)  # line, error header, all_frame_locals, call_stack
+    finished = Signal(object, object)          # bodies, id_to_node
     errored = Signal(str)
 
     def __init__(self, parent=None):
@@ -132,20 +132,20 @@ class DebugSession(QObject):
             return ("continue", mods)   # evaluator only needs to know about "stop"
         return hook
 
-    def _assert_break(self, line: int, all_frame_locals: list, call_stack: list):
-        """Called by the evaluator when an assert fails in debug mode.
+    def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
+        """Called by the evaluator on any runtime error in debug mode.
         Pauses so the user can inspect state; returns when the user resumes.
         The EvalError is raised by the evaluator after this returns.
         """
         if self._stopped:
             return
-        self.assert_failed.emit(line, list(all_frame_locals), list(call_stack))
+        self.error_break.emit(line, msg, list(all_frame_locals), list(call_stack))
         self._pause_event.clear()
         self._pause_event.wait()
 
     def _run(self, nodes, root_scope, echo_fn):
         from neuscad.engine.evaluator import Evaluator, EvalError
-        ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook(), assert_break_fn=self._assert_break)
+        ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook(), error_break_fn=self._error_break)
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope)
             if not self._stopped:
@@ -325,14 +325,18 @@ class DebuggerPane(QWidget):
                     self._btn_step_out, self._btn_stop):
             btn.setEnabled(True)
 
-    def set_assert_failed(self, line: int, all_frame_locals: list, call_stack: list):
-        self._status.setText(f"Assert failed at line {line}")
+    def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
+        # Strip the "ERROR: " prefix for the status label; truncate if long
+        display = msg.removeprefix("ERROR: ")
+        if len(display) > 80:
+            display = display[:77] + "…"
+        self._status.setText(f"Line {line}: {display}")
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
-        self._original_locals = {}  # no modifications allowed after assert failure
+        self._original_locals = {}  # no modifications allowed after an error break
         self._populate_stack(call_stack)
         self._populate_vars(innermost, editable=False)
-        # Only Continue and Stop make sense — step buttons don't apply
+        # Only Continue and Stop make sense — cannot step forward from an error site
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
         self._btn_step_over.setEnabled(False)

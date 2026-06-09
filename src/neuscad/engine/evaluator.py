@@ -99,7 +99,7 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self, echo_fn=None, debug_hook=None, assert_break_fn=None):
+    def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None):
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -108,7 +108,7 @@ class Evaluator:
         # EvalContext for each live call-stack frame (parallel to _call_stack)
         self._frame_ctxs: list = []
         self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack, all_frame_locals) -> (cmd, mods)
-        self._assert_break_fn = assert_break_fn  # callable(line, all_frame_locals, call_stack); raises or returns
+        self._error_break_fn = error_break_fn  # callable(line, msg, all_frame_locals, call_stack); returns, then EvalError raised
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
 
@@ -179,9 +179,9 @@ class Evaluator:
         lines = [header] + self._trace_lines(node, innermost_frame)
         full = "\n".join(lines)
         self._errors.append(full)
-        if innermost_frame == "assert" and self._assert_break_fn is not None:
+        if self._error_break_fn is not None:
             line = getattr(pos, 'line', 0) if pos else 0
-            self._assert_break_fn(int(line), self._last_all_frame_locals, list(self._call_stack))
+            self._error_break_fn(int(line), header, self._last_all_frame_locals, list(self._call_stack))
         raise EvalError(full)
 
     def _fmt_val(self, v) -> str:
