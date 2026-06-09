@@ -12,7 +12,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
-- **Parser**: openscad_parser (strict PEG-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions or modules — the evaluator layer implements all built-ins)
+- **Parser**: openscad_parser ≥2.5.1 (strict PEG-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions or modules — the evaluator layer implements all built-ins). Declared as a local editable dependency via `[tool.uv.sources]` pointing to `../openscad_parser`.
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
@@ -247,6 +247,7 @@ Follows OpenSCAD semantics exactly:
   - **List match**: does direct equality comparison against each vector entry (or `vector[i][index_col]`). This is the correct idiom for finding a string in a list of strings: `search(["foo"], ["foo","bar","baz"])` → `[0]`.
   - **Scalar match**: returns a list of up to `num_returns` matching indices (`[]` if not found). `num_returns=0` returns all matches.
 - **Assert message format**: `to_openscad([cond_expr]).strip()` is used to recover the condition source text for the `Assertion 'expr' failed` message. This requires `from openscad_parser.ast import to_openscad`.
+- **String literals with leading/trailing whitespace**: arpeggio's `skipws=True` would strip whitespace before each sub-rule in the `(DQUOTE, contents, DQUOTE)` sequence, silently eating leading spaces inside strings (e.g. `"  bar"` → `"bar"`). Fixed in openscad_parser 2.5.1 by collapsing `string_literal` into a single regex terminal `"(?:[^"\\]|\\.|\\$)*"` so no whitespace skipping occurs inside quotes.
 
 ## Manifold API: Geometry Provenance
 
