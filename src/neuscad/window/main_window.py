@@ -346,7 +346,7 @@ class _RenderWorker(QObject):
             self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
             return
         except EvalError as e:
-            self.logged.emit(f"Eval error: {e}")
+            self.logged.emit(f"Eval error:\n{e}")
             return
         except Exception as e:
             self.logged.emit(f"Runtime error: {e}\n{traceback.format_exc()}")
@@ -1377,7 +1377,7 @@ class MainWindow(QMainWindow):
             tab.editor.clear_execution_line()
             tab.debugger_pane.set_idle()
             tab.debug_session = None
-        self.log(f"Debug error: {msg}")
+        self.log(f"Debug error:\n{msg}")
 
     def _on_debug_continue(self):
         tab = self._current_tab()
