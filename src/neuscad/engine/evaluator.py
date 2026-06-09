@@ -143,12 +143,35 @@ class Evaluator:
 
         local, special, hidden = self._categorize_ctx(ctx.dyn)
 
-        # Inherited: lexical scope vars not already in local or hidden
+        # Current scope's own variable declarations go into local/special/hidden by name convention.
+        # Parent scopes' declarations go into inherited.
         inherited: dict = {}
         scope = ctx.scope
+        if scope is not None:
+            for name, decl in scope.variables.items():
+                if isinstance(decl, Assignment):
+                    if name.startswith('$'):
+                        if name not in special:
+                            try:
+                                special[name] = self._eval_expr(decl.expr, ctx)
+                            except Exception:
+                                pass
+                    elif name.startswith('_'):
+                        if name not in hidden:
+                            try:
+                                hidden[name] = self._eval_expr(decl.expr, ctx)
+                            except Exception:
+                                pass
+                    else:
+                        if name not in local:
+                            try:
+                                local[name] = self._eval_expr(decl.expr, ctx)
+                            except Exception:
+                                pass
+            scope = scope.parent
         while scope is not None:
             for name, decl in scope.variables.items():
-                if name not in local and name not in hidden and name not in inherited and isinstance(decl, Assignment):
+                if name not in local and name not in hidden and name not in special and name not in inherited and isinstance(decl, Assignment):
                     try:
                         inherited[name] = self._eval_expr(decl.expr, ctx)
                     except Exception:

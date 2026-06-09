@@ -356,10 +356,10 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 
 | Key | Contents |
 |---|---|
-| `"local"` | `__let_*` bindings whose name is a plain identifier — parameters and `let`-bound vars |
-| `"special"` | `$`-prefixed dynamic-scope vars (`$fn`, `$fa`, `$children`, …) |
-| `"inherited"` | Lexical-scope vars from enclosing scopes (scope walk; innermost frame only) |
-| `"hidden"` | `__let_*` bindings whose name starts with `_` |
+| `"local"` | Parameters and `let`/`for`-bound vars (from `dyn` `__let_*`) plus plain-named assignments in the current scope |
+| `"special"` | `$`-prefixed vars: from `dyn` directly or from `$`-prefixed assignments in the current scope |
+| `"hidden"` | `_`-prefixed vars: `__let__*` in `dyn` or `_`-prefixed assignments in the current scope |
+| `"inherited"` | All other assignments from enclosing (parent) scopes not already in local/special/hidden |
 
 **Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` contains only the local vars (used for `mods` return). The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
 
@@ -367,7 +367,7 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 
 ### Per-frame variable inspection
 
-The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `_categorize_ctx(dyn)` splits a frame's dynamic bindings into `(local, special, hidden)`; the inherited category is added via a scope walk on the current ctx (innermost frame only; parent frames get `"inherited": {}`).
+The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `_categorize_ctx(dyn)` splits a frame's dynamic bindings into `(local, special, hidden)`. Then the current scope's own `Assignment` declarations are merged in by name convention (`$` → special, `_` → hidden, plain → local). Finally, parent scopes are walked to build `inherited` (any name not already in local/special/hidden). Parent frames get `"inherited": {}`.
 
 The Variables panel has a **filter dropdown** (Local vars / Inherited vars / Special $vars / Hidden _vars) that selects which category to display. Changing the filter or clicking a different call-stack row calls `_populate_vars(frame_data, is_innermost)`, which reads `frame_data[combo.currentData()]`. Only the Local category of the innermost frame is editable; all other combinations are read-only. `get_modifications()` skips non-editable rows.
 
