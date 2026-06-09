@@ -13,6 +13,7 @@ dependencies = [
     "numpy",
     "lib3mf",
     "setproctitle>=1.3.7",
+    "openscad_parser>=2.5.1",
 ]
 
 [project.scripts]
@@ -23,6 +24,9 @@ packages = ["src/neuscad"]
 
 [tool.uv]
 package = true
+
+[tool.uv.sources]
+openscad_parser = { path = "../openscad_parser", editable = true }
 
 [dependency-groups]
 dev = [

@@ -112,27 +112,6 @@ class Evaluator:
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
 
-    @staticmethod
-    def _categorize_ctx(dyn: dict) -> tuple[dict, dict, dict]:
-        """Split a dyn dict into (local, special, hidden).
-        local:   __let_* bindings whose name is a plain identifier
-        special: $ keys directly in dyn, plus __let_$* bindings
-        hidden:  __let_* bindings whose name starts with _
-        """
-        local, special, hidden = {}, {}, {}
-        for k, v in dyn.items():
-            if k.startswith('__let_'):
-                name = k[6:]
-                if name.startswith('$'):
-                    special[name] = v
-                elif name.startswith('_'):
-                    hidden[name] = v
-                else:
-                    local[name] = v
-            elif k.startswith('$'):
-                special[k] = v
-        return local, special, hidden
-
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
         if self._debug_hook is None:
             return
@@ -141,55 +120,69 @@ class Evaluator:
         if line is None:
             return
 
-        local, special, hidden = self._categorize_ctx(ctx.dyn)
+        # local_scope: vars belonging to the current call frame (params, for/let, current scope assignments)
+        # outer_scope: vars from enclosing/parent scopes
+        # dyn_names:   subset of local_scope that live in dyn (user-modifiable)
+        local_scope: dict = {}
+        dyn_names: set = set()
 
-        # Current scope's own variable declarations go into local/special/hidden by name convention.
-        # Parent scopes' declarations go into inherited.
-        inherited: dict = {}
-        scope = ctx.scope
-        if scope is not None:
-            for name, decl in scope.variables.items():
-                if isinstance(decl, Assignment):
-                    if name.startswith('$'):
-                        if name not in special:
-                            try:
-                                special[name] = self._eval_expr(decl.expr, ctx)
-                            except Exception:
-                                pass
-                    elif name.startswith('_'):
-                        if name not in hidden:
-                            try:
-                                hidden[name] = self._eval_expr(decl.expr, ctx)
-                            except Exception:
-                                pass
-                    else:
-                        if name not in local:
-                            try:
-                                local[name] = self._eval_expr(decl.expr, ctx)
-                            except Exception:
-                                pass
-            scope = scope.parent
+        for k, v in ctx.dyn.items():
+            if k.startswith('__let_'):
+                name = k[6:]
+                local_scope[name] = v
+                dyn_names.add(name)
+            elif k.startswith('$'):
+                local_scope[k] = v
+
+        if self._call_stack and ctx.scope is not None:
+            for name, decl in ctx.scope.variables.items():
+                if name not in local_scope and isinstance(decl, Assignment):
+                    try:
+                        local_scope[name] = self._eval_expr(decl.expr, ctx)
+                    except Exception:
+                        pass
+            outer_start = ctx.scope.parent
+        else:
+            outer_start = ctx.scope  # top level: all scope vars belong to outer
+
+        outer_scope: dict = {}
+        scope = outer_start
         while scope is not None:
             for name, decl in scope.variables.items():
-                if name not in local and name not in hidden and name not in special and name not in inherited and isinstance(decl, Assignment):
+                if name not in local_scope and name not in outer_scope and isinstance(decl, Assignment):
                     try:
-                        inherited[name] = self._eval_expr(decl.expr, ctx)
+                        outer_scope[name] = self._eval_expr(decl.expr, ctx)
                     except Exception:
                         pass
             scope = scope.parent
 
-        # all_frame_locals: list of {"local","special","hidden","inherited"} dicts, innermost first
-        current_frame = {"local": local, "special": special, "hidden": hidden, "inherited": inherited}
+        current_frame = {"local_scope": local_scope, "outer_scope": outer_scope, "dyn_names": dyn_names}
         all_frame_locals = [current_frame]
-        for frame_ctx in reversed(self._frame_ctxs[:-1]):   # parent frames, inner→outer
-            p_local, p_special, p_hidden = self._categorize_ctx(frame_ctx.dyn)
-            all_frame_locals.append({"local": p_local, "special": p_special, "hidden": p_hidden, "inherited": {}})
+        for frame_ctx in reversed(self._frame_ctxs[:-1]):
+            p_local: dict = {}
+            p_dyn: set = set()
+            for k, v in frame_ctx.dyn.items():
+                if k.startswith('__let_'):
+                    name = k[6:]
+                    p_local[name] = v
+                    p_dyn.add(name)
+                elif k.startswith('$'):
+                    p_local[k] = v
+            all_frame_locals.append({"local_scope": p_local, "outer_scope": {}, "dyn_names": p_dyn})
 
-        self._last_locals = dict(local)
+        # When inside a call, append a <toplevel> frame whose locals are the global (outer) vars.
+        if self._call_stack:
+            toplevel_frame = {
+                "local_scope": dict(outer_scope),
+                "outer_scope": {},
+                "dyn_names": set(),
+            }
+            all_frame_locals.append(toplevel_frame)
+
+        self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
 
-        # Pass local vars as mods dict (only local vars are user-modifiable)
-        cmd, mods = self._debug_hook(int(line), local, list(self._call_stack), all_frame_locals)
+        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":

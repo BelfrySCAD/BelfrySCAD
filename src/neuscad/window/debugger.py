@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QTableWidget, QTableWidgetItem, QPushButton,
-    QLabel, QHeaderView, QAbstractItemView, QComboBox,
+    QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
 )
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Qt, QObject, Signal
@@ -31,6 +31,35 @@ def _fmt(v) -> str:
     if isinstance(v, str):
         return f'"{v}"'
     return str(v)
+
+
+def _is_hidden(name: str) -> bool:
+    return name.startswith('_') or name.startswith('$_')
+
+
+def _var_category(name: str, local_names: set) -> str:
+    """Return 'specials', 'constants', 'locals', or 'globals'."""
+    if name.startswith('$'):
+        return 'specials'
+    if name.isupper() and any(c.isalpha() for c in name):
+        return 'constants'
+    if name in local_names:
+        return 'locals'
+    return 'globals'
+
+
+def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
+    local_scope = frame_data.get("local_scope", {})
+    outer_scope = frame_data.get("outer_scope", {})
+    local_names = set(local_scope.keys())
+    all_vars = {**outer_scope, **local_scope}   # local overrides outer on name collision
+    result = {}
+    for name, value in all_vars.items():
+        if _is_hidden(name) and not show_hidden:
+            continue
+        if _var_category(name, local_names) == category:
+            result[name] = value
+    return result
 
 
 def _parse_val(s: str):
@@ -110,7 +139,8 @@ class DebugSession(QObject):
             self._step_over_depth = None
             self._step_out_depth = None
 
-            self.paused.emit(line, list(all_frame_locals), list(call_stack))
+            display_stack = list(call_stack) + [("toplevel", "<toplevel>", None)]
+            self.paused.emit(line, list(all_frame_locals), display_stack)
             self._pause_event.clear()
             self._pause_event.wait()
 
@@ -139,7 +169,8 @@ class DebugSession(QObject):
         """
         if self._stopped:
             return
-        self.error_break.emit(line, msg, list(all_frame_locals), list(call_stack))
+        display_stack = list(call_stack) + [("toplevel", "<toplevel>", None)]
+        self.error_break.emit(line, msg, list(all_frame_locals), display_stack)
         self._pause_event.clear()
         self._pause_event.wait()
 
@@ -244,11 +275,13 @@ class DebuggerPane(QWidget):
         vars_header = QHBoxLayout()
         vars_header.addWidget(QLabel("Variables"))
         vars_header.addStretch()
+        self._hidden_check = QCheckBox("Hiddens")
+        vars_header.addWidget(self._hidden_check)
         self._filter_combo = QComboBox()
-        self._filter_combo.addItem("Local vars",     "local")
-        self._filter_combo.addItem("Inherited vars", "inherited")
-        self._filter_combo.addItem("Special $vars",  "special")
-        self._filter_combo.addItem("Hidden _vars",   "hidden")
+        self._filter_combo.addItem("Locals",    "locals")
+        self._filter_combo.addItem("Globals",   "globals")
+        self._filter_combo.addItem("CONSTANTS", "constants")
+        self._filter_combo.addItem("$Specials", "specials")
         self._filter_combo.setCurrentIndex(0)
         vars_header.addWidget(self._filter_combo)
         vv.addLayout(vars_header)
@@ -275,6 +308,7 @@ class DebuggerPane(QWidget):
         self._btn_stop.clicked.connect(self.stop_requested)
         self._stack_list.currentRowChanged.connect(self._on_frame_selected)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
+        self._hidden_check.toggled.connect(self._on_filter_changed)
 
     def get_modifications(self) -> dict:
         """Return variable values the user edited in the innermost-frame vars table."""
@@ -297,18 +331,22 @@ class DebuggerPane(QWidget):
         self._stack_list.blockSignals(True)
         self._stack_list.clear()
         for entry in reversed(call_stack):
-            name = entry[1]
-            call_pos = entry[2]
-            line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
-            self._stack_list.addItem(f"{name}()  line {line_str}")
+            if entry[0] == "toplevel":
+                self._stack_list.addItem("<toplevel>")
+            else:
+                name = entry[1]
+                call_pos = entry[2]
+                line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
+                self._stack_list.addItem(f"{name}()  line {line_str}")
         if self._stack_list.count() > 0:
             self._stack_list.setCurrentRow(0)
         self._stack_list.blockSignals(False)
 
     def _populate_vars(self, frame_data: dict, is_innermost: bool = False):
         category = self._filter_combo.currentData()
-        data = frame_data.get(category, {}) if isinstance(frame_data, dict) else {}
-        editable = is_innermost and category == "local"
+        show_hidden = self._hidden_check.isChecked()
+        data = _filtered_vars(frame_data, category, show_hidden) if isinstance(frame_data, dict) else {}
+        dyn_names = frame_data.get("dyn_names", set()) if isinstance(frame_data, dict) else set()
         self._vars_table.setRowCount(0)
         for name in sorted(data):
             row = self._vars_table.rowCount()
@@ -317,7 +355,7 @@ class DebuggerPane(QWidget):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 0, name_item)
             val_item = QTableWidgetItem(_fmt(data[name]))
-            if not editable:
+            if not (is_innermost and category == "locals" and name in dyn_names):
                 val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 1, val_item)
 
@@ -326,7 +364,7 @@ class DebuggerPane(QWidget):
             return
         self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
 
-    def _on_filter_changed(self, _index: int):
+    def _on_filter_changed(self, _=None):
         row = self._stack_list.currentRow()
         if row < 0:
             row = 0
@@ -337,7 +375,9 @@ class DebuggerPane(QWidget):
         self._status.setText(f"Paused at line {line}")
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
-        self._original_locals = {k: _fmt(v) for k, v in innermost.get("local", {}).items()}
+        dyn_names = innermost.get("dyn_names", set())
+        self._original_locals = {k: _fmt(v) for k, v in innermost.get("local_scope", {}).items()
+                                  if k in dyn_names}
         self._populate_stack(call_stack)
         self._populate_vars(innermost, is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
