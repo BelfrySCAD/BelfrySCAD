@@ -217,7 +217,7 @@ TRACE: called by 'outer' in file foo.scad, line 7
 
 Unknown modules emit `WARNING: Ignoring unknown module 'name' in file ..., line n` followed by the same TRACE lines, without raising an exception.
 
-`_call_stack` entries: modules use 4-tuples `("module", name, call_pos, decl_pos)` where `call_pos` is the call site and `decl_pos` is where the module declaration starts; functions use 3-tuples `("function", name, call_pos)`. `error(msg, node=None, innermost_frame=None)` accepts the failing AST node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line.
+`_call_stack` entries: modules use 4-tuples `("module", name, call_pos, decl_pos)` where `call_pos` is the call site and `decl_pos` is where the module declaration starts; functions use 3-tuples `("function", name, call_pos)`. `error(msg, node=None, innermost_frame=None)` accepts the failing AST node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line. If `error_break_fn` is set (debug mode), `error()` calls it before raising `EvalError`, pausing the debugger at the error site.
 
 ### Special variable scoping (`$variables`)
 
@@ -336,6 +336,42 @@ Parse + evaluate runs in a background `QThread` so the GUI stays responsive. The
 **Cancellation**: `_render()` passes a `threading.Event` to the worker; the worker checks `cancel.is_set()` between major steps. A `render_id` integer is incremented on each new render; the callback discards results whose `render_id` no longer matches the current one.
 
 **Progress indicator**: an indeterminate `QProgressBar` in the status bar is shown while rendering and hidden when the worker's `done` signal fires. A `WaitCursor` override is set/restored at the same time.
+
+## Debugger
+
+The debugger runs the evaluator in a daemon worker thread (`DebugSession`) and surfaces a `DebuggerPane` widget with call-stack and variables panels.
+
+### DebugSession (`debugger.py`)
+
+Signals (all emitted from worker thread; Qt queues them to main thread):
+
+| Signal | Args | When |
+|---|---|---|
+| `paused` | `line, all_frame_locals, call_stack` | Hit a breakpoint or step |
+| `error_break` | `line, msg, all_frame_locals, call_stack` | Any runtime error |
+| `finished` | `bodies, id_to_node` | Evaluation completed |
+| `errored` | `str` | Unhandled exception after error_break resume |
+
+`all_frame_locals` is a list of dicts, **innermost first** — `all_frame_locals[0]` matches row 0 (innermost) in the call-stack list.
+
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
+
+**Error break** — `Evaluator(error_break_fn=self._error_break)` intercepts every `error()` call before it raises `EvalError`. `_error_break` emits `error_break` and blocks until the user resumes. After the user presses Continue, `EvalError` propagates normally (caught by `_run`, triggers `errored`).
+
+### Per-frame variable inspection
+
+The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `all_frame_locals` is built: innermost frame uses the comprehensive `locals_dict` (scope-walked); parent frames extract `__let_*` bindings from their stored `EvalContext.dyn`.
+
+Clicking a row in the Call Stack list fires `_on_frame_selected(row)`, which repopulates the Variables table from `_all_frame_locals[row]`. Row 0 (innermost) is editable; parent frames are read-only. `get_modifications()` skips non-editable rows.
+
+### DebuggerPane states
+
+| Method | Status label | Step buttons |
+|---|---|---|
+| `set_running()` | "Running…" | Disabled (Stop only) |
+| `set_paused(line, frames, stack)` | "Paused at line N" | All enabled |
+| `set_error_break(line, msg, frames, stack)` | "Line N: \<error\>" | Continue + Stop only |
+| `set_idle()` | "Not debugging" | All disabled |
 
 ## V1 Scope Boundaries
 
