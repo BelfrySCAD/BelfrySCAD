@@ -369,7 +369,7 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 
 The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `_categorize_ctx(dyn)` splits a frame's dynamic bindings into `(local, special, hidden)`; the inherited category is added via a scope walk on the current ctx (innermost frame only; parent frames get `"inherited": {}`).
 
-The Variables panel has a **filter dropdown** (Local / Special ($) / Inherited / Hidden (_)) that selects which category to display. Changing the filter or clicking a different call-stack row calls `_populate_vars(frame_data, is_innermost)`, which reads `frame_data[combo.currentData()]`. Only the Local category of the innermost frame is editable; all other combinations are read-only. `get_modifications()` skips non-editable rows.
+The Variables panel has a **filter dropdown** (Local vars / Inherited vars / Special $vars / Hidden _vars) that selects which category to display. Changing the filter or clicking a different call-stack row calls `_populate_vars(frame_data, is_innermost)`, which reads `frame_data[combo.currentData()]`. Only the Local category of the innermost frame is editable; all other combinations are read-only. `get_modifications()` skips non-editable rows.
 
 ### DebuggerPane states
 
