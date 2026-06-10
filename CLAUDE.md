@@ -167,7 +167,14 @@ WARNING: a was assigned on line 1 but was overwritten in file foo.scad, line 3
 ```
 matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the source position of each `__let_*` entry for this purpose.
 
-`_eval_children` shares `ctx.dyn` (not a copy) across all sibling nodes so that eager assignments from one sibling are immediately visible to subsequent ones in the same block. Isolation between scopes is preserved because `_eval_user_module` and `_eval_for` each create a fresh `child_ctx` via `ctx.child_ctx()` before calling `_eval_children`.
+`_eval_children` shares `ctx.dyn` (not a copy) across all sibling nodes so that eager assignments from one sibling are immediately visible to subsequent ones in the same block.
+
+`EvalContext` has two context-creation methods with different inheritance rules:
+
+| Method | `__let_*` inherited | Use for |
+|---|---|---|
+| `child_ctx()` | Yes (full copy) | `for`/`let` iterations, `_eval_let_block`, list comprehension scopes — where outer variable bindings must remain visible |
+| `call_ctx()` | No (only `$*` dynamic vars) | Module and function calls — callee has its own variable scope; inheriting caller `__let_*` would trigger spurious double-assignment warnings |
 
 ### Built-ins implemented
 
