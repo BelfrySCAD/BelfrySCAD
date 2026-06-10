@@ -84,6 +84,8 @@ class EvalContext:
     scope: Any
     # Dynamic variables ($fn, $fa, $fs, $t, etc.) — call-chain inherited
     dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0})
+    # Positions of assignments stored in dyn (for double-assignment warnings)
+    dyn_positions: dict[str, Any] = field(default_factory=dict)
     # Optional color propagated from parent color() call
     color: Optional[tuple[float, float, float, float]] = None
     # Children passed into a module call (for children() built-in)
@@ -93,6 +95,7 @@ class EvalContext:
         return EvalContext(
             scope=scope if scope is not None else self.scope,
             dyn=dyn if dyn is not None else dict(self.dyn),
+            dyn_positions={} if dyn is None else self.dyn_positions,
             color=color if color is not None else self.color,
             children_bodies=children_bodies if children_bodies is not None else [],
         )
@@ -111,6 +114,7 @@ class Evaluator:
         self._error_break_fn = error_break_fn  # callable(line, msg, all_frame_locals, call_stack); returns, then EvalError raised
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
+        self._root_ctx: EvalContext | None = None
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext):
         if self._debug_hook is None:
@@ -120,8 +124,8 @@ class Evaluator:
         if line is None:
             return
 
-        # local_scope: vars belonging to the current call frame (params, for/let, current scope assignments)
-        # outer_scope: vars from enclosing/parent scopes
+        # local_scope: all eagerly-assigned vars in the current frame's dyn
+        # outer_scope: global vars from the root context (shown when inside a call)
         # dyn_names:   subset of local_scope that live in dyn (user-modifiable)
         local_scope: dict = {}
         dyn_names: set = set()
@@ -134,27 +138,13 @@ class Evaluator:
             elif k.startswith('$'):
                 local_scope[k] = v
 
-        if self._call_stack and ctx.scope is not None:
-            for name, decl in ctx.scope.variables.items():
-                if name not in local_scope and isinstance(decl, Assignment):
-                    try:
-                        local_scope[name] = self._eval_expr(decl.expr, ctx)
-                    except Exception:
-                        pass
-            outer_start = ctx.scope.parent
-        else:
-            outer_start = ctx.scope  # top level: all scope vars belong to outer
-
         outer_scope: dict = {}
-        scope = outer_start
-        while scope is not None:
-            for name, decl in scope.variables.items():
-                if name not in local_scope and name not in outer_scope and isinstance(decl, Assignment):
-                    try:
-                        outer_scope[name] = self._eval_expr(decl.expr, ctx)
-                    except Exception:
-                        pass
-            scope = scope.parent
+        if self._call_stack and self._root_ctx is not None:
+            for k, v in self._root_ctx.dyn.items():
+                if k.startswith('__let_'):
+                    name = k[6:]
+                    if name not in local_scope:
+                        outer_scope[name] = v
 
         current_frame = {"local_scope": local_scope, "outer_scope": outer_scope, "dyn_names": dyn_names}
         all_frame_locals = [current_frame]
@@ -257,8 +247,12 @@ class Evaluator:
         self._call_stack.clear()
         self._frame_ctxs.clear()
         ctx = EvalContext(scope=root_scope)
+        self._root_ctx = ctx
         result = []
-        for node in nodes:
+        # OpenSCAD executes all assignments before geometry in each scope.
+        assignments = [n for n in nodes if isinstance(n, Assignment)]
+        others = [n for n in nodes if not isinstance(n, Assignment)]
+        for node in assignments + others:
             bodies = self._eval_statement(node, ctx)
             result.extend(bodies)
         return result, self.id_to_node
@@ -271,9 +265,21 @@ class Evaluator:
         if not isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
             self._check_debug(node, ctx)
         if isinstance(node, Assignment):
-            # $-prefixed assignments update the dynamic context so child calls inherit them
-            if node.name.name.startswith("$"):
-                ctx.dyn[node.name.name] = self._eval_expr(node.expr, ctx)
+            name = node.name.name
+            if name.startswith("$"):
+                ctx.dyn[name] = self._eval_expr(node.expr, ctx)
+            else:
+                key = f'__let_{name}'
+                pos = getattr(node, 'position', None)
+                if key in ctx.dyn:
+                    first_pos = ctx.dyn_positions.get(key)
+                    first_line = getattr(first_pos, 'line', '?') if first_pos else '?'
+                    self._echo_fn(
+                        f"WARNING: {name} was assigned on line {first_line}"
+                        f" but was overwritten{self._loc(pos)}"
+                    )
+                ctx.dyn[key] = self._eval_expr(node.expr, ctx)
+                ctx.dyn_positions[key] = pos
             return []
         if isinstance(node, ModularCall):
             body = self._eval_modular_call(node, ctx)
@@ -317,13 +323,19 @@ class Evaluator:
 
     def _eval_children(self, children, ctx: EvalContext) -> list[ColoredBody]:
         result = []
-        for child in children:
+        # OpenSCAD executes all assignments before geometry in each scope.
+        assignments = [c for c in children if isinstance(c, Assignment)]
+        others = [c for c in children if not isinstance(c, Assignment)]
+        for child in assignments + others:
             # Use the node's own scope from build_scopes when available so that
-            # variables defined as siblings in the same block are visible.
+            # each node evaluates in its correct lexical scope. Share ctx.dyn
+            # (not a copy) so that eager assignments in one sibling are visible
+            # to subsequent siblings in the same block.
             if hasattr(child, 'scope') and child.scope is not None:
                 child_ctx = EvalContext(
                     scope=child.scope,
-                    dyn=dict(ctx.dyn),
+                    dyn=ctx.dyn,
+                    dyn_positions=ctx.dyn_positions,
                     color=ctx.color,
                     children_bodies=ctx.children_bodies,
                 )
