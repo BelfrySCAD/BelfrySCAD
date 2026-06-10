@@ -254,11 +254,13 @@ class Evaluator:
     # Public entry point
     # ------------------------------------------------------------------
 
-    def evaluate(self, nodes: list[ASTNode], root_scope) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
+    def evaluate(self, nodes: list[ASTNode], root_scope, viewport_params: dict | None = None) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
         """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
         self._call_stack.clear()
         self._frame_ctxs.clear()
         ctx = EvalContext(scope=root_scope)
+        if viewport_params:
+            ctx.dyn.update(viewport_params)
         self._root_ctx = ctx
         result = []
         # OpenSCAD executes all assignments before geometry in each scope.
@@ -1508,6 +1510,7 @@ class Evaluator:
         self._call_stack.append(("function", name, pos))
         self._frame_ctxs.append(child_ctx)
         try:
+            self._check_debug(decl.expr, child_ctx)
             return self._eval_expr(decl.expr, child_ctx)
         finally:
             self._call_stack.pop()

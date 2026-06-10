@@ -103,7 +103,7 @@ class DebugSession(QObject):
         self._stopped: bool = False
         self._thread: threading.Thread | None = None
 
-    def start(self, nodes, root_scope, breakpoints: set[int], echo_fn):
+    def start(self, nodes, root_scope, breakpoints: set[int], echo_fn, viewport_params: dict | None = None):
         self._breakpoints = set(breakpoints)
         self._break_on_first = True   # always pause at the very first statement
         self._step_mode = False
@@ -112,7 +112,7 @@ class DebugSession(QObject):
         self._stopped = False
         self._pending_mods = {}
         self._thread = threading.Thread(
-            target=self._run, args=(nodes, root_scope, echo_fn), daemon=True
+            target=self._run, args=(nodes, root_scope, echo_fn, viewport_params or {}), daemon=True
         )
         self._thread.start()
 
@@ -139,7 +139,7 @@ class DebugSession(QObject):
             self._step_over_depth = None
             self._step_out_depth = None
 
-            display_stack = list(call_stack) + [("toplevel", "<toplevel>", None)]
+            display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
             self.paused.emit(line, list(all_frame_locals), display_stack)
             self._pause_event.clear()
             self._pause_event.wait()
@@ -169,16 +169,16 @@ class DebugSession(QObject):
         """
         if self._stopped:
             return
-        display_stack = list(call_stack) + [("toplevel", "<toplevel>", None)]
+        display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
         self.error_break.emit(line, msg, list(all_frame_locals), display_stack)
         self._pause_event.clear()
         self._pause_event.wait()
 
-    def _run(self, nodes, root_scope, echo_fn):
+    def _run(self, nodes, root_scope, echo_fn, viewport_params: dict):
         from neuscad.engine.evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook(), error_break_fn=self._error_break)
         try:
-            bodies, id_to_node = ev.evaluate(nodes, root_scope)
+            bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
             if not self._stopped:
                 self.finished.emit(bodies, id_to_node)
         except EvalError as e:
@@ -330,7 +330,7 @@ class DebuggerPane(QWidget):
     def _populate_stack(self, call_stack: list):
         self._stack_list.blockSignals(True)
         self._stack_list.clear()
-        for entry in reversed(call_stack):
+        for entry in call_stack:
             if entry[0] == "toplevel":
                 self._stack_list.addItem("<toplevel>")
             else:

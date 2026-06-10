@@ -242,11 +242,12 @@ class _RenderWorker(QObject):
     finished = Signal(object, object, float)  # (bodies, id_to_node, elapsed_ms)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
-    def __init__(self, source: str, file_path, cancel: threading.Event):
+    def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None):
         super().__init__()
         self._source = source
         self._file_path = file_path
         self._cancel = cancel
+        self._viewport_params = viewport_params or {}
 
     @Slot()
     def run(self):
@@ -341,7 +342,7 @@ class _RenderWorker(QObject):
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self.logged.emit)
         try:
-            bodies, id_to_node = evaluator.evaluate(nodes, root_scope)
+            bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
         except RecursionError:
             self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
             return
@@ -1062,6 +1063,18 @@ class MainWindow(QMainWindow):
     # Render
     # ------------------------------------------------------------------
 
+    def _viewport_params(self, tab) -> dict:
+        """Snapshot camera state as OpenSCAD $vp* special variables."""
+        try:
+            cam = tab.viewport._renderer.camera
+            return {
+                "$vpt": cam.target.tolist(),
+                "$vpr": [float(cam.elevation), 0.0, float(cam.azimuth)],
+                "$vpd": float(cam.distance),
+            }
+        except Exception:
+            return {}
+
     def _render(self):
         tab = self._current_tab()
         if not tab:
@@ -1084,7 +1097,7 @@ class MainWindow(QMainWindow):
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        worker = _RenderWorker(source, tab.file_path, cancel)
+        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(tab))
         self._render_worker = worker  # keep alive while thread runs
         callback = _RenderCallback(self, tab, render_id, parent=self)
         self._render_callback = callback  # keep alive while thread runs
@@ -1340,7 +1353,8 @@ class MainWindow(QMainWindow):
 
         tab.debugger_pane.set_running()
         tab.debug_session.start(nodes, root_scope, breakpoints,
-                                lambda msg, t=tab: self.log_to_tab(t, msg))
+                                lambda msg, t=tab: self.log_to_tab(t, msg),
+                                self._viewport_params(tab))
 
     def _on_debug_paused(self, tab, line: int, all_frame_locals: list, call_stack: list):
         tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
