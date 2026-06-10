@@ -155,6 +155,20 @@ Recursive AST walker with a built-ins dispatch table:
 3. For each function call: look up via `scope.lookup_function(name)`, evaluate args in caller's scope, evaluate body in new scope
 4. Default parameter values are evaluated in the **caller's** scope, not the callee's
 
+### Assignment execution order
+
+Within each scope (top-level, module body, `if`/`for` block), all `Assignment` nodes are evaluated **before** any geometry statements, matching OpenSCAD's last-wins semantics. For example, `a = 5; cube(a); a = 10;` produces a 10×10×10 cube — `a = 5` and `a = 10` both run before `cube(a)`. This applies recursively at every level processed by `evaluate()` and `_eval_children()`.
+
+Assignments are **eager**: when `_eval_statement` processes an `Assignment`, it evaluates the expression immediately and stores the result in `ctx.dyn` as `__let_{name}`. `_eval_identifier` checks `ctx.dyn` first, so the cached value is used for subsequent references in the same scope. Forward references (a variable used before its assignment in source order) fall back to `scope.lookup_variable()` and lazy evaluation.
+
+When the same variable is assigned twice in the same scope, the second assignment overwrites the first and emits:
+```
+WARNING: a was assigned on line 1 but was overwritten in file foo.scad, line 3
+```
+matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the source position of each `__let_*` entry for this purpose.
+
+`_eval_children` shares `ctx.dyn` (not a copy) across all sibling nodes so that eager assignments from one sibling are immediately visible to subsequent ones in the same block. Isolation between scopes is preserved because `_eval_user_module` and `_eval_for` each create a fresh `child_ctx` via `ctx.child_ctx()` before calling `_eval_children`.
+
 ### Built-ins implemented
 
 **3D Primitives** (→ `ColoredBody.body`): `cube`, `sphere`, `cylinder`, `polyhedron`
@@ -357,8 +371,8 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 
 | Key | Contents |
 |---|---|
-| `"local_scope"` | Vars belonging to this call frame: `dyn` `__let_*` bindings (params, `for`/`let`) + current scope's own `Assignment` declarations (when inside a call) |
-| `"outer_scope"` | Vars from enclosing/parent scopes (innermost frame only; parent frames get `{}`) |
+| `"local_scope"` | All eagerly-assigned vars in the current frame's `ctx.dyn`: `__let_*` (params, `for`/`let`, assignments executed so far) and `$*` specials |
+| `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars that can be modified via the pane |
 
 **Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` = dyn-bound locals only (used for `mods`). `call_stack` = the real call stack (used for step-depth math). The hook emits a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting the `paused` signal. The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
@@ -371,7 +385,7 @@ The call-stack list always ends with a `<toplevel>` entry. When inside a call, a
 
 ### Per-frame variable inspection
 
-The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `local_scope` is built from `dyn` (`__let_*` + `$*`) plus the current scope's own assignments (when inside a call). Parent scopes fill `outer_scope`. A `<toplevel>` frame with `local_scope = outer_scope` is appended when `_call_stack` is non-empty.
+The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `local_scope` is read directly from `ctx.dyn` (all `__let_*` and `$*` entries) — no scope walk needed because assignments are eager. When inside a call, `outer_scope` is populated from `_root_ctx.dyn` (the top-level context) to provide the Globals view. A `<toplevel>` frame with `local_scope = outer_scope` is appended when `_call_stack` is non-empty.
 
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
