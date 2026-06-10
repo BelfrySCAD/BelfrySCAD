@@ -1648,7 +1648,8 @@ class TestRecursiveModule:
 class TestScoping:
     def test_last_wins_in_block(self):
         _, lines = run("x = 1; x = 7; echo(x);")
-        assert lines == ["ECHO: 7"]
+        assert any("WARNING" in l and "x" in l and "overwritten" in l for l in lines)
+        assert "ECHO: 7" in lines
 
     def test_forward_reference_function(self):
         src = "echo(double(5)); function double(x) = x * 2;"

@@ -100,6 +100,18 @@ class EvalContext:
             children_bodies=children_bodies if children_bodies is not None else [],
         )
 
+    def call_ctx(self, scope=None, color=None, children_bodies=None):
+        """Child context for a module/function call: inherits only $-prefixed
+        dynamic bindings, not __let_* variable bindings from the caller's scope."""
+        dyn = {k: v for k, v in self.dyn.items() if k.startswith('$')}
+        return EvalContext(
+            scope=scope if scope is not None else self.scope,
+            dyn=dyn,
+            dyn_positions={},
+            color=color if color is not None else self.color,
+            children_bodies=children_bodies if children_bodies is not None else [],
+        )
+
 
 class Evaluator:
     def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None):
@@ -364,7 +376,7 @@ class Evaluator:
         # Evaluate children in caller's ctx so they become available via children()
         caller_bodies = self._eval_children(call.children, ctx)
 
-        child_ctx = ctx.child_ctx(
+        child_ctx = ctx.call_ctx(
             scope=child_scope,
             children_bodies=caller_bodies,
         )
@@ -1488,7 +1500,7 @@ class Evaluator:
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
         params = decl.parameters if hasattr(decl, 'parameters') else []
         bound = self._bind_args(params, arguments, ctx)
-        child_ctx = ctx.child_ctx(scope=decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope)
+        child_ctx = ctx.call_ctx(scope=decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope)
         for k, v in bound.items():
             child_ctx.dyn[f"__let_{k}"] = v
         self._apply_defaults(params, child_ctx, ctx)
