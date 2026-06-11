@@ -58,6 +58,21 @@ A faint vertical line is drawn at column 80 in the code editor. It is implemente
 - `update_geometry()` keeps the overlay sized to the full viewport rect; called from `CodeEditor.resizeEvent()`
 - The x position is computed as `cursorRect(cursor_at_pos_0).x() + QFontMetricsF(font).horizontalAdvance('0' * 80)`. `QFontMetricsF` (not `QFontMetrics`) is required — the integer version rounds character width up by ~0.2px, which accumulates to ~2 columns of error over 80 characters.
 
+### Code Folding
+
+Fold markers (▼ unfolded, ▶ folded) appear in the right section of the line-number gutter. Clicking triggers `toggle_fold(block_number)`.
+
+`_compute_fold_regions(doc)` returns `{open_block: close_block}` using three passes:
+1. **`{...}` pairs** — covers modules, if/for/let bodies
+2. **`(...)` pairs** — covers `let(...)` argument lists and multi-line function parameter lists
+3. **Function bodies** — lines that start with `function` (after optional whitespace) and whose stripped text ends with `=` (e.g. `function foo(x) =`); the fold extends to the last more-indented continuation line
+
+`_fold_regions` is recomputed lazily on the first paint after `_fold_dirty` is set by `_on_doc_changed`. `_fold_busy` guards prevent re-entrant recomputation and prevent `_on_doc_changed` from resetting `_fold_dirty` while a fold toggle is in progress.
+
+`_set_range_visible(start_bn, end_bn, visible)` sets `QTextBlock.setVisible()` on each hidden block then calls `cursor.beginEditBlock(); cursor.endEditBlock()` — a no-op edit that forces `QPlainTextDocumentLayout` to recalculate block heights (required for visibility changes to take effect).
+
+Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath.drawPath` was tested and found invisible at small sizes on macOS; `drawPolygon` renders reliably.
+
 ### Go to Definition
 
 Right-click on any identifier in the code editor shows a context menu with "Go to Definition of 'name'". The menu item only appears for words matching `[A-Za-z_][A-Za-z0-9_]*` (standard identifiers).

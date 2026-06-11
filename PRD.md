@@ -127,7 +127,7 @@ Fallback behavior:
 * syntax highlighting (via `QSyntaxHighlighter` subclass)
 * line numbers (via custom `LineNumberArea` widget)
 * error underlines (via `QTextCharFormat` with `SpellCheckUnderline` style)
-* code folding (fold/unfold multi-line `{…}` regions via gutter arrows)
+* code folding (fold/unfold multi-line regions via gutter arrows; see §5.12)
 * breakpoints (click in gutter; displayed as red dots; persisted per-document)
 * execution line highlighting (yellow full-width highlight; used by debugger)
 * find/replace overlay (`FindBar` widget; Cmd+F / Cmd+H; see §5.7)
@@ -447,6 +447,24 @@ Behaviour:
 * Lookup order: variable → function → module; first non-`None` result wins; built-in modules silently produce no result
 * **Same file**: scrolls the current editor to the definition line
 * **Different file**: switches to an already-open tab if found, otherwise opens the file in a new tab (view-only, no render triggered)
+
+---
+
+## 5.12 Code Folding
+
+Fold markers (solid triangles) are drawn in the gutter next to any line that opens a collapsible region. Clicking the triangle toggles the region collapsed or expanded.
+
+**Detected fold patterns** (three-pass scan, comment text stripped before matching):
+
+| Pattern | Example |
+|---|---|
+| Brace block | `module foo() { … }`, `if (…) { … }`, `for (…) { … }` |
+| Parenthesis block | `let(…)`, multi-line function parameter list |
+| Function body | `function f(x) =` — line starts with `function` and ends with `=`; folds over the indented continuation |
+
+A brace or paren region is created only when the matching closer is on a different line than the opener. Function-body regions use indentation: the fold extends to the last line that is strictly more indented than the `=` line.
+
+When a region is collapsed, all lines between the opener and closer are hidden; the opener line remains visible. Collapsed regions are tracked in memory only — they are not persisted across sessions.
 
 ---
 

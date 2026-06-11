@@ -14,25 +14,66 @@ from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent,
 
 
 def _compute_fold_regions(doc) -> dict[int, int]:
-    """Scan the document for matching multi-line {…} pairs.
+    """Scan for multi-line {…}, (…), and function-body folds.
     Returns {open_block_number: close_block_number}."""
     regions: dict[int, int] = {}
-    stack: list[int] = []
+    brace_stack: list[int] = []
+    paren_stack: list[int] = []
+
+    # Pass 1: brace and paren matching
     block = doc.begin()
     while block.isValid():
         bn = block.blockNumber()
         text = block.text()
-        ci = text.find("//")          # strip line comments (simple heuristic)
+        ci = text.find("//")
         if ci >= 0:
             text = text[:ci]
         for ch in text:
             if ch == "{":
-                stack.append(bn)
-            elif ch == "}" and stack:
-                start = stack.pop()
-                if start != bn:       # skip single-line {…}
+                brace_stack.append(bn)
+            elif ch == "}" and brace_stack:
+                start = brace_stack.pop()
+                if start != bn:
+                    regions[start] = bn
+            elif ch == "(":
+                paren_stack.append(bn)
+            elif ch == ")" and paren_stack:
+                start = paren_stack.pop()
+                if start != bn:
                     regions[start] = bn
         block = block.next()
+
+    # Pass 2: function declaration bodies — lines whose non-comment content
+    # starts with "function" and ends with "=" (possibly across the same line,
+    # e.g. "function f(x) ="), where continuation lines are more indented.
+    import re as _re
+    _func_re = _re.compile(r"^\s*function\b")
+    block = doc.begin()
+    while block.isValid():
+        bn = block.blockNumber()
+        raw = block.text()
+        stripped = raw
+        ci = stripped.find("//")
+        if ci >= 0:
+            stripped = stripped[:ci]
+        stripped = stripped.rstrip()
+        if _func_re.match(raw) and stripped.endswith("="):
+            base_indent = len(raw) - len(raw.lstrip())
+            # Walk forward to find last line of the expression body
+            nxt = block.next()
+            last_bn = None
+            while nxt.isValid():
+                ntext = nxt.text()
+                if ntext.strip():
+                    n_indent = len(ntext) - len(ntext.lstrip())
+                    if n_indent <= base_indent:
+                        break
+                    last_bn = nxt.blockNumber()
+                nxt = nxt.next()
+            if last_bn is not None and last_bn > bn:
+                regions.setdefault(bn, last_bn)
+        block = block.next()
+
     return regions
 
 
@@ -588,22 +629,19 @@ class CodeEditor(QPlainTextEdit):
                 )
 
                 if block_number in self._fold_regions:
-                    mid_y = top + lh / 2
-                    tx = float(bp_w + num_w + 2)
-                    tw, th = 8.0, 5.0
-                    path = QPainterPath()
-                    if block_number in self._folded:
-                        path.moveTo(tx,        mid_y - th)
-                        path.lineTo(tx + tw,   mid_y)
-                        path.lineTo(tx,        mid_y + th)
-                    else:
-                        path.moveTo(tx,        mid_y - th + 2)
-                        path.lineTo(tx + tw,   mid_y - th + 2)
-                        path.lineTo(tx + tw/2, mid_y + th - 1)
-                    path.closeSubpath()
+                    cx = bp_w + num_w + 7
+                    cy = int(top) + lh // 2
                     painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(QColor("#555555"))
-                    painter.drawPath(path)
+                    painter.setBrush(QColor("#606060"))
+                    if block_number in self._folded:
+                        pts = [QPoint(cx - 3, cy - 4),
+                               QPoint(cx + 3, cy),
+                               QPoint(cx - 3, cy + 4)]
+                    else:
+                        pts = [QPoint(cx - 4, cy - 2),
+                               QPoint(cx + 4, cy - 2),
+                               QPoint(cx,     cy + 3)]
+                    painter.drawPolygon(pts)
 
             block = block.next()
             top = bottom
@@ -615,7 +653,8 @@ class CodeEditor(QPlainTextEdit):
     # ------------------------------------------------------------------
 
     def _on_doc_changed(self):
-        self._fold_dirty = True
+        if not self._fold_busy:
+            self._fold_dirty = True
         self._line_number_area.update()
 
     def _recompute_fold_regions(self):
@@ -633,7 +672,13 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid() and block.blockNumber() <= end_bn:
             block.setVisible(visible)
             block = block.next()
-        self.document().markContentsDirty(0, self.document().characterCount())
+        # beginEditBlock/endEditBlock forces Qt to recalculate the document layout,
+        # which is required for block visibility changes to take effect visually.
+        cursor = QTextCursor(self.document())
+        cursor.beginEditBlock()
+        cursor.endEditBlock()
+        self._update_line_number_area_width()
+        self._line_number_area.update()
         self.viewport().update()
 
     def toggle_fold(self, block_number: int):
@@ -643,12 +688,14 @@ class CodeEditor(QPlainTextEdit):
         if block_number not in self._fold_regions:
             return
         end_bn = self._fold_regions[block_number]
+        self._fold_busy = True
         if block_number in self._folded:
             self._folded.discard(block_number)
             self._set_range_visible(block_number, end_bn, True)
         else:
             self._folded.add(block_number)
             self._set_range_visible(block_number, end_bn, False)
+        self._fold_busy = False
         self._update_line_number_area_width()
         self._line_number_area.update()
 
