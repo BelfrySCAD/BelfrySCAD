@@ -839,12 +839,13 @@ class CodeEditor(QPlainTextEdit):
         text = doc.toPlainText()
         pos = cur.position()
 
-        # Cursor just after an opener, or just before a closer
+        # Cursor on either side of any bracket character; prefer the character before
         bracket_pos = None
         bracket_ch = None
-        if pos > 0 and text[pos - 1] in self._OPEN:
+        _all = self._OPEN + self._CLOSE
+        if pos > 0 and text[pos - 1] in _all:
             bracket_pos, bracket_ch = pos - 1, text[pos - 1]
-        elif pos < len(text) and text[pos] in self._CLOSE:
+        elif pos < len(text) and text[pos] in _all:
             bracket_pos, bracket_ch = pos, text[pos]
 
         if bracket_pos is None:
