@@ -1301,6 +1301,7 @@ class Evaluator:
                 elif v is not None:
                     result.append(v)
             else:
+                self._check_debug(elem, ctx, expr_level=True)
                 result.append(self._eval_expr(elem, ctx))
         return result
 
@@ -1333,6 +1334,7 @@ class Evaluator:
             if isinstance(v, list):
                 return v
             return [v] if v is not None else []
+        self._check_debug(body, ctx, expr_level=True)
         v = self._eval_expr(body, ctx)
         return [v] if v is not None else []
 
