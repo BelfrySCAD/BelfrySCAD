@@ -101,6 +101,7 @@ class DebugSession(QObject):
         self._step_over_depth: int | None = None  # step_over: pause when depth ≤ N
         self._step_out_depth: int | None = None   # step_out:  pause when depth < N
         self._stopped: bool = False
+        self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
 
     def start(self, nodes, root_scope, breakpoints: set[int], echo_fn, viewport_params: dict | None = None):
@@ -110,6 +111,7 @@ class DebugSession(QObject):
         self._step_over_depth = None
         self._step_out_depth = None
         self._stopped = False
+        self._pause_requested = False
         self._pending_mods = {}
         self._thread = threading.Thread(
             target=self._run, args=(nodes, root_scope, echo_fn, viewport_params or {}), daemon=True
@@ -122,8 +124,12 @@ class DebugSession(QObject):
                 return ("stop", {})
 
             depth = len(call_stack)
+            pause_now = self._pause_requested
+            if pause_now:
+                self._pause_requested = False
             should_pause = (
-                self._break_on_first
+                pause_now
+                or self._break_on_first
                 or (line in self._breakpoints)
                 or self._step_mode
                 or (self._step_over_depth is not None and depth <= self._step_over_depth)
@@ -189,6 +195,10 @@ class DebugSession(QObject):
             if not self._stopped:
                 self.errored.emit(f"{e}\n{traceback.format_exc()}")
 
+    def pause(self):
+        """Request the evaluator to pause at the next debug hook call."""
+        self._pause_requested = True
+
     def resume(self, command: str = "continue", mods: dict | None = None):
         self._resume_command = command
         self._pending_mods = dict(mods) if mods else {}
@@ -208,15 +218,18 @@ class DebuggerPane(QWidget):
     """Pane showing call stack, local variables, and step controls."""
 
     continue_requested = Signal()
+    pause_requested = Signal()
     step_into_requested = Signal()
     step_over_requested = Signal()
     step_out_requested = Signal()
+    restart_requested = Signal()
     stop_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._original_locals: dict[str, str] = {}
         self._all_frame_locals: list[dict] = []
+        self._is_running: bool = False
         self._setup_ui()
         self.setMinimumWidth(180)
 
@@ -245,13 +258,17 @@ class DebuggerPane(QWidget):
         self._btn_step_out.setIcon(_debug_icon("step-out"))
         self._btn_step_out.setToolTip("Step Out (F12)")
         self._btn_step_out.setFixedSize(28, 28)
+        self._btn_restart = QPushButton()
+        self._btn_restart.setIcon(_debug_icon("restart"))
+        self._btn_restart.setToolTip("Restart")
+        self._btn_restart.setFixedSize(28, 28)
         self._btn_stop = QPushButton()
         self._btn_stop.setIcon(_debug_icon("stop"))
         self._btn_stop.setToolTip("Stop")
         self._btn_stop.setFixedSize(28, 28)
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
-                    self._btn_step_out, self._btn_stop):
+                    self._btn_step_out, self._btn_stop, self._btn_restart):
             header.addWidget(btn)
             btn.setEnabled(False)
         layout.addLayout(header)
@@ -301,14 +318,21 @@ class DebuggerPane(QWidget):
         self._status = QLabel("Not debugging")
         layout.addWidget(self._status)
 
-        self._btn_continue.clicked.connect(self.continue_requested)
+        self._btn_continue.clicked.connect(self._on_continue_pause_clicked)
         self._btn_step_into.clicked.connect(self.step_into_requested)
         self._btn_step_over.clicked.connect(self.step_over_requested)
         self._btn_step_out.clicked.connect(self.step_out_requested)
+        self._btn_restart.clicked.connect(self.restart_requested)
         self._btn_stop.clicked.connect(self.stop_requested)
         self._stack_list.currentRowChanged.connect(self._on_frame_selected)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
+
+    def _on_continue_pause_clicked(self):
+        if self._is_running:
+            self.pause_requested.emit()
+        else:
+            self.continue_requested.emit()
 
     def get_modifications(self) -> dict:
         """Return variable values the user edited in the innermost-frame vars table."""
@@ -372,6 +396,7 @@ class DebuggerPane(QWidget):
             self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
+        self._set_continue_mode()
         self._status.setText(f"Paused at line {line}")
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
@@ -381,10 +406,11 @@ class DebuggerPane(QWidget):
         self._populate_stack(call_stack)
         self._populate_vars(innermost, is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
-                    self._btn_step_out, self._btn_stop):
+                    self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
     def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
+        self._set_continue_mode()
         display = msg.removeprefix("ERROR: ")
         if len(display) > 80:
             display = display[:77] + "…"
@@ -398,18 +424,30 @@ class DebuggerPane(QWidget):
         self._btn_step_into.setEnabled(False)
         self._btn_step_over.setEnabled(False)
         self._btn_step_out.setEnabled(False)
+        self._btn_restart.setEnabled(True)
         self._btn_stop.setEnabled(True)
 
+    def _set_continue_mode(self):
+        self._is_running = False
+        self._btn_continue.setIcon(_debug_icon("continue"))
+        self._btn_continue.setToolTip("Continue (F5)")
+
     def set_running(self):
+        self._is_running = True
         self._status.setText("Running…")
-        for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over, self._btn_step_out):
+        self._btn_continue.setIcon(_debug_icon("pause"))
+        self._btn_continue.setToolTip("Pause")
+        self._btn_continue.setEnabled(True)
+        for btn in (self._btn_step_into, self._btn_step_over, self._btn_step_out):
             btn.setEnabled(False)
+        self._btn_restart.setEnabled(True)
         self._btn_stop.setEnabled(True)
 
     def set_idle(self):
+        self._set_continue_mode()
         self._status.setText("Not debugging")
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
-                    self._btn_step_out, self._btn_stop):
+                    self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(False)
         self._stack_list.clear()
         self._vars_table.setRowCount(0)

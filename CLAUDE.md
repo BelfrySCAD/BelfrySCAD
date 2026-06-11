@@ -206,6 +206,8 @@ matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the
 
 **Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` is set to the child count when entering a user module body. `$`-prefixed named arguments in any call (e.g. `sphere(r=2, $fn=64)`) are merged into the dynamic context for that call and its children.
 
+**Viewport special variables**: `$vpt` (viewport translation = `camera.target` as `[x,y,z]`), `$vpr` (viewport rotation = `[elevation, 0, azimuth]`), and `$vpd` (viewport distance = `camera.distance`) are injected into the root `EvalContext.dyn` at render and debug start. They are snapshotted in the main thread via `MainWindow._viewport_params(tab)` before the worker thread launches, so the values are consistent with what the user sees. `Evaluator.evaluate()` accepts a `viewport_params: dict | None` argument and merges it into `ctx.dyn` before processing begins.
+
 ### originalID assignment
 
 Each geometry-producing node (primitives and their transform/boolean ancestors) is assigned a unique Manifold `originalID` via `ReserveIDs`. The evaluator builds and returns the `originalID → AST node` lookup table alongside the Manifold mesh.
@@ -382,17 +384,23 @@ Signals (all emitted from worker thread; Qt queues them to main thread):
 | `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars that can be modified via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` = dyn-bound locals only (used for `mods`). `call_stack` = the real call stack (used for step-depth math). The hook emits a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting the `paused` signal. The hook pauses on breakpoints, step-into, step-over, and step-out by blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` = dyn-bound locals only (used for `mods`). `call_stack` = the real call stack (used for step-depth math). The hook emits a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting the `paused` signal. The hook pauses on breakpoints, step-into, step-over, step-out, and user-requested pauses by blocking on a `threading.Event`.
+
+**Pause during execution** — `DebugSession.pause()` sets a `_pause_requested` flag. The hook checks and consumes this flag at the top of every call; if set, it triggers an immediate pause regardless of breakpoints or step state. This allows interrupting a long-running evaluation to inspect what is happening.
 
 **Error break** — `Evaluator(error_break_fn=self._error_break)` intercepts every `error()` call before it raises `EvalError`. `_error_break` emits `error_break` and blocks until the user resumes. After the user presses Continue, `EvalError` propagates normally (caught by `_run`, triggers `errored`).
 
 ### Call stack display
 
-The call-stack list always ends with a `<toplevel>` entry. When inside a call, a corresponding `<toplevel>` frame (whose `local_scope` = the global scope vars) is appended to `all_frame_locals`. Clicking `<toplevel>` and selecting Locals shows the file's global variable declarations.
+The call-stack list is displayed **innermost-first** (the currently executing frame at row 0, `<toplevel>` at the bottom). `_call_stack` in the evaluator is outermost-first; the display stack is built as `list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]` in both `_make_hook()` and `_error_break()`. `_populate_stack()` iterates the display stack in order without reversing. `all_frame_locals[0]` always corresponds to row 0 (innermost frame).
+
+When inside a call, a corresponding `<toplevel>` frame (whose `local_scope` = the global scope vars) is appended to `all_frame_locals`. Clicking `<toplevel>` and selecting Locals shows the file's global variable declarations.
 
 ### Per-frame variable inspection
 
 The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call_stack`), pushed/popped in `_eval_user_module` and `_eval_user_function`. At each `_check_debug` call, `local_scope` is read directly from `ctx.dyn` (all `__let_*` and `$*` entries) — no scope walk needed because assignments are eager. When inside a call, `outer_scope` is populated from `_root_ctx.dyn` (the top-level context) to provide the Globals view. A `<toplevel>` frame with `local_scope = outer_scope` is appended when `_call_stack` is non-empty.
+
+**Step Into for functions**: Function bodies are expressions (not statements), so `_eval_statement`'s `_check_debug` call is never reached for them. `_eval_user_function` explicitly calls `self._check_debug(decl.expr, child_ctx)` after pushing the call frame and before calling `_eval_expr(decl.expr, child_ctx)`. This gives the debugger a pause opportunity at the start of every function body, enabling Step Into to work correctly.
 
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
@@ -408,12 +416,16 @@ Categorization (applied after the hidden check):
 
 ### DebuggerPane states
 
-| Method | Status label | Step buttons |
-|---|---|---|
-| `set_running()` | "Running…" | Disabled (Stop only) |
-| `set_paused(line, frames, stack)` | "Paused at line N" | All enabled |
-| `set_error_break(line, msg, frames, stack)` | "Line N: \<error\>" | Continue + Stop only |
-| `set_idle()` | "Not debugging" | All disabled |
+| Method | Status label | Continue/Pause btn | Step buttons | Restart | Stop |
+|---|---|---|---|---|---|
+| `set_running()` | "Running…" | **Pause** (enabled) | Disabled | Enabled | Enabled |
+| `set_paused(line, frames, stack)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |
+| `set_error_break(line, msg, frames, stack)` | "Line N: \<error\>" | **Continue** (enabled) | Disabled | Enabled | Enabled |
+| `set_idle()` | "Not debugging" | **Continue** (disabled) | Disabled | Disabled | Disabled |
+
+The Continue/Pause button is a single `_btn_continue` widget that changes icon and behavior depending on state. In running state it shows the pause icon and emits `pause_requested`; in all other states it shows the continue icon and emits `continue_requested`. `_set_continue_mode()` is a helper that restores the continue icon and clears `_is_running`; it is called at the start of `set_paused`, `set_error_break`, and `set_idle`.
+
+**Restart** — `_on_debug_restart()` in `main_window.py` stops the current session (`tab.debug_session.stop()`, sets `tab.debug_session = None`), clears the execution line highlight, then calls `_start_debug()`. Because `tab.debug_session` is already `None` at that point, `_start_debug()`'s "already running → continue" guard does not fire and a fresh parse + session begins from the top.
 
 ## V1 Scope Boundaries
 

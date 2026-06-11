@@ -23,8 +23,8 @@
      inkscape:pagecheckerboard="1"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="27.5"
-     inkscape:cx="16.018182"
-     inkscape:cy="16.018182"
+     inkscape:cx="15.872727"
+     inkscape:cy="17.072727"
      inkscape:window-width="1714"
      inkscape:window-height="1186"
      inkscape:window-x="0"
@@ -33,29 +33,34 @@
      inkscape:current-layer="svg2" />
   <!-- horizontal bar at top -->
   <!-- arrowhead pointing up -->
-  <polyline
-     points="9,16 16,8 23,16"
-     fill="none"
-     stroke="#444"
-     stroke-width="2.5"
-     stroke-linecap="round"
-     stroke-linejoin="round"
-     id="polyline1" />
   <!-- vertical shaft -->
-  <line
-     x1="16"
-     y1="8"
-     x2="16"
-     y2="28"
-     stroke="#444"
-     stroke-width="2.5"
-     stroke-linecap="round"
-     id="line2" />
-  <ellipse
-     style="fill:#444444;fill-opacity:1;stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
-     id="path3"
-     cx="16"
-     cy="3.4318178"
-     rx="0.90909094"
-     ry="0.85454547" />
+  <g
+     id="g1"
+     transform="translate(0,0.22045523)">
+    <polyline
+       points="9,16 16,8 23,16"
+       fill="none"
+       stroke="#444444"
+       stroke-width="2.5"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       id="polyline1"
+       transform="translate(0,0.98181828)" />
+    <line
+       x1="16"
+       y1="8.9818172"
+       x2="16"
+       y2="28.981817"
+       stroke="#444444"
+       stroke-width="2.5"
+       stroke-linecap="round"
+       id="line2" />
+    <ellipse
+       style="fill:#444444;fill-opacity:1;stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="path3"
+       cx="16"
+       cy="3.4318178"
+       rx="0.90909094"
+       ry="0.85454547" />
+  </g>
 </svg>

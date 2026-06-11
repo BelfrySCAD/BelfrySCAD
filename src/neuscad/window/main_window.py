@@ -658,9 +658,11 @@ class MainWindow(QMainWindow):
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
         tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
@@ -768,9 +770,11 @@ class MainWindow(QMainWindow):
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
         tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -889,9 +893,11 @@ class MainWindow(QMainWindow):
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
+        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
         tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
         self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -1409,6 +1415,12 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.set_running()
         tab.debug_session.resume("continue", mods)
 
+    def _on_debug_pause(self):
+        tab = self._current_tab()
+        if not tab or not tab.debug_session:
+            return
+        tab.debug_session.pause()
+
     def _on_debug_step_into(self):
         tab = self._current_tab()
         if not tab or not tab.debug_session:
@@ -1435,6 +1447,16 @@ class MainWindow(QMainWindow):
         tab.editor.clear_execution_line()
         tab.debugger_pane.set_running()
         tab.debug_session.resume("step_out", mods)
+
+    def _on_debug_restart(self):
+        tab = self._current_tab()
+        if not tab:
+            return
+        if tab.debug_session:
+            tab.debug_session.stop()
+            tab.debug_session = None
+        tab.editor.clear_execution_line()
+        self._start_debug()
 
     def _on_debug_stop(self):
         tab = self._current_tab()
