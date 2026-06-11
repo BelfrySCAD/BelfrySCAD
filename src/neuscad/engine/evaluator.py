@@ -788,6 +788,13 @@ class Evaluator:
         if points is None or faces is None:
             self.error("polyhedron: 'points' and 'faces' are required", node)
             return None
+        if not isinstance(points, list) or not isinstance(faces, list):
+            self.error("polyhedron: 'points' and 'faces' must be lists", node)
+            return None
+        for i, p in enumerate(points):
+            if not isinstance(p, list) or len(p) != 3 or any(c is None for c in p):
+                self.error(f"polyhedron: point[{i}] is not a valid [x,y,z] coordinate", node)
+                return None
         try:
             verts = np.array([[float(c) for c in p] for p in points], dtype=np.float32)
             # Triangulate faces (fan triangulation for convex polygons)
