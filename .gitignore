@@ -29,3 +29,7 @@ env/
 
 # macOS
 .DS_Store
+
+# Testing
+.coverage
+htmlcov/
