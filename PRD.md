@@ -179,7 +179,7 @@ Fallback behavior:
 * **Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`
 * **Transforms**: `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
 * **Booleans**: `union`, `difference`, `intersection`
-* **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
+* **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`, `breakpoint()`
 * **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`. `$`-prefixed variables use dynamic scoping (inherited down the call chain), not lexical scoping — the evaluator maintains a separate dynamic binding context threaded through module calls
 * **Viewport special variables**: `$vpt` (viewport translation, as `[x,y,z]`), `$vpr` (viewport rotation, as `[elevation, 0, azimuth]`), `$vpd` (camera distance) — snapshotted from the active camera in the main thread before the worker starts and injected into the root evaluation context
 
@@ -400,6 +400,15 @@ F5 (or Design → Debug) parses the current document, resolves breakpoints, and 
 ### Breakpoints:
 
 Set by clicking the gutter of the code editor (displayed as red dots). Breakpoints are 1-indexed line numbers. The debugger pauses before executing the statement at a breakpoint line.
+
+### `breakpoint()` built-in:
+
+Triggers an immediate debugger pause from within the script, independent of gutter breakpoints.
+
+* `breakpoint()` — always pauses when the debugger is running
+* `breakpoint(condition)` — pauses only if `condition` is truthy; accepts positional or named (`condition=`) argument
+
+`breakpoint()` is a no-op when evaluated outside a debug session (e.g. during a normal render). It produces no geometry.
 
 ### Call stack panel:
 
