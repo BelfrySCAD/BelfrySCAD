@@ -301,13 +301,15 @@ class Evaluator:
         if isinstance(node, ModularIf):
             cond = self._eval_expr(node.condition, ctx)
             if cond:
-                return self._eval_children(node.true_branch, ctx)
+                branch = node.true_branch
+                self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
+                return self._eval_children(branch, ctx)
             return []
         if isinstance(node, ModularIfElse):
             cond = self._eval_expr(node.condition, ctx)
-            if cond:
-                return self._eval_children(node.true_branch, ctx)
-            return self._eval_children(node.false_branch, ctx)
+            branch = node.true_branch if cond else node.false_branch
+            self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
+            return self._eval_children(branch, ctx)
         if isinstance(node, ModularFor):
             return self._eval_for(node, ctx)
         if isinstance(node, ModularIntersectionFor):
