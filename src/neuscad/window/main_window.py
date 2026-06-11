@@ -480,6 +480,11 @@ class MainWindow(QMainWindow):
         self._act_render.triggered.connect(self._render)
         tb.addAction(self._act_render)
 
+        self._act_debug_tb = QAction(self._toolbar_icon("debug"), "Debug", self)
+        self._act_debug_tb.setToolTip("Debug (F5)")
+        self._act_debug_tb.triggered.connect(self._start_debug)
+        tb.addAction(self._act_debug_tb)
+
         tb.addSeparator()
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
