@@ -1777,7 +1777,7 @@ def _run_with_hook(src: str):
     echo_lines = []
     paused_lines = []
 
-    def hook(line, locals_dict, call_stack, all_frame_locals, forced=False, expr_level=False):
+    def hook(line, locals_dict, call_stack, all_frame_locals, forced=False, expr_level=False, expr_depth=0):
         if forced:
             paused_lines.append(line)
         return ("continue", {})

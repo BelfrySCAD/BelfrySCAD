@@ -99,7 +99,9 @@ class DebugSession(QObject):
         self._break_on_first: bool = False
         self._step_mode: bool = False          # step_into: pause at very next statement
         self._step_over_depth: int | None = None  # step_over: pause when depth ≤ N
-        self._step_out_depth: int | None = None   # step_out:  pause when depth < N
+        self._step_out_depth: int | None = None   # step_out:  pause when call depth < N
+        self._step_out_expr_depth: int | None = None  # step_out inside expr: pause when expr_depth ≤ N
+        self._current_pause_expr_depth: int = 0
         self._stopped: bool = False
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
@@ -110,6 +112,8 @@ class DebugSession(QObject):
         self._step_mode = False
         self._step_over_depth = None
         self._step_out_depth = None
+        self._step_out_expr_depth = None
+        self._current_pause_expr_depth = 0
         self._stopped = False
         self._pause_requested = False
         self._pending_mods = {}
@@ -119,7 +123,7 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False) -> tuple[str, dict]:
+        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False, expr_depth: int = 0) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -135,6 +139,7 @@ class DebugSession(QObject):
                 or self._step_mode  # step_into pauses at expression checkpoints too
                 or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
                 or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level)
+                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth)
             )
 
             if not should_pause:
@@ -145,6 +150,8 @@ class DebugSession(QObject):
             self._step_mode = False
             self._step_over_depth = None
             self._step_out_depth = None
+            self._step_out_expr_depth = None
+            self._current_pause_expr_depth = expr_depth
 
             display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
             self.paused.emit(line, list(all_frame_locals), display_stack)
@@ -163,7 +170,10 @@ class DebugSession(QObject):
             elif cmd == "step_over":
                 self._step_over_depth = depth
             elif cmd == "step_out":
-                self._step_out_depth = depth
+                if self._current_pause_expr_depth > 0:
+                    self._step_out_expr_depth = self._current_pause_expr_depth - 1
+                else:
+                    self._step_out_depth = depth
             # "continue" leaves all flags cleared
 
             return ("continue", mods)   # evaluator only needs to know about "stop"

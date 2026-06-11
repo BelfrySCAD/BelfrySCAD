@@ -471,6 +471,8 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call
 - **`ListCompEach`** — before the body expression is evaluated, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` (plain expression elements) and the fallthrough in `_eval_list_comp_body` (the final expression yielding one element)
 
+**Expression-level Step Out**: When paused at an `expr_level` checkpoint, pressing Step Out backs out one level of listcomp nesting (one `for`, `if`, `each`, or nested `[...]` body). The evaluator tracks `self._expr_depth: int`, incrementing it when entering each listcomp body and decrementing on exit. The hook passes `expr_depth` to `DebugSession`. When paused, `_current_pause_expr_depth` is stored. Pressing Step Out when `_current_pause_expr_depth > 0` sets `_step_out_expr_depth = _current_pause_expr_depth - 1`; the hook fires on any checkpoint (including `expr_level=True` ones) where `expr_depth <= _step_out_expr_depth`. When `_current_pause_expr_depth == 0`, normal call-stack Step Out applies (`_step_out_depth = depth`).
+
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
 - A **Hiddens checkbox**: when unchecked, variables whose name starts with `_` or `$_` are hidden from all filters

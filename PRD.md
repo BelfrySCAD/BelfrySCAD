@@ -389,7 +389,7 @@ Continue/Pause · Step Over · Step Into · Step Out · Stop · Restart
 * **Continue/Pause**: when code is running, the button shows Pause and suspends execution at the next statement. When paused, it resumes execution.
 * **Step Over** (F10): advance one statement, staying in the current scope
 * **Step Into** (F11): advance one statement, descending into called functions and modules. Also pauses at expression-level checkpoints within the current statement: ternary condition and chosen branch, `let()` assignments, `if()` and chosen branch in list comprehensions, `for` iterations, `let` assignments, `each`, and each produced list element. Step Over and gutter breakpoints are unaffected by these sub-expression pauses.
-* **Step Out** (F12): run until the current scope returns
+* **Step Out** (F12): when paused at an expression-level checkpoint (inside a list comprehension `for`, `if`, `each`, or nested `[...]`), backs out one nesting level — execution continues until a checkpoint fires at a shallower expression depth. When paused at a statement-level checkpoint (not inside any list comprehension nesting), runs until the current function/module scope returns.
 * **Stop**: terminate the debug session
 * **Restart**: stop any running session and start a fresh debug run from the top. Always enabled — clicking while not in debug mode starts a new session.
 

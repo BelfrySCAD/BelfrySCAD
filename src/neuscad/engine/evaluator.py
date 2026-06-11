@@ -127,6 +127,7 @@ class Evaluator:
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
         self._root_ctx: EvalContext | None = None
+        self._expr_depth: int = 0  # nesting depth inside listcomp for/if/each/listcomp bodies
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
         if self._debug_hook is None:
@@ -184,7 +185,7 @@ class Evaluator:
         self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level)
+        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level, expr_depth=self._expr_depth)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
@@ -1280,13 +1281,17 @@ class Evaluator:
             elif isinstance(elem, ListCompIf):
                 self._check_debug(elem, ctx, expr_level=True)
                 if self._eval_expr(elem.condition, ctx):
+                    self._expr_depth += 1
                     self._check_debug(elem.true_expr, ctx, expr_level=True)
                     result.extend(self._eval_list_comp_body(elem.true_expr, ctx))
+                    self._expr_depth -= 1
             elif isinstance(elem, ListCompIfElse):
                 self._check_debug(elem, ctx, expr_level=True)
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
+                self._expr_depth += 1
                 self._check_debug(branch, ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(branch, ctx))
+                self._expr_depth -= 1
             elif isinstance(elem, ListCompLet):
                 let_ctx = ctx.child_ctx()
                 for assign in elem.assignments:
@@ -1294,8 +1299,10 @@ class Evaluator:
                     self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
+                self._expr_depth += 1
                 self._check_debug(elem, ctx, expr_level=True)
                 v = self._eval_expr(elem.body, ctx)
+                self._expr_depth -= 1
                 if isinstance(v, list):
                     result.extend(v)
                 elif v is not None:
@@ -1308,7 +1315,10 @@ class Evaluator:
     def _eval_list_comp_body(self, body, ctx: EvalContext) -> list:
         if isinstance(body, ListComprehension):
             # Bracketed body is a single element — wrap so caller's extend adds it as one item.
-            return [self._eval_list_comp(body, ctx)]
+            self._expr_depth += 1
+            result = [self._eval_list_comp(body, ctx)]
+            self._expr_depth -= 1
+            return result
         if isinstance(body, ListCompFor):
             return self._eval_listcomp_for(body, ctx)
         if isinstance(body, ListCompLet):
@@ -1320,17 +1330,25 @@ class Evaluator:
         if isinstance(body, ListCompIf):
             self._check_debug(body, ctx, expr_level=True)
             if self._eval_expr(body.condition, ctx):
+                self._expr_depth += 1
                 self._check_debug(body.true_expr, ctx, expr_level=True)
-                return self._eval_list_comp_body(body.true_expr, ctx)
+                result = self._eval_list_comp_body(body.true_expr, ctx)
+                self._expr_depth -= 1
+                return result
             return []
         if isinstance(body, ListCompIfElse):
             self._check_debug(body, ctx, expr_level=True)
             branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
+            self._expr_depth += 1
             self._check_debug(branch, ctx, expr_level=True)
-            return self._eval_list_comp_body(branch, ctx)
+            result = self._eval_list_comp_body(branch, ctx)
+            self._expr_depth -= 1
+            return result
         if isinstance(body, ListCompEach):
+            self._expr_depth += 1
             self._check_debug(body, ctx, expr_level=True)
             v = self._eval_expr(body.body, ctx)
+            self._expr_depth -= 1
             if isinstance(v, list):
                 return v
             return [v] if v is not None else []
@@ -1356,12 +1374,14 @@ class Evaluator:
             loop_ctx = ctx.child_ctx()
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
+            self._expr_depth += 1
             self._check_debug(node, loop_ctx, expr_level=True)
             if isinstance(node.body, ListComprehension):
                 # Bracketed inner comprehension — yields one list element per iteration.
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
+            self._expr_depth -= 1
         return result
 
     def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> OscRange:
