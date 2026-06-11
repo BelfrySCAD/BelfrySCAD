@@ -131,8 +131,9 @@ Fallback behavior:
 * breakpoints (click in gutter; displayed as red dots; persisted per-document)
 * execution line highlighting (yellow full-width highlight; used by debugger)
 * find/replace overlay (`FindBar` widget; Cmd+F / Cmd+H; see §5.7)
-* column guide at 80 characters (faint vertical line; see §5.9)
-* Go to Definition context menu (right-click identifier → jump to definition; see §5.10)
+* indent guides (faint lines at each indent level within indentation whitespace; see §5.9)
+* column guide at configurable column (default 80; see §5.10)
+* Go to Definition context menu (right-click identifier → jump to definition; see §5.11)
 * user input surface
 
 ### Non-responsibilities:
@@ -425,13 +426,19 @@ Values in the Local Variables panel of the innermost frame are editable; the new
 
 ---
 
-## 5.9 Column Guide
+## 5.9 Indent Guides
 
-A faint vertical line is drawn at column 80 in the code editor as a writing-width reference. It is implemented as a transparent overlay widget (`_ColumnGuide`) parented to the editor viewport so it never interferes with mouse events or text layout.
+Faint vertical lines are drawn within the indentation whitespace of each indented line, at every N columns where N is the configured indent size. The guide at the column of the first non-whitespace character on a line is never drawn (it would appear "right before" the text). Empty and unindented lines have no guides.
 
 ---
 
-## 5.10 Go to Definition
+## 5.10 Column Guide
+
+A faint vertical line is drawn at a configurable column (default 80) in the code editor as a writing-width reference. Configurable in Preferences.
+
+---
+
+## 5.11 Go to Definition
 
 Right-click on any identifier in the code editor to show a context menu with **"Go to Definition of 'name'"**. The item only appears for valid identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
 

@@ -45,6 +45,12 @@ Parse errors are indicated in the editor with a squiggly underline at the error 
 - `_find_selections` is a separate extra-selection list on `CodeEditor`, inserted between `_selection_extra` and `_exec_selection` in `_refresh_extra_selections`
 - Document changes while the bar is open automatically re-run the search via `document().contentsChanged`
 
+### Indent Guides
+
+Faint vertical lines are drawn inside the indentation whitespace of each indented line, at every `_indent_size` columns — except at the column of the first non-whitespace character itself. Implemented as `_IndentGuides(QWidget)`, a transparent overlay parented to `CodeEditor.viewport()`, created before `_ColumnGuide` so the column guide renders on top. Repaint is triggered by `document().contentsChanged` and by `set_indent_size()`.
+
+Paint logic: for each visible block, count leading spaces `n`. Draw a guide at columns `indent_size, 2*indent_size, …` while `col < n` (strictly less than, so the column at `n` — right before the first non-whitespace character — is never drawn). Empty and unindented lines are skipped. Uses `QFontMetricsF` for sub-pixel accuracy.
+
 ### Column Guide
 
 A faint vertical line is drawn at column 80 in the code editor. It is implemented as `_ColumnGuide(QWidget)`, a transparent overlay widget parented to `CodeEditor.viewport()`. Key implementation notes:

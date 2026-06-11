@@ -36,6 +36,71 @@ def _compute_fold_regions(doc) -> dict[int, int]:
     return regions
 
 
+class _IndentGuides(QWidget):
+    """Transparent overlay that draws faint vertical lines at each indent level."""
+
+    def __init__(self, editor: 'CodeEditor'):
+        super().__init__(editor.viewport())
+        self._editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setGeometry(editor.viewport().rect())
+        self.raise_()
+        editor.document().contentsChanged.connect(self.update)
+
+    def update_geometry(self):
+        self.setGeometry(self._editor.viewport().rect())
+        self.raise_()
+
+    def paintEvent(self, event):
+        editor = self._editor
+        indent_size = editor._indent_size
+        if indent_size < 1:
+            return
+
+        doc_cursor = QTextCursor(editor.document())
+        doc_cursor.movePosition(QTextCursor.MoveOperation.Start)
+        x0 = editor.cursorRect(doc_cursor).x()
+        char_w = QFontMetricsF(editor.font()).horizontalAdvance('0')
+
+        block = editor.firstVisibleBlock()
+        geom = editor.blockBoundingGeometry(block).translated(editor.contentOffset())
+        top = geom.top()
+
+        painter = QPainter(self)
+        painter.setPen(QColor("#E0E0E0"))
+
+        r_top = event.rect().top()
+        r_bottom = event.rect().bottom()
+        r_left = event.rect().left()
+        r_right = event.rect().right()
+
+        while block.isValid() and top <= r_bottom:
+            height = editor.blockBoundingRect(block).height()
+            bot = top + height
+
+            if bot >= r_top and block.isVisible():
+                text = block.text()
+                n = len(text) - len(text.lstrip(' '))  # leading spaces
+                # Only draw on non-empty indented lines; guides at each indent
+                # column strictly inside the indentation (not at the first
+                # non-whitespace column itself).
+                if text.strip() and n >= indent_size:
+                    col = indent_size
+                    while col < n:
+                        x = round(x0 + col * char_w)
+                        if r_left <= x <= r_right + 1:
+                            painter.drawLine(x, round(top), x, round(bot) - 1)
+                        col += indent_size
+
+            block = block.next()
+            if not block.isValid():
+                break
+            top = bot
+
+        painter.end()
+
+
 class _ColumnGuide(QWidget):
     """Transparent overlay on the viewport that draws a vertical column guide."""
 
@@ -449,6 +514,7 @@ class CodeEditor(QPlainTextEdit):
         self._exec_selection: list = []
         self._find_selections: list = []
         self._find_bar = FindBar(self)
+        self._indent_guides = _IndentGuides(self)
         self._column_guide = _ColumnGuide(self)
 
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
@@ -589,6 +655,7 @@ class CodeEditor(QPlainTextEdit):
     def set_indent_size(self, size: int):
         self._indent_size = size
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * size)
+        self._indent_guides.update()
 
     def set_error_location(self, line, col):
         fmt = QTextCharFormat()
@@ -729,6 +796,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
         self._reposition_find_bar()
+        self._indent_guides.update_geometry()
         self._column_guide.update_geometry()
 
     def show_find(self, replace: bool = False):
