@@ -1294,6 +1294,7 @@ class Evaluator:
                     self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
+                self._check_debug(elem, ctx, expr_level=True)
                 v = self._eval_expr(elem.body, ctx)
                 if isinstance(v, list):
                     result.extend(v)
@@ -1327,6 +1328,7 @@ class Evaluator:
             self._check_debug(branch, ctx, expr_level=True)
             return self._eval_list_comp_body(branch, ctx)
         if isinstance(body, ListCompEach):
+            self._check_debug(body, ctx, expr_level=True)
             v = self._eval_expr(body.body, ctx)
             if isinstance(v, list):
                 return v
