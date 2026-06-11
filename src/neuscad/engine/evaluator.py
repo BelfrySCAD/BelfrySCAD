@@ -546,16 +546,16 @@ class Evaluator:
             r = 1.0
         r = float(r)
         n = self._fn(ctx)  # longitude segments
-        stacks = max(2, n // 2)  # number of latitude rings (no single-point poles)
+        stacks = max(2, int(math.ceil(n / 2)))  # number of latitude rings (no single-point poles)
 
         # OpenSCAD-compatible sphere: polygon caps at top/bottom (no triangulated poles),
         # quad belts between rings. Rings evenly spaced excluding the actual poles.
-        step = math.pi / (stacks + 1)  # latitude step in radians
+        step = math.pi / stacks  # latitude step in radians
         verts = []
         rings = []  # rings[i] = list of vertex indices
 
         for s in range(stacks):
-            lat = -math.pi / 2 + (s + 1) * step
+            lat = -math.pi / 2 + (s + 0.5) * step
             ring_r = r * math.cos(lat)
             z = r * math.sin(lat)
             ring = []

@@ -544,6 +544,10 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
         self._add_action(edit_menu, "Find & Replace…", self._find_replace, QKeySequence.StandardKey.Replace)
         edit_menu.addSeparator()
+        self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
+        self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
+        edit_menu.addAction(self._act_word_wrap)
+        edit_menu.addSeparator()
         prefs_act = self._add_action(edit_menu, "Preferences…", self._open_preferences, QKeySequence("Ctrl+,"))
         prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
 
@@ -697,6 +701,7 @@ class MainWindow(QMainWindow):
                 load_preference("editor/showColumnGuide", bool),
                 load_preference("editor/columnGuide", int),
             )
+            self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -809,6 +814,7 @@ class MainWindow(QMainWindow):
             load_preference("editor/showColumnGuide", bool),
             load_preference("editor/columnGuide", int),
         )
+        self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         return tab
@@ -1628,6 +1634,11 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
         self._toggle_perspective(perspective)
+        word_wrap = s.value("wordWrap", False, type=bool)
+        self._act_word_wrap.blockSignals(True)
+        self._act_word_wrap.setChecked(word_wrap)
+        self._act_word_wrap.blockSignals(False)
+        self._toggle_word_wrap(word_wrap)
         self._apply_preferences()
 
     def closeEvent(self, event):
@@ -1635,6 +1646,7 @@ class MainWindow(QMainWindow):
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
+        s.setValue("wordWrap", self._act_word_wrap.isChecked())
         # Release all Manifold geometry before shutdown so nanobind sees clean refcounts.
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -1647,6 +1659,12 @@ class MainWindow(QMainWindow):
 
     def _apply_perspective_to_tab(self, tab):
         tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()
+
+    def _apply_word_wrap_to_tab(self, tab):
+        from PySide6.QtWidgets import QPlainTextEdit
+        enabled = self._act_word_wrap.isChecked()
+        mode = QPlainTextEdit.LineWrapMode.WidgetWidth if enabled else QPlainTextEdit.LineWrapMode.NoWrap
+        tab.editor.setLineWrapMode(mode)
 
     def _current_debugger_splitter_orientation(self):
         if self._debugger_dock.isFloating():
@@ -1668,6 +1686,12 @@ class MainWindow(QMainWindow):
     def _on_debugger_top_level_changed(self, floating: bool):
         if floating:
             self._apply_debugger_splitter_orientation(Qt.Orientation.Horizontal)
+
+    def _toggle_word_wrap(self, enabled: bool):
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab:
+                self._apply_word_wrap_to_tab(tab)
 
     def _toggle_perspective(self, perspective: bool):
         tab = self._current_tab()

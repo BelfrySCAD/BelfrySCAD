@@ -564,6 +564,8 @@ Preferences are stored under the `editor/` key group in `QSettings("NeuSCAD", "N
 
 The Preferences action uses `QAction.MenuRole.PreferencesRole` so Qt automatically places it in the application menu on macOS (Cmd+,).
 
+**Word Wrap** is a checkable Edit menu item stored at the top level in `QSettings` under key `"wordWrap"` (default `False`), not under `editor/`. It is persisted and restored in `closeEvent`/`_restore_settings` using the same `blockSignals` pattern as `perspective`, and applied to all open tabs via `_apply_word_wrap_to_tab(tab)` (also called for new tabs in `_new_document` and `_create_and_add_tab`).
+
 ## Startup Behavior
 
 Opens with a single blank untitled document.
@@ -616,7 +618,7 @@ self._toggle_perspective(perspective)
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable)
 
 **Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)*
 
