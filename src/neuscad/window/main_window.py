@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
     QDockWidget, QStackedWidget, QProgressBar, QApplication,
 )
-from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand
+from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, Signal, Slot
 import threading
 import time
@@ -1216,12 +1216,58 @@ class MainWindow(QMainWindow):
         pass  # TODO: walk selection down AST
 
     def _indent(self):
-        if e := self._current_editor():
-            cursor = e.textCursor()
-            cursor.insertText(" " * e._indent_size)
+        if not (e := self._current_editor()):
+            return
+        cursor = e.textCursor()
+        spaces = " " * e._indent_size
+        doc = e.document()
+        cursor.beginEditBlock()
+        if cursor.hasSelection():
+            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
+            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
+            end_cur = QTextCursor(doc)
+            end_cur.setPosition(cursor.selectionEnd())
+            if end_cur.atBlockStart() and end_bn > start_bn:
+                end_bn -= 1
+            for bn in range(start_bn, end_bn + 1):
+                bc = QTextCursor(doc.findBlockByNumber(bn))
+                bc.insertText(spaces)
+        else:
+            bc = QTextCursor(cursor.block())
+            bc.insertText(spaces)
+        cursor.endEditBlock()
 
     def _undent(self):
-        pass  # TODO: remove leading spaces
+        if not (e := self._current_editor()):
+            return
+        cursor = e.textCursor()
+        n = e._indent_size
+        doc = e.document()
+        cursor.beginEditBlock()
+        if cursor.hasSelection():
+            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
+            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
+            end_cur = QTextCursor(doc)
+            end_cur.setPosition(cursor.selectionEnd())
+            if end_cur.atBlockStart() and end_bn > start_bn:
+                end_bn -= 1
+            for bn in range(start_bn, end_bn + 1):
+                block = doc.findBlockByNumber(bn)
+                text = block.text()
+                n_sp = min(n, len(text) - len(text.lstrip()))
+                if n_sp > 0:
+                    bc = QTextCursor(block)
+                    bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
+                    bc.removeSelectedText()
+        else:
+            block = cursor.block()
+            text = block.text()
+            n_sp = min(n, len(text) - len(text.lstrip()))
+            if n_sp > 0:
+                bc = QTextCursor(block)
+                bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
+                bc.removeSelectedText()
+        cursor.endEditBlock()
 
     def _comment(self):
         if e := self._current_editor():

@@ -460,7 +460,8 @@ Fold markers (solid triangles) are drawn in the gutter next to any line that ope
 |---|---|
 | Brace block | `module foo() { … }`, `if (…) { … }`, `for (…) { … }` |
 | Parenthesis block | `let(…)`, multi-line function parameter list |
-| Function body | `function f(x) =` or `function f(x) = [` — line starts with `function` and ends with `=` or `= [`; folds over the indented continuation |
+| Bracket block | `[for (…) …]`, multi-line vector/list literal |
+| Indented continuation | Any line followed by more-indented lines — function bodies, ternary chains, nested list comprehensions, all indent levels within a function |
 
 A brace or paren region is created only when the matching closer is on a different line than the opener. Function-body regions use indentation: the fold extends to the last line that is strictly more indented than the `=` line.
 

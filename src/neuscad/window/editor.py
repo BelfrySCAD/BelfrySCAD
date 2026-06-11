@@ -14,13 +14,22 @@ from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent,
 
 
 def _compute_fold_regions(doc) -> dict[int, int]:
-    """Scan for multi-line {…}, (…), and function-body folds.
-    Returns {open_block_number: close_block_number}."""
+    """Scan for foldable regions.  Returns {open_block_number: close_block_number}.
+
+    Two passes:
+    1. Explicit delimiter matching — {…} (…) […]; region created only when
+       opener and closer are on different lines.
+    2. Indentation continuation — any non-empty line followed by at least one
+       non-empty line that is strictly more indented.  Covers function bodies,
+       ternary chains, nested list comprehensions, etc.  setdefault ensures
+       delimiter regions from pass 1 take precedence.
+    """
     regions: dict[int, int] = {}
     brace_stack: list[int] = []
     paren_stack: list[int] = []
+    bracket_stack: list[int] = []
 
-    # Pass 1: brace and paren matching
+    # Pass 1: explicit delimiter matching
     block = doc.begin()
     while block.isValid():
         bn = block.blockNumber()
@@ -41,27 +50,21 @@ def _compute_fold_regions(doc) -> dict[int, int]:
                 start = paren_stack.pop()
                 if start != bn:
                     regions[start] = bn
+            elif ch == "[":
+                bracket_stack.append(bn)
+            elif ch == "]" and bracket_stack:
+                start = bracket_stack.pop()
+                if start != bn:
+                    regions[start] = bn
         block = block.next()
 
-    # Pass 2: function declaration bodies — lines whose non-comment content
-    # starts with "function" and ends with "=" or "= [" (e.g. "function f(x) ="
-    # or "function f(x) = [" for list-comprehension bodies), where continuation
-    # lines are more indented.
-    import re as _re
-    _func_re = _re.compile(r"^\s*function\b")
-    _func_body_end_re = _re.compile(r"=\s*\[?\s*$")
+    # Pass 2: indentation-based continuation folds
     block = doc.begin()
     while block.isValid():
         bn = block.blockNumber()
         raw = block.text()
-        stripped = raw
-        ci = stripped.find("//")
-        if ci >= 0:
-            stripped = stripped[:ci]
-        stripped = stripped.rstrip()
-        if _func_re.match(raw) and _func_body_end_re.search(stripped):
+        if raw.strip():
             base_indent = len(raw) - len(raw.lstrip())
-            # Walk forward to find last line of the expression body
             nxt = block.next()
             last_bn = None
             while nxt.isValid():

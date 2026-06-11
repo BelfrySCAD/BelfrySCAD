@@ -62,10 +62,9 @@ A faint vertical line is drawn at column 80 in the code editor. It is implemente
 
 Fold markers (▼ unfolded, ▶ folded) appear in the right section of the line-number gutter. Clicking triggers `toggle_fold(block_number)`.
 
-`_compute_fold_regions(doc)` returns `{open_block: close_block}` using three passes:
-1. **`{...}` pairs** — covers modules, if/for/let bodies
-2. **`(...)` pairs** — covers `let(...)` argument lists and multi-line function parameter lists
-3. **Function bodies** — lines that start with `function` (after optional whitespace) and whose stripped text ends with `=` or `= [` (e.g. `function foo(x) =` or `function foo(x) = [` for list-comprehension bodies); the fold extends to the last more-indented continuation line
+`_compute_fold_regions(doc)` returns `{open_block: close_block}` using two passes:
+1. **Delimiter matching** — `{…}`, `(…)`, `[…]` pairs; a region is created only when the opener and closer are on different lines
+2. **Indentation continuation** — any non-empty line followed by at least one non-empty line that is strictly more indented; covers function bodies, ternary chains, nested list comprehensions, and any other multi-line indented expression; `setdefault` ensures delimiter regions from pass 1 take precedence
 
 `_fold_regions` is recomputed lazily on the first paint after `_fold_dirty` is set by `_on_doc_changed`. `_fold_busy` guards prevent re-entrant recomputation and prevent `_on_doc_changed` from resetting `_fold_dirty` while a fold toggle is in progress.
 
