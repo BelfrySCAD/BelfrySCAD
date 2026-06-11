@@ -128,7 +128,7 @@ class Evaluator:
         self._last_all_frame_locals: list = []
         self._root_ctx: EvalContext | None = None
 
-    def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False):
+    def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
         if self._debug_hook is None:
             return
         pos = getattr(node, 'position', None)
@@ -184,7 +184,7 @@ class Evaluator:
         self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced)
+        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
@@ -1190,6 +1190,7 @@ class Evaluator:
             except TypeError:
                 return None
         if isinstance(node, TernaryOp):
+            self._check_debug(node, ctx, expr_level=True)
             cond = self._eval_expr(node.condition, ctx)
             return self._eval_expr(node.true_expr, ctx) if cond else self._eval_expr(node.false_expr, ctx)
         if isinstance(node, PrimaryCall):
@@ -1221,6 +1222,7 @@ class Evaluator:
             for assign in node.assignments:
                 v = self._eval_expr(assign.expr, ctx)
                 child_ctx.dyn[f"__let_{assign.name.name}"] = v
+                self._check_debug(assign, child_ctx, expr_level=True)
             return self._eval_expr(node.body, child_ctx)
         if isinstance(node, EchoOp):
             self._do_echo(node.arguments, ctx)
@@ -1281,6 +1283,7 @@ class Evaluator:
                 let_ctx = ctx.child_ctx()
                 for assign in elem.assignments:
                     let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+                    self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
                 v = self._eval_expr(elem.body, ctx)
@@ -1302,6 +1305,7 @@ class Evaluator:
             let_ctx = ctx.child_ctx()
             for assign in body.assignments:
                 let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+                self._check_debug(assign, let_ctx, expr_level=True)
             return self._eval_list_comp_body(body.body, let_ctx)
         if isinstance(body, ListCompIf):
             if self._eval_expr(body.condition, ctx):
@@ -1336,6 +1340,7 @@ class Evaluator:
             loop_ctx = ctx.child_ctx()
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
+            self._check_debug(node, loop_ctx, expr_level=True)
             if isinstance(node.body, ListComprehension):
                 # Bracketed inner comprehension — yields one list element per iteration.
                 result.append(self._eval_list_comp(node.body, loop_ctx))

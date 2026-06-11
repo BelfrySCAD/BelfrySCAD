@@ -119,7 +119,7 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False) -> tuple[str, dict]:
+        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -130,11 +130,11 @@ class DebugSession(QObject):
             should_pause = (
                 forced
                 or pause_now
-                or self._break_on_first
-                or (line in self._breakpoints)
-                or self._step_mode
-                or (self._step_over_depth is not None and depth <= self._step_over_depth)
-                or (self._step_out_depth is not None and depth < self._step_out_depth)
+                or (self._break_on_first and not expr_level)
+                or (line in self._breakpoints and not expr_level)
+                or self._step_mode  # step_into pauses at expression checkpoints too
+                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
+                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level)
             )
 
             if not should_pause:
