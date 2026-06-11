@@ -238,10 +238,6 @@ class DebuggerPane(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Debugger"))
-        header.addStretch()
-
         self._btn_continue = QPushButton()
         self._btn_continue.setIcon(_debug_icon("continue"))
         self._btn_continue.setToolTip("Continue (F5)")
@@ -269,18 +265,25 @@ class DebuggerPane(QWidget):
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
                     self._btn_step_out, self._btn_stop, self._btn_restart):
-            header.addWidget(btn)
-            btn.setEnabled(False)
-        layout.addLayout(header)
+            btn.setFlat(True)
+            btn.setEnabled(btn is self._btn_restart)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = self._splitter
 
         mono = QFont("Menlo", 10)
 
         stack_widget = QWidget()
         sv = QVBoxLayout(stack_widget)
         sv.setContentsMargins(0, 0, 0, 0)
-        sv.addWidget(QLabel("Call Stack"))
+        sv.setSpacing(2)
+        stack_header = QHBoxLayout()
+        stack_header.addWidget(QLabel("Call Stack"))
+        stack_header.addStretch()
+        for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
+                    self._btn_step_out, self._btn_stop, self._btn_restart):
+            stack_header.addWidget(btn)
+        sv.addLayout(stack_header)
         self._stack_list = QListWidget()
         self._stack_list.setFont(mono)
         sv.addWidget(self._stack_list)
@@ -289,18 +292,18 @@ class DebuggerPane(QWidget):
         vars_widget = QWidget()
         vv = QVBoxLayout(vars_widget)
         vv.setContentsMargins(0, 0, 0, 0)
+        vv.setSpacing(2)
         vars_header = QHBoxLayout()
-        vars_header.addWidget(QLabel("Variables"))
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem("Local Variables",   "locals")
+        self._filter_combo.addItem("Global Variables",  "globals")
+        self._filter_combo.addItem("$Special Variables","specials")
+        self._filter_combo.addItem("CONSTANTS",         "constants")
+        self._filter_combo.setCurrentIndex(0)
+        vars_header.addWidget(self._filter_combo)
         vars_header.addStretch()
         self._hidden_check = QCheckBox("Hiddens")
         vars_header.addWidget(self._hidden_check)
-        self._filter_combo = QComboBox()
-        self._filter_combo.addItem("Locals",    "locals")
-        self._filter_combo.addItem("Globals",   "globals")
-        self._filter_combo.addItem("CONSTANTS", "constants")
-        self._filter_combo.addItem("$Specials", "specials")
-        self._filter_combo.setCurrentIndex(0)
-        vars_header.addWidget(self._filter_combo)
         vv.addLayout(vars_header)
         self._vars_table = QTableWidget(0, 2)
         self._vars_table.setFont(mono)
@@ -327,6 +330,9 @@ class DebuggerPane(QWidget):
         self._stack_list.currentRowChanged.connect(self._on_frame_selected)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
+
+    def set_splitter_orientation(self, orientation: Qt.Orientation):
+        self._splitter.setOrientation(orientation)
 
     def _on_continue_pause_clicked(self):
         if self._is_running:
@@ -447,7 +453,8 @@ class DebuggerPane(QWidget):
         self._set_continue_mode()
         self._status.setText("Not debugging")
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
-                    self._btn_step_out, self._btn_restart, self._btn_stop):
+                    self._btn_step_out, self._btn_stop):
             btn.setEnabled(False)
+        self._btn_restart.setEnabled(True)
         self._stack_list.clear()
         self._vars_table.setRowCount(0)

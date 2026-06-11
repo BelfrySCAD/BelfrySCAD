@@ -416,7 +416,9 @@ Categorization (applied after the hidden check):
 
 ### DebuggerPane states
 
-| Method | Status label | Continue/Pause btn | Step buttons | Restart | Stop |
+Button order in the toolbar: Continue/Pause · Step Over · Step Into · Step Out · Stop · Restart
+
+| Method | Status label | Continue/Pause btn | Step buttons | Stop | Restart |
 |---|---|---|---|---|---|
 | `set_running()` | "Running…" | **Pause** (enabled) | Disabled | Enabled | Enabled |
 | `set_paused(line, frames, stack)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |

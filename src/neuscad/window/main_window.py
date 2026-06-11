@@ -423,6 +423,8 @@ class MainWindow(QMainWindow):
         self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
         self._debugger_dock.hide()
+        self._debugger_dock.dockLocationChanged.connect(self._on_debugger_dock_location_changed)
+        self._debugger_dock.topLevelChanged.connect(self._on_debugger_top_level_changed)
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -448,6 +450,11 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
+        self._act_new = QAction(self._toolbar_icon("new"), "New", self)
+        self._act_new.setToolTip("New (Ctrl+N)")
+        self._act_new.triggered.connect(self._new_document)
+        tb.addAction(self._act_new)
+
         self._act_open = QAction(self._toolbar_icon("open"), "Open", self)
         self._act_open.setToolTip("Open (Ctrl+O)")
         self._act_open.triggered.connect(self._open_file)
@@ -462,11 +469,6 @@ class MainWindow(QMainWindow):
         self._act_render.setToolTip("Render (F6)")
         self._act_render.triggered.connect(self._render)
         tb.addAction(self._act_render)
-
-        self._act_debug_run = QAction(self._toolbar_icon("debug"), "Debug", self)
-        self._act_debug_run.setToolTip("Debug (F5)")
-        self._act_debug_run.triggered.connect(self._start_debug)
-        tb.addAction(self._act_debug_run)
 
         tb.addSeparator()
 
@@ -657,6 +659,7 @@ class MainWindow(QMainWindow):
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
         tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
@@ -769,6 +772,7 @@ class MainWindow(QMainWindow):
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
         tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
@@ -892,6 +896,7 @@ class MainWindow(QMainWindow):
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
+        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
         tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
         tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
@@ -1469,6 +1474,9 @@ class MainWindow(QMainWindow):
 
     def _restore_settings(self):
         s = QSettings("NeuSCAD", "NeuSCAD")
+        geometry = s.value("windowGeometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
         state = s.value("windowState")
         if state is not None:
             self.restoreState(state)
@@ -1480,12 +1488,34 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         s = QSettings("NeuSCAD", "NeuSCAD")
+        s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
         super().closeEvent(event)
 
     def _apply_perspective_to_tab(self, tab):
         tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()
+
+    def _current_debugger_splitter_orientation(self):
+        if self._debugger_dock.isFloating():
+            return Qt.Orientation.Horizontal
+        area = self.dockWidgetArea(self._debugger_dock)
+        if area in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea):
+            return Qt.Orientation.Vertical
+        return Qt.Orientation.Horizontal
+
+    def _apply_debugger_splitter_orientation(self, orientation):
+        for i in range(self._debugger_stack.count()):
+            self._debugger_stack.widget(i).set_splitter_orientation(orientation)
+
+    def _on_debugger_dock_location_changed(self, area):
+        vertical = area in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea)
+        orientation = Qt.Orientation.Vertical if vertical else Qt.Orientation.Horizontal
+        self._apply_debugger_splitter_orientation(orientation)
+
+    def _on_debugger_top_level_changed(self, floating: bool):
+        if floating:
+            self._apply_debugger_splitter_orientation(Qt.Orientation.Horizontal)
 
     def _toggle_perspective(self, perspective: bool):
         tab = self._current_tab()
