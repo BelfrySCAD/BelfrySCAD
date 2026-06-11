@@ -65,7 +65,7 @@ Fold markers (▼ unfolded, ▶ folded) appear in the right section of the line-
 `_compute_fold_regions(doc)` returns `{open_block: close_block}` using three passes:
 1. **`{...}` pairs** — covers modules, if/for/let bodies
 2. **`(...)` pairs** — covers `let(...)` argument lists and multi-line function parameter lists
-3. **Function bodies** — lines that start with `function` (after optional whitespace) and whose stripped text ends with `=` (e.g. `function foo(x) =`); the fold extends to the last more-indented continuation line
+3. **Function bodies** — lines that start with `function` (after optional whitespace) and whose stripped text ends with `=` or `= [` (e.g. `function foo(x) =` or `function foo(x) = [` for list-comprehension bodies); the fold extends to the last more-indented continuation line
 
 `_fold_regions` is recomputed lazily on the first paint after `_fold_dirty` is set by `_on_doc_changed`. `_fold_busy` guards prevent re-entrant recomputation and prevent `_on_doc_changed` from resetting `_fold_dirty` while a fold toggle is in progress.
 

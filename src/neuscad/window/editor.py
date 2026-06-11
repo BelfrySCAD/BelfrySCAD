@@ -44,10 +44,12 @@ def _compute_fold_regions(doc) -> dict[int, int]:
         block = block.next()
 
     # Pass 2: function declaration bodies — lines whose non-comment content
-    # starts with "function" and ends with "=" (possibly across the same line,
-    # e.g. "function f(x) ="), where continuation lines are more indented.
+    # starts with "function" and ends with "=" or "= [" (e.g. "function f(x) ="
+    # or "function f(x) = [" for list-comprehension bodies), where continuation
+    # lines are more indented.
     import re as _re
     _func_re = _re.compile(r"^\s*function\b")
+    _func_body_end_re = _re.compile(r"=\s*\[?\s*$")
     block = doc.begin()
     while block.isValid():
         bn = block.blockNumber()
@@ -57,7 +59,7 @@ def _compute_fold_regions(doc) -> dict[int, int]:
         if ci >= 0:
             stripped = stripped[:ci]
         stripped = stripped.rstrip()
-        if _func_re.match(raw) and stripped.endswith("="):
+        if _func_re.match(raw) and _func_body_end_re.search(stripped):
             base_indent = len(raw) - len(raw.lstrip())
             # Walk forward to find last line of the expression body
             nxt = block.next()
