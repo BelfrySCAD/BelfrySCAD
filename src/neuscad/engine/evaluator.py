@@ -798,12 +798,13 @@ class Evaluator:
                 return None
         try:
             verts = np.array([[float(c) for c in p] for p in points], dtype=np.float32)
-            # Triangulate faces (fan triangulation for convex polygons)
+            # Fan-triangulate faces, reversing winding to convert OpenSCAD's
+            # CW-from-outside convention to Manifold's CCW-from-outside convention.
             tris = []
             for face in faces:
                 face = list(face)
                 for i in range(1, len(face) - 1):
-                    tris.append([face[0], face[i], face[i + 1]])
+                    tris.append([face[0], face[i + 1], face[i]])
             tri_arr = np.array(tris, dtype=np.uint32)
             mesh = m3d.Mesh(vert_properties=verts, tri_verts=tri_arr)
             body = m3d.Manifold(mesh)
