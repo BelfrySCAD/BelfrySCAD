@@ -1363,6 +1363,18 @@ class TestNewBuiltins:
         assert len(bodies) == 1
         assert abs(bodies[0].body.volume() - 1.0) < 0.01
 
+    def test_polyhedron_triangles_alias(self):
+        # legacy 'triangles' parameter name should work identically to 'faces'
+        src = """
+        polyhedron(
+          points=[[0,0,0],[1,0,0],[0,1,0],[0,0,1]],
+          triangles=[[0,2,1],[0,1,3],[0,3,2],[1,2,3]]
+        );
+        """
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() > 0
+
 
 # ---------------------------------------------------------------------------
 # 2D primitives, linear_extrude, rotate_extrude, minkowski
