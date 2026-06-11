@@ -283,9 +283,16 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 ### Application Preferences:
 
-* **Font size**: editor font size
-* **Viewport background color**: background color of the 3D display
-* **Editor theme**: syntax highlighting color scheme for QScintilla
+Accessible via **NeuSCAD → Preferences…** (Cmd+,). Settings take effect immediately for all open tabs and are persisted across sessions.
+
+| Setting | Description |
+|---|---|
+| **Font** | Editor font family (filtered to monospace fonts) |
+| **Font size** | Editor font size in points |
+| **Indent size** | Spaces per indent level (1–8; affects auto-indent on Enter, backspace-unindent, and closing-bracket unindent) |
+| **Column guide** | Show/hide column guide and configure which column (default 80) |
+
+*(Viewport background color and editor theme are planned for a future preferences expansion.)*
 
 ### Persistent settings (survives restart):
 

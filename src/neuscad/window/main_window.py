@@ -12,6 +12,7 @@ import time
 from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
 from neuscad.window.debugger import DebuggerPane, DebugSession
+from neuscad.window.preferences import PreferencesDialog, load_preference, save_preferences
 
 import re
 from pathlib import Path
@@ -537,6 +538,9 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
         self._add_action(edit_menu, "Find & Replace…", self._find_replace, QKeySequence.StandardKey.Replace)
+        edit_menu.addSeparator()
+        prefs_act = self._add_action(edit_menu, "Preferences…", self._open_preferences, QKeySequence("Ctrl+,"))
+        prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
 
         # Design
         design_menu = mb.addMenu("Design")
@@ -681,6 +685,13 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
+            self._apply_preferences_to_tab(
+                tab,
+                QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
+                load_preference("editor/indentSize", int),
+                load_preference("editor/showColumnGuide", bool),
+                load_preference("editor/columnGuide", int),
+            )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
@@ -786,6 +797,13 @@ class MainWindow(QMainWindow):
             lambda word, t=tab: self._go_to_definition(t, word)
         )
         self._apply_perspective_to_tab(tab)
+        self._apply_preferences_to_tab(
+            tab,
+            QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
+            load_preference("editor/indentSize", int),
+            load_preference("editor/showColumnGuide", bool),
+            load_preference("editor/columnGuide", int),
+        )
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         return tab
@@ -1200,7 +1218,7 @@ class MainWindow(QMainWindow):
     def _indent(self):
         if e := self._current_editor():
             cursor = e.textCursor()
-            cursor.insertText("    ")
+            cursor.insertText(" " * e._indent_size)
 
     def _undent(self):
         pass  # TODO: remove leading spaces
@@ -1516,6 +1534,32 @@ class MainWindow(QMainWindow):
         tab.debug_session = None
         tab.debugger_pane.set_idle()
 
+    def _open_preferences(self):
+        dialog = PreferencesDialog(parent=self)
+        if dialog.exec() == PreferencesDialog.DialogCode.Accepted:
+            save_preferences(dialog.get_values())
+            self._apply_preferences()
+
+    def _apply_preferences(self):
+        family = load_preference("editor/fontFamily")
+        size = load_preference("editor/fontSize", int)
+        indent = load_preference("editor/indentSize", int)
+        show_guide = load_preference("editor/showColumnGuide", bool)
+        guide_col = load_preference("editor/columnGuide", int)
+        font = QFont(family, size)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab:
+                self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
+
+    @staticmethod
+    def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
+        tab.editor.setFont(font)
+        tab.editor.set_indent_size(indent)
+        tab.editor._column_guide.set_column(guide_col)
+        tab.editor._column_guide.setVisible(show_guide)
+
     def _restore_settings(self):
         s = QSettings("NeuSCAD", "NeuSCAD")
         geometry = s.value("windowGeometry")
@@ -1529,6 +1573,7 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
         self._toggle_perspective(perspective)
+        self._apply_preferences()
 
     def closeEvent(self, event):
         s = QSettings("NeuSCAD", "NeuSCAD")

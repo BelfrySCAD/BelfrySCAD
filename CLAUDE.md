@@ -512,9 +512,21 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 ## Application Preferences
 
-- **Font size**: editor font size
-- **Viewport background color**: the background color of the 3D display
-- **Editor theme**: syntax highlighting color scheme for QScintilla
+Preferences are stored under the `editor/` key group in `QSettings("NeuSCAD", "NeuSCAD")` and accessed via `load_preference(key, type)` / `save_preferences(dict)` helpers in `preferences.py`.
+
+| Setting | Key | Default |
+|---|---|---|
+| Font family | `editor/fontFamily` | `"Menlo"` |
+| Font size | `editor/fontSize` | `13` |
+| Indent size | `editor/indentSize` | `4` |
+| Show column guide | `editor/showColumnGuide` | `True` |
+| Column guide column | `editor/columnGuide` | `80` |
+
+`MainWindow._apply_preferences()` reads all settings and pushes them to every open tab via `_apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)`. Called on startup (end of `_restore_settings()`) and after the dialog is accepted. New tabs created via `_new_document()` and `_create_and_add_tab()` also call `_apply_preferences_to_tab` so they inherit the current settings immediately.
+
+`CodeEditor.set_indent_size(n)` stores `_indent_size` and updates `tabStopDistance`. All indent/unindent logic in `keyPressEvent` reads `self._indent_size`.
+
+The Preferences action uses `QAction.MenuRole.PreferencesRole` so Qt automatically places it in the application menu on macOS (Cmd+,).
 
 ## Startup Behavior
 

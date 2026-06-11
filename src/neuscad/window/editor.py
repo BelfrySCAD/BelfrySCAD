@@ -42,6 +42,7 @@ class _ColumnGuide(QWidget):
     def __init__(self, editor: 'CodeEditor'):
         super().__init__(editor.viewport())
         self._editor = editor
+        self._column: int = 80
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(editor.viewport().rect())
@@ -51,11 +52,15 @@ class _ColumnGuide(QWidget):
         self.setGeometry(self._editor.viewport().rect())
         self.raise_()
 
+    def set_column(self, column: int):
+        self._column = column
+        self.update()
+
     def paintEvent(self, event):
         cursor = QTextCursor(self._editor.document())
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         x0 = self._editor.cursorRect(cursor).x()
-        total_w = QFontMetricsF(self._editor.font()).horizontalAdvance('0' * 80)
+        total_w = QFontMetricsF(self._editor.font()).horizontalAdvance('0' * self._column)
         x = round(x0 + total_w)
         if not (event.rect().left() <= x <= event.rect().right() + 1):
             return
@@ -430,11 +435,13 @@ class CodeEditor(QPlainTextEdit):
 
         self.setUndoRedoEnabled(False)
 
+        self._indent_size: int = 4
+
         font = QFont("Menlo", 13)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
         self.setTabStopDistance(
-            self.fontMetrics().horizontalAdvance(" ") * 4
+            self.fontMetrics().horizontalAdvance(" ") * self._indent_size
         )
 
         self._error_selections: list = []
@@ -579,6 +586,10 @@ class CodeEditor(QPlainTextEdit):
         self._update_line_number_area_width()
         self._line_number_area.update()
 
+    def set_indent_size(self, size: int):
+        self._indent_size = size
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * size)
+
     def set_error_location(self, line, col):
         fmt = QTextCharFormat()
         fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
@@ -635,7 +646,7 @@ class CodeEditor(QPlainTextEdit):
             indent = len(block_text) - len(block_text.lstrip())
             stripped = block_text.rstrip()
             if stripped.endswith(("{", "[", "(")):
-                indent += 4
+                indent += self._indent_size
             super().keyPressEvent(event)
             self.insertPlainText(" " * indent)
             return
@@ -645,18 +656,20 @@ class CodeEditor(QPlainTextEdit):
                 block_text = cursor.block().text()
                 pos_in_block = cursor.positionInBlock()
                 before_cursor = block_text[:pos_in_block]
-                if before_cursor and not before_cursor.strip() and len(before_cursor) >= 4:
-                    for _ in range(4):
+                n = self._indent_size
+                if before_cursor and not before_cursor.strip() and len(before_cursor) >= n:
+                    for _ in range(n):
                         cursor.deletePreviousChar()
                     return
         if event.text() in ('}', ']', ')'):
             cursor = self.textCursor()
             block_text = cursor.block().text()
+            n = self._indent_size
             # Only unindent if the line is pure whitespace so far
-            if block_text and not block_text.strip() and len(block_text) >= 4:
+            if block_text and not block_text.strip() and len(block_text) >= n:
                 cursor.movePosition(cursor.MoveOperation.StartOfBlock)
                 cursor.movePosition(cursor.MoveOperation.Right,
-                                    cursor.MoveMode.KeepAnchor, 4)
+                                    cursor.MoveMode.KeepAnchor, n)
                 cursor.removeSelectedText()
         super().keyPressEvent(event)
 
