@@ -261,7 +261,9 @@ matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the
 
 **Other**: `version`, `version_num`, `parent_module` (stub)
 
-**Not yet implemented**: `text`, `surface`, `import` (warn and return None)
+**`surface(file, center=false, invert=false)`**: loads a heightmap from a `.dat` text file or a PNG image and builds a closed solid mesh. `.dat` format: whitespace-separated number matrix; `#`-prefixed lines and blank lines are ignored; first row in file = highest Y (OpenSCAD row convention). PNG: linear luminance `Y = 0.2126R + 0.7152G + 0.0722B` scaled to 0–100; `invert=true` flips the mapping. `center=true` centers the mesh on X and Y axes; bottom face always sits at z=0. Requires Pillow for image files.
+
+**Not yet implemented**: `text`, `import` (warn and return None)
 
 **Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` is set to the child count when entering a user module body. `$`-prefixed named arguments in any call (e.g. `sphere(r=2, $fn=64)`) are merged into the dynamic context for that call and its children.
 

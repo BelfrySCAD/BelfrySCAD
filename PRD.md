@@ -176,7 +176,7 @@ Fallback behavior:
 
 ### Built-ins implemented by the evaluator:
 
-* **Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`
+* **Primitives** (→ Manifold bodies): `cube`, `sphere`, `cylinder`, `cone`, `polyhedron`, `surface`
 * **Transforms**: `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `hull`, `minkowski`
 * **Booleans**: `union`, `difference`, `intersection`
 * **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`, `breakpoint()`
