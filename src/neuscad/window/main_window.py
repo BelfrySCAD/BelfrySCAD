@@ -1635,6 +1635,14 @@ class MainWindow(QMainWindow):
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
+        # Release all Manifold geometry before shutdown so nanobind sees clean refcounts.
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is not None:
+                tab._bodies = []
+                tab.viewport.load_geometry([])
+        import gc
+        gc.collect()
         super().closeEvent(event)
 
     def _apply_perspective_to_tab(self, tab):
