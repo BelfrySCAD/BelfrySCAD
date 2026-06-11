@@ -472,7 +472,9 @@ class Evaluator:
             # render() is a display hint; just pass through children
             children = self._eval_children(node.children, ctx)
             return self._combine(children) if children else None
-        if name in ("text", "surface", "import"):
+        if name == "surface":
+            return self._builtin_surface(args, node, ctx)
+        if name in ("text", "import"):
             self._echo_fn(f"WARNING: {name}() is not yet implemented")
             return None
         if name == "echo":
@@ -812,6 +814,139 @@ class Evaluator:
         except Exception as e:
             self.error(f"polyhedron: {e}", node)
             return None
+
+    def _builtin_surface(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        file_arg = self._get_arg(args, 0, "file", None)
+        center = bool(self._get_arg(args, None, "center", False))
+        invert = bool(self._get_arg(args, None, "invert", False))
+
+        if file_arg is None:
+            self.error("surface: 'file' parameter is required", node)
+            return None
+
+        # Resolve path relative to the source file
+        base_dir = None
+        pos = getattr(node, 'position', None)
+        if pos and getattr(pos, 'origin', None):
+            import os as _os
+            base_dir = _os.path.dirname(pos.origin)
+        if base_dir:
+            import os as _os
+            file_path = _os.path.join(base_dir, str(file_arg)) if not _os.path.isabs(str(file_arg)) else str(file_arg)
+        else:
+            file_path = str(file_arg)
+
+        try:
+            heights = self._surface_load(file_path, invert)
+        except Exception as e:
+            self.error(f"surface: {e}", node)
+            return None
+
+        if heights is None or len(heights) == 0 or len(heights[0]) == 0:
+            self.error("surface: empty height data", node)
+            return None
+
+        rows = len(heights)
+        cols = len(heights[0])
+
+        x_off = -(cols - 1) / 2.0 if center else 0.0
+        y_off = -(rows - 1) / 2.0 if center else 0.0
+
+        # Build vertex grid: (cols) * (rows) top vertices + same for bottom (z=0)
+        # top verts: index = row * cols + col
+        # bottom verts: index = rows*cols + row * cols + col
+        n = rows * cols
+        verts = []
+        for r in range(rows):
+            for c in range(cols):
+                verts.append([c + x_off, r + y_off, float(heights[r][c])])
+        for r in range(rows):
+            for c in range(cols):
+                verts.append([c + x_off, r + y_off, 0.0])
+
+        tris = []
+
+        def top(r, c):
+            return r * cols + c
+
+        def bot(r, c):
+            return n + r * cols + c
+
+        # Top surface (CCW from above = outward upward normal)
+        for r in range(rows - 1):
+            for c in range(cols - 1):
+                tl, tr, bl, br = top(r+1, c), top(r+1, c+1), top(r, c), top(r, c+1)
+                tris.append([tl, bl, br])
+                tris.append([tl, br, tr])
+
+        # Bottom face (CCW from below = outward downward normal)
+        for r in range(rows - 1):
+            for c in range(cols - 1):
+                tl, tr, bl, br = bot(r+1, c), bot(r+1, c+1), bot(r, c), bot(r, c+1)
+                tris.append([tl, tr, br])
+                tris.append([tl, br, bl])
+
+        # Side walls (outward normals: front=-Y, back=+Y, left=-X, right=+X)
+        for c in range(cols - 1):  # front (r=0, outward=-Y)
+            tris.append([top(0, c), bot(0, c), bot(0, c+1)])
+            tris.append([top(0, c), bot(0, c+1), top(0, c+1)])
+        for c in range(cols - 1):  # back (r=rows-1, outward=+Y)
+            tris.append([top(rows-1, c), top(rows-1, c+1), bot(rows-1, c+1)])
+            tris.append([top(rows-1, c), bot(rows-1, c+1), bot(rows-1, c)])
+        for r in range(rows - 1):  # left (c=0, outward=-X)
+            tris.append([top(r, 0), top(r+1, 0), bot(r+1, 0)])
+            tris.append([top(r, 0), bot(r+1, 0), bot(r, 0)])
+        for r in range(rows - 1):  # right (c=cols-1, outward=+X)
+            tris.append([top(r, cols-1), bot(r+1, cols-1), top(r+1, cols-1)])
+            tris.append([top(r, cols-1), bot(r, cols-1), bot(r+1, cols-1)])
+
+        try:
+            verts_arr = np.array(verts, dtype=np.float32)
+            tris_arr = np.array(tris, dtype=np.uint32)
+            mesh = m3d.Mesh(vert_properties=verts_arr, tri_verts=tris_arr)
+            body = m3d.Manifold(mesh)
+            return self._tag(body, node, ctx)
+        except Exception as e:
+            self.error(f"surface: mesh construction failed: {e}", node)
+            return None
+
+    def _surface_load(self, file_path: str, invert: bool):
+        """Load height data from a .dat text file or a PNG image."""
+        import os as _os
+        ext = _os.path.splitext(file_path)[1].lower()
+        if ext in (".png", ".jpg", ".jpeg", ".bmp", ".gif"):
+            return self._surface_load_image(file_path, invert)
+        return self._surface_load_dat(file_path)
+
+    def _surface_load_dat(self, file_path: str):
+        heights = []
+        with open(file_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                heights.append([float(v) for v in line.split()])
+        heights.reverse()  # first row in file = highest Y (OpenSCAD convention)
+        return heights
+
+    def _surface_load_image(self, file_path: str, invert: bool):
+        try:
+            from PIL import Image
+        except ImportError:
+            raise RuntimeError("Pillow is required for image-based surface() — install it with: uv add Pillow")
+        img = Image.open(file_path).convert("RGB")
+        w, h = img.size
+        pixels = img.load()
+        heights = []
+        for row in range(h - 1, -1, -1):  # bottom row of image = Y=0
+            r_vals = []
+            for col in range(w):
+                r, g, b = pixels[col, row]
+                gray = 0.2126 * r + 0.7152 * g + 0.0722 * b  # linear luminance
+                val = (255.0 - gray) / 255.0 * 100.0 if invert else gray / 255.0 * 100.0
+                r_vals.append(val)
+            heights.append(r_vals)
+        return heights
 
     def _builtin_offset(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         children = self._eval_children(node.children, ctx)
