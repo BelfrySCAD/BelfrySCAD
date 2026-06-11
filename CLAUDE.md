@@ -31,6 +31,20 @@ Source Code → QScintilla Editor → openscad_parser (AST) → Evaluator → Ma
 
 Parse errors are indicated in the editor with a squiggly underline at the error location, implemented via `QTextCharFormat` with `SpellCheckUnderline` style applied as an extra selection on the `QPlainTextEdit`. Errors are also reported in the console.
 
+### Find / Replace
+
+`CodeEditor.show_find(replace=False)` opens a `FindBar` overlay widget parented to the editor, positioned at the top-right corner. `show_find(replace=True)` also reveals the replace row. Triggered by Cmd+F and Cmd+H respectively.
+
+`FindBar` features:
+- Plain-text and regex search (toggled by `.*` button), case-sensitive toggle (`Aa`)
+- All matches highlighted in pale yellow; current match in orange with white text
+- Match count label ("N of M"); previous/next navigation (◀ ▶ or Shift+Enter / Enter)
+- Replace one (replaces current match) and Replace All (works backwards through matches to preserve positions, wrapped in a single `beginEditBlock`/`endEditBlock` for one undo step)
+- If the editor has a single-word selection when Find opens, it is pre-populated into the search field
+- Escape closes the bar and returns focus to the editor
+- `_find_selections` is a separate extra-selection list on `CodeEditor`, inserted between `_selection_extra` and `_exec_selection` in `_refresh_extra_selections`
+- Document changes while the bar is open automatically re-run the search via `document().contentsChanged`
+
 ### Critical Constraint: Strict Parser
 
 The parser produces **no partial AST** — it either succeeds fully or fails entirely. The system must handle the no-AST state gracefully:

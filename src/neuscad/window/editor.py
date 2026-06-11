@@ -1,7 +1,10 @@
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
+from PySide6.QtWidgets import (
+    QPlainTextEdit, QWidget, QTextEdit,
+    QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
+)
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
-    QPainter, QTextFormat, QPainterPath, QKeySequence,
+    QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal
 
@@ -137,6 +140,252 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
 
+class FindBar(QWidget):
+    """Floating find/replace overlay, parented to CodeEditor."""
+
+    def __init__(self, editor: 'CodeEditor'):
+        super().__init__(editor)
+        self._editor = editor
+        self._matches: list[QTextCursor] = []
+        self._current: int = -1
+        self._setup_ui()
+        self.hide()
+
+    def _setup_ui(self):
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        from PySide6.QtGui import QPalette
+        pal.setColor(QPalette.ColorRole.Window, QColor("#F3F3F3"))
+        self.setPalette(pal)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(3)
+
+        # --- Find row ---
+        find_row = QHBoxLayout()
+        find_row.setSpacing(2)
+
+        self._find_input = QLineEdit()
+        self._find_input.setPlaceholderText("Find")
+        self._find_input.setMinimumWidth(160)
+        find_row.addWidget(self._find_input)
+
+        self._match_label = QLabel()
+        self._match_label.setMinimumWidth(58)
+        self._match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        find_row.addWidget(self._match_label)
+
+        self._btn_prev = QPushButton("◀")
+        self._btn_next = QPushButton("▶")
+        self._btn_case = QPushButton("Aa")
+        self._btn_case.setCheckable(True)
+        self._btn_case.setToolTip("Match Case")
+        self._btn_regex = QPushButton(".*")
+        self._btn_regex.setCheckable(True)
+        self._btn_regex.setToolTip("Use Regular Expression")
+        self._btn_close = QPushButton("✕")
+        self._btn_close.setToolTip("Close (Escape)")
+
+        for btn in (self._btn_prev, self._btn_next, self._btn_case,
+                    self._btn_regex, self._btn_close):
+            btn.setFixedSize(22, 22)
+            btn.setFlat(True)
+            find_row.addWidget(btn)
+
+        outer.addLayout(find_row)
+
+        # --- Replace row (hidden in find-only mode) ---
+        self._replace_widget = QWidget()
+        replace_row = QHBoxLayout(self._replace_widget)
+        replace_row.setContentsMargins(0, 0, 0, 0)
+        replace_row.setSpacing(2)
+
+        self._replace_input = QLineEdit()
+        self._replace_input.setPlaceholderText("Replace")
+        self._replace_input.setMinimumWidth(160)
+        replace_row.addWidget(self._replace_input)
+
+        self._btn_replace = QPushButton("Replace")
+        self._btn_replace_all = QPushButton("Replace All")
+        replace_row.addWidget(self._btn_replace)
+        replace_row.addWidget(self._btn_replace_all)
+        replace_row.addStretch()
+
+        outer.addWidget(self._replace_widget)
+        self._replace_widget.hide()
+
+        # Connections
+        self._find_input.textChanged.connect(self._on_search_changed)
+        self._find_input.returnPressed.connect(self._find_next)
+        self._btn_case.toggled.connect(self._on_search_changed)
+        self._btn_regex.toggled.connect(self._on_search_changed)
+        self._btn_prev.clicked.connect(self._find_prev)
+        self._btn_next.clicked.connect(self._find_next)
+        self._btn_close.clicked.connect(self.close_bar)
+        self._btn_replace.clicked.connect(self._replace_one)
+        self._btn_replace_all.clicked.connect(self._replace_all)
+
+        self._editor.document().contentsChanged.connect(self._on_doc_changed)
+
+    # ------------------------------------------------------------------
+    # Show / hide
+    # ------------------------------------------------------------------
+
+    def open_find(self):
+        self._replace_widget.hide()
+        self._show_and_focus()
+
+    def open_replace(self):
+        self._replace_widget.show()
+        self._show_and_focus()
+
+    def _show_and_focus(self):
+        self.adjustSize()
+        self.show()
+        self._editor._reposition_find_bar()
+        self._find_input.setFocus()
+        self._find_input.selectAll()
+        self._on_search_changed()
+
+    def close_bar(self):
+        self.hide()
+        self._matches = []
+        self._current = -1
+        self._editor._find_selections = []
+        self._editor._refresh_extra_selections()
+        self._editor.setFocus()
+
+    # ------------------------------------------------------------------
+    # Key handling
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close_bar()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._find_prev()
+            else:
+                self._find_next()
+            return
+        super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------
+    # Search logic
+    # ------------------------------------------------------------------
+
+    def _make_pattern(self) -> QRegularExpression | None:
+        text = self._find_input.text()
+        if not text:
+            return None
+        if not self._btn_regex.isChecked():
+            text = QRegularExpression.escape(text)
+        opts = QRegularExpression.PatternOption(0)
+        if not self._btn_case.isChecked():
+            opts |= QRegularExpression.PatternOption.CaseInsensitiveOption
+        pat = QRegularExpression(text, opts)
+        return pat if pat.isValid() else None
+
+    def _on_search_changed(self):
+        if self.isHidden():
+            return
+        pattern = self._make_pattern()
+        self._matches = []
+        if pattern is None:
+            self._match_label.setText("")
+            self._find_input.setStyleSheet("")
+            self._editor._find_selections = []
+            self._editor._refresh_extra_selections()
+            return
+
+        doc = self._editor.document()
+        c = doc.find(pattern)
+        while not c.isNull():
+            self._matches.append(c)
+            c = doc.find(pattern, c)
+
+        if not self._matches:
+            self._match_label.setText("No results")
+            self._find_input.setStyleSheet("background: #FFCCCC;")
+            self._current = -1
+            self._editor._find_selections = []
+            self._editor._refresh_extra_selections()
+            return
+
+        self._find_input.setStyleSheet("")
+        pos = self._editor.textCursor().position()
+        self._current = 0
+        for i, m in enumerate(self._matches):
+            if m.selectionStart() >= pos:
+                self._current = i
+                break
+
+        self._update_highlights()
+        self._scroll_to_current()
+
+    def _on_doc_changed(self):
+        if self.isVisible():
+            self._on_search_changed()
+
+    def _update_highlights(self):
+        sels = []
+        for i, m in enumerate(self._matches):
+            sel = QTextEdit.ExtraSelection()
+            if i == self._current:
+                sel.format.setBackground(QColor("#FF9900"))
+                sel.format.setForeground(QColor("#FFFFFF"))
+            else:
+                sel.format.setBackground(QColor("#FFE080"))
+            sel.cursor = m
+            sels.append(sel)
+        self._editor._find_selections = sels
+        self._editor._refresh_extra_selections()
+        n = len(self._matches)
+        self._match_label.setText(f"{self._current + 1} of {n}" if n else "")
+
+    def _scroll_to_current(self):
+        if 0 <= self._current < len(self._matches):
+            self._editor.setTextCursor(self._matches[self._current])
+            self._editor.ensureCursorVisible()
+
+    def _find_next(self):
+        if not self._matches:
+            return
+        self._current = (self._current + 1) % len(self._matches)
+        self._update_highlights()
+        self._scroll_to_current()
+
+    def _find_prev(self):
+        if not self._matches:
+            return
+        self._current = (self._current - 1) % len(self._matches)
+        self._update_highlights()
+        self._scroll_to_current()
+
+    # ------------------------------------------------------------------
+    # Replace logic
+    # ------------------------------------------------------------------
+
+    def _replace_one(self):
+        if not self._matches or self._current < 0:
+            return
+        self._matches[self._current].insertText(self._replace_input.text())
+        # _on_doc_changed will re-run the search
+
+    def _replace_all(self):
+        if not self._matches:
+            return
+        replacement = self._replace_input.text()
+        undo_cursor = QTextCursor(self._editor.document())
+        undo_cursor.beginEditBlock()
+        for m in reversed(self._matches):
+            m.insertText(replacement)
+        undo_cursor.endEditBlock()
+        # _on_doc_changed will re-run the search
+
+
 class CodeEditor(QPlainTextEdit):
     breakpoints_changed = Signal(object)  # emits set[int] of 0-indexed block numbers
 
@@ -157,6 +406,8 @@ class CodeEditor(QPlainTextEdit):
         self._error_selections: list = []
         self._selection_extra: list = []
         self._exec_selection: list = []
+        self._find_selections: list = []
+        self._find_bar = FindBar(self)
 
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
 
@@ -188,13 +439,6 @@ class CodeEditor(QPlainTextEdit):
             )
         if rect.contains(self.viewport().rect()):
             self._update_line_number_area_width()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        cr = self.contentsRect()
-        self._line_number_area.setGeometry(
-            QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
-        )
 
     def line_number_area_paint_event(self, event):
         if self._fold_dirty and not self._fold_busy:
@@ -416,4 +660,35 @@ class CodeEditor(QPlainTextEdit):
         self._refresh_extra_selections()
 
     def _refresh_extra_selections(self):
-        self.setExtraSelections(self._error_selections + self._selection_extra + self._exec_selection)
+        self.setExtraSelections(
+            self._error_selections + self._selection_extra
+            + self._find_selections + self._exec_selection
+        )
+
+    def _reposition_find_bar(self):
+        bar = self._find_bar
+        if bar.isHidden():
+            return
+        bar_w = bar.sizeHint().width()
+        bar_h = bar.sizeHint().height()
+        x = max(self.line_number_area_width() + 2, self.width() - bar_w - 4)
+        bar.setGeometry(x, 2, min(bar_w, self.width() - self.line_number_area_width() - 6), bar_h)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self._line_number_area.setGeometry(
+            QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
+        )
+        self._reposition_find_bar()
+
+    def show_find(self, replace: bool = False):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            sel = cursor.selectedText()
+            if ' ' not in sel:  # skip multi-line selections
+                self._find_bar._find_input.setText(sel)
+        if replace:
+            self._find_bar.open_replace()
+        else:
+            self._find_bar.open_find()

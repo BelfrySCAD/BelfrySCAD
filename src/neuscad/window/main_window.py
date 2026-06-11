@@ -1245,10 +1245,14 @@ class MainWindow(QMainWindow):
         cursor.insertText(" ".join(lines))
 
     def _find(self):
-        pass  # TODO: find bar
+        tab = self._current_tab()
+        if tab:
+            tab.editor.show_find(replace=False)
 
     def _find_replace(self):
-        pass  # TODO: find & replace dialog
+        tab = self._current_tab()
+        if tab:
+            tab.editor.show_find(replace=True)
 
     def _current_editor(self):
         tab = self._current_tab()
