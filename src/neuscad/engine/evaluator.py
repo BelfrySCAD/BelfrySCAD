@@ -545,51 +545,46 @@ class Evaluator:
         if r is None:
             r = 1.0
         r = float(r)
-        n = self._fn(ctx)  # longitude segments (= OpenSCAD's $fn-derived fragment count)
-        stacks = max(2, n // 2)  # latitude rings between poles
+        n = self._fn(ctx)  # longitude segments
+        stacks = max(2, n // 2)  # number of latitude rings (no single-point poles)
 
-        # UV sphere matching OpenSCAD's lat/lon construction.
-        # Poles are single vertices; middle rings have n vertices each.
+        # OpenSCAD-compatible sphere: polygon caps at top/bottom (no triangulated poles),
+        # quad belts between rings. Rings evenly spaced excluding the actual poles.
+        step = math.pi / (stacks + 1)  # latitude step in radians
         verts = []
-        bot_idx = 0
-        verts.append([0.0, 0.0, -r])  # south pole
-        for stack in range(1, stacks):
-            lat = math.pi * stack / stacks - math.pi / 2  # -pi/2..pi/2 exclusive
-            z = r * math.sin(lat)
+        rings = []  # rings[i] = list of vertex indices
+
+        for s in range(stacks):
+            lat = -math.pi / 2 + (s + 1) * step
             ring_r = r * math.cos(lat)
+            z = r * math.sin(lat)
+            ring = []
             for seg in range(n):
                 angle = 2 * math.pi * seg / n
+                ring.append(len(verts))
                 verts.append([ring_r * math.cos(angle), ring_r * math.sin(angle), z])
-        top_idx = len(verts)
-        verts.append([0.0, 0.0, r])   # north pole
+            rings.append(ring)
 
         tris = []
 
-        def ring_start(stack):  # 0-indexed stack among middle rings
-            return 1 + stack * n
+        # Bottom polygon cap: fan with reversed winding → outward normal points down
+        bot = rings[0]
+        for i in range(1, n - 1):
+            tris.append([bot[0], bot[i + 1], bot[i]])
 
-        # South pole cap (CCW from outside = outward downward)
-        for seg in range(n):
-            a = ring_start(0) + seg
-            b = ring_start(0) + (seg + 1) % n
-            tris.append([bot_idx, b, a])
-
-        # Middle bands
-        for stack in range(stacks - 2):
-            rs = ring_start(stack)
-            rn = ring_start(stack + 1)
+        # Quad belts between adjacent rings
+        for s in range(stacks - 1):
+            lo, hi = rings[s], rings[s + 1]
             for seg in range(n):
-                a, b = rs + seg, rs + (seg + 1) % n
-                c, d_ = rn + seg, rn + (seg + 1) % n
+                a, b = lo[seg], lo[(seg + 1) % n]
+                c, d_ = hi[seg], hi[(seg + 1) % n]
                 tris.append([a, b, d_])
                 tris.append([a, d_, c])
 
-        # North pole cap
-        last_ring = ring_start(stacks - 2)
-        for seg in range(n):
-            a = last_ring + seg
-            b = last_ring + (seg + 1) % n
-            tris.append([top_idx, a, b])
+        # Top polygon cap: forward-winding fan → outward normal points up
+        top = rings[-1]
+        for i in range(1, n - 1):
+            tris.append([top[0], top[i], top[i + 1]])
 
         verts_arr = np.array(verts, dtype=np.float32)
         tris_arr = np.array(tris, dtype=np.uint32)
