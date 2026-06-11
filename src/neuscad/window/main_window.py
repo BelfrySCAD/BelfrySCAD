@@ -1087,7 +1087,11 @@ class MainWindow(QMainWindow):
             cam = tab.viewport._renderer.camera
             return {
                 "$vpt": cam.target.tolist(),
-                "$vpr": [float(cam.elevation), 0.0, float(cam.azimuth)],
+                "$vpr": [
+                    ((90.0 - cam.altitude) % 360 + 360) % 360,
+                    0.0,
+                    ((cam.azimuth - 270.0) % 360 + 360) % 360,
+                ],
                 "$vpd": float(cam.distance),
             }
         except Exception:

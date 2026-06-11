@@ -181,7 +181,7 @@ Fallback behavior:
 * **Booleans**: `union`, `difference`, `intersection`
 * **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`, `breakpoint()`
 * **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`. `$`-prefixed variables use dynamic scoping (inherited down the call chain), not lexical scoping — the evaluator maintains a separate dynamic binding context threaded through module calls
-* **Viewport special variables**: `$vpt` (viewport translation, as `[x,y,z]`), `$vpr` (viewport rotation, as `[elevation, 0, azimuth]`), `$vpd` (camera distance) — snapshotted from the active camera in the main thread before the worker starts and injected into the root evaluation context
+* **Viewport special variables**: `$vpt` (viewport translation, as `[x,y,z]`), `$vpr` (viewport rotation, as `[((90-altitude)%360+360)%360, 0, ((azimuth-270)%360+360)%360]`), `$vpd` (camera distance) — snapshotted from the active camera in the main thread before the worker starts and injected into the root evaluation context
 
 ### Outputs:
 

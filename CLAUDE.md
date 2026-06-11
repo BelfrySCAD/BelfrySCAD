@@ -265,7 +265,7 @@ matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the
 
 **Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` is set to the child count when entering a user module body. `$`-prefixed named arguments in any call (e.g. `sphere(r=2, $fn=64)`) are merged into the dynamic context for that call and its children.
 
-**Viewport special variables**: `$vpt` (viewport translation = `camera.target` as `[x,y,z]`), `$vpr` (viewport rotation = `[elevation, 0, azimuth]`), and `$vpd` (viewport distance = `camera.distance`) are injected into the root `EvalContext.dyn` at render and debug start. They are snapshotted in the main thread via `MainWindow._viewport_params(tab)` before the worker thread launches, so the values are consistent with what the user sees. `Evaluator.evaluate()` accepts a `viewport_params: dict | None` argument and merges it into `ctx.dyn` before processing begins.
+**Viewport special variables**: `$vpt` (viewport translation = `camera.target` as `[x,y,z]`), `$vpr` (viewport rotation = `[((90-altitude)%360+360)%360, 0, ((azimuth-270)%360+360)%360]`), and `$vpd` (viewport distance = `camera.distance`) are injected into the root `EvalContext.dyn` at render and debug start. They are snapshotted in the main thread via `MainWindow._viewport_params(tab)` before the worker thread launches, so the values are consistent with what the user sees. `Evaluator.evaluate()` accepts a `viewport_params: dict | None` argument and merges it into `ctx.dyn` before processing begins.
 
 ### originalID assignment
 
