@@ -15,6 +15,7 @@ from openscad_parser.ast import to_openscad
 from openscad_parser.ast.nodes import (
     ASTNode, Assignment, Identifier,
     NumberLiteral, BooleanLiteral, StringLiteral, UndefinedLiteral,
+    CommentedExpr,
     ListComprehension, ListCompFor, ListCompIf, ListCompIfElse, ListCompLet, ListCompEach,
     PositionalArgument, NamedArgument,
     AdditionOp, SubtractionOp, MultiplicationOp, DivisionOp, ModuloOp, ExponentOp,
@@ -1085,6 +1086,8 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _eval_expr(self, node: ASTNode, ctx: EvalContext) -> Any:
+        if isinstance(node, CommentedExpr):
+            return self._eval_expr(node.expr, ctx)
         if isinstance(node, NumberLiteral):
             return node.val
         if isinstance(node, BooleanLiteral):
