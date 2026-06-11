@@ -247,7 +247,9 @@ matching OpenSCAD's exact warning format. `EvalContext.dyn_positions` tracks the
 
 **Topology**: `hull`, `minkowski`, `projection`
 
-**Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`
+**Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`, `breakpoint()`
+
+`breakpoint()` — immediately pauses execution in the debugger at the call site. Optional first positional or keyword argument `condition`: if provided and falsy, the breakpoint is skipped. No-op when running outside the debugger. Implemented via `_check_debug(node, ctx, forced=True)`, which passes `forced=True` through to the debug hook so the hook bypasses its normal step/breakpoint-line check.
 
 **Math functions**: `abs`, `sign`, `ceil`, `floor`, `round`, `sqrt`, `ln`, `log`, `exp`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `min`, `max`, `pow`, `norm`, `cross`, `rands`, `lookup`
 

@@ -128,7 +128,7 @@ class Evaluator:
         self._last_all_frame_locals: list = []
         self._root_ctx: EvalContext | None = None
 
-    def _check_debug(self, node: ASTNode, ctx: EvalContext):
+    def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False):
         if self._debug_hook is None:
             return
         pos = getattr(node, 'position', None)
@@ -184,7 +184,7 @@ class Evaluator:
         self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals)
+        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
@@ -478,6 +478,8 @@ class Evaluator:
             return None
         if name == "children":
             return self._builtin_children(args, ctx)
+        if name == "breakpoint":
+            return self._builtin_breakpoint(args, node, ctx)
         # Unknown module — warn with call stack, matching OpenSCAD's WARNING format
         pos = getattr(node, 'position', None)
         warn = f"WARNING: Ignoring unknown module '{name}'{self._loc(pos)}"
@@ -937,6 +939,13 @@ class Evaluator:
                 return ctx.children_bodies[idx]
             return None
         return self._combine(ctx.children_bodies)
+
+    def _builtin_breakpoint(self, args: dict, node, ctx: EvalContext):
+        cond = self._get_arg(args, 0, "condition", default=None)
+        if cond is not None and not cond:
+            return None
+        self._check_debug(node, ctx, forced=True)
+        return None
 
     # --- for loops ---
 

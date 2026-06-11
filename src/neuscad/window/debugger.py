@@ -119,7 +119,7 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list) -> tuple[str, dict]:
+        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -128,7 +128,8 @@ class DebugSession(QObject):
             if pause_now:
                 self._pause_requested = False
             should_pause = (
-                pause_now
+                forced
+                or pause_now
                 or self._break_on_first
                 or (line in self._breakpoints)
                 or self._step_mode
