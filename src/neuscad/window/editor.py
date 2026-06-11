@@ -1,10 +1,14 @@
+import re
+
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
+    QMenu,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
+    QAction, QFontMetricsF,
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal
 
@@ -30,6 +34,35 @@ def _compute_fold_regions(doc) -> dict[int, int]:
                     regions[start] = bn
         block = block.next()
     return regions
+
+
+class _ColumnGuide(QWidget):
+    """Transparent overlay on the viewport that draws a vertical column guide."""
+
+    def __init__(self, editor: 'CodeEditor'):
+        super().__init__(editor.viewport())
+        self._editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setGeometry(editor.viewport().rect())
+        self.raise_()
+
+    def update_geometry(self):
+        self.setGeometry(self._editor.viewport().rect())
+        self.raise_()
+
+    def paintEvent(self, event):
+        cursor = QTextCursor(self._editor.document())
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        x0 = self._editor.cursorRect(cursor).x()
+        total_w = QFontMetricsF(self._editor.font()).horizontalAdvance('0' * 80)
+        x = round(x0 + total_w)
+        if not (event.rect().left() <= x <= event.rect().right() + 1):
+            return
+        painter = QPainter(self)
+        painter.setPen(QColor("#DDDDDD"))
+        painter.drawLine(x, event.rect().top(), x, event.rect().bottom())
+        painter.end()
 
 
 class LineNumberArea(QWidget):
@@ -387,7 +420,8 @@ class FindBar(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    breakpoints_changed = Signal(object)  # emits set[int] of 0-indexed block numbers
+    breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
+    go_to_definition_requested = Signal(str)   # emits the identifier word
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -408,6 +442,7 @@ class CodeEditor(QPlainTextEdit):
         self._exec_selection: list = []
         self._find_selections: list = []
         self._find_bar = FindBar(self)
+        self._column_guide = _ColumnGuide(self)
 
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
 
@@ -681,6 +716,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
         self._reposition_find_bar()
+        self._column_guide.update_geometry()
 
     def show_find(self, replace: bool = False):
         cursor = self.textCursor()
@@ -692,3 +728,20 @@ class CodeEditor(QPlainTextEdit):
             self._find_bar.open_replace()
         else:
             self._find_bar.open_find()
+
+    def contextMenuEvent(self, event):
+        cursor = self.cursorForPosition(event.pos())
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        word = cursor.selectedText()
+
+        menu = self.createStandardContextMenu()
+
+        if word and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', word):
+            menu.addSeparator()
+            act = QAction(f"Go to Definition of '{word}'", self)
+            act.triggered.connect(
+                lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
+            )
+            menu.addAction(act)
+
+        menu.exec(event.globalPos())

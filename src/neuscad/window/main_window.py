@@ -151,6 +151,7 @@ class DocumentTab(QWidget):
 
         self.file_path = None
         self.is_modified = False
+        self.root_scope = None
 
     def _make_tools_strip(self):
         strip = QWidget()
@@ -226,6 +227,11 @@ class _RenderCallback(QObject):
             self._mw.log_to_tab(self._tab, captured.rstrip())
             self._mw._parse_error_to_editor(self._tab, captured)
 
+    @Slot(object, object)
+    def on_ast_ready(self, nodes, root_scope):
+        if self._render_id == self._mw._render_id:
+            self._tab.root_scope = root_scope
+
     @Slot(object, object, float)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float):
         self._mw._on_render_done(self._tab, bodies, id_to_node, elapsed_ms, self._render_id)
@@ -239,6 +245,7 @@ class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
+    ast_ready = Signal(object, object)   # (nodes, root_scope) — emitted after successful parse
     finished = Signal(object, object, float)  # (bodies, id_to_node, elapsed_ms)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
@@ -335,6 +342,8 @@ class _RenderWorker(QObject):
         except RecursionError:
             self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during scope build).")
             return
+
+        self.ast_ready.emit(nodes, root_scope)
 
         if self._cancel.is_set():
             return
@@ -667,6 +676,9 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
+        tab.editor.go_to_definition_requested.connect(
+            lambda word, t=tab: self._go_to_definition(t, word)
+        )
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -734,18 +746,8 @@ class MainWindow(QMainWindow):
     # File operations
     # ------------------------------------------------------------------
 
-    def _open_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open File", "", "OpenSCAD Files (*.scad);;All Files (*)"
-        )
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except OSError as e:
-            QMessageBox.critical(self, "Open Error", str(e))
-            return
+    def _create_and_add_tab(self, path: str, text: str) -> 'DocumentTab':
+        """Create a fully-connected DocumentTab for an existing file and add it to the UI."""
         tab = DocumentTab()
         tab.id_to_node = {}
         tab.file_path = path
@@ -780,9 +782,27 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
+        tab.editor.go_to_definition_requested.connect(
+            lambda word, t=tab: self._go_to_definition(t, word)
+        )
         self._apply_perspective_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
+        return tab
+
+    def _open_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "", "OpenSCAD Files (*.scad);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.critical(self, "Open Error", str(e))
+            return
+        self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._render()
 
@@ -870,43 +890,7 @@ class MainWindow(QMainWindow):
             settings.setValue("recentFiles", recents)
             self._rebuild_recent_menu()
             return
-        tab = DocumentTab()
-        tab.id_to_node = {}
-        tab.file_path = path
-        tab._last_text = text
-        tab._last_cursor = 0
-        tab._suppress_text_undo = False
-        tab.editor.setPlainText(text)
-        tab.is_modified = False
-        tab.editor.document().contentsChanged.connect(
-            lambda t=tab: self._on_editor_changed(t)
-        )
-        tab.viewport.selection_changed.connect(
-            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
-        )
-        tab.viewport.translate_committed.connect(
-            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
-        )
-        tab.viewport.rotate_committed.connect(
-            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
-        )
-        tab.viewport.scale_committed.connect(
-            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
-        )
-        self._editor_stack.addWidget(tab.editor)
-        self._console_stack.addWidget(tab.console)
-        self._debugger_stack.addWidget(tab.debugger_pane)
-        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
-        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
-        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
-        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
-        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
-        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
-        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
-        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
-        self._apply_perspective_to_tab(tab)
-        idx = self._tabs.addTab(tab, tab.display_name())
-        self._tabs.setCurrentIndex(idx)
+        self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._render()
 
@@ -1120,6 +1104,7 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         worker.logged.connect(callback.on_logged)
         worker.parse_errored.connect(callback.on_parse_errored)
+        worker.ast_ready.connect(callback.on_ast_ready)
         worker.finished.connect(callback.on_finished)
         worker.done.connect(callback.on_done)
         worker.done.connect(thread.quit)
@@ -1254,6 +1239,60 @@ class MainWindow(QMainWindow):
         if tab:
             tab.editor.show_find(replace=True)
 
+    def _go_to_definition(self, tab, word: str):
+        scope = getattr(tab, 'root_scope', None)
+        if scope is None:
+            self.log_to_tab(tab, f"Go to Definition: no AST available (render or debug first)")
+            return
+
+        node = (scope.lookup_variable(word)
+                or scope.lookup_function(word)
+                or scope.lookup_module(word))
+
+        if node is None:
+            self.log_to_tab(tab, f"Go to Definition: no definition found for '{word}'")
+            return
+
+        pos = node.position
+        def_line = pos.line
+        def_file = getattr(pos, 'origin', None)
+
+        # Determine which tab contains the definition
+        target_tab = None
+        if not def_file or not tab.file_path:
+            target_tab = tab
+        else:
+            def_resolved = str(Path(def_file).resolve())
+            tab_resolved = str(Path(tab.file_path).resolve())
+            if def_resolved == tab_resolved:
+                target_tab = tab
+            else:
+                for i in range(self._tabs.count()):
+                    t = self._tabs.widget(i)
+                    if t and t.file_path and str(Path(t.file_path).resolve()) == def_resolved:
+                        target_tab = t
+                        self._tabs.setCurrentIndex(i)
+                        break
+                if target_tab is None:
+                    try:
+                        with open(def_file, "r", encoding="utf-8") as f:
+                            text = f.read()
+                    except OSError as e:
+                        self.log_to_tab(tab, f"Go to Definition: cannot open '{def_file}': {e}")
+                        return
+                    target_tab = self._create_and_add_tab(def_file, text)
+
+        editor = target_tab.editor
+        block = editor.document().findBlockByLineNumber(def_line - 1)
+        if block.isValid():
+            cursor = editor.textCursor()
+            cursor.setPosition(block.position())
+            editor.setTextCursor(cursor)
+            editor.ensureCursorVisible()
+        self._editor_dock.show()
+        self._editor_dock.raise_()
+        self._editor_stack.setCurrentWidget(editor)
+
     def _current_editor(self):
         tab = self._current_tab()
         return tab.editor if tab else None
@@ -1346,6 +1385,7 @@ class MainWindow(QMainWindow):
 
         tab.editor.clear_errors()
         root_scope = build_scopes(nodes)
+        tab.root_scope = root_scope
 
         # Convert 0-indexed block numbers to 1-indexed line numbers
         breakpoints = {bn + 1 for bn in tab.editor._breakpoints}

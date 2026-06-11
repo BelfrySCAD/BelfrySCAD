@@ -45,6 +45,29 @@ Parse errors are indicated in the editor with a squiggly underline at the error 
 - `_find_selections` is a separate extra-selection list on `CodeEditor`, inserted between `_selection_extra` and `_exec_selection` in `_refresh_extra_selections`
 - Document changes while the bar is open automatically re-run the search via `document().contentsChanged`
 
+### Column Guide
+
+A faint vertical line is drawn at column 80 in the code editor. It is implemented as `_ColumnGuide(QWidget)`, a transparent overlay widget parented to `CodeEditor.viewport()`. Key implementation notes:
+- `WA_TransparentForMouseEvents` + `WA_TranslucentBackground` so only the line pixel is visible and all mouse events pass through to the text
+- `update_geometry()` keeps the overlay sized to the full viewport rect; called from `CodeEditor.resizeEvent()`
+- The x position is computed as `cursorRect(cursor_at_pos_0).x() + QFontMetricsF(font).horizontalAdvance('0' * 80)`. `QFontMetricsF` (not `QFontMetrics`) is required — the integer version rounds character width up by ~0.2px, which accumulates to ~2 columns of error over 80 characters.
+
+### Go to Definition
+
+Right-click on any identifier in the code editor shows a context menu with "Go to Definition of 'name'". The menu item only appears for words matching `[A-Za-z_][A-Za-z0-9_]*` (standard identifiers).
+
+`CodeEditor.go_to_definition_requested` signal (emits the word string) is connected to `MainWindow._go_to_definition(tab, word)` for each tab.
+
+`_go_to_definition` requires a cached `root_scope` on the tab (set after every successful `build_scopes()` call — both in the render worker and in `_start_debug()`). If no scope is cached yet, it logs a message asking the user to render first.
+
+Lookup order: `scope.lookup_variable(word)` → `scope.lookup_function(word)` → `scope.lookup_module(word)`. The first non-None result wins. Built-in modules return `None` from `lookup_module` and are silently skipped.
+
+The definition node's `.position.origin` gives the source file path; `.position.line` gives the 1-indexed line number. Navigation:
+- Same file (or origin is `None` / tab is untitled): scroll the current editor to the definition line
+- Different file: search open tabs for a matching `file_path`; if found, switch to it; if not, open the file via `_create_and_add_tab()` (view-only, no render triggered)
+
+`_create_and_add_tab(path, text) -> DocumentTab` is a helper that creates a fully-connected tab (all viewport and debugger-pane signals, perspective, Go-to-Definition signal) and adds it to the UI. Used by `_open_file`, `_open_recent`, and `_go_to_definition`; not used by `_new_document` (which creates a blank tab with a different setup path).
+
 ### Critical Constraint: Strict Parser
 
 The parser produces **no partial AST** — it either succeeds fully or fails entirely. The system must handle the no-AST state gracefully:
