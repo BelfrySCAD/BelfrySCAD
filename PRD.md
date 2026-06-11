@@ -131,6 +131,8 @@ Fallback behavior:
 * breakpoints (click in gutter; displayed as red dots; persisted per-document)
 * execution line highlighting (yellow full-width highlight; used by debugger)
 * find/replace overlay (`FindBar` widget; Cmd+F / Cmd+H; see §5.7)
+* column guide at 80 characters (faint vertical line; see §5.9)
+* Go to Definition context menu (right-click identifier → jump to definition; see §5.10)
 * user input surface
 
 ### Non-responsibilities:
@@ -413,6 +415,24 @@ Values in the Local Variables panel of the innermost frame are editable; the new
 ### Viewport special variables at debug start:
 
 `$vpt`, `$vpr`, and `$vpd` are snapshotted from the active viewport camera before the debug session starts and injected into the root evaluation context, matching render-time behavior.
+
+---
+
+## 5.9 Column Guide
+
+A faint vertical line is drawn at column 80 in the code editor as a writing-width reference. It is implemented as a transparent overlay widget (`_ColumnGuide`) parented to the editor viewport so it never interferes with mouse events or text layout.
+
+---
+
+## 5.10 Go to Definition
+
+Right-click on any identifier in the code editor to show a context menu with **"Go to Definition of 'name'"**. The item only appears for valid identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
+
+Behaviour:
+* Requires a successful render or debug run (caches `root_scope` on the tab after every `build_scopes()` call)
+* Lookup order: variable → function → module; first non-`None` result wins; built-in modules silently produce no result
+* **Same file**: scrolls the current editor to the definition line
+* **Different file**: switches to an already-open tab if found, otherwise opens the file in a new tab (view-only, no render triggered)
 
 ---
 
