@@ -783,6 +783,8 @@ class Evaluator:
     def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         points = self._get_arg(args, 0, "points", None)
         faces = self._get_arg(args, 1, "faces", None)
+        if faces is None:
+            faces = self._get_arg(args, 1, "triangles", None)  # legacy alias
         if points is None or faces is None:
             self.error("polyhedron: 'points' and 'faces' are required", node)
             return None
