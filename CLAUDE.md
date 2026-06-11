@@ -468,6 +468,8 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call
 - **`LetOp`** — after each assignment, with the new variable already in `child_ctx` (so the value is visible in the Variables panel)
 - **`ListCompFor`** — at the start of each iteration, after loop variables are bound into `loop_ctx`
 - **`ListCompLet`** — after each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
+- **`ListCompEach`** — before the body expression is evaluated, in both `_eval_list_comp` and `_eval_list_comp_body`
+- **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` (plain expression elements) and the fallthrough in `_eval_list_comp_body` (the final expression yielding one element)
 
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
