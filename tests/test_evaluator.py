@@ -1766,3 +1766,97 @@ class TestSpecialVariables:
         # At top level, parent_module() returns undef (no parent)
         _, lines = run('echo(is_undef(parent_module()));')
         assert lines == ["ECHO: true"]
+
+
+# ---------------------------------------------------------------------------
+# breakpoint()
+# ---------------------------------------------------------------------------
+
+def _run_with_hook(src: str):
+    """Run src with a debug hook attached. Returns (paused_lines, echo_lines)."""
+    echo_lines = []
+    paused_lines = []
+
+    def hook(line, locals_dict, call_stack, all_frame_locals, forced=False):
+        if forced:
+            paused_lines.append(line)
+        return ("continue", {})
+
+    nodes = getASTfromString(src)
+    root_scope = build_scopes(nodes)
+    ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg), debug_hook=hook)
+    ev.evaluate(nodes, root_scope)
+    return paused_lines, echo_lines
+
+
+class TestBreakpoint:
+    def test_unconditional_pauses_in_debug_mode(self):
+        paused, _ = _run_with_hook("breakpoint();")
+        assert len(paused) == 1
+
+    def test_unconditional_noop_without_hook(self):
+        # No exception and no side effects when no debugger is attached.
+        bodies, lines = run("breakpoint(); cube(1);")
+        assert lines == []
+        assert len(bodies) == 1
+
+    def test_true_condition_pauses(self):
+        paused, _ = _run_with_hook("breakpoint(true);")
+        assert len(paused) == 1
+
+    def test_false_condition_skips(self):
+        paused, _ = _run_with_hook("breakpoint(false);")
+        assert paused == []
+
+    def test_zero_condition_skips(self):
+        paused, _ = _run_with_hook("breakpoint(0);")
+        assert paused == []
+
+    def test_nonzero_condition_pauses(self):
+        paused, _ = _run_with_hook("breakpoint(1);")
+        assert len(paused) == 1
+
+    def test_named_condition_arg(self):
+        paused, _ = _run_with_hook("breakpoint(condition=true);")
+        assert len(paused) == 1
+
+    def test_named_condition_false_skips(self):
+        paused, _ = _run_with_hook("breakpoint(condition=false);")
+        assert paused == []
+
+    def test_variable_condition(self):
+        paused, _ = _run_with_hook("x = 5; breakpoint(x > 3);")
+        assert len(paused) == 1
+
+    def test_variable_condition_false(self):
+        paused, _ = _run_with_hook("x = 2; breakpoint(x > 3);")
+        assert paused == []
+
+    def test_pauses_at_correct_line(self):
+        src = "cube(1);\nbreakpoint();\ncube(2);"
+        paused, _ = _run_with_hook(src)
+        assert paused == [2]
+
+    def test_multiple_breakpoints(self):
+        src = "breakpoint();\nbreakpoint();"
+        paused, _ = _run_with_hook(src)
+        assert len(paused) == 2
+
+    def test_produces_no_geometry(self):
+        bodies, _ = run("breakpoint();")
+        assert bodies == []
+
+    def test_does_not_interfere_with_geometry(self):
+        paused, _ = _run_with_hook("cube(1); breakpoint(); sphere(1);")
+        assert len(paused) == 1
+
+    def test_breakpoint_inside_module(self):
+        src = "module foo() { breakpoint(); } foo();"
+        paused, _ = _run_with_hook(src)
+        assert len(paused) == 1
+
+    def test_conditional_breakpoint_inside_loop(self):
+        # Breaks only on iterations where i >= 3 (i = 3, 4 → 2 breaks)
+        src = "for (i = [0:4]) { breakpoint(i >= 3); }"
+        paused, _ = _run_with_hook(src)
+        assert len(paused) == 2
