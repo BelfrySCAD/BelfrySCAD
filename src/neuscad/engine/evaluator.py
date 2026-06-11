@@ -1192,7 +1192,9 @@ class Evaluator:
         if isinstance(node, TernaryOp):
             self._check_debug(node, ctx, expr_level=True)
             cond = self._eval_expr(node.condition, ctx)
-            return self._eval_expr(node.true_expr, ctx) if cond else self._eval_expr(node.false_expr, ctx)
+            branch = node.true_expr if cond else node.false_expr
+            self._check_debug(branch, ctx, expr_level=True)
+            return self._eval_expr(branch, ctx)
         if isinstance(node, PrimaryCall):
             return self._eval_function_call(node, ctx)
         if isinstance(node, PrimaryIndex):

@@ -462,7 +462,7 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call
 **Step Into for functions**: Function bodies are expressions (not statements), so `_eval_statement`'s `_check_debug` call is never reached for them. `_eval_user_function` explicitly calls `self._check_debug(decl.expr, child_ctx)` after pushing the call frame and before calling `_eval_expr(decl.expr, child_ctx)`. This gives the debugger a pause opportunity at the start of every function body, enabling Step Into to work correctly.
 
 **Expression-level step points**: `_check_debug` accepts `expr_level=True` to mark sub-expression pauses. The debug hook only honours `expr_level` checkpoints for `step_into` (`_step_mode`); break-on-first, gutter breakpoints, step-over, and step-out all filter them out (`and not expr_level`). The following expression nodes call `_check_debug(…, expr_level=True)`:
-- **`TernaryOp`** — once before condition evaluation (so step-into enters the ternary)
+- **`TernaryOp`** — twice: once before condition evaluation, then again at the chosen branch (true or false) after the condition is resolved
 - **`LetOp`** — after each assignment, with the new variable already in `child_ctx` (so the value is visible in the Variables panel)
 - **`ListCompFor`** — at the start of each iteration, after loop variables are bound into `loop_ctx`
 - **`ListCompLet`** — after each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
