@@ -559,6 +559,7 @@ class CodeEditor(QPlainTextEdit):
         self._selection_extra: list = []
         self._exec_selection: list = []
         self._find_selections: list = []
+        self._bracket_selections: list = []
         self._find_bar = FindBar(self)
         self._indent_guides = _IndentGuides(self)
         self._column_guide = _ColumnGuide(self)
@@ -573,6 +574,7 @@ class CodeEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.document().contentsChanged.connect(self._on_doc_changed)
+        self.cursorPositionChanged.connect(self._update_bracket_match)
         self._update_line_number_area_width()
 
     _BP_W = 14  # breakpoint column width (left gutter)
@@ -826,10 +828,74 @@ class CodeEditor(QPlainTextEdit):
         self._selection_extra = []
         self._refresh_extra_selections()
 
+    _OPEN  = "([{"
+    _CLOSE = ")]}"
+    _MATCH = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
+
+    def _update_bracket_match(self):
+        self._bracket_selections = []
+        cur = self.textCursor()
+        doc = self.document()
+        text = doc.toPlainText()
+        pos = cur.position()
+
+        # Cursor just after an opener, or just before a closer
+        bracket_pos = None
+        bracket_ch = None
+        if pos > 0 and text[pos - 1] in self._OPEN:
+            bracket_pos, bracket_ch = pos - 1, text[pos - 1]
+        elif pos < len(text) and text[pos] in self._CLOSE:
+            bracket_pos, bracket_ch = pos, text[pos]
+
+        if bracket_pos is None:
+            self._refresh_extra_selections()
+            return
+
+        # Find matching bracket by counting depth
+        ch = bracket_ch
+        match_ch = self._MATCH[ch]
+        forward = ch in self._OPEN
+        depth = 0
+        match_pos = None
+        i = bracket_pos
+        step = 1 if forward else -1
+        while 0 <= i < len(text):
+            c = text[i]
+            if c == ch:
+                depth += 1
+            elif c == match_ch:
+                depth -= 1
+                if depth == 0:
+                    match_pos = i
+                    break
+            i += step
+
+        fmt_ok = QTextCharFormat()
+        fmt_ok.setBackground(QColor("#3a6040"))  # matched — green tint
+        fmt_ok.setForeground(QColor("#ffffff"))
+        fmt_err = QTextCharFormat()
+        fmt_err.setBackground(QColor("#7a2020"))  # unmatched — red tint
+        fmt_err.setForeground(QColor("#ffffff"))
+        fmt = fmt_ok if match_pos is not None else fmt_err
+
+        def make_sel(char_pos):
+            sel = QTextEdit.ExtraSelection()
+            sel.format = fmt
+            c = QTextCursor(doc)
+            c.setPosition(char_pos)
+            c.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            return sel
+
+        self._bracket_selections = [make_sel(bracket_pos)]
+        if match_pos is not None:
+            self._bracket_selections.append(make_sel(match_pos))
+        self._refresh_extra_selections()
+
     def _refresh_extra_selections(self):
         self.setExtraSelections(
             self._error_selections + self._selection_extra
-            + self._find_selections + self._exec_selection
+            + self._find_selections + self._bracket_selections + self._exec_selection
         )
 
     def _reposition_find_bar(self):
