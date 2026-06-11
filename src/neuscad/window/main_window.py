@@ -291,7 +291,7 @@ class _RenderWorker(QObject):
                 _tmp.write(self._source)
                 _tmp.close()
                 parse_path = _tmp.name
-            nodes = getASTfromFile(parse_path)
+            nodes = getASTfromFile(parse_path, include_comments=False)
             _sys.stdout = old_stdout
             captured = buf.getvalue()
         except Exception as e:
@@ -322,7 +322,7 @@ class _RenderWorker(QObject):
             if isinstance(node, UseStatement):
                 try:
                     fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp, include_comments=False)
                     if lib_nodes:
                         injected.extend(
                             n for n in lib_nodes
@@ -1088,9 +1088,9 @@ class MainWindow(QMainWindow):
             return {
                 "$vpt": cam.target.tolist(),
                 "$vpr": [
-                    ((90.0 - cam.altitude) % 360 + 360) % 360,
+                    ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0,
                     0.0,
-                    ((cam.azimuth - 270.0) % 360 + 360) % 360,
+                    ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0,
                 ],
                 "$vpd": float(cam.distance),
             }
@@ -1416,7 +1416,7 @@ class MainWindow(QMainWindow):
                 _tmp.write(source)
                 _tmp.close()
                 parse_path = _tmp.name
-            nodes = getASTfromFile(parse_path)
+            nodes = getASTfromFile(parse_path, include_comments=False)
             _sys.stdout = old_stdout
             captured = buf.getvalue()
         except Exception as e:
@@ -1443,7 +1443,7 @@ class MainWindow(QMainWindow):
             if isinstance(node, UseStatement):
                 try:
                     fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp)
+                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp, include_comments=False)
                     if lib_nodes:
                         injected.extend(
                             n for n in lib_nodes

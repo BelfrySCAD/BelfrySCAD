@@ -14,7 +14,7 @@ from neuscad.engine.evaluator import Evaluator, EvalError
 def run(src: str):
     """Parse, scope, and evaluate src. Returns (bodies, echo_lines)."""
     echo_lines = []
-    nodes = getASTfromString(src)
+    nodes = getASTfromString(src, include_comments=False)
     root_scope = build_scopes(nodes)
     ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
     bodies, _ = ev.evaluate(nodes, root_scope)
@@ -1794,7 +1794,7 @@ def _run_with_hook(src: str):
             paused_lines.append(line)
         return ("continue", {})
 
-    nodes = getASTfromString(src)
+    nodes = getASTfromString(src, include_comments=False)
     root_scope = build_scopes(nodes)
     ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg), debug_hook=hook)
     ev.evaluate(nodes, root_scope)
