@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QListWidget, QTableWidget, QTableWidgetItem, QPushButton,
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
 )
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtCore import Qt, QObject, Signal
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -286,6 +286,15 @@ class DebuggerPane(QWidget):
         sv.addLayout(stack_header)
         self._stack_list = QListWidget()
         self._stack_list.setFont(mono)
+        # Keep active highlight color even when the list loses keyboard focus.
+        pal = self._stack_list.palette()
+        pal.setColor(QPalette.ColorGroup.Inactive,
+                     QPalette.ColorRole.Highlight,
+                     pal.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Highlight))
+        pal.setColor(QPalette.ColorGroup.Inactive,
+                     QPalette.ColorRole.HighlightedText,
+                     pal.color(QPalette.ColorGroup.Active, QPalette.ColorRole.HighlightedText))
+        self._stack_list.setPalette(pal)
         sv.addWidget(self._stack_list)
         splitter.addWidget(stack_widget)
 
@@ -330,6 +339,10 @@ class DebuggerPane(QWidget):
         self._stack_list.currentRowChanged.connect(self._on_frame_selected)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
+
+        # Seed the initial <toplevel> entry so the list is never empty.
+        self._stack_list.addItem("<toplevel>")
+        self._stack_list.setCurrentRow(0)
 
     def set_splitter_orientation(self, orientation: Qt.Orientation):
         self._splitter.setOrientation(orientation)
@@ -456,5 +469,9 @@ class DebuggerPane(QWidget):
                     self._btn_step_out, self._btn_stop):
             btn.setEnabled(False)
         self._btn_restart.setEnabled(True)
+        self._stack_list.blockSignals(True)
         self._stack_list.clear()
+        self._stack_list.addItem("<toplevel>")
+        self._stack_list.setCurrentRow(0)
+        self._stack_list.blockSignals(False)
         self._vars_table.setRowCount(0)
