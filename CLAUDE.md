@@ -464,6 +464,7 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list, parallel to `_call
 **Expression-level step points**: `_check_debug` accepts `expr_level=True` to mark sub-expression pauses. The debug hook only honours `expr_level` checkpoints for `step_into` (`_step_mode`); break-on-first, gutter breakpoints, step-over, and step-out all filter them out (`and not expr_level`). The following expression nodes call `_check_debug(…, expr_level=True)`:
 - **`TernaryOp`** — twice: once before condition evaluation, then again at the chosen branch (true or false) after the condition is resolved
 - **`ModularIf` / `ModularIfElse`** — the `if` node itself is already paused at by `_eval_statement`; a second `expr_level=True` pause fires at the first statement of the chosen branch after the condition is resolved (`node` used as fallback if the branch is empty)
+- **`ListCompIf` / `ListCompIfElse`** — pause at the `if` node before condition, then at the chosen branch expression after; handled in both `_eval_list_comp` and `_eval_list_comp_body`
 - **`LetOp`** — after each assignment, with the new variable already in `child_ctx` (so the value is visible in the Variables panel)
 - **`ListCompFor`** — at the start of each iteration, after loop variables are bound into `loop_ctx`
 - **`ListCompLet`** — after each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`

@@ -1278,10 +1278,14 @@ class Evaluator:
             if isinstance(elem, ListCompFor):
                 result.extend(self._eval_listcomp_for(elem, ctx))
             elif isinstance(elem, ListCompIf):
+                self._check_debug(elem, ctx, expr_level=True)
                 if self._eval_expr(elem.condition, ctx):
+                    self._check_debug(elem.true_expr, ctx, expr_level=True)
                     result.extend(self._eval_list_comp_body(elem.true_expr, ctx))
             elif isinstance(elem, ListCompIfElse):
+                self._check_debug(elem, ctx, expr_level=True)
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
+                self._check_debug(branch, ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(branch, ctx))
             elif isinstance(elem, ListCompLet):
                 let_ctx = ctx.child_ctx()
@@ -1312,11 +1316,15 @@ class Evaluator:
                 self._check_debug(assign, let_ctx, expr_level=True)
             return self._eval_list_comp_body(body.body, let_ctx)
         if isinstance(body, ListCompIf):
+            self._check_debug(body, ctx, expr_level=True)
             if self._eval_expr(body.condition, ctx):
+                self._check_debug(body.true_expr, ctx, expr_level=True)
                 return self._eval_list_comp_body(body.true_expr, ctx)
             return []
         if isinstance(body, ListCompIfElse):
+            self._check_debug(body, ctx, expr_level=True)
             branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
+            self._check_debug(branch, ctx, expr_level=True)
             return self._eval_list_comp_body(branch, ctx)
         if isinstance(body, ListCompEach):
             v = self._eval_expr(body.body, ctx)
