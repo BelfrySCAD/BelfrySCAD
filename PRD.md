@@ -127,6 +127,10 @@ Fallback behavior:
 * syntax highlighting (via `QSyntaxHighlighter` subclass)
 * line numbers (via custom `LineNumberArea` widget)
 * error underlines (via `QTextCharFormat` with `SpellCheckUnderline` style)
+* code folding (fold/unfold multi-line `{…}` regions via gutter arrows)
+* breakpoints (click in gutter; displayed as red dots; persisted per-document)
+* execution line highlighting (yellow full-width highlight; used by debugger)
+* find/replace overlay (`FindBar` widget; Cmd+F / Cmd+H; see §5.7)
 * user input surface
 
 ### Non-responsibilities:
@@ -174,6 +178,7 @@ Fallback behavior:
 * **Booleans**: `union`, `difference`, `intersection`
 * **Control / utility**: `for`, `let`, `if`/`else`, `echo`, `assert`, `children()`, `$children`
 * **Special variables**: `$fn`, `$fa`, `$fs` — control mesh resolution; defaults: `$fn=0`, `$fa=12`, `$fs=2`. `$`-prefixed variables use dynamic scoping (inherited down the call chain), not lexical scoping — the evaluator maintains a separate dynamic binding context threaded through module calls
+* **Viewport special variables**: `$vpt` (viewport translation, as `[x,y,z]`), `$vpr` (viewport rotation, as `[elevation, 0, azimuth]`), `$vpd` (camera distance) — snapshotted from the active camera in the main thread before the worker starts and injected into the root evaluation context
 
 ### Outputs:
 
@@ -282,8 +287,9 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 ### Persistent settings (survives restart):
 
+* Window size and position (`saveGeometry`/`restoreGeometry`)
+* Dock panel positions and visibility (`saveState`/`restoreState`)
 * Perspective/orthographic toggle state
-* Dock panel positions and visibility
 * Recent files list
 
 ### Startup:
@@ -294,14 +300,14 @@ Opens with a single blank untitled document.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  [Open] [Render] [Export]  |  [Undo] [Redo]                 │  ← toolbar
+│  [New] [Open] [Export] [Render]  |  [Undo] [Redo]           │  ← toolbar
 ├──────────────────────────────────────────────────────────────┤
 │  [file1.scad ×]  [file2.scad ×]  [+]                        │  ← tabs
 ├──────────────────────────┬──────────────────────────┬────────┤
 │                          │                          │   T    │
 │                          │                  [cube]  │   R    │
-│   QScintilla             │   3D Viewport            │   S    │
-│   Code Editor            │                          │   ·    │
+│   Code Editor            │   3D Viewport            │   S    │
+│   (QPlainTextEdit)       │                          │   ·    │
 │                          │                          │   ·    │
 ├──────────────────────────┴──────────────────────────┴────────┤
 │  Console                                                      │
@@ -310,7 +316,7 @@ Opens with a single blank untitled document.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-* **Toolbar**: Open, Render, Export, Undo, Redo across the top
+* **Toolbar**: New, Open, Export, Render, Undo, Redo across the top
 * **Tabs**: one per open file; tabs can be torn off into separate windows
 * **Code editor**: left pane (QScintilla)
 * **3D viewport**: center pane; always visible; contains:
@@ -340,6 +346,73 @@ The code editor, console, and debugger panels are dockable `QDockWidget` instanc
 * Show Axes / Show Edges / Show Scale Markers / Show Crosshairs / Show Status Bar
 
 **Window**: Minimize / Zoom / — / Move Tab to New Window / — / *(open document list)* / Bring All to Front
+
+---
+
+## 5.7 Find / Replace
+
+A `FindBar` overlay widget is parented to the `CodeEditor` and floated at the top-right corner of the editor viewport. It is shown/hidden on demand and never changes the editor's layout.
+
+* **Cmd+F**: open in find-only mode (replace row hidden)
+* **Cmd+H**: open in find + replace mode
+* Plain-text search (default) or regular expression mode (`.*` toggle)
+* Case-sensitive toggle (`Aa`)
+* All matches highlighted in pale yellow; current match highlighted orange with white text
+* Match count label ("N of M")
+* Previous / next navigation (◀ ▶ buttons, or Shift+Enter / Enter in the find field)
+* If the editor has a single-word selection when Find opens, it pre-populates the search field
+* **Replace**: replaces the current match and moves to the next
+* **Replace All**: replaces all matches in a single undo step
+* **Escape**: closes the bar and returns focus to the editor
+* Highlights update live as the document changes
+
+---
+
+## 5.8 Debugger
+
+The debugger runs the evaluator in a daemon background thread and surfaces a `DebuggerPane` in a dockable panel (docked to bottom by default; can be moved to any side).
+
+### Controls (left to right in the pane header):
+
+Continue/Pause · Step Over · Step Into · Step Out · Stop · Restart
+
+* **Continue/Pause**: when code is running, the button shows Pause and suspends execution at the next statement. When paused, it resumes execution.
+* **Step Over** (F10): advance one statement, staying in the current scope
+* **Step Into** (F11): advance one statement, descending into called functions and modules
+* **Step Out** (F12): run until the current scope returns
+* **Stop**: terminate the debug session
+* **Restart**: stop any running session and start a fresh debug run from the top. Always enabled — clicking while not in debug mode starts a new session.
+
+### Starting a debug session:
+
+F5 (or Design → Debug) parses the current document, resolves breakpoints, and begins execution. The evaluator pauses at the first statement (unconditionally on first run, then at breakpoints).
+
+### Breakpoints:
+
+Set by clicking the gutter of the code editor (displayed as red dots). Breakpoints are 1-indexed line numbers. The debugger pauses before executing the statement at a breakpoint line.
+
+### Call stack panel:
+
+Displayed innermost-first (currently executing frame at row 0, `<toplevel>` at the bottom). Clicking a frame shows its variables.
+
+When the debugger dock is placed on the left or right side, the call stack and variables panels stack vertically; on top/bottom or floating, they sit side by side.
+
+### Variables panel:
+
+Filter dropdown: **Local Variables** / **Global Variables** / **$Special Variables** / **CONSTANTS**
+
+* **Local Variables**: variables assigned in the current frame (eagerly evaluated assignments, function/module parameters)
+* **Global Variables**: top-level assignments visible from the current frame
+* **$Special Variables**: `$fn`, `$fa`, `$fs`, `$vpt`, `$vpr`, `$vpd`, `$children`, etc.
+* **CONSTANTS**: `ALL_UPPERCASE` names
+
+**Hiddens** checkbox: when unchecked, names starting with `_` or `$_` are hidden.
+
+Values in the Local Variables panel of the innermost frame are editable; the new value takes effect when execution resumes.
+
+### Viewport special variables at debug start:
+
+`$vpt`, `$vpr`, and `$vpd` are snapshotted from the active viewport camera before the debug session starts and injected into the root evaluation context, matching render-time behavior.
 
 ---
 
