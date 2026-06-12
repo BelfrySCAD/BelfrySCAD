@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "neuscad"
 version = "0.1.0"
 requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"  # replace with SPDX expression e.g. "MIT" before publishing
+license-files = ["LICENSE"]
 dependencies = [
     "PySide6",
     "manifold3d",
@@ -28,6 +30,38 @@ package = true
 
 [dependency-groups]
 dev = [
+    "briefcase>=0.4.2",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
 ]
+
+# ---------------------------------------------------------------------------
+# Briefcase packaging
+# ---------------------------------------------------------------------------
+
+[tool.briefcase]
+project_name = "NeuSCAD"
+bundle = "org.neuscad"          # replace with your reverse domain before distributing
+version = "0.1.0"
+description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
+
+[tool.briefcase.app.neuscad]
+formal_name = "NeuSCAD"
+description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
+# icon = "resources/neuscad"    # uncomment once neuscad.icns / neuscad.ico exist
+sources = ["src/neuscad"]
+main_module = "neuscad.main"
+requires = [
+    "PySide6",
+    "manifold3d",
+    "moderngl",
+    "numpy",
+    "lib3mf",
+    "Pillow",
+    "setproctitle>=1.3.7",
+    "openscad_parser>=2.5.1",
+]
+
+[tool.briefcase.app.neuscad.macOS]
+
+[tool.briefcase.app.neuscad.windows]
