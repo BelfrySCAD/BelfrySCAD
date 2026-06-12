@@ -34,6 +34,9 @@ env/
 logs/
 dist/
 
+# Icon build artifacts
+resources/*.iconset/
+
 # Testing
 .coverage
 htmlcov/

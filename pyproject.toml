@@ -41,14 +41,17 @@ dev = [
 
 [tool.briefcase]
 project_name = "NeuSCAD"
-bundle = "org.neuscad"          # replace with your reverse domain before distributing
+bundle = "com.belfrydw"
 version = "0.1.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
+author = "Revar Desmera"
+author_email = "revarbat@gmail.com"
+url = "https://www.github.com/BelfrySCAD/NeuSCAD"
 
 [tool.briefcase.app.neuscad]
 formal_name = "NeuSCAD"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
-# icon = "resources/neuscad"    # uncomment once neuscad.icns / neuscad.ico exist
+icon = "resources/neuscad"
 sources = ["src/neuscad"]
 requires = [
     "PySide6",
@@ -65,3 +68,4 @@ requires = [
 min_os_version = "12.0"
 
 [tool.briefcase.app.neuscad.windows]
+installer_type = "msi"

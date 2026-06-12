@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+
+    <!-- Background -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#1b2333"/>
+    </linearGradient>
+
+    <!-- Cube top face: bright cyan, lit from above -->
+    <linearGradient id="cube-top" x1="390" y1="285" x2="555" y2="475" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#ade8f4"/>
+      <stop offset="100%" stop-color="#48cae4"/>
+    </linearGradient>
+
+    <!-- Cube right face: medium blue -->
+    <linearGradient id="cube-right" x1="390" y1="428" x2="555" y2="428" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#0096c7"/>
+      <stop offset="100%" stop-color="#023e8a"/>
+    </linearGradient>
+
+    <!-- Cube left / front face: dark blue, in shadow -->
+    <linearGradient id="cube-left" x1="225" y1="428" x2="390" y2="428" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#03045e"/>
+      <stop offset="100%" stop-color="#0077b6"/>
+    </linearGradient>
+
+    <!-- Sphere: warm orange, radial highlight upper-left -->
+    <radialGradient id="sphere" cx="585" cy="348" r="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#ffd166"/>
+      <stop offset="28%"  stop-color="#f4a261"/>
+      <stop offset="62%"  stop-color="#e76f51"/>
+      <stop offset="100%" stop-color="#9b2226"/>
+    </radialGradient>
+
+    <!-- Cone body: magenta to violet, lit from left -->
+    <linearGradient id="cone-body" x1="364" y1="355" x2="660" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#f72585"/>
+      <stop offset="52%"  stop-color="#b5179e"/>
+      <stop offset="100%" stop-color="#560bad"/>
+    </linearGradient>
+
+    <!-- Cone base disc: purple -->
+    <radialGradient id="cone-base" cx="497" cy="748" r="158" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#e0aaff"/>
+      <stop offset="48%"  stop-color="#9d4edd"/>
+      <stop offset="100%" stop-color="#3a0ca3"/>
+    </radialGradient>
+
+    <!-- Drop shadow -->
+    <filter id="shadow" x="-22%" y="-22%" width="144%" height="144%">
+      <feDropShadow dx="2" dy="8" stdDeviation="14" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="1024" height="1024" rx="200" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="200" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="3"/>
+
+  <!-- ── CUBE ────────────────────────────────────────────────────────
+       Isometric cube, visual centre (390, 475), side = 190 px.
+       e_h = cos30 × 190 ≈ 165    e_v = sin30 × 190 = 95
+       Vertices:
+         top apex     (390, 285)
+         right apex   (555, 380)
+         front corner (390, 475)
+         left apex    (225, 380)
+         right bot    (555, 570)
+         front bot    (390, 665)
+         left bot     (225, 570)
+  -->
+
+  <!-- right face -->
+  <polygon points="555,380 555,570 390,665 390,475" fill="url(#cube-right)"/>
+  <!-- top face -->
+  <polygon points="390,285 555,380 390,475 225,380" fill="url(#cube-top)"/>
+  <!-- left / front face -->
+  <polygon points="225,380 390,475 390,665 225,570" fill="url(#cube-left)"/>
+
+  <!-- edge highlights -->
+  <polyline points="390,285 555,380 390,475 225,380 390,285"
+            fill="none" stroke="rgba(173,232,244,0.40)" stroke-width="2" stroke-linejoin="round"/>
+  <line x1="390" y1="475" x2="390"  y2="665" stroke="rgba(173,232,244,0.32)" stroke-width="2"/>
+  <line x1="555" y1="380" x2="555"  y2="570" stroke="rgba(0,150,199,0.28)"   stroke-width="1.5"/>
+  <line x1="555" y1="570" x2="390"  y2="665" stroke="rgba(0,150,199,0.22)"   stroke-width="1.5"/>
+  <line x1="225" y1="380" x2="225"  y2="570" stroke="rgba(0,150,199,0.22)"   stroke-width="1.5"/>
+  <line x1="225" y1="570" x2="390"  y2="665" stroke="rgba(0,150,199,0.18)"   stroke-width="1.5"/>
+
+  <!-- ── SPHERE ──────────────────────────────────────────────────────
+       Centre (630, 415) radius 175.  Overlaps the cube's right face,
+       suggesting a boolean difference / intersection operation.
+  -->
+  <circle cx="630" cy="415" r="175" fill="url(#sphere)" filter="url(#shadow)"/>
+  <!-- specular highlight -->
+  <ellipse cx="565" cy="352" rx="62" ry="44" fill="rgba(255,255,255,0.16)"
+           transform="rotate(-28,565,352)"/>
+  <!-- rim -->
+  <circle cx="630" cy="415" r="175" fill="none" stroke="rgba(255,200,100,0.18)" stroke-width="2"/>
+
+  <!-- ── CONE ───────────────────────────────────────────────────────
+       Apex (512, 350) – inside the sphere (distance ≈ 134 < 175),
+       so the cone pierces the sphere: a CSG-style intersection moment.
+       Base ellipse centre (512, 755), rx=148, ry=54.
+
+       Body: apex → left-base-tangent → bottom arc → right-base-tangent → Z
+             (sweep 0 = CCW traces the lower half of the base ellipse)
+  -->
+  <path d="M 512,350 L 364,755 A 148,54 0 0,0 660,755 Z"
+        fill="url(#cone-body)" filter="url(#shadow)"/>
+  <!-- base disc drawn on top for the 3-D cap illusion -->
+  <ellipse cx="512" cy="755" rx="148" ry="54" fill="url(#cone-base)"/>
+  <!-- lit left edge -->
+  <line x1="512" y1="350" x2="364" y2="755" stroke="rgba(247,37,133,0.48)" stroke-width="2.5"/>
+  <!-- dim right edge -->
+  <line x1="512" y1="350" x2="660" y2="755" stroke="rgba(114,9,183,0.28)"  stroke-width="1.5"/>
+
+</svg>
