@@ -632,11 +632,3 @@ self._toggle_perspective(perspective)
 - Show Axes / Show Edges / Show Scale Markers / Show Crosshairs / Show Status Bar
 
 **Window**: Minimize / Zoom / — / Move Tab to New Window / — / *(open document list)* / Bring All to Front
-
-## Open Design Questions (must resolve before implementing affected subsystems)
-
-1. ~~How is geometry provenance tracked through Manifold CSG operations?~~ Resolved: `originalID` + `run_original_id` in `MeshGL`.
-2. ~~What is the ID system for pickable geometry elements in the viewport?~~ Resolved: `originalID` is the pick ID; ray-cast hit triangle → `run_original_id` lookup.
-3. ~~How does drag-to-edit decide which AST expression to modify when multiple are candidates?~~ Resolved: tool choice (Translate/Rotate/Scale) declares the transform type; find innermost existing wrapper or insert new one outside existing wrappers.
-4. ~~How is user "intent" inferred from code structure (e.g., named parameters vs. positional)?~~ Resolved: literal → rewrite in place; variable = literal → update declaration; variable = expression or inline expression → append delta. See Source Rewrite Rules above.
-5. ~~Full rebuild vs. incremental regeneration on each edit?~~ Resolved: full rebuild for v1; incremental rebuild is a planned future optimization.
