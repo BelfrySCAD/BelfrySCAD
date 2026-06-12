@@ -26,9 +26,6 @@ packages = ["src/neuscad"]
 [tool.uv]
 package = true
 
-[tool.uv.sources]
-openscad_parser = { path = "../openscad_parser", editable = true }
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
