@@ -50,7 +50,6 @@ formal_name = "NeuSCAD"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 # icon = "resources/neuscad"    # uncomment once neuscad.icns / neuscad.ico exist
 sources = ["src/neuscad"]
-main_module = "neuscad.main"
 requires = [
     "PySide6",
     "manifold3d",
