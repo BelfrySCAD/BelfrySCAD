@@ -30,6 +30,9 @@ env/
 # macOS
 .DS_Store
 
+# Briefcase
+logs/
+
 # Testing
 .coverage
 htmlcov/
