@@ -57,7 +57,11 @@ def _resolve_use_scopes(nodes, current_file, log_fn):
             continue
         try:
             fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-            lib_nodes, lib_path = getASTfromLibraryFile(current_file, fp, include_comments=False)
+            # `include`d files are flattened into `nodes`, so a `use` statement
+            # may have originated from a different file than `current_file` —
+            # resolve relative paths against where it was actually written.
+            origin = getattr(getattr(node, 'position', None), 'origin', None)
+            lib_nodes, lib_path = getASTfromLibraryFile(origin or current_file, fp, include_comments=False)
         except Exception as e:
             msg = str(e)
             if "not found" not in msg and "No such file" not in msg:

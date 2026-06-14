@@ -732,6 +732,11 @@ class TestLetBlocks:
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(5)
 
+    def test_let_sequential_binding_reference(self):
+        # Later bindings in the same let() can reference earlier ones.
+        _, lines = run("echo(let(a=1, b=a+1) b);")
+        assert lines == ["ECHO: 2"]
+
 
 # ---------------------------------------------------------------------------
 # User-defined modules
@@ -1000,6 +1005,26 @@ class TestExpressionEdgeCases:
     def test_matrix_times_scalar(self):
         _, lines = run("echo([[1,2],[3,4]] * 2);")
         assert lines == ["ECHO: [[2, 4], [6, 8]]"]
+
+    def test_vector_dot_product(self):
+        _, lines = run("echo([1,2,3] * [4,5,6]);")
+        assert lines == ["ECHO: 32"]
+
+    def test_matrix_times_vector(self):
+        _, lines = run("echo([[1,0],[0,1]] * [3,4]);")
+        assert lines == ["ECHO: [3, 4]"]
+
+    def test_vector_times_matrix(self):
+        _, lines = run("echo([3,4] * [[1,0],[0,1]]);")
+        assert lines == ["ECHO: [3, 4]"]
+
+    def test_matrix_times_matrix(self):
+        _, lines = run("echo([[1,2],[3,4]] * [[1,0],[0,1]]);")
+        assert lines == ["ECHO: [[1, 2], [3, 4]]"]
+
+    def test_vector_divided_by_scalar(self):
+        _, lines = run("echo([2,4,6] / 2);")
+        assert lines == ["ECHO: [1, 2, 3]"]
 
     def test_undef_comparison_lt(self):
         _, lines = run("echo(undef < 1);")
@@ -1323,6 +1348,18 @@ class TestNewBuiltins:
         _, lines = run('echo(search(["b","a"], ["a","b","c"]));')
         assert lines == ["ECHO: [1, 0]"]
 
+    def test_search_vector_match_direct_equality(self):
+        # When the match value is itself a vector, it's compared directly
+        # against each whole element of the haystack (not column-indexed) —
+        # this is the basis of BOSL2's `in_list(v, [UP,RIGHT,BACK])`.
+        _, lines = run('echo(search([[0,0,1]], [[0,0,1],[1,0,0],[0,1,0]]));')
+        assert lines == ["ECHO: [0]"]
+
+    def test_search_scalar_match_uses_index_col(self):
+        # A scalar match value still compares against vector[i][index_col].
+        _, lines = run('echo(search([0,0,1], [[0,0,1],[1,0,0],[0,1,0]]));')
+        assert lines == ["ECHO: [0, 0, 1]"]
+
     def test_search_string_as_char_array(self):
         # Multi-char string: each char searched independently in a string vector
         _, lines = run('echo(search("ba", "abcd"));')
@@ -1535,6 +1572,25 @@ class TestRemainingBuiltins:
         _, lines = run(src)
         assert lines == ["ECHO: 0"]
 
+    def test_children_count_counts_statements_not_geometries(self):
+        # $children counts child *statements* in {}, regardless of how many
+        # geometries each one produces — an `if` that yields nothing (or a
+        # `children()` forwarding zero bodies) still counts as one child.
+        src = "module m() { echo($children); } m() { cube(1); if (false) sphere(1); }"
+        _, lines = run(src)
+        assert lines == ["ECHO: 2"]
+
+    def test_children_call_counts_even_with_no_bodies_to_forward(self):
+        # `children()` is itself one child statement in the calling block,
+        # even if the *caller's* own children (forwarded here) is empty.
+        src = (
+            "module inner() { echo($children); }"
+            " module outer() { inner() { cube(1); children(); } }"
+            " outer();"
+        )
+        _, lines = run(src)
+        assert lines == ["ECHO: 2"]
+
     def test_modular_assert_passes(self):
         # assert with true condition — children pass through, no error
         bodies, _ = run("assert(true) cube(1);")
@@ -1671,6 +1727,24 @@ class TestScoping:
         assert any("WARNING" in l and "x" in l and "overwritten" in l for l in lines)
         assert "ECHO: 7" in lines
 
+    def test_param_self_reference_default_does_not_recurse(self):
+        # A parameter with no default, re-assigned via a self-referential
+        # expression in the body (the BOSL2 `chamfer = approx(chamfer,0) ?
+        # undef : chamfer;` pattern) must resolve to its own (undef) param
+        # value on the RHS, not recurse into the body's own assignment.
+        src = "module m(x) { x = is_undef(x) ? 5 : x; echo(x); } m();"
+        _, lines = run(src)
+        assert lines == ["ECHO: 5"]
+
+    def test_param_shadow_reassignment_no_warning(self):
+        # A body assignment that shadows a parameter name with the same
+        # value-normalization pattern must NOT emit a spurious "was assigned
+        # ... but was overwritten" warning — only real double-assignments do.
+        src = "module m(x) { x = is_undef(x) ? 5 : x; echo(x); } m();"
+        _, lines = run(src)
+        assert lines == ["ECHO: 5"]
+        assert not any("WARNING" in l for l in lines)
+
     def test_forward_reference_function(self):
         src = "echo(double(5)); function double(x) = x * 2;"
         _, lines = run(src)
@@ -1691,6 +1765,27 @@ class TestScoping:
         """
         _, lines = run(src)
         assert lines == ["ECHO: 20", "ECHO: 10"]
+
+    def test_nested_module_closes_over_reassigned_outer_local(self):
+        # A module nested inside another module's body is a closure over
+        # the enclosing call's locals (BOSL2's `cuboid()` defines a nested
+        # `module corner_shape()` that reads cuboid's local `edges`, which
+        # cuboid reassigns from its own parameter via `edges =
+        # _edges(edges, ...)` before calling corner_shape). The inner
+        # module must see the REASSIGNED value, not recurse forever trying
+        # to resolve the outer assignment's own right-hand side.
+        src = """
+        module outer(edges=[1,2,3]) {
+            edges = [edges[0]+1, edges[1]+1, edges[2]+1];
+            module inner() {
+                echo(edges);
+            }
+            inner();
+        }
+        outer();
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: [2, 3, 4]"]
 
 
 # ---------------------------------------------------------------------------

@@ -33,7 +33,9 @@ A variable assigned twice in the same scope: the second overwrites the first and
 ```
 WARNING: a was assigned on line 1 but was overwritten in file foo.scad, line 3
 ```
-matching OpenSCAD's exact format. `EvalContext.dyn_positions` tracks each `__let_*` entry's source position for this.
+matching OpenSCAD's exact format. `EvalContext.dyn_positions` tracks each `__let_*` entry's source position for this. The warning only fires when `dyn_positions` already has an entry for that name — a parameter binding (from `_bind_args`/`_apply_defaults`) sets `ctx.dyn` but not `dyn_positions`, so a body assignment that normalizes a parameter (e.g. `anchor = default(anchor, CENTER);`, BOSL2's standard pattern) does not spuriously warn.
+
+Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `undef` (`None`) if it has no default and the caller didn't supply one. Without this, a body statement shadowing a parameter name with a self-referential expression (e.g. BOSL2's `chamfer = approx(chamfer,0) ? undef : chamfer;`) would resolve `chamfer` via `scope.lookup_variable` to that same hoisted Assignment instead of the parameter, recursing forever.
 
 `_eval_children` shares `ctx.dyn` (not a copy) across siblings so eager assignments are immediately visible to subsequent siblings.
 
@@ -43,6 +45,8 @@ matching OpenSCAD's exact format. `EvalContext.dyn_positions` tracks each `__let
 |---|---|---|
 | `child_ctx()` | Yes (full copy) | `for`/`let` iterations, `_eval_let_block`, list comprehension scopes — outer bindings must stay visible |
 | `call_ctx()` | No (only `$*` dynamic vars) | Module/function calls — callee has its own variable scope; inheriting caller `__let_*` would trigger spurious double-assignment warnings |
+
+`_call_ctx_for(decl, ctx, ...)` picks between the two for a module/function call: it walks `_call_stack` and uses `child_ctx()` (inherit `__let_*`) if `decl`'s source span is *strictly contained* within an already-active frame's declaration span — i.e. `decl` is a module/function declared lexically inside the body of a module/function currently being evaluated (a closure over that call's locals), otherwise `call_ctx()` (isolated). Direct recursion (a declaration's span containing itself) is excluded from "nested" so a recursive call doesn't inherit its own in-progress locals as if they were its caller's. This is what lets BOSL2's `cuboid()` — which reassigns its `edges` parameter (`edges = _edges(edges, ...)`) and then calls a nested `module corner_shape() { ... }` referencing `edges` — see the *reassigned* value instead of recursing forever back into `scope.lookup_variable("edges")` → the same reassignment's own RHS.
 
 ## Built-ins implemented
 
@@ -76,7 +80,7 @@ matching OpenSCAD's exact format. `EvalContext.dyn_positions` tracks each `__let
 
 **Not yet implemented**: `text`, `import` (warn and return None)
 
-**Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` = child count when entering a user module body. `$`-prefixed named args in any call (e.g. `sphere(r=2, $fn=64)`) merge into the dynamic context for that call and its children.
+**Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` = the number of module-instantiation child *statements* in the `{}` block passed to this module call (`len(call.children)`, excluding `Assignment`/`ModuleDeclaration`/`FunctionDeclaration`), not the number of geometries they produce — e.g. `children()` counts as one child even when it forwards zero bodies, and `if (false) sphere();` still counts as one child. `$`-prefixed named args in any call (e.g. `sphere(r=2, $fn=64)`) merge into the dynamic context for that call and its children.
 
 **Viewport special variables**: `$vpt` (= `camera.target` as `[x,y,z]`), `$vpr` (= `[((90-altitude)%360+360)%360, 0, ((azimuth-270)%360+360)%360]`), `$vpd` (= `camera.distance`) are injected into the root `EvalContext.dyn` at render/debug start, snapshotted in the main thread via `MainWindow._viewport_params(tab)` before the worker thread launches. `Evaluator.evaluate()` accepts `viewport_params: dict | None` and merges it into `ctx.dyn` before processing.
 
@@ -142,13 +146,16 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - **Ranges** are an `OscRange(start, step, end)` object, not an expanded list. `echo([1:3])` prints `[1 : 1 : 3]`. Expanded to a list only when iterated (`for`, list comprehensions, `intersection_for`) or indexed with `[i]`. A zero-step range echoes as `[1 : 0 : 5]` and iterates to nothing.
 - **Boolean arithmetic** returns `undef` (`None`): `true + 1` → `undef`. The evaluator checks `isinstance(a, bool) or isinstance(b, bool)` before any arithmetic op.
 - **Scalar × matrix/vector** multiplication recurses into nested lists (`_scale()`): `2 * [[1,2],[3,4]]` → `[[2,4],[6,8]]`, not just flat vectors.
+- **List × list** multiplication (`_matmul()`) implements OpenSCAD's vector/matrix algebra: vector·vector → scalar dot product (`[1,2,3]*[4,5,6]` → `32`), matrix·vector and vector·matrix → vector, matrix·matrix → matrix. Dimension mismatches return `undef`.
+- **List / scalar** division recurses into nested lists (`_div_scale()`), mirroring `_scale()`: `[2,4,6]/2` → `[1,2,3]`. `scalar/list` and `list/list` are `undef`.
+- **`let(a=expr1, b=expr2, ...)`** bindings are sequential: each `exprN` is evaluated with the *previous* bindings in the same `let` already visible, so `let(a=1, b=a+1) b` → `2`. (Two bindings with the *same* name in one `let` are a separate, unhandled edge case — real OpenSCAD keeps the first and warns "Ignoring duplicate variable assignment".)
 - **Division by zero** returns IEEE 754 values: `1/0` → `inf`, `-1/0` → `-inf`, `0/0` → `nan`. Math domain errors follow suit: `sqrt(-1)` → `nan`, `ln(0)` → `-inf`, `asin(2)` → `nan`.
 - **Negative string/list indexing** returns `undef`, not Python wraparound. `"hello"[-1]` → `undef`. `PrimaryIndex` rejects any `i < 0`.
 - **Named args to built-in math functions** map to positional order as fallback (e.g. `abs(x=-3)` → `3`): positional args tried first, then named args in declaration order.
 - **`parent_module()`** returns `undef` at the top level (not `""`).
 - `search()` match modes depend on the first argument's type:
   - **String**: character array, each character searched independently. `num_returns=1` (default) drops not-found characters; `num_returns=0` includes them as `[]`. Only valid when the vector is also a string.
-  - **List**: direct equality against each vector entry (or `vector[i][index_col]`) — correct idiom for finding a string in a list of strings: `search(["foo"], ["foo","bar","baz"])` → `[0]`.
+  - **List**: each element is searched for independently. If an element is itself a list/vector, it's compared via **direct equality** against each whole `vector[i]` entry (`index_col` is ignored) — correct idiom for finding a string in a list of strings (`search(["foo"], ["foo","bar","baz"])` → `[0]`) and for BOSL2's `in_list(v, [UP,RIGHT,BACK])`. If an element is a scalar, it's compared against `vector[i][index_col]` (or `vector[i]` if not a list).
   - **Scalar**: returns up to `num_returns` matching indices (`[]` if none); `num_returns=0` returns all matches.
 - **Assert message format**: `to_openscad([cond_expr]).strip()` recovers the condition source text for `Assertion 'expr' failed` (requires `from openscad_parser.ast import to_openscad`).
 - **String literals with leading/trailing whitespace**: arpeggio's `skipws=True` would strip whitespace before sub-rules in `(DQUOTE, contents, DQUOTE)`, eating leading spaces (`"  bar"` → `"bar"`). Fixed in openscad_parser 2.5.1 by collapsing `string_literal` into one regex terminal `"(?:[^"\\]|\\.|\\$)*"`, avoiding whitespace skipping inside quotes.

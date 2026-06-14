@@ -57,6 +57,62 @@ def _scale(scalar, value):
         return None
 
 
+def _div_scale(value, divisor):
+    """Recursively divide `value` (a number or nested list) by `divisor`, OpenSCAD-style.
+
+    `[1,2,3] / 2` -> `[0.5, 1, 1.5]`; nested lists (matrices) recurse like `_scale()`.
+    Division by zero follows IEEE 754 (`inf`/`-inf`/`nan`) element-wise.
+    """
+    if isinstance(value, list):
+        return [_div_scale(v, divisor) for v in value]
+    if isinstance(value, bool):
+        return None
+    try:
+        if divisor == 0:
+            return float('nan') if value == 0 else math.copysign(float('inf'), value)
+        return value / divisor
+    except TypeError:
+        return None
+
+
+def _matmul(a, b):
+    """OpenSCAD `*` between two lists: vector/matrix (dot/matrix) product.
+
+    - vector * vector -> scalar (dot product)
+    - matrix * vector -> vector (matrix-vector product)
+    - vector * matrix -> vector (vector-matrix product)
+    - matrix * matrix -> matrix (matrix product)
+    Returns `None` (undef) on dimension mismatches or non-numeric entries.
+    """
+    a_is_mat = bool(a) and isinstance(a[0], list)
+    b_is_mat = bool(b) and isinstance(b[0], list)
+    try:
+        if not a_is_mat and not b_is_mat:
+            if len(a) != len(b):
+                return None
+            return sum(x * y for x, y in zip(a, b))
+        if a_is_mat and not b_is_mat:
+            if any(len(row) != len(b) for row in a):
+                return None
+            return [sum(x * y for x, y in zip(row, b)) for row in a]
+        if not a_is_mat and b_is_mat:
+            if len(a) != len(b):
+                return None
+            cols = len(b[0])
+            if any(len(row) != cols for row in b):
+                return None
+            return [sum(a[i] * b[i][j] for i in range(len(a))) for j in range(cols)]
+        # matrix * matrix
+        if not a or not b or len(a[0]) != len(b):
+            return None
+        cols = len(b[0])
+        if any(len(row) != cols for row in b) or any(len(row) != len(a[0]) for row in a):
+            return None
+        return [[sum(arow[k] * b[k][j] for k in range(len(b))) for j in range(cols)] for arow in a]
+    except TypeError:
+        return None
+
+
 class OscRange:
     """Lazy OpenSCAD range value — echoes as [start : step : end], iterable, indexable."""
     __slots__ = ("start", "step", "end")
@@ -304,8 +360,13 @@ class Evaluator:
             else:
                 key = f'__let_{name}'
                 pos = getattr(node, 'position', None)
-                if key in ctx.dyn:
-                    first_pos = ctx.dyn_positions.get(key)
+                # Only warn on a genuine double-assignment within this scope.
+                # A parameter binding (from _bind_args/_apply_defaults) also
+                # sets ctx.dyn[key] but has no dyn_positions entry — a body
+                # assignment shadowing a parameter (e.g. `anchor =
+                # default(anchor, CENTER);`) is normal and not a warning.
+                if key in ctx.dyn_positions:
+                    first_pos = ctx.dyn_positions[key]
                     first_line = getattr(first_pos, 'line', '?') if first_pos else '?'
                     self._echo_fn(
                         f"WARNING: {name} was assigned on line {first_line}"
@@ -390,6 +451,41 @@ class Evaluator:
             return self._eval_user_module(user_mod, node, ctx)
         return self._eval_builtin(name, node, ctx)
 
+    @staticmethod
+    def _pos_contains(outer, inner) -> bool:
+        """True if `inner`'s source span is strictly contained within `outer`'s.
+
+        Used to detect "`inner` is declared lexically inside `outer`'s body"
+        (e.g. a nested `module`/`function`). Identical spans (a declaration
+        calling itself — direct recursion) are NOT considered contained.
+        """
+        if outer is None or inner is None:
+            return False
+        if outer.origin != inner.origin:
+            return False
+        if (outer.start_offset, outer.end_offset) == (inner.start_offset, inner.end_offset):
+            return False
+        return outer.start_offset <= inner.start_offset and inner.end_offset <= outer.end_offset
+
+    def _call_ctx_for(self, decl, ctx: EvalContext, scope=None, children_bodies=None) -> EvalContext:
+        """Build the child context for a module/function call.
+
+        A declaration nested inside the body of a currently-executing
+        module/function (e.g. BOSL2's `cuboid()` defines a local `module
+        corner_shape() {...}` that references `cuboid`'s local `edges`
+        variable) is a closure over that call's locals, so it inherits
+        `ctx.dyn` (including `__let_*` bindings) via `child_ctx`. A
+        top-level declaration, or a declaration calling itself
+        (recursion), only inherits `$`-prefixed dynamic vars, per
+        `call_ctx` — otherwise a recursive call would see its own
+        in-progress local variables as if they were its caller's.
+        """
+        decl_pos = getattr(decl, 'position', None)
+        nested = any(self._pos_contains(frame[-1], decl_pos) for frame in self._call_stack)
+        if nested:
+            return ctx.child_ctx(scope=scope, children_bodies=children_bodies)
+        return ctx.call_ctx(scope=scope, children_bodies=children_bodies)
+
     def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         # Bind parameters
         child_scope = decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope
@@ -399,11 +495,18 @@ class Evaluator:
         # Evaluate children in caller's ctx so they become available via children()
         caller_bodies = self._eval_children(call.children, ctx)
 
-        child_ctx = ctx.call_ctx(
+        child_ctx = self._call_ctx_for(
+            decl, ctx,
             scope=child_scope,
             children_bodies=caller_bodies,
         )
-        child_ctx.dyn["$children"] = len(caller_bodies)
+        # $children is the number of module-instantiation children passed in
+        # `{}`, not the number of geometries they produced — e.g. `children()`
+        # counts as one child even if the caller passed it none to forward.
+        child_ctx.dyn["$children"] = len([
+            c for c in call.children
+            if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))
+        ])
         # Bind all args; $-prefixed go into dyn directly, others as __let_
         for k, v in args.items():
             if k.startswith("$"):
@@ -1319,6 +1422,8 @@ class Evaluator:
                 return None
         if isinstance(node, MultiplicationOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+            if isinstance(a, list) and isinstance(b, list):
+                return _matmul(a, b)
             if isinstance(a, list) and isinstance(b, (int, float)) and not isinstance(b, bool):
                 return [_scale(b, x) for x in a]
             if isinstance(b, list) and isinstance(a, (int, float)) and not isinstance(a, bool):
@@ -1331,9 +1436,11 @@ class Evaluator:
                 return None
         if isinstance(node, DivisionOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
-                return None
             if isinstance(a, bool) or isinstance(b, bool):
+                return None
+            if isinstance(a, list) and isinstance(b, (int, float)):
+                return _div_scale(a, b)
+            if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
                 return None
             if b == 0:
                 if a == 0:
@@ -1432,7 +1539,9 @@ class Evaluator:
         if isinstance(node, LetOp):
             child_ctx = ctx.child_ctx()
             for assign in node.assignments:
-                v = self._eval_expr(assign.expr, ctx)
+                # Evaluate in child_ctx (not ctx) so each binding can see
+                # earlier bindings in the same let(), e.g. let(a=1, b=a+1).
+                v = self._eval_expr(assign.expr, child_ctx)
                 child_ctx.dyn[f"__let_{assign.name.name}"] = v
                 self._check_debug(assign, child_ctx, expr_level=True)
             return self._eval_expr(node.body, child_ctx)
@@ -1693,7 +1802,13 @@ class Evaluator:
         def _find_all(val):
             results = []
             for i, item in enumerate(vector):
-                target = item[col] if isinstance(item, list) else item
+                # A vector match value (e.g. searching for a coordinate like
+                # [0,0,1]) is compared directly against each whole element,
+                # not column-indexed — index_col only applies to scalar matches.
+                if isinstance(val, list):
+                    target = item
+                else:
+                    target = item[col] if isinstance(item, list) else item
                 if target == val:
                     results.append(i)
             return results
@@ -1748,23 +1863,35 @@ class Evaluator:
         return 0
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
-        """Bind default values for any params not already set in child_ctx.dyn."""
+        """Bind default values for any params not already set in child_ctx.dyn.
+
+        Every declared parameter gets a `__let_*` entry — `undef` (`None`) if
+        it has no default and the caller didn't supply one — so
+        `_eval_identifier`'s eager `ctx.dyn` check always wins for parameter
+        names. Without this, a body statement that shadows a parameter name
+        (e.g. BOSL2's `chamfer = approx(chamfer,0) ? undef : chamfer;`) would
+        hit the hoisted Assignment via `scope.lookup_variable` when
+        evaluating its own right-hand side, recursing forever.
+        """
         for param in params:
             pname = param.name.name if hasattr(param, 'name') else None
             if pname and f"__let_{pname}" not in child_ctx.dyn:
                 default = getattr(param, 'default', None)
                 if default is not None:
                     child_ctx.dyn[f"__let_{pname}"] = self._eval_expr(default, caller_ctx)
+                else:
+                    child_ctx.dyn[f"__let_{pname}"] = None
 
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
         params = decl.parameters if hasattr(decl, 'parameters') else []
         bound = self._bind_args(params, arguments, ctx)
-        child_ctx = ctx.call_ctx(scope=decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope)
+        fn_scope = decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope
+        child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope)
         for k, v in bound.items():
             child_ctx.dyn[f"__let_{k}"] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
-        self._call_stack.append(("function", name, pos))
+        self._call_stack.append(("function", name, pos, getattr(decl, 'position', None)))
         self._frame_ctxs.append(child_ctx)
         try:
             self._check_debug(decl.expr, child_ctx)

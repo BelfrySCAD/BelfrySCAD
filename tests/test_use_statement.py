@@ -96,3 +96,26 @@ class TestUseStatement:
         _bodies, echoes, logs = run_file(tmp_path / "main.scad")
         assert logs == []
         assert echoes == ["ECHO: 1"]
+
+    def test_use_path_resolved_relative_to_originating_file(self, tmp_path):
+        # `include <sub/inc.scad>` flattens inc.scad's `use <lib.scad>` into
+        # main.scad's top-level nodes. `lib.scad` only exists next to inc.scad
+        # (in `sub/`), not next to main.scad — so the `use` path must resolve
+        # relative to inc.scad's directory (via the node's source position),
+        # not main.scad's.
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "lib.scad").write_text(
+            "module box() { cube([7,7,7]); }\n"
+        )
+        (sub / "inc.scad").write_text(
+            "use <lib.scad>\n"
+        )
+        (tmp_path / "main.scad").write_text(
+            "include <sub/inc.scad>\n"
+            "box();\n"
+        )
+        bodies, _echoes, logs = run_file(tmp_path / "main.scad")
+        assert logs == []
+        assert len(bodies) == 1
+        assert bodies[0].body.bounding_box() == (0.0, 0.0, 0.0, 7.0, 7.0, 7.0)
