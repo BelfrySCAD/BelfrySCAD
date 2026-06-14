@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import manifold3d as m3d
 import numpy as np
+from PySide6.QtGui import QColor
 
 from openscad_parser.ast import to_openscad
 from openscad_parser.ast.nodes import (
@@ -761,20 +762,18 @@ class Evaluator:
         return result
 
     def _css_color(self, name: str, alpha: float = 1.0) -> tuple:
-        table = {
-            "red": (1,0,0), "green": (0,0.502,0), "blue": (0,0,1),
-            "white": (1,1,1), "black": (0,0,0), "yellow": (1,1,0),
-            "cyan": (0,1,1), "magenta": (1,0,1), "orange": (1,0.647,0),
-            "purple": (0.502,0,0.502), "gray": (0.502,0.502,0.502),
-            "grey": (0.502,0.502,0.502),
-        }
-        rgb = table.get(name.lower(), (1, 1, 1))
         if name.startswith("#"):
             h = name.lstrip("#")
             if len(h) == 6:
                 rgb = (int(h[0:2],16)/255, int(h[2:4],16)/255, int(h[4:6],16)/255)
             elif len(h) == 3:
                 rgb = (int(h[0],16)/15, int(h[1],16)/15, int(h[2],16)/15)
+            else:
+                rgb = (1, 1, 1)
+            return rgb + (alpha,)
+
+        color = QColor(name)
+        rgb = color.getRgbF()[:3] if color.isValid() else (1, 1, 1)
         return rgb + (alpha,)
 
     # --- CSG ---
