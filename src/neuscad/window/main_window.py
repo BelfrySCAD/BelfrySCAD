@@ -1191,12 +1191,14 @@ class MainWindow(QMainWindow):
             self.log_to_tab(tab, f"Post-render error: {e}\n{traceback.format_exc()}")
 
     def _flush_caches(self):
-        """Discard each tab's pre-calculated AST scope and originalID->node table."""
+        """Discard each tab's pre-calculated AST scope/node table and openscad_parser's AST cache."""
+        from openscad_parser.ast import clear_ast_cache
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 tab.root_scope = None
                 tab.id_to_node = {}
+        clear_ast_cache()
         self.log("Flushed AST caches — render or debug to rebuild.")
 
     def _parse_error_to_editor(self, tab, captured: str):
