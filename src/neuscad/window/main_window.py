@@ -555,6 +555,8 @@ class MainWindow(QMainWindow):
         design_menu = mb.addMenu("Design")
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
         design_menu.addSeparator()
+        self._add_action(design_menu, "Flush Caches", self._flush_caches)
+        design_menu.addSeparator()
         insert_menu = design_menu.addMenu("Insert Primitive")
         for prim in ("Cube", "Sphere", "Cylinder", "Cone"):
             insert_menu.addAction(prim)
@@ -1187,6 +1189,15 @@ class MainWindow(QMainWindow):
         except Exception as e:
             import traceback
             self.log_to_tab(tab, f"Post-render error: {e}\n{traceback.format_exc()}")
+
+    def _flush_caches(self):
+        """Discard each tab's pre-calculated AST scope and originalID->node table."""
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab:
+                tab.root_scope = None
+                tab.id_to_node = {}
+        self.log("Flushed AST caches — render or debug to rebuild.")
 
     def _parse_error_to_editor(self, tab, captured: str):
         """Parse the error text from openscad_parser and mark the editor."""
