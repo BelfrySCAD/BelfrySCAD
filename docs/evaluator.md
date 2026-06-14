@@ -124,7 +124,15 @@ The evaluator maintains a separate dynamic binding context threaded through each
 
 Exact OpenSCAD semantics:
 - `include <file.scad>` — brings all declarations and top-level geometry into the current scope
-- `use <file.scad>` — brings only functions and modules (top-level geometry ignored)
+- `use <file.scad>` — brings only the used file's own functions and modules into scope; its top-level geometry and variable assignments are not injected and its variable namespace stays isolated from the using file's (in both directions)
+
+`_resolve_use_scopes(nodes, current_file, log_fn)` in `main_window.py` implements `use`, called once from both the render-worker and debug-session paths. For each top-level `UseStatement` in `current_file`, it recursively resolves the used file's own `use` statements first, then:
+
+- Injects only the used file's *own* `ModuleDeclaration`/`FunctionDeclaration` nodes (not ones it transitively pulled in via its own `use`) — "nested use has no effect on the base file's environment".
+- Builds `current_file`'s combined `root_scope` from its own nodes plus the injected declarations, so `current_file` can call them by name.
+- Re-anchors each injected declaration's `.scope` (and its body's scope tree) back to the used file's own root scope — built from the used file's own nodes plus anything *it* injected via nested `use`. This lets the injected modules/functions resolve the used file's own globals (and any nested-`use` declarations) without exposing them to `current_file`, and vice versa.
+
+Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.build_scope` are idempotent: calling `.build_scope(scope)` a second time just creates a fresh child scope and reassigns `.scope` on the node and its descendants, overwriting the (incorrect) scope assigned by `current_file`'s combined `build_scopes()` call.
 
 ## Implementation quirks
 

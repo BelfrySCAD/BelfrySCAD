@@ -25,6 +25,64 @@ _TOOL_ICONS = {
 }
 
 
+def _resolve_use_scopes(nodes, current_file, log_fn):
+    """Resolve `use <file>` statements per OpenSCAD semantics.
+
+    Each top-level `UseStatement` is replaced by the used file's *own*
+    module and function declarations — its top-level geometry and variable
+    assignments are not injected, so `current_file`'s own variable namespace
+    stays isolated from (and invisible to) the used file's globals.
+    Declarations that the used file itself pulled in via a nested `use` are
+    not re-exported ("nested use has no effect on the base file's
+    environment").
+
+    Returns `(processed_nodes, own_nodes, root_scope)`:
+    - `processed_nodes` — what `current_file` should be evaluated as: its
+      own nodes plus the declarations injected via its `use` statements.
+    - `own_nodes` — `current_file`'s own nodes (minus `UseStatement`s),
+      excluding anything injected via `use`; this is what gets exposed to
+      whoever in turn `use`s `current_file`.
+    - `root_scope` — built from `processed_nodes`, then each injected
+      declaration is re-anchored to its own file's root scope (computed
+      recursively), giving it access to its own file's globals without
+      exposing them to `current_file`.
+    """
+    from openscad_parser.ast import getASTfromLibraryFile, build_scopes
+    from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+
+    injected = []
+    reanchor = []
+    for node in nodes:
+        if not isinstance(node, UseStatement):
+            continue
+        try:
+            fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
+            lib_nodes, lib_path = getASTfromLibraryFile(current_file, fp, include_comments=False)
+        except Exception as e:
+            msg = str(e)
+            if "not found" not in msg and "No such file" not in msg:
+                log_fn(f"use error: {e}")
+            continue
+        if not lib_nodes:
+            continue
+        _, lib_own_nodes, lib_root_scope = _resolve_use_scopes(lib_nodes, lib_path, log_fn)
+        lib_injected = [
+            n for n in lib_own_nodes
+            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
+        ]
+        injected.extend(lib_injected)
+        if lib_injected:
+            reanchor.append((lib_injected, lib_root_scope))
+
+    own_nodes = [n for n in nodes if not isinstance(n, UseStatement)]
+    processed_nodes = injected + own_nodes
+    root_scope = build_scopes(processed_nodes)
+    for lib_injected, lib_root_scope in reanchor:
+        for n in lib_injected:
+            n.build_scope(lib_root_scope)
+    return processed_nodes, own_nodes, root_scope
+
+
 class _TextEditCmd(QUndoCommand):
     """Undo command for raw text edits in the code editor."""
     _MERGE_WINDOW = 3.0   # seconds: edits this close are merged into one undo step
@@ -259,10 +317,6 @@ class _RenderWorker(QObject):
 
     @Slot()
     def run(self):
-        import io, sys as _sys, time as _time, os as _os, tempfile, traceback
-        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
-        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
-        from neuscad.engine.evaluator import Evaluator, EvalError
         try:
             self._do_render()
         finally:
@@ -270,8 +324,7 @@ class _RenderWorker(QObject):
 
     def _do_render(self):
         import io, sys as _sys, time as _time, os as _os, tempfile, traceback
-        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
-        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+        from openscad_parser.ast import getASTfromFile
         from neuscad.engine.evaluator import Evaluator, EvalError
 
         _t0 = _time.perf_counter()
@@ -315,31 +368,10 @@ class _RenderWorker(QObject):
         if self._cancel.is_set():
             return
 
-        # Resolve `use` statements
+        # Resolve `use` statements and build scopes
         current_file = self._file_path or parse_path
-        injected = []
-        for node in nodes:
-            if isinstance(node, UseStatement):
-                try:
-                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp, include_comments=False)
-                    if lib_nodes:
-                        injected.extend(
-                            n for n in lib_nodes
-                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
-                        )
-                except Exception as e:
-                    msg = str(e)
-                    if "not found" not in msg and "No such file" not in msg:
-                        self.logged.emit(f"use error: {e}")
-        if injected:
-            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
-
-        if self._cancel.is_set():
-            return
-
         try:
-            root_scope = build_scopes(nodes)
+            nodes, _own, root_scope = _resolve_use_scopes(nodes, current_file, self.logged.emit)
         except RecursionError:
             self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during scope build).")
             return
@@ -1417,8 +1449,7 @@ class MainWindow(QMainWindow):
 
         tab.console.clear()
 
-        from openscad_parser.ast import getASTfromFile, getASTfromLibraryFile, build_scopes
-        from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+        from openscad_parser.ast import getASTfromFile
         import tempfile, io, sys as _sys
 
         _tmp = None
@@ -1457,26 +1488,13 @@ class MainWindow(QMainWindow):
             return
 
         current_file = tab.file_path or parse_path
-        injected = []
-        for node in nodes:
-            if isinstance(node, UseStatement):
-                try:
-                    fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-                    lib_nodes, _ = getASTfromLibraryFile(current_file, fp, include_comments=False)
-                    if lib_nodes:
-                        injected.extend(
-                            n for n in lib_nodes
-                            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
-                        )
-                except Exception as e:
-                    msg = str(e)
-                    if "not found" not in msg and "No such file" not in msg:
-                        self.log(f"use error: {e}")
-        if injected:
-            nodes = injected + [n for n in nodes if not isinstance(n, UseStatement)]
+        try:
+            nodes, _own, root_scope = _resolve_use_scopes(nodes, current_file, self.log)
+        except RecursionError:
+            self.log("Error: AST too deeply nested (recursion limit exceeded during scope build).")
+            return
 
         tab.editor.clear_errors()
-        root_scope = build_scopes(nodes)
         tab.root_scope = root_scope
 
         # Convert 0-indexed block numbers to 1-indexed line numbers
