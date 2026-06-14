@@ -993,6 +993,14 @@ class TestExpressionEdgeCases:
         _, lines = run("echo(true * 5);")
         assert lines == ["ECHO: undef"]
 
+    def test_scalar_times_matrix(self):
+        _, lines = run("echo(2 * [[1,2],[3,4]]);")
+        assert lines == ["ECHO: [[2, 4], [6, 8]]"]
+
+    def test_matrix_times_scalar(self):
+        _, lines = run("echo([[1,2],[3,4]] * 2);")
+        assert lines == ["ECHO: [[2, 4], [6, 8]]"]
+
     def test_undef_comparison_lt(self):
         _, lines = run("echo(undef < 1);")
         assert lines == ["ECHO: undef"]

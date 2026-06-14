@@ -41,6 +41,22 @@ class EvalError(Exception):
     pass
 
 
+def _scale(scalar, value):
+    """Recursively multiply `scalar` into `value`, OpenSCAD-style.
+
+    `value` may be a (possibly nested) list, e.g. a matrix — each element is
+    scaled in turn so `2 * [[1,2],[3,4]]` returns `[[2,4],[6,8]]`.
+    """
+    if isinstance(value, list):
+        return [_scale(scalar, v) for v in value]
+    if isinstance(scalar, bool) or isinstance(value, bool):
+        return None
+    try:
+        return scalar * value
+    except TypeError:
+        return None
+
+
 class OscRange:
     """Lazy OpenSCAD range value — echoes as [start : step : end], iterable, indexable."""
     __slots__ = ("start", "step", "end")
@@ -1304,9 +1320,9 @@ class Evaluator:
         if isinstance(node, MultiplicationOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
             if isinstance(a, list) and isinstance(b, (int, float)) and not isinstance(b, bool):
-                return [x * b for x in a]
+                return [_scale(b, x) for x in a]
             if isinstance(b, list) and isinstance(a, (int, float)) and not isinstance(a, bool):
-                return [a * x for x in b]
+                return [_scale(a, x) for x in b]
             if isinstance(a, bool) or isinstance(b, bool):
                 return None
             try:
