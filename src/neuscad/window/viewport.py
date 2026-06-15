@@ -247,7 +247,8 @@ class Viewport(QOpenGLWidget):
     def wheelEvent(self, event: QWheelEvent):
         delta = event.angleDelta().y()
         cam = self._renderer.camera
-        factor = 1.03 if delta < 0 else 0.97
+        deadspot = 5
+        factor = 1.01 if delta < -deadspot else 0.99 if delta > deadspot else 1.0
         cam.distance = max(0.1, cam.distance * factor)
         self.update()
 

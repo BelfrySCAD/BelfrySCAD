@@ -201,7 +201,7 @@ class SceneRenderer:
         self._buffers: list[MeshBuffer] = []
         self.camera = Camera()
         self._viewport: tuple[int, int] = (800, 600)
-        self._default_color = (0.6, 0.7, 0.85, 1.0)
+        self._default_color = (0.9, 0.85, 0.1, 1.0)
         self.selected_id: Optional[int] = None
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
@@ -1074,8 +1074,8 @@ def _fmt_tick(val: float, spacing: float) -> str:
 
 def _highlight_color(color: tuple) -> tuple:
     r, g, b, a = color
-    return (min(1.0, r * 0.35 + 0.65),
-            min(1.0, g * 0.35 + 0.52),
+    return (min(1.0, r * 0.35),
+            min(1.0, g * 0.35 + 0.65),
             min(1.0, b * 0.35),
             a)
 
