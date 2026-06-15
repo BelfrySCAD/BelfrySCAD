@@ -1876,7 +1876,11 @@ class Evaluator:
             return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
 
         if name and func_node is None:
-            self.error(f"undefined function '{name}'", node)
+            # Unknown function — warn and evaluate to undef, matching real
+            # OpenSCAD's "Ignoring unknown function" behavior (no TRACE,
+            # execution continues), rather than aborting the whole render.
+            pos = getattr(node, 'position', None)
+            self._echo_fn(f"WARNING: Ignoring unknown function '{name}'{self._loc(pos)}")
 
         return None
 

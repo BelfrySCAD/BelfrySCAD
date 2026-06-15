@@ -392,20 +392,22 @@ class TestUserFunctions:
         _, lines = run(src)
         assert lines == ["ECHO: 15"]
 
-    def test_undefined_function_error(self):
-        with pytest.raises(EvalError, match="undefined function 'nope'"):
-            run("echo(nope(1));")
+    def test_undefined_function_warns_and_returns_undef(self):
+        # Real OpenSCAD treats a call to an unknown function as a WARNING
+        # ("Ignoring unknown function 'X'") and evaluates it to undef,
+        # rather than aborting the whole render.
+        _, lines = run("echo(nope(1));")
+        assert lines[0] == "WARNING: Ignoring unknown function 'nope' in file <string>, line 1"
+        assert lines[1] == "ECHO: undef"
 
-    def test_undefined_function_traceback(self):
+    def test_undefined_function_in_nested_call_no_traceback(self):
         src = """
         function outer() = inner();
         echo(outer());
         """
-        with pytest.raises(EvalError) as exc_info:
-            run(src)
-        msg = str(exc_info.value)
-        assert "undefined function 'inner'" in msg
-        assert "called by 'outer'" in msg
+        _, lines = run(src)
+        assert lines[0] == "WARNING: Ignoring unknown function 'inner' in file <string>, line 2"
+        assert lines[1] == "ECHO: undef"
 
 
 # ---------------------------------------------------------------------------
@@ -1767,18 +1769,18 @@ class Test2DCSG:
 class TestModuleErrorCallChain:
     def test_module_appears_in_chain(self):
         src = """
-        module bad() { echo(undefined_fn()); }
+        module bad() { assert(false, "boom"); }
         bad();
         """
         with pytest.raises(EvalError) as exc_info:
             run(src)
         msg = str(exc_info.value)
-        assert "undefined function 'undefined_fn'" in msg
+        assert "Assertion 'false' failed" in msg
         assert "called by 'bad'" in msg
 
     def test_nested_modules_in_chain(self):
         src = """
-        module inner() { echo(nope()); }
+        module inner() { assert(false, "boom"); }
         module outer() { inner(); }
         outer();
         """
@@ -1790,7 +1792,7 @@ class TestModuleErrorCallChain:
 
     def test_function_inside_module_in_chain(self):
         src = """
-        function bad() = nope();
+        function bad() = assert(false, "boom") 1;
         module m() { echo(bad()); }
         m();
         """
