@@ -70,7 +70,9 @@ Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `unde
 
 **String / list functions**: `str`, `chr`, `ord`, `concat`, `len`, `search`
 
-**Type checks**: `is_undef`, `is_bool`, `is_num`, `is_string`, `is_list`, `is_range`, `is_function`
+**Type checks**: `is_undef`, `is_bool`, `is_num`, `is_string`, `is_list`, `is_function`
+
+Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins despite the `is_*` naming convention — they're ordinary functions defined by BOSL2 (`utility.scad`). Calling them without BOSL2's `std.scad` included raises an "undefined function" error here (matching this evaluator's stricter-than-OpenSCAD treatment of undefined functions; real OpenSCAD would warn and return `undef`). Do not add them to `math_fns` — doing so would shadow BOSL2's own definitions.
 
 **Constants**: `PI`
 
@@ -143,7 +145,7 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — use `.filepath.val`.
 - "file not found" errors from library resolution (e.g. internal BOSL2 files already handled by the parser) are suppressed in the console.
 - `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` around `build_scopes()`/`evaluate()` is treated as a runtime error (shows last-valid geometry).
-- **Ranges** are an `OscRange(start, step, end)` object, not an expanded list. `echo([1:3])` prints `[1 : 1 : 3]`. Expanded to a list only when iterated (`for`, list comprehensions, `intersection_for`) or indexed with `[i]`. A zero-step range echoes as `[1 : 0 : 5]` and iterates to nothing.
+- **Ranges** are an `OscRange(start, step, end)` object, not an expanded list. `echo([1:3])` prints `[1 : 1 : 3]`. Expanded to a list only when iterated (`for`, list comprehensions, `intersection_for`). A zero-step range echoes as `[1 : 0 : 5]` and iterates to nothing. **Indexing** a range with `[0]`/`[1]`/`[2]` returns its `start`/`step`/`end` components (not iterated values) — e.g. `[2:3:11][0]` → `2`, `[1]` → `3`, `[2]` → `11`, matching real OpenSCAD. This is what BOSL2's `is_finite()`/`is_range()` inspect to detect range values.
 - **C-style `for` in list comprehensions** — `[for (a=v[0], i=1; i<=len(v); a = cond?a+v[i]:a, i=i+1) a]` — parses as a `ListCompCFor` node (`inits`, `condition`, `incrs`, `body`), distinct from the assignment-style `ListCompFor`. `_eval_listcomp_cfor()` binds `inits` once into a child context, then loops while `condition` is true, evaluating `body` (via `_eval_list_comp_body`) and then `incrs` *sequentially* (each `incrs` assignment sees the previous ones' new values, matching source order) each iteration. Capped at `_MAX_CFOR_ITERATIONS` (1,000,000) to avoid hangs on a malformed `incrs`/`condition`. Used by BOSL2's `cumsum()`, `product()`, etc.
 - **Boolean arithmetic** returns `undef` (`None`): `true + 1` → `undef`. The evaluator checks `isinstance(a, bool) or isinstance(b, bool)` before any arithmetic op.
 - **`+`/`-` between lists** recurse element-wise into nested lists (`_vec_add()`/`_vec_sub()`), like `_scale()`/`_div_scale()`: `[[0,0,0,0],[0,0,0,0]] + [[1,1,1,1],[2,2,2,2]]` → `[[1,1,1,1],[2,2,2,2]]`. (A naive `zip`+Python-`+` would *concatenate* each row instead — `[0,0,0,0,1,1,1,1]` — which silently corrupted BOSL2's `_edges()`/`sum()` on edge-set matrices.)

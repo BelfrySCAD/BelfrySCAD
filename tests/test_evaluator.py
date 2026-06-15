@@ -253,10 +253,6 @@ class TestBuiltinFunctions:
         _, lines = run("echo(is_list([1,2]));")
         assert lines == ["ECHO: true"]
 
-    def test_is_range(self):
-        _, lines = run("echo(is_range([0:1:3]), is_range([1,2,3]));")
-        assert lines == ["ECHO: true, false"]
-
     def test_is_undef(self):
         _, lines = run("echo(is_undef(undef));")
         assert lines == ["ECHO: true"]
@@ -1144,6 +1140,13 @@ class TestRangeEdgeCases:
         # iterating a zero-step range produces no values
         _, lines = run("echo([for (i=[1:0:5]) i]);")
         assert lines == ["ECHO: []"]
+
+    def test_range_indexing(self):
+        # Indexing a range yields its [start, step, end] components, not its
+        # iterated values: `[2:3:11][0]` -> 2, `[1]` -> 3, `[2]` -> 11. This is
+        # what BOSL2's `is_range()`/`is_finite()` inspect to detect ranges.
+        _, lines = run("r = [2:3:11]; echo(r[0], r[1], r[2]);")
+        assert lines == ["ECHO: 2, 3, 11"]
 
 
 # ---------------------------------------------------------------------------

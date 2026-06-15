@@ -168,8 +168,9 @@ class OscRange:
                 v += self.step
 
     def __getitem__(self, idx: int):
-        items = list(self)
-        return items[idx] if 0 <= idx < len(items) else None
+        # OpenSCAD indexes a range as its 3 components, not its iterated values:
+        # `[2:3:11][0]` -> 2 (start), `[1]` -> 3 (step), `[2]` -> 11 (end).
+        return (self.start, self.step, self.end)[idx] if 0 <= idx <= 2 else None
 
     def __repr__(self):
         return f"OscRange({self.start}, {self.step}, {self.end})"
@@ -1807,7 +1808,6 @@ class Evaluator:
             "is_bool": lambda x: isinstance(x, bool),
             "is_string": lambda x: isinstance(x, str),
             "is_list": lambda x: isinstance(x, list),
-            "is_range": lambda x: isinstance(x, OscRange),
             "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
             "search": self._builtin_search,
             "lookup": self._builtin_lookup,
