@@ -17,7 +17,7 @@ from openscad_parser.ast.nodes import (
     ASTNode, Assignment, Identifier,
     NumberLiteral, BooleanLiteral, StringLiteral, UndefinedLiteral,
     CommentedExpr,
-    ListComprehension, ListCompFor, ListCompIf, ListCompIfElse, ListCompLet, ListCompEach,
+    ListComprehension, ListCompFor, ListCompCFor, ListCompIf, ListCompIfElse, ListCompLet, ListCompEach,
     PositionalArgument, NamedArgument,
     AdditionOp, SubtractionOp, MultiplicationOp, DivisionOp, ModuloOp, ExponentOp,
     UnaryMinusOp,
@@ -71,6 +71,38 @@ def _div_scale(value, divisor):
         if divisor == 0:
             return float('nan') if value == 0 else math.copysign(float('inf'), value)
         return value / divisor
+    except TypeError:
+        return None
+
+
+def _vec_add(a, b):
+    """OpenSCAD `+` between two values, recursing element-wise into nested lists.
+
+    `[1,2,3] + [4,5,6]` -> `[5,7,9]`; matrices (lists of vectors) recurse so
+    `[[0,0,0,0]] + [[1,1,1,1]]` -> `[[1,1,1,1]]` rather than concatenating
+    each row's elements.
+    """
+    if isinstance(a, list) and isinstance(b, list):
+        return [_vec_add(x, y) for x, y in zip(a, b)]
+    if isinstance(a, bool) or isinstance(b, bool):
+        return None
+    try:
+        return a + b
+    except TypeError:
+        return None
+
+
+def _vec_sub(a, b):
+    """OpenSCAD `-` between two values, recursing element-wise into nested lists.
+
+    See `_vec_add()` — matrices (lists of vectors) recurse row-by-row.
+    """
+    if isinstance(a, list) and isinstance(b, list):
+        return [_vec_sub(x, y) for x, y in zip(a, b)]
+    if isinstance(a, bool) or isinstance(b, bool):
+        return None
+    try:
+        return a - b
     except TypeError:
         return None
 
@@ -1402,24 +1434,10 @@ class Evaluator:
             return self._eval_range(node, ctx)
         if isinstance(node, AdditionOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, list) and isinstance(b, list):
-                return [x + y for x, y in zip(a, b)]
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            try:
-                return a + b
-            except TypeError:
-                return None
+            return _vec_add(a, b)
         if isinstance(node, SubtractionOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, list) and isinstance(b, list):
-                return [x - y for x, y in zip(a, b)]
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            try:
-                return a - b
-            except TypeError:
-                return None
+            return _vec_sub(a, b)
         if isinstance(node, MultiplicationOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
             if isinstance(a, list) and isinstance(b, list):
@@ -1594,6 +1612,8 @@ class Evaluator:
         for elem in node.elements:
             if isinstance(elem, ListCompFor):
                 result.extend(self._eval_listcomp_for(elem, ctx))
+            elif isinstance(elem, ListCompCFor):
+                result.extend(self._eval_listcomp_cfor(elem, ctx))
             elif isinstance(elem, ListCompIf):
                 self._check_debug(elem, ctx, expr_level=True)
                 if self._eval_expr(elem.condition, ctx):
@@ -1637,6 +1657,8 @@ class Evaluator:
             return result
         if isinstance(body, ListCompFor):
             return self._eval_listcomp_for(body, ctx)
+        if isinstance(body, ListCompCFor):
+            return self._eval_listcomp_cfor(body, ctx)
         if isinstance(body, ListCompLet):
             let_ctx = ctx.child_ctx()
             for assign in body.assignments:
@@ -1700,6 +1722,33 @@ class Evaluator:
             self._expr_depth -= 1
         return result
 
+    # OpenSCAD has no native loop-iteration cap; this just guards against a
+    # runaway condition/increment (e.g. `i = i+1` typo'd as `i = i-1`) hanging
+    # the evaluator forever.
+    _MAX_CFOR_ITERATIONS = 1_000_000
+
+    def _eval_listcomp_cfor(self, node: ListCompCFor, ctx: EvalContext) -> list:
+        loop_ctx = ctx.child_ctx()
+        for assign in node.inits:
+            loop_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, loop_ctx)
+
+        result = []
+        iterations = 0
+        while self._eval_expr(node.condition, loop_ctx):
+            iterations += 1
+            if iterations > self._MAX_CFOR_ITERATIONS:
+                self.error("C-style for loop exceeded maximum iteration count", node)
+            self._expr_depth += 1
+            self._check_debug(node, loop_ctx, expr_level=True)
+            if isinstance(node.body, ListComprehension):
+                result.append(self._eval_list_comp(node.body, loop_ctx))
+            else:
+                result.extend(self._eval_list_comp_body(node.body, loop_ctx))
+            self._expr_depth -= 1
+            for assign in node.incrs:
+                loop_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, loop_ctx)
+        return result
+
     def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> OscRange:
         start = self._eval_expr(node.start, ctx)
 
@@ -1758,6 +1807,7 @@ class Evaluator:
             "is_bool": lambda x: isinstance(x, bool),
             "is_string": lambda x: isinstance(x, str),
             "is_list": lambda x: isinstance(x, list),
+            "is_range": lambda x: isinstance(x, OscRange),
             "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
             "search": self._builtin_search,
             "lookup": self._builtin_lookup,

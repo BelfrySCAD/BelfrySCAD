@@ -52,6 +52,17 @@ class TestExpressions:
         _, lines = run("echo([5,7,9] - [4,5,6]);")
         assert lines == ["ECHO: [1, 2, 3]"]
 
+    def test_matrix_add(self):
+        # `+`/`-` between lists of vectors (matrices) must recurse element-wise
+        # per row, not concatenate each row's elements (e.g. `[0,0,0,0] +
+        # [1,1,1,1]` must give `[1,1,1,1]`, not `[0,0,0,0,1,1,1,1]`).
+        _, lines = run("echo([[0,0,0,0],[0,0,0,0]] + [[1,1,1,1],[2,2,2,2]]);")
+        assert lines == ["ECHO: [[1, 1, 1, 1], [2, 2, 2, 2]]"]
+
+    def test_matrix_subtract(self):
+        _, lines = run("echo([[5,5,5],[5,5,5]] - [[1,2,3],[4,5,6]]);")
+        assert lines == ["ECHO: [[4, 3, 2], [1, 0, -1]]"]
+
     def test_vector_scale_right(self):
         _, lines = run("echo([1,2,3] * 2);")
         assert lines == ["ECHO: [2, 4, 6]"]
@@ -242,6 +253,10 @@ class TestBuiltinFunctions:
         _, lines = run("echo(is_list([1,2]));")
         assert lines == ["ECHO: true"]
 
+    def test_is_range(self):
+        _, lines = run("echo(is_range([0:1:3]), is_range([1,2,3]));")
+        assert lines == ["ECHO: true, false"]
+
     def test_is_undef(self):
         _, lines = run("echo(is_undef(undef));")
         assert lines == ["ECHO: true"]
@@ -419,6 +434,17 @@ class TestListComprehensions:
         """
         _, lines = run(src)
         assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
+
+    def test_c_style_for(self):
+        # `for (init...; cond; incr...)` — the C-style for in a list
+        # comprehension (parsed as `ListCompCFor`), used e.g. by BOSL2's
+        # `cumsum()`: [for (a=v[0], i=1; i<=len(v); a = i<len(v)?a+v[i]:a, i=i+1) a]
+        src = """
+        v = [0, 1, 2, 3];
+        echo([for (a = v[0], i = 1; i <= len(v); a = i < len(v) ? a + v[i] : a, i = i + 1) a]);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: [0, 1, 3, 6]"]
 
 
 # ---------------------------------------------------------------------------
