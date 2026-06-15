@@ -169,6 +169,13 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
   - **Scalar**: returns up to `num_returns` matching indices (`[]` if none); `num_returns=0` returns all matches.
 - **Assert message format**: `to_openscad([cond_expr]).strip()` recovers the condition source text for `Assertion 'expr' failed` (requires `from openscad_parser.ast import to_openscad`).
 - **String literals with leading/trailing whitespace**: arpeggio's `skipws=True` would strip whitespace before sub-rules in `(DQUOTE, contents, DQUOTE)`, eating leading spaces (`"  bar"` → `"bar"`). Fixed in openscad_parser 2.5.1 by collapsing `string_literal` into one regex terminal `"(?:[^"\\]|\\.|\\$)*"`, avoiding whitespace skipping inside quotes.
+- **`chr()`** accepts either a single code point (`chr(65)` → `"A"`) or a vector of code points (`chr([65,66,67])` → `"ABC"`), converting and concatenating each element; `chr([])` → `""`. Floats are truncated via `int()` (`chr(65.7)` / each element of a vector → `"A"`).
+- **`+`/`-` involving strings**: OpenSCAD has no `+`/`-` operator for strings (unlike Python's `str.__add__`). `"ab" + "cd"` → `undef`, not Python-style concatenation `"abcd"`. `_vec_add()`/`_vec_sub()` check for `str` operands before falling back to Python's `+`/`-`.
+- **Number formatting (`echo()`/`str()`)**: `_format_number()` replicates OpenSCAD's number-to-string conversion, which differs from Python's `f"{v:g}"`:
+  - At most 6 significant digits.
+  - Fixed-point notation is used for exponents in `[-5, 5]` (one wider than `%g`'s `[-4, 5]`): `0.00001` → `"0.00001"`, where `%g` would give `"1e-05"`.
+  - Scientific notation drops the exponent's leading zero: `1000000` → `"1e+6"` (not `"1e+06"`), `1.23456789e-7` → `"1.23457e-7"` (not `"1.23457e-07"`).
+  - `-0.0` → `"0"`. `nan`/`inf`/`-inf` are lowercase.
 
 ## Manifold API: Geometry Provenance
 

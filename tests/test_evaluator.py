@@ -63,6 +63,12 @@ class TestExpressions:
         _, lines = run("echo([[5,5,5],[5,5,5]] - [[1,2,3],[4,5,6]]);")
         assert lines == ["ECHO: [[4, 3, 2], [1, 0, -1]]"]
 
+    def test_string_plus_string_is_undef(self):
+        # OpenSCAD has no `+` for strings (unlike Python's str.__add__,
+        # which would silently concatenate them).
+        _, lines = run('echo("ab" + "cd");')
+        assert lines == ["ECHO: undef"]
+
     def test_vector_scale_right(self):
         _, lines = run("echo([1,2,3] * 2);")
         assert lines == ["ECHO: [2, 4, 6]"]
@@ -340,6 +346,20 @@ class TestBuiltinFunctions:
     def test_chr(self):
         _, lines = run("echo(chr(65));")
         assert lines == ['ECHO: "A"']
+
+    def test_chr_vector(self):
+        # chr() also accepts a vector of code points, converting and
+        # concatenating each one.
+        _, lines = run("echo(chr([65,66,67]));")
+        assert lines == ['ECHO: "ABC"']
+
+    def test_chr_vector_truncates_floats(self):
+        _, lines = run("echo(chr([65.7,66.2]));")
+        assert lines == ['ECHO: "AB"']
+
+    def test_chr_empty_vector(self):
+        _, lines = run("echo(chr([]));")
+        assert lines == ['ECHO: ""']
 
     def test_ord(self):
         _, lines = run('echo(ord("A"));')
@@ -1940,6 +1960,28 @@ class TestStrEdgeCases:
     def test_concat_three_lists(self):
         _, lines = run('echo(concat([1], [2], [3]));')
         assert lines == ["ECHO: [1, 2, 3]"]
+
+
+class TestNumberFormatting:
+    """`echo()`/`str()` number formatting must match OpenSCAD's output:
+    6 significant digits, exponents without a leading zero, and fixed
+    notation for exponents in [-5, 5] (one wider than Python's `%g`)."""
+
+    def test_large_exponent_no_leading_zero(self):
+        _, lines = run("echo(1000000);")
+        assert lines == ["ECHO: 1e+6"]
+
+    def test_small_number_stays_fixed_notation(self):
+        _, lines = run("echo(0.00001);")
+        assert lines == ["ECHO: 0.00001"]
+
+    def test_small_exponent_no_leading_zero(self):
+        _, lines = run("echo(1.23456789e-7);")
+        assert lines == ["ECHO: 1.23457e-7"]
+
+    def test_negative_zero(self):
+        _, lines = run("echo(-0.0);")
+        assert lines == ["ECHO: 0"]
 
 
 # ---------------------------------------------------------------------------

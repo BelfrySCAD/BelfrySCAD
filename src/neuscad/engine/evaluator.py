@@ -86,6 +86,9 @@ def _vec_add(a, b):
         return [_vec_add(x, y) for x, y in zip(a, b)]
     if isinstance(a, bool) or isinstance(b, bool):
         return None
+    if isinstance(a, str) or isinstance(b, str):
+        # OpenSCAD has no `+` for strings (unlike Python's `str.__add__`).
+        return None
     try:
         return a + b
     except TypeError:
@@ -105,6 +108,42 @@ def _vec_sub(a, b):
         return a - b
     except TypeError:
         return None
+
+
+def _format_number(v: float) -> str:
+    """Format a number the way OpenSCAD's `echo()`/`str()` do.
+
+    Differs from Python's `f"{v:g}"` in two ways:
+    - exponents drop their leading zero (`1e+08` -> `1e+8`, `1e-07` -> `1e-7`)
+    - small numbers stay in fixed notation one digit further than `%g`
+      (`1e-5` -> `0.00001`, where `%g` would give `1e-05`); fixed notation
+      covers exponents in `[-5, 5]`, vs. `%g`'s `[-4, 5]`.
+    Both still show at most 6 significant digits, and `-0.0` -> `"0"`.
+    """
+    if math.isnan(v):
+        return "nan"
+    if math.isinf(v):
+        return "inf" if v > 0 else "-inf"
+    if v == 0:
+        return "0"
+
+    neg = v < 0
+    av = abs(v)
+    exp = math.floor(math.log10(av))
+    mantissa = round(av / (10 ** exp), 5)
+    if mantissa >= 10:
+        mantissa /= 10
+        exp += 1
+
+    if -5 <= exp <= 5:
+        decimals = max(0, 5 - exp)
+        s = f"{av:.{decimals}f}"
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+    else:
+        m = f"{mantissa:.5f}".rstrip("0").rstrip(".")
+        s = f"{m}e{'+' if exp >= 0 else '-'}{abs(exp)}"
+    return ("-" + s) if neg else s
 
 
 def _matmul(a, b):
@@ -339,9 +378,9 @@ class Evaluator:
         if isinstance(v, bool):
             return "true" if v else "false"
         if isinstance(v, OscRange):
-            return f"[{v.start:g} : {v.step:g} : {v.end:g}]"
+            return f"[{_format_number(v.start)} : {_format_number(v.step)} : {_format_number(v.end)}]"
         if isinstance(v, float):
-            return f"{v:g}"
+            return _format_number(v)
         if isinstance(v, list):
             return "[" + ", ".join(self._fmt_val(x) for x in v) + "]"
         if isinstance(v, str):
@@ -1800,7 +1839,8 @@ class Evaluator:
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": lambda x: len(x) if isinstance(x, (list, str)) else None,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
-            "chr": lambda x: chr(int(x)),
+            # chr() accepts either a single code point or a vector of them.
+            "chr": lambda x: "".join(chr(int(c)) for c in x) if isinstance(x, list) else chr(int(x)),
             # ord() of a multi-character string returns the code of its first character.
             "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
             "is_undef": lambda x: x is None,
