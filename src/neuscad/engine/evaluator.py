@@ -110,6 +110,50 @@ def _vec_sub(a, b):
         return None
 
 
+def _osc_type_name(v) -> str:
+    """OpenSCAD's name for `v`'s type, as used in 'undefined operation (...)' warnings."""
+    if v is None:
+        return "undefined"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "vector"
+    return "undefined"
+
+
+def _osc_equal(a, b) -> bool:
+    """OpenSCAD `==`: unlike Python, `bool` is not interchangeable with `int`/`float`,
+    so `1 == true` and `0 == false` are `false`. Recurses into lists element-wise."""
+    if isinstance(a, bool) != isinstance(b, bool):
+        return False
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_osc_equal(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def _osc_comparable(a, b) -> bool:
+    """Whether `<`/`>`/`<=`/`>=` are defined between `a` and `b` in OpenSCAD.
+
+    Ordering is only defined between two values of the *same* type:
+    number-number (int/float mix ok), string-string, vector-vector, or
+    bool-bool. Any other pairing (e.g. `true > 0`, `"a" < 1`, `[1,2] < 5`)
+    is an "undefined operation".
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool)
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return True
+    if isinstance(a, str) and isinstance(b, str):
+        return True
+    if isinstance(a, list) and isinstance(b, list):
+        return True
+    return False
+
+
 def _format_number(v: float) -> str:
     """Format a number the way OpenSCAD's `echo()`/`str()` do.
 
@@ -1540,28 +1584,28 @@ class Evaluator:
             return not bool(self._eval_expr(node.expr, ctx))
         if isinstance(node, EqualityOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return a == b
+            return _osc_equal(a, b)
         if isinstance(node, InequalityOp):
             a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return a != b
-        if isinstance(node, GreaterThanOp):
-            try:
-                return self._eval_expr(node.left, ctx) > self._eval_expr(node.right, ctx)
-            except TypeError:
+            return not _osc_equal(a, b)
+        if isinstance(node, (GreaterThanOp, GreaterThanOrEqualOp, LessThanOp, LessThanOrEqualOp)):
+            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+            symbol = {
+                GreaterThanOp: ">", GreaterThanOrEqualOp: ">=",
+                LessThanOp: "<", LessThanOrEqualOp: "<=",
+            }[type(node)]
+            if not _osc_comparable(a, b):
+                pos = getattr(node, 'position', None)
+                self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} {symbol} {_osc_type_name(b)}){self._loc(pos)}")
                 return None
-        if isinstance(node, GreaterThanOrEqualOp):
             try:
-                return self._eval_expr(node.left, ctx) >= self._eval_expr(node.right, ctx)
-            except TypeError:
-                return None
-        if isinstance(node, LessThanOp):
-            try:
-                return self._eval_expr(node.left, ctx) < self._eval_expr(node.right, ctx)
-            except TypeError:
-                return None
-        if isinstance(node, LessThanOrEqualOp):
-            try:
-                return self._eval_expr(node.left, ctx) <= self._eval_expr(node.right, ctx)
+                if isinstance(node, GreaterThanOp):
+                    return a > b
+                if isinstance(node, GreaterThanOrEqualOp):
+                    return a >= b
+                if isinstance(node, LessThanOp):
+                    return a < b
+                return a <= b
             except TypeError:
                 return None
         if isinstance(node, TernaryOp):
@@ -1816,10 +1860,14 @@ class Evaluator:
         # Built-in math functions
         math_fns = {
             "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
-            "ceil": math.ceil, "floor": math.floor,
+            # math.ceil()/math.floor() raise on nan/inf (Python wants a finite
+            # result to convert to int); OpenSCAD passes nan/inf through unchanged.
+            "ceil": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.ceil(x),
+            "floor": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.floor(x),
             # OpenSCAD rounds half away from zero (round(2.5)==3, round(-2.5)==-3),
             # unlike Python's round-half-to-even (round(2.5)==2).
-            "round": lambda x: math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5),
+            "round": lambda x: x if (math.isnan(x) or math.isinf(x))
+                else (math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)),
             "sqrt": lambda x: float('nan') if x < 0 else math.sqrt(x),
             "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
             "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),

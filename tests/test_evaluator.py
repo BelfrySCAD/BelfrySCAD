@@ -1103,8 +1103,55 @@ class TestExpressionEdgeCases:
         assert lines == ["ECHO: [1, 2, 3]"]
 
     def test_undef_comparison_lt(self):
+        # Ordering comparisons between mismatched types (here undefined vs.
+        # number) warn and evaluate to undef, matching real OpenSCAD.
         _, lines = run("echo(undef < 1);")
-        assert lines == ["ECHO: undef"]
+        assert lines == ["WARNING: undefined operation (undefined < number) in file <string>, line 1",
+                          "ECHO: undef"]
+
+    def test_number_equals_bool_is_false(self):
+        # bool is a distinct type from number in OpenSCAD: 1 == true is
+        # false, unlike Python where True == 1.
+        _, lines = run("echo(1 == true, true == 1, 0 == false);")
+        assert lines == ["ECHO: false, false, false"]
+
+    def test_int_equals_float_is_true(self):
+        _, lines = run("echo(1 == 1.0);")
+        assert lines == ["ECHO: true"]
+
+    def test_list_equality_with_bool_element_is_false(self):
+        # [1, true] != [1, 1] even though Python's `1 == True`.
+        _, lines = run("echo([1, true] == [1, 1]);")
+        assert lines == ["ECHO: false"]
+
+    def test_list_equality_different_lengths(self):
+        _, lines = run("echo([1,2] == [1,2,3]);")
+        assert lines == ["ECHO: false"]
+
+    def test_bool_greater_than_number_is_undef(self):
+        _, lines = run("echo(true > 0);")
+        assert lines == ["WARNING: undefined operation (bool > number) in file <string>, line 1",
+                          "ECHO: undef"]
+
+    def test_bool_comparison_works(self):
+        _, lines = run("echo(true >= false);")
+        assert lines == ["ECHO: true"]
+
+    def test_vector_comparison_works(self):
+        _, lines = run("echo([1,2] < [3,4]);")
+        assert lines == ["ECHO: true"]
+
+    def test_floor_of_nan_is_nan(self):
+        _, lines = run("echo(floor(0/0));")
+        assert lines == ["ECHO: nan"]
+
+    def test_ceil_of_inf_is_inf(self):
+        _, lines = run("echo(ceil(1/0));")
+        assert lines == ["ECHO: inf"]
+
+    def test_round_of_nan_is_nan(self):
+        _, lines = run("echo(round(0/0));")
+        assert lines == ["ECHO: nan"]
 
     def test_sqrt_negative_is_nan(self):
         _, lines = run("echo(sqrt(-1));")
