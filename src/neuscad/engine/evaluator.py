@@ -879,7 +879,7 @@ class EvalContext:
     # Lexical scope (from build_scopes)
     scope: Any
     # Dynamic variables ($fn, $fa, $fs, $t, etc.) — call-chain inherited
-    dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0})
+    dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0})
     # Positions of assignments stored in dyn (for double-assignment warnings)
     dyn_positions: dict[str, Any] = field(default_factory=dict)
     # Optional color propagated from parent color() call

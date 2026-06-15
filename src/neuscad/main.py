@@ -1,3 +1,4 @@
+import os
 import sys
 import setproctitle
 from PySide6.QtGui import QSurfaceFormat
@@ -22,7 +23,13 @@ def main():
     app.setApplicationName("NeuSCAD")
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    code = app.exec()
+    # Skip normal interpreter finalization: its GC pass can crash inside
+    # manifold3d's nanobind bindings if a background render thread was
+    # recently active (see MainWindow.closeEvent). MainWindow.closeEvent
+    # has already saved settings (with an explicit sync()) and released
+    # geometry, so there's nothing left to clean up.
+    os._exit(code)
 
 
 if __name__ == "__main__":

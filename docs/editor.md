@@ -78,6 +78,16 @@ The console displays:
 - Parse errors (file/line/col from AST metadata)
 - On each render: bounding box of the resulting mesh and current camera position
 
+## Animation
+
+The **Animate** dock (`AnimatePane` in `window/animate.py`, one per `DocumentTab`) implements OpenSCAD's [`$t` animation](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Animation):
+
+- **Time / FPS / Steps** fields: Time shows the current `$t` (read-only display, but editable — typing a value jumps to the nearest step, clamped to `[0, 1 - 1/steps)`); FPS (1-1000) sets the playback rate; Steps (1-1,000,000) sets the number of frames in one cycle. `$t = step / steps` for `step` in `0..steps-1`. Tab/Shift+Tab move between these three fields, and Enter confirms an edit (`QLineEdit.editingFinished`, which fires on Return as well as focus-out). `AnimatePane` installs an event filter on each field to accept the `ShortcutOverride` event for Tab/Backtab — otherwise the main window's Indent/Undent actions (bound to Tab/Shift+Tab as window-wide shortcuts for the code editor) would consume the key before normal focus-navigation gets it.
+- **Big play/pause button** and the **transport row** (First / Previous / Play / Pause / Next / Last) drive playback. Any non-playback transport action pauses playback first.
+- **Dump Pictures** checkbox: when checked and Play is pressed, NeuSCAD prompts (once per tab) for a destination folder via a folder picker, then saves each frame of one full animation cycle as `frameNNNN.png` (via `Viewport.grabFramebuffer()`), pausing automatically after frame `steps - 1` rather than looping.
+
+Each frame change re-renders the active tab with `$t` set accordingly — `MainWindow._viewport_params(tab)` includes `"$t": tab.animate_pane.current_t()`, merged into the evaluator's dynamic context alongside `$vpt`/`$vpr`/`$vpd` (see `docs/evaluator.md`). During playback the viewport camera is **not** auto-fit to the model's bounding box on each frame (unlike a normal Render), so the camera stays put across frames. Switching tabs pauses any other tab's animation, since playback re-renders the active tab on every frame.
+
 ## Keyboard Shortcuts
 
 Standard platform conventions apply throughout. Custom shortcuts:
@@ -155,7 +165,7 @@ Opens with a single blank untitled document.
 - **Console**: bottom pane
 - **Status bar**: bottom strip; shows 3D coordinates of the last clicked point on the mesh
 
-The code editor, console, and debugger are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock".
+The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The Animate dock starts hidden; toggle via View ▸ Show Animate.
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 
@@ -178,7 +188,7 @@ self._toggle_perspective(perspective)
 **Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)*
 
 **View**:
-- Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console
+- Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console / Show Debugger / Show Animate
 - —
 - Top / Bottom / Left / Right / Front / Back / Isometric / View All
 - —

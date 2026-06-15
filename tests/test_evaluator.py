@@ -193,6 +193,18 @@ class TestVariables:
         _, lines = run("$fn = 64; echo($fn);")
         assert lines == ["ECHO: 64"]
 
+    def test_animation_t_defaults_to_zero(self):
+        _, lines = run("echo($t);")
+        assert lines == ["ECHO: 0"]
+
+    def test_animation_t_set_via_viewport_params(self):
+        nodes = getASTfromString("echo($t);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        echo_lines = []
+        ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
+        ev.evaluate(nodes, root_scope, {"$t": 0.25})
+        assert echo_lines == ["ECHO: 0.25"]
+
 
 # ---------------------------------------------------------------------------
 # Built-in functions

@@ -12,10 +12,12 @@ import time
 from neuscad.window.editor import CodeEditor
 from neuscad.window.viewport import Viewport
 from neuscad.window.debugger import DebuggerPane, DebugSession
+from neuscad.window.animate import AnimatePane
 from neuscad.window.preferences import PreferencesDialog, load_preference, save_preferences
 
 import re
 from pathlib import Path
+from typing import Optional
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 _TOOL_ICONS = {
@@ -199,6 +201,8 @@ class DocumentTab(QWidget):
         self.console.setFont(QFont("Menlo", 11))
         self.debugger_pane = DebuggerPane()
         self.debug_session: DebugSession | None = None
+        self.animate_pane = AnimatePane()
+        self._dump_dir: Optional[str] = None
 
         self.viewport = Viewport()
         self.tools_strip = self._make_tools_strip()
@@ -302,6 +306,8 @@ class _RenderCallback(QObject):
     @Slot()
     def on_done(self):
         self._mw._set_render_busy(False)
+        if self._render_id == self._mw._render_id:
+            self._mw._on_render_thread_done(self._tab)
 
 
 class _RenderWorker(QObject):
@@ -421,6 +427,7 @@ class MainWindow(QMainWindow):
         self._undo_stack = self._create_undo_stack()
         self._render_cancel: threading.Event | None = None
         self._render_id: int = 0
+        self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -473,6 +480,15 @@ class MainWindow(QMainWindow):
         self._debugger_dock.hide()
         self._debugger_dock.dockLocationChanged.connect(self._on_debugger_dock_location_changed)
         self._debugger_dock.topLevelChanged.connect(self._on_debugger_top_level_changed)
+
+        # --- Animate dock (bottom, beside console) ---
+        self._animate_stack = QStackedWidget()
+        self._animate_dock = QDockWidget("Animate", self)
+        self._animate_dock.setObjectName("AnimateDock")
+        self._animate_dock.setWidget(self._animate_stack)
+        self._animate_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._animate_dock)
+        self._animate_dock.hide()
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -621,6 +637,10 @@ class MainWindow(QMainWindow):
         self._act_show_debugger.setText("Show Debugger")
         view_menu.addAction(self._act_show_debugger)
 
+        self._act_show_animate = self._animate_dock.toggleViewAction()
+        self._act_show_animate.setText("Show Animate")
+        view_menu.addAction(self._act_show_animate)
+
         view_menu.addSeparator()
         for label, preset, key in (
             ("Top",       "top",    "Ctrl+4"),
@@ -721,6 +741,12 @@ class MainWindow(QMainWindow):
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
+        self._animate_stack.addWidget(tab.animate_pane)
+        tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
+        tab.animate_pane.dump_started.connect(
+            lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
+        )
+        tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
         tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
         tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
@@ -754,6 +780,13 @@ class MainWindow(QMainWindow):
             self._editor_stack.setCurrentWidget(tab.editor)
             self._console_stack.setCurrentWidget(tab.console)
             self._debugger_stack.setCurrentWidget(tab.debugger_pane)
+            self._animate_stack.setCurrentWidget(tab.animate_pane)
+        # Animation playback re-renders the active tab on every frame, so
+        # pause any other tab's animation while it's not visible.
+        for i in range(self._tabs.count()):
+            other = self._tabs.widget(i)
+            if other is not None and other is not tab:
+                other.animate_pane.pause()
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -772,9 +805,11 @@ class MainWindow(QMainWindow):
                 if not self._save_file():
                     return
         if tab:
+            tab.animate_pane.pause()
             self._editor_stack.removeWidget(tab.editor)
             self._console_stack.removeWidget(tab.console)
             self._debugger_stack.removeWidget(tab.debugger_pane)
+            self._animate_stack.removeWidget(tab.animate_pane)
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
             self._new_document()
@@ -835,6 +870,12 @@ class MainWindow(QMainWindow):
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
+        self._animate_stack.addWidget(tab.animate_pane)
+        tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
+        tab.animate_pane.dump_started.connect(
+            lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
+        )
+        tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
         tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
         tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
         tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
@@ -1128,10 +1169,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _viewport_params(self, tab) -> dict:
-        """Snapshot camera state as OpenSCAD $vp* special variables."""
+        """Snapshot camera state and animation time as OpenSCAD $vp*/$t special variables."""
+        params = {"$t": tab.animate_pane.current_t()}
         try:
             cam = tab.viewport._renderer.camera
-            return {
+            params.update({
                 "$vpt": cam.target.tolist(),
                 "$vpr": [
                     ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0,
@@ -1139,12 +1181,14 @@ class MainWindow(QMainWindow):
                     ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0,
                 ],
                 "$vpd": float(cam.distance),
-            }
+            })
         except Exception:
-            return {}
+            pass
+        return params
 
-    def _render(self):
-        tab = self._current_tab()
+    def _render(self, tab=None):
+        if tab is None:
+            tab = self._current_tab()
         if not tab:
             return
         source = tab.editor.toPlainText()
@@ -1166,11 +1210,20 @@ class MainWindow(QMainWindow):
         self._set_render_busy(True)
 
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(tab))
-        self._render_worker = worker  # keep alive while thread runs
         callback = _RenderCallback(self, tab, render_id, parent=self)
-        self._render_callback = callback  # keep alive while thread runs
         thread = QThread(self)
         worker.moveToThread(thread)
+
+        # Animation playback can start a new render before the previous one's
+        # thread has finished (or even started); keep every in-flight
+        # worker/callback/thread alive until its thread.finished fires, so
+        # Qt never tries to invoke a slot on an object Python has already GC'd.
+        job = (worker, callback, thread)
+        self._render_jobs.append(job)
+
+        def _cleanup_job(job=job):
+            if job in self._render_jobs:
+                self._render_jobs.remove(job)
 
         # callback lives in the main thread; Qt auto-uses QueuedConnection for all
         # of these cross-thread connections, so all slots run on the main thread.
@@ -1182,8 +1235,26 @@ class MainWindow(QMainWindow):
         worker.done.connect(callback.on_done)
         worker.done.connect(thread.quit)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_cleanup_job)
 
         thread.start()
+
+    def _on_animate_frame(self, tab, t: float):
+        if tab.animate_pane.is_dumping():
+            tab._dump_frame = tab.animate_pane.current_step()
+        self._render(tab)
+
+    def _on_dump_started(self, tab):
+        if tab._dump_dir is None:
+            path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To")
+            if not path:
+                tab.animate_pane.pause()
+                return
+            tab._dump_dir = path
+        self.log_to_tab(tab, f"Dumping animation frames to {tab._dump_dir}")
+
+    def _on_dump_finished(self, tab):
+        self.log_to_tab(tab, "Animation frame dump complete.")
 
     def _set_render_busy(self, busy: bool):
         if busy:
@@ -1216,7 +1287,10 @@ class MainWindow(QMainWindow):
                 bb = composed.bounding_box()
                 bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
-                tab.viewport.frame_scene(bb_min, bb_max)
+                # Animation playback keeps the camera fixed across frames; only
+                # auto-fit on explicit (non-animation) renders.
+                if not tab.animate_pane.is_playing():
+                    tab.viewport.frame_scene(bb_min, bb_max)
                 extent = float(np.linalg.norm(bb_max - bb_min))
                 self.log_to_tab(
                     tab,
@@ -1227,6 +1301,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             import traceback
             self.log_to_tab(tab, f"Post-render error: {e}\n{traceback.format_exc()}")
+
+    def _on_render_thread_done(self, tab):
+        """Called once the render worker thread has fully finished.
+
+        Dumping is paced from here (rather than from _on_render_done, which
+        runs while the worker thread is still tearing down) so the next
+        frame's worker thread never starts while the previous one is still
+        touching the parser — see AnimatePane.play()/advance_frame().
+        """
+        if tab.animate_pane.is_dumping() and tab._dump_dir:
+            try:
+                frame = getattr(tab, "_dump_frame", tab.animate_pane.current_step())
+                image = tab.viewport.grabFramebuffer()
+                filename = f"frame{frame:04d}.png"
+                image.save(str(Path(tab._dump_dir) / filename))
+                self.log_to_tab(tab, f"Dumped {filename}")
+            except Exception as e:
+                self.log_to_tab(tab, f"Frame dump error: {e}")
+            tab.animate_pane.advance_frame()
 
     def _flush_caches(self):
         """Discard each tab's pre-calculated AST scope/node table and openscad_parser's AST cache."""
@@ -1683,19 +1776,40 @@ class MainWindow(QMainWindow):
         self._apply_preferences()
 
     def closeEvent(self, event):
+        # Stop animation playback (no more renders get queued) and let any
+        # in-flight render thread finish — Qt aborts if a QThread is
+        # destroyed while still running.
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is not None:
+                tab.animate_pane.pause()
+        if self._render_cancel is not None:
+            self._render_cancel.set()
+        deadline = time.monotonic() + 5.0
+        while any(t.isRunning() for _, _, t in self._render_jobs) and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.005)
+
         s = QSettings("NeuSCAD", "NeuSCAD")
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
         s.setValue("wordWrap", self._act_word_wrap.isChecked())
-        # Release all Manifold geometry before shutdown so nanobind sees clean refcounts.
+        # Flush settings to disk now: the app exits via os._exit() (see
+        # main.py), which skips QSettings' normal sync-on-destruction.
+        s.sync()
+        # Release all Manifold geometry before shutdown so nanobind sees clean
+        # refcounts. Do NOT call gc.collect() here: forcing a GC pass that
+        # collects nanobind-wrapped Manifold/CrossSection objects shortly
+        # after a background render thread has been active can SIGSEGV
+        # (nanobind's object collection isn't safe across threads). Plain
+        # refcounting from clearing these references is sufficient for
+        # nanobind to free the objects during interpreter shutdown.
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab is not None:
                 tab._bodies = []
                 tab.viewport.load_geometry([])
-        import gc
-        gc.collect()
         super().closeEvent(event)
 
     def _apply_perspective_to_tab(self, tab):
