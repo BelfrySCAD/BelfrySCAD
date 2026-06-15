@@ -2250,3 +2250,90 @@ class TestBreakpoint:
         src = "for (i = [0:4]) { breakpoint(i >= 3); }"
         paused, _ = _run_with_hook(src)
         assert len(paused) == 2
+
+
+# ---------------------------------------------------------------------------
+# object()
+# ---------------------------------------------------------------------------
+
+class TestObject:
+    def test_basic_creation_and_access(self):
+        src = 'o = object(a=1, b="hello", c=[1,2,3]); echo(o.a, o.b, o.c, o["a"]);'
+        _, echoes = run(src)
+        assert echoes == ['ECHO: 1, "hello", [1, 2, 3], 1']
+
+    def test_nested_object(self):
+        src = "o = object(a=1, nested=object(x=10, y=20)); echo(o.nested.x); echo(o.nested);"
+        _, echoes = run(src)
+        assert echoes == ["ECHO: 10", "ECHO: { x = 10; y = 20; }"]
+
+    def test_empty_object_echo(self):
+        _, echoes = run("echo(object());")
+        assert echoes == ["ECHO: { }"]
+
+    def test_missing_key_is_undef(self):
+        src = 'o = object(a=1); echo(o.nope); echo(o["nope"]); echo(o[0]);'
+        _, echoes = run(src)
+        assert echoes == ["ECHO: undef", "ECHO: undef", "ECHO: undef"]
+
+    def test_type_predicates(self):
+        src = (
+            "o = object(a=1);"
+            "echo(is_object(o), is_list(o), is_string(o), is_num(o), is_undef(o), is_object(5));"
+        )
+        _, echoes = run(src)
+        assert echoes == ["ECHO: true, false, false, false, false, false"]
+
+    def test_len(self):
+        _, echoes = run("echo(len(object(a=1, b=2, c=3)));")
+        assert echoes == ["ECHO: 3"]
+
+    def test_equality_is_deep_and_order_sensitive(self):
+        src = (
+            "echo(object(a=1,b=2) == object(a=1,b=2));"
+            "echo(object(a=1,b=2) == object(b=2,a=1));"
+            "echo(object(a=1,b=2) != object(b=2,a=1));"
+        )
+        _, echoes = run(src)
+        assert echoes == ["ECHO: true", "ECHO: false", "ECHO: true"]
+
+    def test_str_formatting(self):
+        src = 'echo(str(object(a=1, nested=object(x=10, y=20))));'
+        _, echoes = run(src)
+        assert echoes == ['ECHO: "{ a = 1; nested = { x = 10; y = 20; }; }"']
+
+    def test_for_iterates_over_keys(self):
+        src = "for (k = object(z=1, a=2, m=3)) echo(k);"
+        _, echoes = run(src)
+        assert echoes == ['ECHO: "z"', 'ECHO: "a"', 'ECHO: "m"']
+
+    def test_function_valued_member_is_callable(self):
+        src = "f = object(fn=function(x) x*2); echo(f.fn(5));"
+        _, echoes = run(src)
+        assert echoes == ["ECHO: 10"]
+
+    def test_merge_via_positional_object(self):
+        src = (
+            "o1 = object(a=1, b=2);"
+            "echo(object(o1, c=3));"
+            "echo(object(o1, b=99, c=3));"
+        )
+        _, echoes = run(src)
+        assert echoes == [
+            "ECHO: { a = 1; b = 2; c = 3; }",
+            "ECHO: { a = 1; b = 99; c = 3; }",
+        ]
+
+    def test_merge_via_positional_list_of_pairs(self):
+        _, echoes = run('echo(object([["x",10],["y",20]]));')
+        assert echoes == ["ECHO: { x = 10; y = 20; }"]
+
+    def test_invalid_positional_arg_warns_and_is_undef(self):
+        _, echoes = run("echo(object(1,2));")
+        assert len(echoes) == 2
+        assert "WARNING: object(Argument 0 <number>) An unnamed argument must be either <object> or <list>, it is <number>." in echoes[0]
+        assert echoes[1] == "ECHO: undef"
+
+    def test_addition_on_objects_is_undef(self):
+        _, echoes = run("echo(object(a=1) + object(b=2));")
+        assert echoes == ["ECHO: undef"]

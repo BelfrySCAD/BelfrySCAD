@@ -145,16 +145,50 @@ def _osc_type_name(v) -> str:
         return "string"
     if isinstance(v, list):
         return "vector"
+    if isinstance(v, OscObject):
+        return "object"
     return "undefined"
+
+
+def _object_arg_type_name(v) -> str:
+    """Type name as used in `object()`'s own argument-validation warnings
+    (`<number>`, `<string>`, `<list>`, ... `<undef>`) — distinct spelling from
+    `_osc_type_name()`'s `undefined`/`vector`."""
+    if v is None:
+        return "undef"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "list"
+    if isinstance(v, OscRange):
+        return "range"
+    if isinstance(v, OscObject):
+        return "object"
+    if isinstance(v, (FunctionDeclaration, FunctionLiteral)):
+        return "function"
+    return "undef"
 
 
 def _osc_equal(a, b) -> bool:
     """OpenSCAD `==`: unlike Python, `bool` is not interchangeable with `int`/`float`,
-    so `1 == true` and `0 == false` are `false`. Recurses into lists element-wise."""
+    so `1 == true` and `0 == false` are `false`. Recurses into lists element-wise.
+
+    `object()` equality is deep AND order-sensitive: two objects with the same
+    keys/values in a different order are NOT equal, matching real OpenSCAD."""
     if isinstance(a, bool) != isinstance(b, bool):
         return False
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(_osc_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, OscObject) and isinstance(b, OscObject):
+        pairs_a, pairs_b = list(a.items()), list(b.items())
+        return len(pairs_a) == len(pairs_b) and all(
+            ka == kb and _osc_equal(va, vb)
+            for (ka, va), (kb, vb) in zip(pairs_a, pairs_b)
+        )
     return a == b
 
 
@@ -280,6 +314,29 @@ class OscRange:
 
     def __repr__(self):
         return f"OscRange({self.start}, {self.step}, {self.end})"
+
+
+class OscObject:
+    """OpenSCAD `object()` value — an ordered string-keyed map."""
+    __slots__ = ("data",)
+
+    def __init__(self, data: dict):
+        self.data = data
+
+    def __iter__(self):
+        return iter(self.data)  # keys, in insertion order
+
+    def __len__(self):
+        return len(self.data)
+
+    def get(self, key):
+        return self.data.get(key)  # missing key -> None (undef)
+
+    def items(self):
+        return self.data.items()
+
+    def __repr__(self):
+        return f"OscObject({self.data!r})"
 
 
 @dataclass
@@ -450,6 +507,10 @@ class Evaluator:
             return _format_number(v)
         if isinstance(v, list):
             return "[" + ", ".join(self._fmt_val(x) for x in v) + "]"
+        if isinstance(v, OscObject):
+            if len(v) == 0:
+                return "{ }"
+            return "{ " + "".join(f"{k} = {self._fmt_val(val)}; " for k, val in v.items()) + "}"
         if isinstance(v, str):
             return f'"{v}"'
         return str(v)
@@ -1459,6 +1520,8 @@ class Evaluator:
                 values = []
             elif isinstance(values, OscRange):
                 values = list(values)
+            elif isinstance(values, OscObject):
+                values = list(values)  # iterate over keys
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -1491,6 +1554,8 @@ class Evaluator:
                 return []
             if isinstance(values, OscRange):
                 values = list(values)
+            elif isinstance(values, OscObject):
+                values = list(values)  # iterate over keys
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -1697,6 +1762,8 @@ class Evaluator:
                     return obj[i]
                 except IndexError:
                     return None
+            if isinstance(obj, OscObject) and isinstance(idx, str):
+                return obj.get(idx)
             return None
         if isinstance(node, PrimaryMember):
             obj = self._eval_expr(node.left, ctx)
@@ -1705,6 +1772,8 @@ class Evaluator:
                 swizzle = {"x": 0, "y": 1, "z": 2, "w": 3}
                 if member in swizzle and swizzle[member] < len(obj):
                     return obj[swizzle[member]]
+            if isinstance(obj, OscObject):
+                return obj.get(member)
             return None
         if isinstance(node, LetOp):
             child_ctx = ctx.child_ctx()
@@ -1861,6 +1930,8 @@ class Evaluator:
                 values = []
             elif isinstance(values, OscRange):
                 values = list(values)
+            elif isinstance(values, OscObject):
+                values = list(values)  # iterate over keys
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -1931,6 +2002,9 @@ class Evaluator:
         name = node.left.name if isinstance(node.left, Identifier) else None
         args = self._resolve_args(node.arguments, ctx)
 
+        if name == "object":
+            return self._builtin_object(args, node)
+
         # Built-in math functions
         math_fns = {
             "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
@@ -1959,7 +2033,7 @@ class Evaluator:
             "cross": self._builtin_cross,
             "rands": self._builtin_rands,
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
-            "len": lambda x: len(x) if isinstance(x, (list, str)) else None,
+            "len": lambda x: len(x) if isinstance(x, (list, str, OscObject)) else None,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
             # chr() accepts either a single code point or a vector of them.
             "chr": lambda x: "".join(chr(int(c)) for c in x) if isinstance(x, list) else chr(int(x)),
@@ -1972,6 +2046,7 @@ class Evaluator:
             "is_string": lambda x: isinstance(x, str),
             "is_list": lambda x: isinstance(x, list),
             "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
+            "is_object": lambda x: isinstance(x, OscObject),
             "search": self._builtin_search,
             "lookup": self._builtin_lookup,
             "version": lambda: [2025, 1, 1],
@@ -2149,6 +2224,42 @@ class Evaluator:
                 t = (key - k0) / (k1 - k0)
                 return v0 + t * (v1 - v0)
         return 0
+
+    def _builtin_object(self, args: dict, node) -> Optional[OscObject]:
+        """`object(a=1, b=2, ...)` — an ordered string-keyed map.
+
+        Positional arguments merge an existing `OscObject`'s entries, or a
+        list of `[key, value]` pairs, into the result (in their own order);
+        named arguments set/override entries in call order. Any other
+        positional argument type is invalid and the whole call is `undef`.
+        """
+        result: dict = {}
+        for key, val in args.items():
+            if isinstance(key, str):
+                result[key] = val
+                continue
+            if isinstance(val, OscObject):
+                for k, v in val.items():
+                    result[k] = v
+            elif isinstance(val, list):
+                for entry in val:
+                    if isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], str):
+                        result[entry[0]] = entry[1]
+                    else:
+                        self._echo_fn(
+                            f"WARNING: object(Argument {key}) malformed [key,value] entry in "
+                            f"unnamed list argument{self._loc(getattr(node, 'position', None))}"
+                        )
+                        return None
+            else:
+                tname = _object_arg_type_name(val)
+                self._echo_fn(
+                    f"WARNING: object(Argument {key} <{tname}>) An unnamed argument must be "
+                    f"either <object> or <list>, it is <{tname}>. "
+                    f"{self._loc(getattr(node, 'position', None))}"
+                )
+                return None
+        return OscObject(result)
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
         """Bind default values for any params not already set in child_ctx.dyn.
