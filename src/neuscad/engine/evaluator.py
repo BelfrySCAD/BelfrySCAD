@@ -5,11 +5,13 @@ Returns (manifold_body, id_to_node, colored_meshes) or raises EvalError.
 from __future__ import annotations
 import math
 import random
+from pathlib import Path
 from typing import Any, Optional
 from dataclasses import dataclass, field
 
 import manifold3d as m3d
 import numpy as np
+from fontTools.ttLib import TTFont
 from PySide6.QtGui import QColor
 
 from openscad_parser.ast import to_openscad
@@ -337,6 +339,77 @@ class OscObject:
 
     def __repr__(self):
         return f"OscObject({self.data!r})"
+
+
+_FONT_PATH = Path(__file__).parent.parent / "resources" / "fonts" / "LiberationSans-Regular.ttf"
+_default_font_cache: Optional[dict] = None
+
+
+def _load_default_font() -> dict:
+    """Lazily load the bundled Liberation Sans font and cache its tables.
+
+    `textmetrics()`/`fontmetrics()` always measure against this single
+    bundled font regardless of the requested `font=` — see docs/evaluator.md
+    for the rationale (real OpenSCAD resolves `font=` via fontconfig/CoreText,
+    which is out of scope here).
+    """
+    global _default_font_cache
+    if _default_font_cache is None:
+        font = TTFont(str(_FONT_PATH))
+        _default_font_cache = {
+            "cmap": font.getBestCmap(),
+            "hmtx": font["hmtx"],
+            "glyf": font["glyf"],
+            "units_per_em": font["head"].unitsPerEm,
+            "head": font["head"],
+            "hhea": font["hhea"],
+        }
+    return _default_font_cache
+
+
+def _measure_text(text: str, size: float, spacing: float) -> dict:
+    """Lay out `text` left-to-right and return its ink-bbox/advance metrics
+    in OpenSCAD units, scaled for `size` (see docs/evaluator.md for the
+    scale-factor and per-glyph layout derivation).
+
+    Returns a dict with `ascent`, `descent`, `ink_min_x`, `ink_max_x`,
+    `advance_x` — all `0` if `text` contains no measurable glyphs.
+    """
+    font = _load_default_font()
+    cmap, hmtx, glyf = font["cmap"], font["hmtx"], font["glyf"]
+    scale = size * (100 / 72) / font["units_per_em"]
+
+    pen_x = 0.0
+    ascent = descent = ink_min_x = ink_max_x = 0.0
+    has_ink = False
+    for ch in text:
+        gname = cmap.get(ord(ch))
+        if gname is None:
+            continue
+        advance, _lsb = hmtx[gname]
+        glyph = glyf[gname]
+        if glyph.numberOfContours != 0:
+            left = pen_x * scale + glyph.xMin * scale
+            right = pen_x * scale + glyph.xMax * scale
+            top = glyph.yMax * scale
+            bottom = glyph.yMin * scale
+            if not has_ink:
+                ink_min_x, ink_max_x, ascent, descent = left, right, top, bottom
+                has_ink = True
+            else:
+                ink_min_x = min(ink_min_x, left)
+                ink_max_x = max(ink_max_x, right)
+                ascent = max(ascent, top)
+                descent = min(descent, bottom)
+        pen_x += advance * spacing
+
+    return {
+        "ascent": ascent,
+        "descent": descent,
+        "ink_min_x": ink_min_x,
+        "ink_max_x": ink_max_x,
+        "advance_x": pen_x * scale,
+    }
 
 
 @dataclass
@@ -2004,6 +2077,10 @@ class Evaluator:
 
         if name == "object":
             return self._builtin_object(args, node)
+        if name == "textmetrics":
+            return self._builtin_textmetrics(args, node)
+        if name == "fontmetrics":
+            return self._builtin_fontmetrics(args, node)
 
         # Built-in math functions
         math_fns = {
@@ -2260,6 +2337,75 @@ class Evaluator:
                 )
                 return None
         return OscObject(result)
+
+    def _builtin_textmetrics(self, args: dict, node) -> OscObject:
+        """`textmetrics(text=.., size=.., halign=.., valign=.., spacing=..)`.
+
+        Measures `text` against the bundled Liberation Sans font (see
+        `_measure_text`) and returns an `OscObject` with `position`, `size`,
+        `ascent`, `descent`, `offset`, `advance` — matching real OpenSCAD's
+        key order and (for Liberation Sans) numeric values. `font`,
+        `direction`, `language`, `script` are accepted but unused; see
+        docs/evaluator.md for known gaps.
+        """
+        text = self._get_arg(args, 0, "text", "")
+        size = self._get_arg(args, 1, "size", 10)
+        halign = self._get_arg(args, None, "halign", "left")
+        valign = self._get_arg(args, None, "valign", "baseline")
+        spacing = self._get_arg(args, None, "spacing", 1)
+
+        m = _measure_text(text, size, spacing)
+        ascent, descent = m["ascent"], m["descent"]
+        advance_x = m["advance_x"]
+
+        offset_x = -{"left": 0.0, "center": 0.5, "right": 1.0}.get(halign, 0.0) * advance_x
+        offset_y = {
+            "top": -ascent,
+            "center": -(ascent + descent) / 2,
+            "baseline": 0.0,
+            "bottom": -descent,
+        }.get(valign, 0.0)
+
+        position = [offset_x + m["ink_min_x"], offset_y + descent]
+        size_vec = [m["ink_max_x"] - m["ink_min_x"], ascent - descent]
+
+        return OscObject({
+            "position": position,
+            "size": size_vec,
+            "ascent": ascent,
+            "descent": descent,
+            "offset": [offset_x, offset_y],
+            "advance": [advance_x, 0.0],
+        })
+
+    def _builtin_fontmetrics(self, args: dict, node) -> OscObject:
+        """`fontmetrics(size=.., font=..)` — global metrics of the bundled
+        Liberation Sans font, scaled for `size`. Returns a nested `OscObject`
+        with `nominal`/`max`/`interline`/`font`. `font=` is echoed back into
+        `font.family` for round-tripping but doesn't change the measurements
+        (see docs/evaluator.md for known gaps)."""
+        size = self._get_arg(args, 0, "size", 10)
+        font_name = self._get_arg(args, None, "font", "Liberation Sans")
+
+        font = _load_default_font()
+        head, hhea = font["head"], font["hhea"]
+        scale = size * (100 / 72) / font["units_per_em"]
+
+        return OscObject({
+            "nominal": OscObject({
+                "ascent": hhea.ascent * scale,
+                "descent": hhea.descent * scale,
+            }),
+            "max": OscObject({
+                "ascent": head.yMax * scale,
+                "descent": head.yMin * scale,
+            }),
+            "interline": (hhea.ascent - hhea.descent + hhea.lineGap) * scale,
+            "font": OscObject({
+                "family": font_name,
+                "style": "Regular",
+            }),
+        })
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
         """Bind default values for any params not already set in child_ctx.dyn.
