@@ -1742,6 +1742,10 @@ class TestRemainingBuiltins:
         _, lines = run("echo(lookup(5, [[0,0],[1,10]]));")
         assert lines == ["ECHO: 10"]
 
+    def test_lookup_empty_table_is_undef(self):
+        _, lines = run("echo(lookup(5, []));")
+        assert lines == ["ECHO: undef"]
+
     def test_children_count(self):
         src = "module m() { echo($children); } m() { cube(1); sphere(1); }"
         _, lines = run(src)

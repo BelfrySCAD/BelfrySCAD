@@ -172,6 +172,7 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - **`ord()`** of a multi-character string returns the code point of its *first* character (`ord("ab")` → `97`), not `undef`.
 - **Named args to built-in math functions** map to positional order as fallback (e.g. `abs(x=-3)` → `3`): positional args tried first, then named args in declaration order.
 - **`parent_module()`** returns `undef` at the top level (not `""`).
+- **`lookup()`** on an empty table (`lookup(5, [])`) returns `undef`, not `0`.
 - `search()` match modes depend on the first argument's type:
   - **String**: character array, each character searched independently. `num_returns=1` (default) drops not-found characters; `num_returns=0` includes them as `[]`. Only valid when the vector is also a string.
   - **List**: each element is searched for independently. If an element is itself a list/vector, it's compared via **direct equality** against each whole `vector[i]` entry (`index_col` is ignored) — correct idiom for finding a string in a list of strings (`search(["foo"], ["foo","bar","baz"])` → `[0]`) and for BOSL2's `in_list(v, [UP,RIGHT,BACK])`. If an element is a scalar, it's compared against `vector[i][index_col]` (or `vector[i]` if not a list).

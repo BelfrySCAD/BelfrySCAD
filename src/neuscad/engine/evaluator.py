@@ -2042,7 +2042,7 @@ class Evaluator:
     def _builtin_lookup(self, key, table):
         """Linear interpolation lookup in a [[key, value], ...] table."""
         if not table:
-            return 0
+            return None
         pairs = sorted(table, key=lambda p: p[0])
         if key <= pairs[0][0]:
             return pairs[0][1]
