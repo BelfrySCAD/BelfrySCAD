@@ -253,6 +253,23 @@ class TestBuiltinFunctions:
         _, lines = run("echo(cos(0));")
         assert lines == ["ECHO: 1"]
 
+    def test_sin_cos_tan_exact_at_90_degree_multiples(self):
+        # Real OpenSCAD special-cases exact multiples of 90 degrees to avoid
+        # floating-point noise (e.g. cos(90) -> 6.12e-17, tan(90) -> 1.63e+16).
+        _, lines = run(
+            "echo(sin(180), cos(90), cos(180), tan(90), tan(270), "
+            "sin(360), sin(-90), tan(180), sin(450), cos(-270));"
+        )
+        assert lines == ["ECHO: 0, 0, -1, inf, -inf, 0, -1, 0, 1, 0"]
+
+    def test_sin_cos_tan_near_90_degree_multiple_is_not_special_cased(self):
+        _, lines = run("echo(cos(90.0000001));")
+        assert float(lines[0].split(": ")[1]) == approx(-1.74533e-9)
+
+    def test_cos_of_infinity_is_nan(self):
+        _, lines = run("echo(cos(1/0));")
+        assert lines == ["ECHO: nan"]
+
     def test_len(self):
         _, lines = run("echo(len([1,2,3]));")
         assert lines == ["ECHO: 3"]

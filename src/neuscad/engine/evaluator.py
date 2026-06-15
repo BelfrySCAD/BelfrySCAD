@@ -1878,9 +1878,9 @@ class Evaluator:
             "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
             "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),
             "exp": math.exp,
-            "sin": lambda x: math.sin(math.radians(x)),
-            "cos": lambda x: math.cos(math.radians(x)),
-            "tan": lambda x: math.tan(math.radians(x)),
+            "sin": self._builtin_sin,
+            "cos": self._builtin_cos,
+            "tan": self._builtin_tan,
             "asin": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.asin(x)),
             "acos": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.acos(x)),
             "atan": lambda x: math.degrees(math.atan(x)),
@@ -1973,6 +1973,32 @@ class Evaluator:
             # 0 ** negative is +inf in OpenSCAD; Python's pow()/math.pow() raise.
             return float('inf')
         return pow(a, b)
+
+    # At exact multiples of 90 degrees, sin/cos/tan use exact table values
+    # instead of math.sin/cos/tan(radians(x)), which accumulate floating-point
+    # noise (e.g. cos(90) -> 6.12e-17, tan(90) -> 1.63e+16) — matching real
+    # OpenSCAD's degree-based trig, which special-cases these angles.
+    _SIN_90 = (0.0, 1.0, 0.0, -1.0)
+    _COS_90 = (1.0, 0.0, -1.0, 0.0)
+    _TAN_90 = (0.0, math.inf, 0.0, -math.inf)
+
+    def _deg_trig(self, x, table, fallback):
+        if math.isnan(x) or math.isinf(x):
+            return float('nan')
+        n = x / 90.0
+        rn = round(n)
+        if rn == n:
+            return table[int(rn) % 4]
+        return fallback(math.radians(x))
+
+    def _builtin_sin(self, x):
+        return self._deg_trig(x, self._SIN_90, math.sin)
+
+    def _builtin_cos(self, x):
+        return self._deg_trig(x, self._COS_90, math.cos)
+
+    def _builtin_tan(self, x):
+        return self._deg_trig(x, self._TAN_90, math.tan)
 
     def _builtin_cross(self, a, b):
         if len(a) == 2 and len(b) == 2:
