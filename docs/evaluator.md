@@ -82,7 +82,7 @@ Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins d
 
 **Constants**: `PI`
 
-**Other**: `version`, `version_num`, `parent_module` (stub)
+**Other**: `version`, `version_num`, `parent_module`; **`$parent_modules`** (int, the number of parent module call-stack frames at the point a module's body is entered — 0 at top level, 1 inside one module, etc.)
 
 **`surface(file, center=false, invert=false)`**: loads a heightmap from a `.dat` text file or PNG and builds a closed solid mesh. `.dat`: whitespace-separated number matrix; `#`-prefixed and blank lines ignored; first row = highest Y (OpenSCAD convention). PNG: linear luminance `Y = 0.2126R + 0.7152G + 0.0722B` scaled to 0–100; `invert=true` flips the mapping. `center=true` centers on X/Y; bottom face always at z=0. Requires Pillow for images.
 
@@ -178,7 +178,7 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - **`cross()`** supports both the 3D cross product (returns a vector) and the 2D cross product `cross([a,b],[c,d])` → `a*d - b*c` (returns a scalar). Mismatched/other dimensions are `undef`.
 - **`ord()`** of a multi-character string returns the code point of its *first* character (`ord("ab")` → `97`), not `undef`.
 - **Named args to built-in math functions** map to positional order as fallback (e.g. `abs(x=-3)` → `3`): positional args tried first, then named args in declaration order.
-- **`parent_module()`** returns `undef` at the top level (not `""`).
+- **`parent_module(idx)`** looks up `_call_stack` for only "module"-type frames (skipping function calls), reverses them, and indexes by `idx` (0 = current module, 1 = its caller, etc.). Returns `undef` when `idx` is out of range. Integer conversion is applied to `idx` since numeric literals arrive as floats from the evaluator.
 - **`lookup()`** on an empty table (`lookup(5, [])`) returns `undef`, not `0`.
 - `search()` match modes depend on the first argument's type:
   - **String**: character array, each character searched independently. `num_returns=1` (default) drops not-found characters; `num_returns=0` includes them as `[]`. Only valid when the vector is also a string.

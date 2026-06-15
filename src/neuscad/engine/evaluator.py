@@ -879,7 +879,7 @@ class EvalContext:
     # Lexical scope (from build_scopes)
     scope: Any
     # Dynamic variables ($fn, $fa, $fs, $t, etc.) — call-chain inherited
-    dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0})
+    dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_modules": 0})
     # Positions of assignments stored in dyn (for double-assignment warnings)
     dyn_positions: dict[str, Any] = field(default_factory=dict)
     # Optional color propagated from parent color() call
@@ -1245,6 +1245,7 @@ class Evaluator:
         name = call.name.name
         call_pos = getattr(call, 'position', None)
         decl_pos = getattr(decl, 'position', None)
+        child_ctx.dyn["$parent_modules"] = sum(1 for e in self._call_stack if e[0] == "module")
         self._call_stack.append(("module", name, call_pos, decl_pos))
         self._frame_ctxs.append(child_ctx)
         try:
@@ -2631,7 +2632,7 @@ class Evaluator:
             "lookup": self._builtin_lookup,
             "version": lambda: [2025, 1, 1],
             "version_num": lambda: 20250101,
-            "parent_module": lambda idx=0: None,
+            "parent_module": self._builtin_parent_module,
         }
         if name and name in math_fns:
             positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
@@ -2787,6 +2788,12 @@ class Evaluator:
                 return matches
             else:
                 return matches[:num_returns]
+
+    def _builtin_parent_module(self, idx=0):
+        """Return the name of the module idx levels up from the current module."""
+        modules = [e[1] for e in self._call_stack if e[0] == "module"]
+        rev_idx = len(modules) - 1 - int(idx)
+        return modules[rev_idx] if 0 <= rev_idx < len(modules) else None
 
     def _builtin_lookup(self, key, table):
         """Linear interpolation lookup in a [[key, value], ...] table."""
