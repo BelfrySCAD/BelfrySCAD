@@ -1708,6 +1708,58 @@ class Test2DAndExtrusion:
         bodies, _ = run(src)
         assert abs(bodies[0].body.volume() - 8.0) < 0.01
 
+    def test_roof_square_pyramid(self):
+        # roof() over a square produces a hip-roof/pyramid: apex height ==
+        # inradius (half the square's side), bbox close to (0,0,0)-(10,10,5)
+        src = "roof() square([10,10]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert abs(bb[5] - 5.0) < 0.5
+        expected_vol = 10 * 10 * 5 / 3  # pyramid: base_area * height / 3
+        assert abs(bodies[0].body.volume() - expected_vol) / expected_vol < 0.1
+
+    def test_roof_circle_cone(self):
+        # roof() over a circle produces a cone-like solid; apex height ==
+        # circle radius.
+        src = "roof() circle(5);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert abs(bb[5] - 5.0) < 0.5
+        assert bodies[0].body.volume() > 0
+
+    def test_roof_straight_matches_voronoi_for_convex(self):
+        # for a convex shape, method="straight" and the default "voronoi"
+        # produce equivalent results.
+        bodies_v, _ = run("roof() square([10,10]);")
+        bodies_s, _ = run('roof(method="straight") square([10,10]);')
+        assert bodies_v[0].body.bounding_box() == bodies_s[0].body.bounding_box()
+        assert abs(bodies_v[0].body.volume() - bodies_s[0].body.volume()) < 1e-6
+
+    def test_roof_no_children_returns_none(self):
+        bodies, _ = run("roof();")
+        assert bodies == []
+
+    def test_roof_concave_polygon(self):
+        # L-shaped polygon with a reflex corner — should still produce a
+        # valid, non-empty manifold whose apex height is bounded by the
+        # half-width of the narrowest leg (4 units wide -> height <= 2-ish).
+        src = "roof() polygon([[0,0],[10,0],[10,4],[4,4],[4,10],[0,10]]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert 0 < bb[5] < 3.0
+        assert bodies[0].body.volume() > 0
+
+    def test_roof_unknown_method_warns(self):
+        bodies, echoes = run('roof(method="bogus") square([10,10]);')
+        assert any("Unknown roof method 'bogus'" in e for e in echoes)
+        assert len(bodies) == 1
+
 
 # ---------------------------------------------------------------------------
 # offset, projection, intersection_for, lookup, $children, ModularAssert

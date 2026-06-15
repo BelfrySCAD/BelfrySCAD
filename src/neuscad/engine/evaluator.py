@@ -95,6 +95,29 @@ def _vec_add(a, b):
         return None
 
 
+def _point_seg_dist(p, a, b):
+    """Euclidean distance from 2D point `p` to segment `a`-`b`."""
+    ab = b - a
+    denom = np.dot(ab, ab)
+    t = np.dot(p - a, ab) / denom if denom else 0.0
+    t = max(0.0, min(1.0, t))
+    return float(np.linalg.norm(p - (a + t * ab)))
+
+
+def _point_in_poly_evenodd(p, edges):
+    """Even-odd ray-casting point-in-polygon test against a flat list of (a, b) edges."""
+    x, y = p
+    inside = False
+    for a, b in edges:
+        x1, y1 = a
+        x2, y2 = b
+        if (y1 > y) != (y2 > y):
+            xint = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < xint:
+                inside = not inside
+    return inside
+
+
 def _vec_sub(a, b):
     """OpenSCAD `-` between two values, recursing element-wise into nested lists.
 
@@ -704,6 +727,8 @@ class Evaluator:
             return self._builtin_linear_extrude(args, node, ctx)
         if name == "rotate_extrude":
             return self._builtin_rotate_extrude(args, node, ctx)
+        if name == "roof":
+            return self._builtin_roof(args, node, ctx)
         if name == "render":
             # render() is a display hint; just pass through children
             children = self._eval_children(node.children, ctx)
@@ -1338,6 +1363,49 @@ class Evaluator:
             return self._tag(body, node, ctx)
         except Exception as e:
             self.error(f"rotate_extrude: {e}", node)
+            return None
+
+    def _builtin_roof(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        children = self._eval_children(node.children, ctx)
+        cs = self._to_cross_section(children)
+        if cs is None:
+            return None
+        method = self._get_arg(args, None, "method", "voronoi")
+        if method not in ("voronoi", "straight"):
+            self._echo_fn(f"WARNING: Unknown roof method '{method}'. Using 'voronoi'.")
+            method = "voronoi"
+        try:
+            polys = cs.to_polygons()
+            if not polys:
+                return None
+            edges = []
+            for poly in polys:
+                n = len(poly)
+                for i in range(n):
+                    edges.append((np.asarray(poly[i], dtype=np.float64), np.asarray(poly[(i + 1) % n], dtype=np.float64)))
+
+            minx, miny, maxx, maxy = cs.bounds()
+            width, height = maxx - minx, maxy - miny
+            z_max = min(width, height) / 2 * 1.02
+
+            edge_length = max(width, height, z_max) / 10
+            eps = edge_length / 2
+
+            def sdf(x, y, z):
+                p = np.array([x, y])
+                d = min(_point_seg_dist(p, a, b) for a, b in edges)
+                inside = _point_in_poly_evenodd(p, edges)
+                d2 = d if inside else -d
+                return d2 - z
+
+            bounds = [minx - eps, miny - eps, 0.0, maxx + eps, maxy + eps, z_max + eps]
+            body = m3d.Manifold.level_set(sdf, bounds, edge_length)
+            if body.is_empty():
+                return None
+            body = body.simplify(edge_length * 0.05)
+            return self._tag(body, node, ctx)
+        except Exception as e:
+            self.error(f"roof: {e}", node)
             return None
 
     def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:

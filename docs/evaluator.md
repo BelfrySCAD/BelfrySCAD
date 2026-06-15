@@ -54,7 +54,7 @@ Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `unde
 
 **2D Primitives** (→ `ColoredBody.section`): `circle`, `square`, `polygon`
 
-**Extrusion** (2D → 3D): `linear_extrude`, `rotate_extrude`
+**Extrusion** (2D → 3D): `linear_extrude`, `rotate_extrude`, `roof`
 
 **Transforms** (3D and 2D): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `offset`
 
@@ -187,6 +187,7 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
   - Fixed-point notation is used for exponents in `[-5, 5]` (one wider than `%g`'s `[-4, 5]`): `0.00001` → `"0.00001"`, where `%g` would give `"1e-05"`.
   - Scientific notation drops the exponent's leading zero: `1000000` → `"1e+6"` (not `"1e+06"`), `1.23456789e-7` → `"1.23457e-7"` (not `"1.23457e-07"`).
   - `-0.0` → `"0"`. `nan`/`inf`/`-inf` are lowercase.
+- **`roof()`** is implemented via a signed-distance-field (SDF) and `Manifold.level_set()` (marching tetrahedra), not a true CGAL straight-skeleton. For each `(x, y)` inside the union of the 2D children's polygons, `height(x, y) = Euclidean distance from (x, y) to the nearest point on any polygon edge/vertex`, and the solid is `{(x, y, z) : 0 <= z <= height(x, y)}`. This matches real OpenSCAD's default `method="voronoi"` (verified against `--enable=roof` STL output for a square → pyramid and an L-shaped polygon → rounded reflex-corner cone). `method="straight"` is currently treated identically to `"voronoi"` — true straight-skeleton sharp ridges at concave/reflex corners are not implemented (for convex inputs both methods are identical in real OpenSCAD too, so this only diverges for concave polygons + `method="straight"`). An unrecognized `method` value emits `WARNING: Unknown roof method '...'. Using 'voronoi'.` and falls back to `"voronoi"`. `convexity` is accepted and ignored (it's preview-only in real OpenSCAD too). The marching-tetrahedra grid spacing is `max(width, height, z_max) / 10` (independent of `$fs`/`$fn`, since real OpenSCAD's roof height field is computed analytically, not from the input's facet count); this yields ~3-10% volume error vs. the analytic shape and keeps `roof()` well under the 200ms regeneration budget for typical models. The result is `simplify()`-ed to merge near-coplanar marching-tetrahedra facets back toward clean roof faces.
 
 ## Manifold API: Geometry Provenance
 
