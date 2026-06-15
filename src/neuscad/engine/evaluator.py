@@ -1778,7 +1778,9 @@ class Evaluator:
         math_fns = {
             "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
             "ceil": math.ceil, "floor": math.floor,
-            "round": round,
+            # OpenSCAD rounds half away from zero (round(2.5)==3, round(-2.5)==-3),
+            # unlike Python's round-half-to-even (round(2.5)==2).
+            "round": lambda x: math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5),
             "sqrt": lambda x: float('nan') if x < 0 else math.sqrt(x),
             "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
             "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),
@@ -1790,18 +1792,17 @@ class Evaluator:
             "acos": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.acos(x)),
             "atan": lambda x: math.degrees(math.atan(x)),
             "atan2": lambda y, x: math.degrees(math.atan2(y, x)),
-            "max": max, "min": min,
-            "pow": lambda a, b: float('nan') if a < 0 and not float(b).is_integer() else pow(a, b),
+            "max": self._builtin_max, "min": self._builtin_min,
+            "pow": self._builtin_pow,
             "norm": lambda v: math.sqrt(sum(x*x for x in v)),
-            "cross": lambda a, b: [
-                a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]
-            ],
+            "cross": self._builtin_cross,
             "rands": self._builtin_rands,
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": lambda x: len(x) if isinstance(x, (list, str)) else None,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
             "chr": lambda x: chr(int(x)),
-            "ord": lambda s: ord(s) if isinstance(s, str) and len(s) == 1 else None,
+            # ord() of a multi-character string returns the code of its first character.
+            "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
             "is_undef": lambda x: x is None,
             "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool),
             "is_bool": lambda x: isinstance(x, bool),
@@ -1838,6 +1839,39 @@ class Evaluator:
             self.error(f"undefined function '{name}'", node)
 
         return None
+
+    def _builtin_minmax(self, op, args):
+        """Shared logic for OpenSCAD's `min`/`max`.
+
+        A single vector argument returns `op` of its elements; multiple
+        arguments must all be scalars (mixing in a vector is `undef`, like
+        real OpenSCAD); a single scalar argument returns itself.
+        """
+        if len(args) == 1:
+            v = args[0]
+            return op(v) if isinstance(v, list) else v
+        if any(isinstance(a, list) for a in args):
+            return None
+        return op(args)
+
+    def _builtin_max(self, *args):
+        return self._builtin_minmax(max, args)
+
+    def _builtin_min(self, *args):
+        return self._builtin_minmax(min, args)
+
+    def _builtin_pow(self, a, b):
+        if a < 0 and not float(b).is_integer():
+            return float('nan')
+        if a == 0 and b < 0:
+            # 0 ** negative is +inf in OpenSCAD; Python's pow()/math.pow() raise.
+            return float('inf')
+        return pow(a, b)
+
+    def _builtin_cross(self, a, b):
+        if len(a) == 2 and len(b) == 2:
+            return a[0]*b[1] - a[1]*b[0]
+        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
 
     def _builtin_rands(self, minval, maxval, n, seed=None):
         if seed is not None:

@@ -213,6 +213,12 @@ class TestBuiltinFunctions:
         _, lines = run("echo(round(3.5));")
         assert lines == ["ECHO: 4"]
 
+    def test_round_half_away_from_zero(self):
+        # OpenSCAD rounds .5 away from zero, unlike Python's round-half-to-even
+        # (Python's round(2.5) == 2 and round(-0.5) == 0).
+        _, lines = run("echo(round(2.5), round(-2.5), round(0.5), round(-0.5));")
+        assert lines == ["ECHO: 3, -3, 1, -1"]
+
     def test_min(self):
         _, lines = run("echo(min(5, 3, 8));")
         assert lines == ["ECHO: 3"]
@@ -220,6 +226,18 @@ class TestBuiltinFunctions:
     def test_max(self):
         _, lines = run("echo(max(5, 3, 8));")
         assert lines == ["ECHO: 8"]
+
+    def test_min_single_scalar(self):
+        # A single non-list argument is returned as-is.
+        _, lines = run("echo(min(5));")
+        assert lines == ["ECHO: 5"]
+
+    def test_min_max_multiple_vector_args_is_undef(self):
+        # Real OpenSCAD only supports a single vector argument (returns
+        # min/max of its elements) or multiple scalar arguments; mixing in
+        # more than one vector is undef.
+        _, lines = run("echo(min([1,5],[3,2]), max([1,5],[3,2]));")
+        assert lines == ["ECHO: undef, undef"]
 
     def test_sin(self):
         _, lines = run("echo(sin(90));")
@@ -301,6 +319,11 @@ class TestBuiltinFunctions:
         _, lines = run("echo(pow(3, 3));")
         assert lines == ["ECHO: 27"]
 
+    def test_pow_zero_negative_exponent(self):
+        # 0 ** negative is +inf in OpenSCAD; Python's pow()/math.pow() raise.
+        _, lines = run("echo(pow(0, -1));")
+        assert lines == ["ECHO: inf"]
+
     def test_norm(self):
         _, lines = run("echo(norm([3, 4]));")
         assert float(lines[0].split(": ")[1]) == approx(5.0)
@@ -309,6 +332,11 @@ class TestBuiltinFunctions:
         _, lines = run("echo(cross([1,0,0],[0,1,0]));")
         assert lines == ["ECHO: [0, 0, 1]"]
 
+    def test_cross_2d(self):
+        # 2D cross product returns a scalar: a[0]*b[1] - a[1]*b[0]
+        _, lines = run("echo(cross([1,2],[3,4]));")
+        assert lines == ["ECHO: -2"]
+
     def test_chr(self):
         _, lines = run("echo(chr(65));")
         assert lines == ['ECHO: "A"']
@@ -316,6 +344,10 @@ class TestBuiltinFunctions:
     def test_ord(self):
         _, lines = run('echo(ord("A"));')
         assert lines == ["ECHO: 65"]
+
+    def test_ord_multichar_uses_first_char(self):
+        _, lines = run('echo(ord("ab"));')
+        assert lines == ["ECHO: 97"]
 
 
 # ---------------------------------------------------------------------------

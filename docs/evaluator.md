@@ -155,8 +155,12 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - **List × list** multiplication (`_matmul()`) implements OpenSCAD's vector/matrix algebra: vector·vector → scalar dot product (`[1,2,3]*[4,5,6]` → `32`), matrix·vector and vector·matrix → vector, matrix·matrix → matrix. Dimension mismatches return `undef`.
 - **List / scalar** division recurses into nested lists (`_div_scale()`), mirroring `_scale()`: `[2,4,6]/2` → `[1,2,3]`. `scalar/list` and `list/list` are `undef`.
 - **`let(a=expr1, b=expr2, ...)`** bindings are sequential: each `exprN` is evaluated with the *previous* bindings in the same `let` already visible, so `let(a=1, b=a+1) b` → `2`. (Two bindings with the *same* name in one `let` are a separate, unhandled edge case — real OpenSCAD keeps the first and warns "Ignoring duplicate variable assignment".)
-- **Division by zero** returns IEEE 754 values: `1/0` → `inf`, `-1/0` → `-inf`, `0/0` → `nan`. Math domain errors follow suit: `sqrt(-1)` → `nan`, `ln(0)` → `-inf`, `asin(2)` → `nan`.
+- **Division by zero** returns IEEE 754 values: `1/0` → `inf`, `-1/0` → `-inf`, `0/0` → `nan`. Math domain errors follow suit: `sqrt(-1)` → `nan`, `ln(0)` → `-inf`, `asin(2)` → `nan`. `pow(0, -1)` → `inf` likewise (`_builtin_pow()` special-cases `0 ** negative`, since Python's `pow()`/`math.pow()` raise instead of returning `inf`).
 - **Negative string/list indexing** returns `undef`, not Python wraparound. `"hello"[-1]` → `undef`. `PrimaryIndex` rejects any `i < 0`.
+- **`round()`** rounds half away from zero (`round(2.5)` → `3`, `round(-2.5)` → `-3`), via `math.floor(x+0.5)`/`math.ceil(x-0.5)` — NOT Python's `round()`, which rounds half to even (`round(2.5)` → `2`).
+- **`min`/`max`** (`_builtin_minmax()`): a single list argument returns the min/max of its elements; a single scalar argument returns itself; multiple arguments must all be scalars — mixing in a vector (e.g. `min([1,5],[3,2])`) is `undef`, matching real OpenSCAD (which does *not* do element-wise min/max across vector arguments).
+- **`cross()`** supports both the 3D cross product (returns a vector) and the 2D cross product `cross([a,b],[c,d])` → `a*d - b*c` (returns a scalar). Mismatched/other dimensions are `undef`.
+- **`ord()`** of a multi-character string returns the code point of its *first* character (`ord("ab")` → `97`), not `undef`.
 - **Named args to built-in math functions** map to positional order as fallback (e.g. `abs(x=-3)` → `3`): positional args tried first, then named args in declaration order.
 - **`parent_module()`** returns `undef` at the top level (not `""`).
 - `search()` match modes depend on the first argument's type:
