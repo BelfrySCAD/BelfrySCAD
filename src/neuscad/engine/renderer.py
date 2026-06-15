@@ -32,13 +32,17 @@ in vec3 v_normal;
 in vec3 v_world_pos;
 uniform vec4 object_color;
 uniform vec3 light_dir;
+uniform bool flat_preview;
 out vec4 fragColor;
 void main() {
-    if (!gl_FrontFacing) {
-        fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-        return;
-    }
     vec3 n = normalize(v_normal);
+    if (!gl_FrontFacing) {
+        if (!flat_preview) {
+            fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+            return;
+        }
+        n = -n;
+    }
     float diff_key  = max(dot(n, normalize(light_dir)), 0.0);
     float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
     vec3 col = object_color.rgb;
@@ -132,7 +136,8 @@ class MeshBuffer:
                  cpu_v0: np.ndarray, cpu_v1: np.ndarray, cpu_v2: np.ndarray,
                  tri_ids: np.ndarray,
                  edge_vbo: Optional[mgl.Buffer] = None,
-                 edge_vao: Optional[mgl.VertexArray] = None):
+                 edge_vao: Optional[mgl.VertexArray] = None,
+                 flat_preview: bool = False):
         self.ctx = ctx
         self.vbo = vbo
         self.ibo = ibo
@@ -146,6 +151,7 @@ class MeshBuffer:
         self.original_ids: set[int] = set(int(x) for x in tri_ids)
         self.edge_vbo = edge_vbo
         self.edge_vao = edge_vao
+        self.flat_preview = flat_preview
 
 
 class SceneRenderer:
@@ -275,7 +281,8 @@ class SceneRenderer:
         color = cb.color if cb.color is not None else self._default_color
         return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
-                          tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao)
+                          tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao,
+                          flat_preview=cb.flat_preview)
 
     def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0):
         if self._ctx is None or self._prog is None:
@@ -342,6 +349,7 @@ class SceneRenderer:
             self._prog["model"].write(buf_model.T.tobytes())
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
+            self._prog["flat_preview"].value = buf.flat_preview
             buf.vao.render()
             buf_models.append(buf_model)
 

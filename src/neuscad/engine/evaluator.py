@@ -121,6 +121,170 @@ def _point_in_poly_evenodd(p, edges):
     return inside
 
 
+# ---------------------------------------------------------------------------
+# Straight-skeleton roof() helpers
+# ---------------------------------------------------------------------------
+
+_ROOF_MITER_LIMIT = 1e5
+
+
+def _ccw_polygon(poly: np.ndarray) -> np.ndarray:
+    """Return `poly` (Nx2) reordered to counter-clockwise winding."""
+    n = len(poly)
+    area2 = sum(poly[k][0] * poly[(k + 1) % n][1] - poly[(k + 1) % n][0] * poly[k][1] for k in range(n))
+    return poly[::-1].copy() if area2 < 0 else poly
+
+
+def _ear_clip(poly: np.ndarray) -> list[tuple[int, int, int]]:
+    """Ear-clipping triangulation of a simple CCW polygon (may be concave).
+
+    Returns CCW index triples into `poly`. Raises RuntimeError if no ear can
+    be found (degenerate/self-intersecting input).
+    """
+    n = len(poly)
+    idx = list(range(n))
+
+    def is_convex(a, b, c):
+        ax, ay = poly[a]
+        bx, by = poly[b]
+        cx, cy = poly[c]
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > 0
+
+    def point_in_tri(p, a, b, c):
+        def sign(p1, p2, p3):
+            return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
+        d1, d2, d3 = sign(p, a, b), sign(p, b, c), sign(p, c, a)
+        return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+
+    tris = []
+    while len(idx) > 3:
+        n = len(idx)
+        for i in range(n):
+            a, b, c = idx[(i - 1) % n], idx[i], idx[(i + 1) % n]
+            if not is_convex(a, b, c):
+                continue
+            if any(point_in_tri(poly[j], poly[a], poly[b], poly[c]) for j in idx if j not in (a, b, c)):
+                continue
+            tris.append((a, b, c))
+            idx.pop(i)
+            break
+        else:
+            raise RuntimeError("ear clipping failed")
+    tris.append((idx[0], idx[1], idx[2]))
+    return tris
+
+
+def _miter_vertex_velocities(poly: np.ndarray) -> np.ndarray:
+    """Per-vertex velocity under `offset(-d, Miter)`: moving `poly[k]` by
+    `d * v_k` reproduces the mitered inward offset by `d`.
+    """
+    n = len(poly)
+    vel = np.zeros((n, 2))
+    for k in range(n):
+        prev_dir = poly[k] - poly[(k - 1) % n]
+        next_dir = poly[(k + 1) % n] - poly[k]
+        prev_dir = prev_dir / np.linalg.norm(prev_dir)
+        next_dir = next_dir / np.linalg.norm(next_dir)
+        n1 = np.array([-prev_dir[1], prev_dir[0]])
+        n2 = np.array([-next_dir[1], next_dir[0]])
+        denom = 1 + np.dot(n1, n2)
+        vel[k] = (n1 + n2) / denom
+    return vel
+
+
+def _offset_collapse_distance(cs: m3d.CrossSection, d_hi: float, tol: float) -> float:
+    """Binary search for the largest `d` in `[0, d_hi]` where the mitered
+    inward offset of `cs` by `d` still has positive area."""
+    lo, hi = 0.0, d_hi
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        area = cs.offset(-mid, m3d.JoinType.Miter, _ROOF_MITER_LIMIT).area()
+        if area > tol:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def _offset_is_stable(cs: m3d.CrossSection, d_max: float, n: int) -> bool:
+    """True if the mitered offset of `cs` stays a single `n`-vertex polygon
+    for a range of distances up to `d_max` (i.e. no intermediate
+    collapse/split events)."""
+    for f in (0.25, 0.5, 0.75, 0.9):
+        polys = cs.offset(-d_max * f, m3d.JoinType.Miter, _ROOF_MITER_LIMIT).to_polygons()
+        if len(polys) != 1 or len(polys[0]) != n:
+            return False
+    return True
+
+
+def _skeleton_roof(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
+    """Build an exact straight-skeleton roof for a simple polygon whose
+    mitered offset collapses to a point/ridge with no intermediate topology
+    events. Returns None if `cs` doesn't qualify (multi-contour, degenerate,
+    or an unstable/multi-event collapse) or mesh construction fails.
+    """
+    try:
+        polys = cs.to_polygons()
+        if len(polys) != 1:
+            return None
+        p0 = _ccw_polygon(np.asarray(polys[0], dtype=np.float64))
+        n = len(p0)
+        if n < 3:
+            return None
+
+        minx, miny, maxx, maxy = cs.bounds()
+        d_hi = max(maxx - minx, maxy - miny)
+        if d_hi <= 0:
+            return None
+        tol = (d_hi ** 2) * 1e-12
+        d_max = _offset_collapse_distance(cs, d_hi, tol)
+        if d_max <= 0:
+            return None
+        if not _offset_is_stable(cs, d_max, n):
+            return None
+
+        vel = _miter_vertex_velocities(p0)
+        p1 = p0 + d_max * vel
+
+        raw_verts = [(p[0], p[1], 0.0) for p in p0] + [(p[0], p[1], d_max) for p in p1]
+        merge_tol = 1e-4
+        final_verts: list[tuple[float, float, float]] = []
+        idx_map: dict[int, int] = {}
+        for i, v in enumerate(raw_verts):
+            matched = None
+            for ridx, rv in enumerate(final_verts):
+                if abs(rv[0] - v[0]) < merge_tol and abs(rv[1] - v[1]) < merge_tol and abs(rv[2] - v[2]) < merge_tol:
+                    matched = ridx
+                    break
+            if matched is None:
+                matched = len(final_verts)
+                final_verts.append(v)
+            idx_map[i] = matched
+
+        tris = []
+        for (i, j, k) in _ear_clip(p0):
+            tris.append((idx_map[k], idx_map[j], idx_map[i]))
+        for k in range(n):
+            k1 = (k + 1) % n
+            a, b, c, d = idx_map[k], idx_map[k1], idx_map[n + k1], idx_map[n + k]
+            if c == d:
+                tris.append((a, b, c))
+            else:
+                tris.append((a, b, c))
+                tris.append((a, c, d))
+
+        mesh = m3d.Mesh(
+            vert_properties=np.array(final_verts, dtype=np.float32),
+            tri_verts=np.array(tris, dtype=np.uint32),
+        )
+        body = m3d.Manifold(mesh)
+        if body.status() != m3d.Error.NoError or body.is_empty():
+            return None
+        return body
+    except Exception:
+        return None
+
+
 def _vec_sub(a, b):
     """OpenSCAD `-` between two values, recursing element-wise into nested lists.
 
@@ -493,6 +657,25 @@ class ColoredBody:
     body: Optional[m3d.Manifold] = None
     color: Optional[tuple[float, float, float, float]] = None  # RGBA 0-1
     section: Optional[m3d.CrossSection] = None  # set for 2D primitives
+    flat_preview: bool = False  # thin extrusion standing in for a 2D shape (see to_renderable_bodies)
+
+
+# Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
+# in the 3D viewport — the renderer/exporter only know how to handle Manifold
+# meshes, and real OpenSCAD's flat 2D preview has no Manifold equivalent.
+_TOP_LEVEL_2D_HEIGHT = 1e-3
+
+
+def to_renderable_bodies(bodies: list[ColoredBody]) -> list[ColoredBody]:
+    """Convert top-level 2D-only results (`body is None`, `section` set —
+    e.g. `circle();`) into thin-extruded Manifolds, so the renderer/exporter
+    (which only handle Manifold meshes) can display them. 3D bodies pass
+    through unchanged."""
+    return [
+        ColoredBody(body=m3d.Manifold.extrude(cb.section, _TOP_LEVEL_2D_HEIGHT), color=cb.color, flat_preview=True)
+        if cb.body is None and cb.section is not None else cb
+        for cb in bodies
+    ]
 
 
 @dataclass
@@ -1620,38 +1803,50 @@ class Evaluator:
             self._echo_fn(f"WARNING: Unknown roof method '{method}'. Using 'voronoi'.")
             method = "voronoi"
         try:
-            polys = cs.to_polygons()
-            if not polys:
+            if not cs.to_polygons():
                 return None
-            edges = []
-            for poly in polys:
-                n = len(poly)
-                for i in range(n):
-                    edges.append((np.asarray(poly[i], dtype=np.float64), np.asarray(poly[(i + 1) % n], dtype=np.float64)))
-
-            minx, miny, maxx, maxy = cs.bounds()
-            width, height = maxx - minx, maxy - miny
-            z_max = min(width, height) / 2 * 1.02
-
-            edge_length = max(width, height, z_max) / 10
-            eps = edge_length / 2
-
-            def sdf(x, y, z):
-                p = np.array([x, y])
-                d = min(_point_seg_dist(p, a, b) for a, b in edges)
-                inside = _point_in_poly_evenodd(p, edges)
-                d2 = d if inside else -d
-                return d2 - z
-
-            bounds = [minx - eps, miny - eps, 0.0, maxx + eps, maxy + eps, z_max + eps]
-            body = m3d.Manifold.level_set(sdf, bounds, edge_length)
-            if body.is_empty():
+            body = _skeleton_roof(cs)
+            if body is None:
+                body = self._roof_sdf_fallback(cs)
+            if body is None:
                 return None
-            body = body.simplify(edge_length * 0.05)
             return self._tag(body, node, ctx)
         except Exception as e:
             self.error(f"roof: {e}", node)
             return None
+
+    def _roof_sdf_fallback(self, cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
+        """Signed-distance-field/`level_set` approximation of a roof, used
+        when `_skeleton_roof` doesn't apply (holes, multi-contour, or a
+        mitered-offset collapse with intermediate topology events)."""
+        polys = cs.to_polygons()
+        if not polys:
+            return None
+        edges = []
+        for poly in polys:
+            n = len(poly)
+            for i in range(n):
+                edges.append((np.asarray(poly[i], dtype=np.float64), np.asarray(poly[(i + 1) % n], dtype=np.float64)))
+
+        minx, miny, maxx, maxy = cs.bounds()
+        width, height = maxx - minx, maxy - miny
+        z_max = min(width, height) / 2 * 1.02
+
+        edge_length = max(width, height, z_max) / 10
+        eps = edge_length / 2
+
+        def sdf(x, y, z):
+            p = np.array([x, y])
+            d = min(_point_seg_dist(p, a, b) for a, b in edges)
+            inside = _point_in_poly_evenodd(p, edges)
+            d2 = d if inside else -d
+            return d2 - z
+
+        bounds = [minx - eps, miny - eps, 0.0, maxx + eps, maxy + eps, z_max + eps]
+        body = m3d.Manifold.level_set(sdf, bounds, edge_length)
+        if body.is_empty():
+            return None
+        return body.simplify(edge_length * 0.05)
 
     def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         children = self._eval_children(node.children, ctx)

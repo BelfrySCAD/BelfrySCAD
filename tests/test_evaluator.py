@@ -1710,7 +1710,9 @@ class Test2DAndExtrusion:
 
     def test_roof_square_pyramid(self):
         # roof() over a square produces a hip-roof/pyramid: apex height ==
-        # inradius (half the square's side), bbox close to (0,0,0)-(10,10,5)
+        # inradius (half the square's side), bbox close to (0,0,0)-(10,10,5).
+        # The straight-skeleton path is exact for a square, so this matches
+        # the analytic pyramid volume to within float precision.
         src = "roof() square([10,10]);"
         bodies, _ = run(src)
         assert len(bodies) == 1
@@ -1718,7 +1720,7 @@ class Test2DAndExtrusion:
         assert bb[2] == 0.0
         assert abs(bb[5] - 5.0) < 0.5
         expected_vol = 10 * 10 * 5 / 3  # pyramid: base_area * height / 3
-        assert abs(bodies[0].body.volume() - expected_vol) / expected_vol < 0.1
+        assert abs(bodies[0].body.volume() - expected_vol) / expected_vol < 1e-3
 
     def test_roof_circle_cone(self):
         # roof() over a circle produces a cone-like solid; apex height ==
@@ -1744,15 +1746,40 @@ class Test2DAndExtrusion:
         assert bodies == []
 
     def test_roof_concave_polygon(self):
-        # L-shaped polygon with a reflex corner — should still produce a
-        # valid, non-empty manifold whose apex height is bounded by the
-        # half-width of the narrowest leg (4 units wide -> height <= 2-ish).
+        # L-shaped polygon with a reflex corner, both arms 4 units wide —
+        # the straight skeleton collapses to a single ridge point at height
+        # 2 with no intermediate topology events, so this is exact too.
         src = "roof() polygon([[0,0],[10,0],[10,4],[4,4],[4,10],[0,10]]);"
         bodies, _ = run(src)
         assert len(bodies) == 1
         bb = bodies[0].body.bounding_box()
         assert bb[2] == 0.0
-        assert 0 < bb[5] < 3.0
+        assert abs(bb[5] - 2.0) < 1e-3
+        expected_vol = 58.0 + 2.0 / 3.0
+        assert abs(bodies[0].body.volume() - expected_vol) / expected_vol < 1e-3
+
+    def test_roof_rectangle_ridge(self):
+        # An 8x2 rectangle's straight skeleton is a hip roof with a ridge of
+        # length 6 at height 1 (half the short side).
+        src = "roof() square([8,2]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert abs(bb[5] - 1.0) < 1e-3
+        assert abs(bodies[0].body.volume() - 22.0 / 3.0) < 1e-2
+
+    def test_roof_complex_polygon_falls_back(self):
+        # Asymmetric L (arms of different widths) — the mitered offset has
+        # an intermediate edge-collapse event before fully vanishing, so
+        # this isn't "stable" and falls back to the SDF approximation. It
+        # should still produce a valid, non-empty roof.
+        src = "roof() polygon([[0,0],[8,0],[8,4],[2,4],[2,8],[0,8]]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert 0 < bb[5]
         assert bodies[0].body.volume() > 0
 
     def test_roof_unknown_method_warns(self):

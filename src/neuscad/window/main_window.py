@@ -329,7 +329,7 @@ class _RenderWorker(QObject):
     def _do_render(self):
         import io, sys as _sys, time as _time, os as _os, tempfile, traceback
         from openscad_parser.ast import getASTfromFile
-        from neuscad.engine.evaluator import Evaluator, EvalError
+        from neuscad.engine.evaluator import Evaluator, EvalError, to_renderable_bodies
 
         _t0 = _time.perf_counter()
 
@@ -405,6 +405,8 @@ class _RenderWorker(QObject):
         if not bodies:
             self.logged.emit("Render: no geometry produced.")
             return
+
+        bodies = to_renderable_bodies(bodies)
 
         elapsed_ms = (_time.perf_counter() - _t0) * 1000
         self.finished.emit(bodies, id_to_node, elapsed_ms)
@@ -1534,6 +1536,8 @@ class MainWindow(QMainWindow):
         tab.editor.set_execution_line(line)
 
     def _on_debug_finished(self, tab, bodies, id_to_node):
+        from neuscad.engine.evaluator import to_renderable_bodies
+
         tab.id_to_node = id_to_node
         tab.editor.clear_execution_line()
         tab.debugger_pane.set_idle()
@@ -1541,6 +1545,8 @@ class MainWindow(QMainWindow):
         if not bodies:
             self.log_to_tab(tab, "Debug: no geometry produced.")
             return
+
+        bodies = to_renderable_bodies(bodies)
         try:
             tab.viewport.load_geometry(bodies)
         except Exception as e:
