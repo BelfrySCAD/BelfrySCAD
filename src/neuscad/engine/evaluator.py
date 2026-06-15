@@ -823,24 +823,27 @@ class _FlattenPen(BasePen):
         self._closePath()
 
 
-_glyph_cs_cache: dict[tuple[str, int], m3d.CrossSection] = {}
+# Cached as raw contour point-lists rather than `m3d.CrossSection` objects:
+# nanobind-bound objects held in a module-level cache for the life of the
+# process get reported as "leaked" at interpreter shutdown (finalization
+# order races the manifold3d module's own teardown).
+_glyph_contour_cache: dict[tuple[str, int], list[np.ndarray]] = {}
 
 
 def _glyph_cross_section(gname: str, segs: int) -> m3d.CrossSection:
     """Return the (unscaled, font-units) `m3d.CrossSection` for glyph `gname`,
-    flattening curves into `segs` segments. Cached per `(gname, segs)`."""
+    flattening curves into `segs` segments. Contours cached per `(gname, segs)`."""
     key = (gname, segs)
-    cs = _glyph_cs_cache.get(key)
-    if cs is None:
+    contours = _glyph_contour_cache.get(key)
+    if contours is None:
         glyph_set = _load_default_font()["glyph_set"]
         pen = _FlattenPen(glyph_set, segs)
         glyph_set[gname].draw(pen)
-        if pen.contours:
-            cs = m3d.CrossSection([np.array(c, dtype=np.float64) for c in pen.contours], m3d.FillRule.NonZero)
-        else:
-            cs = m3d.CrossSection()
-        _glyph_cs_cache[key] = cs
-    return cs
+        contours = [np.array(c, dtype=np.float64) for c in pen.contours]
+        _glyph_contour_cache[key] = contours
+    if contours:
+        return m3d.CrossSection(contours, m3d.FillRule.NonZero)
+    return m3d.CrossSection()
 
 
 @dataclass
