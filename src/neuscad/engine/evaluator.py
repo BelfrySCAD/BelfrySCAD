@@ -1666,7 +1666,7 @@ class Evaluator:
 
     _CONSTANTS = {"PI": math.pi}
 
-    def _eval_identifier(self, node: Identifier, ctx: EvalContext) -> Any:
+    def _eval_identifier(self, node: Identifier, ctx: EvalContext, warn_if_undef: bool = True) -> Any:
         name = node.name
         # Built-in constants
         if name in self._CONSTANTS:
@@ -1684,6 +1684,13 @@ class Evaluator:
             # Real OpenSCAD: variables and functions live in separate namespaces,
             # so a bare reference to a `function f(x) = ...` declaration is an
             # "unknown variable" -> undef (matches is_function(f) == false there).
+            # Warn the same way for any unresolved identifier, matching real
+            # OpenSCAD's "Ignoring unknown variable" (no TRACE lines). Suppressed
+            # when probing for a function-value (see _eval_function_call), which
+            # emits its own "Ignoring unknown function" warning instead.
+            if warn_if_undef:
+                pos = getattr(node, 'position', None)
+                self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
             return None
         if isinstance(decl, ParameterDeclaration):
             # Params are bound via __let_ above; reaching here means no value was provided and no default
@@ -1853,7 +1860,6 @@ class Evaluator:
         return OscRange(start, increment, stop)
 
     def _eval_function_call(self, node: PrimaryCall, ctx: EvalContext) -> Any:
-        func_node = self._eval_expr(node.left, ctx)
         name = node.left.name if isinstance(node.left, Identifier) else None
         args = self._resolve_args(node.arguments, ctx)
 
@@ -1892,7 +1898,8 @@ class Evaluator:
             # ord() of a multi-character string returns the code of its first character.
             "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
             "is_undef": lambda x: x is None,
-            "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool),
+            # nan fails is_num() in real OpenSCAD (inf/-inf pass).
+            "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and not math.isnan(x),
             "is_bool": lambda x: isinstance(x, bool),
             "is_string": lambda x: isinstance(x, str),
             "is_list": lambda x: isinstance(x, list),
@@ -1919,7 +1926,14 @@ class Evaluator:
             if decl is not None:
                 return self._eval_user_function(name, decl, node.arguments, ctx, node)
 
-        # Function value, e.g. `g = function(x) x*2; g(3)`
+        # Function value, e.g. `g = function(x) x*2; g(3)`. For a plain
+        # identifier, look up the variable directly (suppressing the
+        # "unknown variable" warning) — an unresolved name here means this
+        # is an unknown *function*, warned about below instead.
+        if isinstance(node.left, Identifier):
+            func_node = self._eval_identifier(node.left, ctx, warn_if_undef=False)
+        else:
+            func_node = self._eval_expr(node.left, ctx)
         if isinstance(func_node, FunctionLiteral):
             return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
 

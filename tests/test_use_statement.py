@@ -62,7 +62,9 @@ class TestUseStatement:
         )
         _bodies, echoes, logs = run_file(tmp_path / "main.scad")
         assert logs == []
-        assert echoes[0] == "ECHO: undef"
+        # `x` is unresolved within lib.scad's scope -> warns, then undef.
+        assert echoes[0].startswith("WARNING: Ignoring unknown variable 'x'")
+        assert echoes[1] == "ECHO: undef"
 
     def test_nested_use_does_not_leak(self, tmp_path):
         (tmp_path / "inner.scad").write_text(
@@ -84,9 +86,12 @@ class TestUseStatement:
         assert logs == []
         # combo() can call get_inner() (lib2's own nested `use`) and reach inner_val.
         assert echoes[0] == "ECHO: 107"
-        # inner.scad's declarations don't leak into main2.scad.
-        assert echoes[1] == "ECHO: true"
+        # inner.scad's declarations don't leak into main2.scad -> both
+        # references are unresolved (warn), then is_undef(undef) == true.
+        assert echoes[1].startswith("WARNING: Ignoring unknown variable 'inner_val'")
         assert echoes[2] == "ECHO: true"
+        assert echoes[3].startswith("WARNING: Ignoring unknown variable 'get_inner'")
+        assert echoes[4] == "ECHO: true"
 
     def test_use_missing_file_is_silently_ignored(self, tmp_path):
         (tmp_path / "main.scad").write_text(

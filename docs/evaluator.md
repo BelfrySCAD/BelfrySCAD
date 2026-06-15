@@ -76,6 +76,8 @@ Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins d
 
 `is_function(x)` is `isinstance(x, (FunctionDeclaration, FunctionLiteral))`. In practice only `FunctionLiteral` values (`g = function(x) ...`) ever reach it as a value — a `FunctionDeclaration` (`function f(x) = ...`) is never returned by identifier lookup (see Architecture #2), so `is_function(f)` for a named function `f` is `false`, matching real OpenSCAD.
 
+`is_num(x)` is `false` for `nan` (`is_num(0/0)` → `false`), even though `nan` is a Python `float` — matching real OpenSCAD's quirk that `nan` fails `is_num()` while `inf`/`-inf` pass. `math_fns["is_num"]` explicitly excludes `math.isnan(x)`.
+
 **Constants**: `PI`
 
 **Other**: `version`, `version_num`, `parent_module` (stub)
@@ -121,6 +123,8 @@ TRACE: called by 'outer' in file foo.scad, line 7
 Unknown modules emit `WARNING: Ignoring unknown module 'name' in file ..., line n` with the same TRACE lines, without raising.
 
 Unknown functions emit `WARNING: Ignoring unknown function 'name' in file ..., line n` (no TRACE lines, even when called from inside a user-defined function/module) and evaluate to `undef`, without raising — matching real OpenSCAD. A call to an unimplemented/unrecognized builtin (e.g. `sort()`, which this OpenSCAD version doesn't have) is therefore non-fatal.
+
+Unknown variables emit `WARNING: Ignoring unknown variable 'name' in file ..., line n` (no TRACE lines) and evaluate to `undef`, for *any* unresolved identifier — including a bare reference to a named function declaration (`function f(x) = ...; f` is an "unknown variable", since functions and variables live in separate namespaces). `_eval_identifier()` takes a `warn_if_undef` flag (default `True`); `_eval_function_call()` passes `False` when probing whether a plain-identifier callee is a variable holding a `FunctionLiteral`, so a genuinely unknown function (e.g. `sort(...)`) produces exactly one warning ("Ignoring unknown function"), not two.
 
 `_call_stack` entries: modules are 4-tuples `("module", name, call_pos, decl_pos)` (call site + declaration start); functions are 3-tuples `("function", name, call_pos)`. `error(msg, node=None, innermost_frame=None)` takes the failing node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line. If `error_break_fn` is set (debug mode), `error()` calls it before raising `EvalError`, pausing the debugger at the error site.
 

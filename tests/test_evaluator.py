@@ -1485,9 +1485,10 @@ class TestNewBuiltins:
     def test_is_function_false_on_named_function_reference(self):
         # Real OpenSCAD: variables and functions live in separate namespaces,
         # so a bare reference to `function f(x) = ...` is an unknown variable
-        # (-> undef), not a callable value.
+        # (-> undef, with a warning), not a callable value.
         _, lines = run("function f(x) = x*2; echo(is_function(f));")
-        assert lines == ["ECHO: false"]
+        assert lines == ["WARNING: Ignoring unknown variable 'f' in file <string>, line 1",
+                          "ECHO: false"]
 
     def test_is_function_false_on_num(self):
         _, lines = run("echo(is_function(42));")
@@ -1497,6 +1498,21 @@ class TestNewBuiltins:
         # bool is not a number in OpenSCAD
         _, lines = run("echo(is_num(true));")
         assert lines == ["ECHO: false"]
+
+    def test_is_num_excludes_nan(self):
+        # nan fails is_num() in real OpenSCAD, even though it's a float.
+        _, lines = run("echo(is_num(0/0));")
+        assert lines == ["ECHO: false"]
+
+    def test_is_num_includes_inf(self):
+        # ...but inf/-inf pass.
+        _, lines = run("echo(is_num(1/0), is_num(-1/0));")
+        assert lines == ["ECHO: true, true"]
+
+    def test_unknown_variable_warns_and_returns_undef(self):
+        _, lines = run("echo(totally_undefined_var);")
+        assert lines == ["WARNING: Ignoring unknown variable 'totally_undefined_var' in file <string>, line 1",
+                          "ECHO: undef"]
 
     def test_search_string_single_char(self):
         # String match in string vector → char-by-char; single char in string
