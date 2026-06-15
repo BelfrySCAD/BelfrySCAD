@@ -14,6 +14,7 @@ import numpy as np
 from fontTools.ttLib import TTFont
 from fontTools.pens.basePen import BasePen
 from PySide6.QtGui import QColor
+from shapely_polyskel import skeletonize
 
 from openscad_parser.ast import to_openscad
 from openscad_parser.ast.nodes import (
@@ -272,6 +273,197 @@ def _skeleton_roof(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
             else:
                 tris.append((a, b, c))
                 tris.append((a, c, d))
+
+        mesh = m3d.Mesh(
+            vert_properties=np.array(final_verts, dtype=np.float32),
+            tri_verts=np.array(tris, dtype=np.uint32),
+        )
+        body = m3d.Manifold(mesh)
+        if body.status() != m3d.Error.NoError or body.is_empty():
+            return None
+        return body
+    except Exception:
+        return None
+
+
+def _build_skeleton_graph(p0: np.ndarray) -> Optional[tuple[dict, dict, list]]:
+    """Build the full planar graph for CCW polygon `p0`: its boundary edges
+    (all at height 0) plus the internal edges of its straight skeleton from
+    `shapely_polyskel.skeletonize()` (which, conversely to `p0`, expects
+    CCW-with-y-down input, i.e. `p0` reversed).
+
+    Returns `(heights, adjacency, p0_keys)` where `heights` maps each node's
+    (deduped) position to its offset-distance ("height"), `adjacency` maps
+    each position to its neighbor positions, and `p0_keys` are the dict keys
+    corresponding to `p0`'s vertices in order. Returns `None` on exception or
+    an empty skeleton.
+    """
+    try:
+        n = len(p0)
+        d_hi = max(p0[:, 0].max() - p0[:, 0].min(), p0[:, 1].max() - p0[:, 1].min())
+        if d_hi <= 0:
+            return None
+        tol = d_hi * 1e-6
+
+        heights: dict[tuple, float] = {}
+
+        def key(x, y):
+            for k in heights:
+                if abs(k[0] - x) < tol and abs(k[1] - y) < tol:
+                    return k
+            return (float(x), float(y))
+
+        p0_keys = []
+        for x, y in p0:
+            k = key(x, y)
+            heights[k] = 0.0
+            p0_keys.append(k)
+
+        adjacency: dict[tuple, list] = {k: [] for k in heights}
+
+        def add_edge(a, b):
+            if a != b:
+                if b not in adjacency[a]:
+                    adjacency[a].append(b)
+                if a not in adjacency[b]:
+                    adjacency[b].append(a)
+
+        for i in range(n):
+            add_edge(p0_keys[i], p0_keys[(i + 1) % n])
+
+        subtrees = skeletonize([(float(x), float(y)) for x, y in p0[::-1]])
+        if not subtrees:
+            return None
+        for st in subtrees:
+            s = key(st.source.x, st.source.y)
+            heights[s] = st.height
+            adjacency.setdefault(s, [])
+            for sink in st.sinks:
+                t = key(sink.x, sink.y)
+                heights.setdefault(t, 0.0)
+                adjacency.setdefault(t, [])
+                add_edge(s, t)
+
+        return heights, adjacency, p0_keys
+    except Exception:
+        return None
+
+
+def _trace_face(adjacency: dict, u: tuple, v: tuple) -> Optional[list]:
+    """Trace the bounded face to the left of directed edge `(u, v)` in
+    `adjacency` (a CCW polygon's boundary edge `u -> v` keeps the polygon's
+    interior, and thus this roof face, on its left). At each vertex, the next
+    edge is the neighbor immediately before the incoming vertex in
+    angle-sorted (CCW) order, i.e. the next edge clockwise.
+
+    Returns the ordered list of face-vertex positions, or `None` if the trace
+    doesn't close within a bounded number of steps.
+    """
+    start = (u, v)
+    face = [u]
+    cur_u, cur_v = u, v
+    for _ in range(2 * len(adjacency) + 4):
+        face.append(cur_v)
+        neighbors = adjacency.get(cur_v)
+        if not neighbors or len(neighbors) < 2:
+            return None
+        ordered = sorted(neighbors, key=lambda w: math.atan2(w[1] - cur_v[1], w[0] - cur_v[0]))
+        try:
+            idx = ordered.index(cur_u)
+        except ValueError:
+            return None
+        nxt = ordered[(idx - 1) % len(ordered)]
+        cur_u, cur_v = cur_v, nxt
+        if (cur_u, cur_v) == start:
+            return face[:-1]
+    return None
+
+
+def _triangulate_planar_face(face_pts3d: np.ndarray) -> Optional[list[tuple[int, int, int]]]:
+    """Triangulate a planar roof face given as 3D points (CCW order, all
+    coplanar). The projection basis derived from the first 3 points (`u`
+    along the first edge, `v = normal x u`) makes `_ear_clip`'s output map
+    directly to outward-facing 3D triangles, with no winding reversal.
+
+    Returns `None` if the face is degenerate (fewer than 3 points, near-zero
+    normal), not planar within tolerance, or ear-clipping fails.
+    """
+    n = len(face_pts3d)
+    if n < 3:
+        return None
+    p0, p1, p2 = face_pts3d[0], face_pts3d[1], face_pts3d[2]
+    normal = np.cross(p1 - p0, p2 - p0)
+    norm_len = np.linalg.norm(normal)
+    if norm_len < 1e-12:
+        return None
+    normal = normal / norm_len
+    u_axis = p1 - p0
+    u_axis = u_axis / np.linalg.norm(u_axis)
+    v_axis = np.cross(normal, u_axis)
+
+    span = max(float(np.linalg.norm(face_pts3d.max(axis=0) - face_pts3d.min(axis=0))), 1e-9)
+    tol = span * 1e-4
+    pts2d = np.zeros((n, 2))
+    for i, p in enumerate(face_pts3d):
+        rel = p - p0
+        if abs(np.dot(rel, normal)) > tol:
+            return None
+        pts2d[i] = (np.dot(rel, u_axis), np.dot(rel, v_axis))
+
+    try:
+        return _ear_clip(pts2d)
+    except RuntimeError:
+        return None
+
+
+def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
+    """Build an exact straight-skeleton roof for a single-contour polygon via
+    the full skeleton graph from `shapely_polyskel.skeletonize()` — handles
+    "unstable" polygons (intermediate edge-collapse/split events during
+    mitered offsetting) that `_skeleton_roof` bails out of. Returns `None` if
+    `cs` isn't single-contour, the skeleton/face-tracing fails, or mesh
+    construction fails.
+    """
+    try:
+        polys = cs.to_polygons()
+        if len(polys) != 1:
+            return None
+        p0 = _ccw_polygon(np.asarray(polys[0], dtype=np.float64))
+        n = len(p0)
+        if n < 3:
+            return None
+
+        graph = _build_skeleton_graph(p0)
+        if graph is None:
+            return None
+        heights, adjacency, p0_keys = graph
+        if len(set(p0_keys)) != n:
+            return None
+
+        final_verts: list[tuple[float, float, float]] = []
+        idx_map: dict[tuple, int] = {}
+
+        def vert_index(pos):
+            if pos not in idx_map:
+                idx_map[pos] = len(final_verts)
+                final_verts.append((pos[0], pos[1], heights[pos]))
+            return idx_map[pos]
+
+        tris = []
+        for (i, j, k) in _ear_clip(p0):
+            tris.append((vert_index(p0_keys[k]), vert_index(p0_keys[j]), vert_index(p0_keys[i])))
+
+        for i in range(n):
+            face = _trace_face(adjacency, p0_keys[i], p0_keys[(i + 1) % n])
+            if face is None or len(face) < 3:
+                return None
+            face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
+            face_tris = _triangulate_planar_face(face_pts3d)
+            if face_tris is None:
+                return None
+            face_idx = [vert_index(p) for p in face]
+            for (a, b, c) in face_tris:
+                tris.append((face_idx[a], face_idx[b], face_idx[c]))
 
         mesh = m3d.Mesh(
             vert_properties=np.array(final_verts, dtype=np.float32),
@@ -1806,6 +1998,8 @@ class Evaluator:
             if not cs.to_polygons():
                 return None
             body = _skeleton_roof(cs)
+            if body is None and len(cs.to_polygons()) == 1:
+                body = _skeleton_roof_general(cs)
             if body is None:
                 body = self._roof_sdf_fallback(cs)
             if body is None:

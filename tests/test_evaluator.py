@@ -1769,12 +1769,32 @@ class Test2DAndExtrusion:
         assert abs(bb[5] - 1.0) < 1e-3
         assert abs(bodies[0].body.volume() - 22.0 / 3.0) < 1e-2
 
-    def test_roof_complex_polygon_falls_back(self):
+    def test_roof_asymmetric_l_exact(self):
         # Asymmetric L (arms of different widths) — the mitered offset has
-        # an intermediate edge-collapse event before fully vanishing, so
-        # this isn't "stable" and falls back to the SDF approximation. It
-        # should still produce a valid, non-empty roof.
+        # an intermediate edge-collapse event before fully vanishing, so this
+        # isn't "stable" for the tier-1 closed-form path. The tier-2
+        # skeleton-graph path (shapely_polyskel) handles it exactly: the
+        # skeleton has internal nodes at heights 1 and 2, giving bbox z=2 and
+        # an exact volume of 92/3.
         src = "roof() polygon([[0,0],[8,0],[8,4],[2,4],[2,8],[0,8]]);"
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        bb = bodies[0].body.bounding_box()
+        assert bb[2] == 0.0
+        assert abs(bb[5] - 2.0) < 1e-3
+        assert abs(bodies[0].body.volume() - 92.0 / 3.0) / (92.0 / 3.0) < 1e-3
+
+    def test_roof_polygon_with_hole_falls_back(self):
+        # A square with a square hole is multi-contour, so neither the
+        # tier-1 closed-form path nor the tier-2 skeleton-graph path (which
+        # only handles single-contour polygons) applies — falls back to the
+        # SDF approximation. Should still produce a valid, non-empty roof.
+        src = """
+        roof() polygon(
+            points=[[0,0],[10,0],[10,10],[0,10],[2,2],[2,8],[8,8],[8,2]],
+            paths=[[0,1,2,3],[4,5,6,7]]
+        );
+        """
         bodies, _ = run(src)
         assert len(bodies) == 1
         bb = bodies[0].body.bounding_box()
