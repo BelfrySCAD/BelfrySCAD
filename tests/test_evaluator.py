@@ -2435,3 +2435,52 @@ class TestTextMetrics:
             "max = { ascent = 13.6108; descent = -4.21143; }; interline = 15.9709; "
             'font = { family = "Arial"; style = "Regular"; }; }'
         ]
+
+
+# ---------------------------------------------------------------------------
+# text()
+# ---------------------------------------------------------------------------
+
+class TestText:
+    """`text()` renders glyph outlines (from the same bundled Liberation Sans
+    font as `textmetrics()`) as a 2D cross-section. Bbox values below come
+    from `linear_extrude(height=1) text(...)` and were cross-checked against
+    real OpenSCAD-dev output (see docs/evaluator.md)."""
+
+    def test_single_char_left_baseline(self):
+        bb = bbox(run('linear_extrude(height=1) text("A", size=10);')[0])
+        assert bb[0] == approx(0.0271267, rel=1e-3)
+        assert bb[1] == pytest.approx(0.0, abs=1e-3)
+        assert bb[3] == approx(9.23665, rel=1e-3)
+        assert bb[4] == approx(9.55539, rel=1e-3)
+
+    def test_word_left_baseline(self):
+        bb = bbox(run('linear_extrude(height=1) text("Hello", size=10);')[0])
+        assert bb[0] == approx(1.13932, rel=1e-3)
+        assert bb[1] == approx(-0.135634, rel=1e-2)
+        assert bb[3] == approx(31.0669, rel=1e-3)
+        assert bb[4] == approx(10.064, rel=1e-3)
+
+    def test_halign_center_valign_center(self):
+        bb = bbox(run(
+            'linear_extrude(height=1) text("Hello", size=10, halign="center", valign="center");'
+        )[0])
+        assert bb[0] == approx(-14.6857, rel=1e-3)
+        assert bb[1] == approx(-5.09983, rel=1e-3)
+        assert bb[3] == approx(15.2418, rel=1e-3)
+        assert bb[4] == approx(5.09983, rel=1e-3)
+
+    def test_empty_text_produces_empty_geometry(self):
+        bodies, _ = run('linear_extrude(height=1) text("");')
+        assert bodies
+        assert bodies[0].body.volume() == 0
+
+    def test_composite_glyph_renders(self):
+        bb = bbox(run('linear_extrude(height=1) text("é", size=10);')[0])
+        area = (bb[3] - bb[0]) * (bb[4] - bb[1])
+        assert area > 0
+
+    def test_spacing_increases_extent(self):
+        bb1 = bbox(run('linear_extrude(height=1) text("AA", size=10, spacing=1);')[0])
+        bb2 = bbox(run('linear_extrude(height=1) text("AA", size=10, spacing=2);')[0])
+        assert bb2[3] > bb1[3]

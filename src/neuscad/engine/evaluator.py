@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import manifold3d as m3d
 import numpy as np
 from fontTools.ttLib import TTFont
+from fontTools.pens.basePen import BasePen
 from PySide6.QtGui import QColor
 
 from openscad_parser.ast import to_openscad
@@ -363,6 +364,7 @@ def _load_default_font() -> dict:
             "units_per_em": font["head"].unitsPerEm,
             "head": font["head"],
             "hhea": font["hhea"],
+            "glyph_set": font.getGlyphSet(),
         }
     return _default_font_cache
 
@@ -373,7 +375,9 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
     scale-factor and per-glyph layout derivation).
 
     Returns a dict with `ascent`, `descent`, `ink_min_x`, `ink_max_x`,
-    `advance_x` — all `0` if `text` contains no measurable glyphs.
+    `advance_x`, and `glyphs` (a list of `(glyph_name, pen_x_scaled)` for
+    each renderable glyph, used by `text()`) — aggregates are all `0` and
+    `glyphs` is empty if `text` contains no measurable glyphs.
     """
     font = _load_default_font()
     cmap, hmtx, glyf = font["cmap"], font["hmtx"], font["glyf"]
@@ -382,6 +386,7 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
     pen_x = 0.0
     ascent = descent = ink_min_x = ink_max_x = 0.0
     has_ink = False
+    glyphs = []
     for ch in text:
         gname = cmap.get(ord(ch))
         if gname is None:
@@ -401,6 +406,7 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
                 ink_max_x = max(ink_max_x, right)
                 ascent = max(ascent, top)
                 descent = min(descent, bottom)
+            glyphs.append((gname, pen_x * scale))
         pen_x += advance * spacing
 
     return {
@@ -409,7 +415,76 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
         "ink_min_x": ink_min_x,
         "ink_max_x": ink_max_x,
         "advance_x": pen_x * scale,
+        "glyphs": glyphs,
     }
+
+
+def _text_align_offset(halign: str, valign: str, m: dict) -> tuple[float, float]:
+    """Compute the `(offset_x, offset_y)` translation for `halign`/`valign`,
+    given the dict returned by `_measure_text`. Shared by `_builtin_textmetrics`
+    (which reports it) and `_builtin_text` (which applies it)."""
+    advance_x, ascent, descent = m["advance_x"], m["ascent"], m["descent"]
+    offset_x = -{"left": 0.0, "center": 0.5, "right": 1.0}.get(halign, 0.0) * advance_x
+    offset_y = {
+        "top": -ascent,
+        "center": -(ascent + descent) / 2,
+        "baseline": 0.0,
+        "bottom": -descent,
+    }.get(valign, 0.0)
+    return offset_x, offset_y
+
+
+class _FlattenPen(BasePen):
+    """A `BasePen` that flattens glyph outlines (including quadratic Bezier
+    curves) into polygon contours, for building a `m3d.CrossSection`."""
+
+    def __init__(self, glyphSet, segs: int):
+        super().__init__(glyphSet)
+        self.segs = segs
+        self.contours: list[list[tuple[float, float]]] = []
+        self._contour: list[tuple[float, float]] = []
+
+    def _moveTo(self, pt):
+        self._contour = [pt]
+
+    def _lineTo(self, pt):
+        self._contour.append(pt)
+
+    def _qCurveToOne(self, pt1, pt2):
+        p0 = self._contour[-1]
+        for i in range(1, self.segs + 1):
+            t = i / self.segs
+            x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * pt1[0] + t ** 2 * pt2[0]
+            y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * pt1[1] + t ** 2 * pt2[1]
+            self._contour.append((x, y))
+
+    def _closePath(self):
+        if self._contour:
+            self.contours.append(self._contour)
+        self._contour = []
+
+    def _endPath(self):
+        self._closePath()
+
+
+_glyph_cs_cache: dict[tuple[str, int], m3d.CrossSection] = {}
+
+
+def _glyph_cross_section(gname: str, segs: int) -> m3d.CrossSection:
+    """Return the (unscaled, font-units) `m3d.CrossSection` for glyph `gname`,
+    flattening curves into `segs` segments. Cached per `(gname, segs)`."""
+    key = (gname, segs)
+    cs = _glyph_cs_cache.get(key)
+    if cs is None:
+        glyph_set = _load_default_font()["glyph_set"]
+        pen = _FlattenPen(glyph_set, segs)
+        glyph_set[gname].draw(pen)
+        if pen.contours:
+            cs = m3d.CrossSection([np.array(c, dtype=np.float64) for c in pen.contours], m3d.FillRule.NonZero)
+        else:
+            cs = m3d.CrossSection()
+        _glyph_cs_cache[key] = cs
+    return cs
 
 
 @dataclass
@@ -853,6 +928,8 @@ class Evaluator:
             return self._builtin_polyhedron(args, node, ctx)
         if name in ("circle", "square", "polygon"):
             return self._builtin_2d(name, args, node, ctx)
+        if name == "text":
+            return self._builtin_text(args, node, ctx)
         if name == "offset":
             return self._builtin_offset(args, node, ctx)
         if name == "projection":
@@ -869,7 +946,7 @@ class Evaluator:
             return self._combine(children) if children else None
         if name == "surface":
             return self._builtin_surface(args, node, ctx)
-        if name in ("text", "import"):
+        if name == "import":
             self._echo_fn(f"WARNING: {name}() is not yet implemented")
             return None
         if name == "echo":
@@ -1458,6 +1535,40 @@ class Evaluator:
             return ColoredBody(section=cs, color=ctx.color)
         except Exception as e:
             self.error(f"{name}: {e}", node)
+            return None
+
+    def _builtin_text(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+        """`text(text=.., size=.., halign=.., valign=.., spacing=..)`.
+
+        Renders `text` as 2D glyph outlines from the bundled Liberation Sans
+        font, laid out and aligned using the same `_measure_text`/
+        `_text_align_offset` infrastructure as `textmetrics()`. `font`,
+        `direction`, `language`, `script` are accepted but unused; see
+        docs/evaluator.md for known gaps.
+        """
+        text = self._get_arg(args, 0, "text", "")
+        size = self._get_arg(args, 1, "size", 10)
+        halign = self._get_arg(args, None, "halign", "left")
+        valign = self._get_arg(args, None, "valign", "baseline")
+        spacing = self._get_arg(args, None, "spacing", 1)
+
+        try:
+            m = _measure_text(text, size, spacing)
+            font = _load_default_font()
+            scale = size * (100 / 72) / font["units_per_em"]
+            segs = max(2, self._fn(ctx) // 2)
+
+            sections = []
+            for gname, pen_x_scaled in m["glyphs"]:
+                glyph_cs = _glyph_cross_section(gname, segs)
+                sections.append(glyph_cs.scale([scale, scale]).translate([pen_x_scaled, 0]))
+
+            cs = m3d.CrossSection.batch_boolean(sections, m3d.OpType.Add) if sections else m3d.CrossSection()
+            offset_x, offset_y = _text_align_offset(halign, valign, m)
+            cs = cs.translate([offset_x, offset_y])
+            return ColoredBody(section=cs, color=ctx.color)
+        except Exception as e:
+            self.error(f"text: {e}", node)
             return None
 
     def _builtin_linear_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -2358,13 +2469,7 @@ class Evaluator:
         ascent, descent = m["ascent"], m["descent"]
         advance_x = m["advance_x"]
 
-        offset_x = -{"left": 0.0, "center": 0.5, "right": 1.0}.get(halign, 0.0) * advance_x
-        offset_y = {
-            "top": -ascent,
-            "center": -(ascent + descent) / 2,
-            "baseline": 0.0,
-            "bottom": -descent,
-        }.get(valign, 0.0)
+        offset_x, offset_y = _text_align_offset(halign, valign, m)
 
         position = [offset_x + m["ink_min_x"], offset_y + descent]
         size_vec = [m["ink_max_x"] - m["ink_min_x"], ascent - descent]
