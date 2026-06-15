@@ -1598,10 +1598,9 @@ class Evaluator:
         # Lexical variable
         decl = ctx.scope.lookup_variable(name)
         if decl is None:
-            # Fall back to function namespace — allows is_function(f) and passing functions as values
-            fn_decl = ctx.scope.lookup_function(name)
-            if fn_decl is not None:
-                return fn_decl
+            # Real OpenSCAD: variables and functions live in separate namespaces,
+            # so a bare reference to a `function f(x) = ...` declaration is an
+            # "unknown variable" -> undef (matches is_function(f) == false there).
             return None
         if isinstance(decl, ParameterDeclaration):
             # Params are bound via __let_ above; reaching here means no value was provided and no default
@@ -1830,8 +1829,13 @@ class Evaluator:
             decl = ctx.scope.lookup_function(name)
             if decl is not None:
                 return self._eval_user_function(name, decl, node.arguments, ctx, node)
-            if func_node is None:
-                self.error(f"undefined function '{name}'", node)
+
+        # Function value, e.g. `g = function(x) x*2; g(3)`
+        if isinstance(func_node, FunctionLiteral):
+            return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
+
+        if name and func_node is None:
+            self.error(f"undefined function '{name}'", node)
 
         return None
 
@@ -1946,6 +1950,29 @@ class Evaluator:
         try:
             self._check_debug(decl.expr, child_ctx)
             return self._eval_expr(decl.expr, child_ctx)
+        finally:
+            self._call_stack.pop()
+            self._frame_ctxs.pop()
+
+    def _eval_function_literal(self, func_node: FunctionLiteral, arguments, ctx: EvalContext, call_node=None, name: str | None = None) -> Any:
+        """Call a `function (...) expr` value, e.g. `g = function(x) x*2; g(3)`.
+
+        Closes over `func_node.scope` (where the literal was written), like
+        `_eval_user_function()` does for named functions via `decl.scope`.
+        """
+        params = func_node.parameters
+        bound = self._bind_args(params, arguments, ctx)
+        fn_scope = func_node.scope if func_node.scope else ctx.scope
+        child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope)
+        for k, v in bound.items():
+            child_ctx.dyn[f"__let_{k}"] = v
+        self._apply_defaults(params, child_ctx, ctx)
+        pos = getattr(call_node, 'position', None)
+        self._call_stack.append(("function", name or "<function>", pos, func_node.position))
+        self._frame_ctxs.append(child_ctx)
+        try:
+            self._check_debug(func_node.body, child_ctx)
+            return self._eval_expr(func_node.body, child_ctx)
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()

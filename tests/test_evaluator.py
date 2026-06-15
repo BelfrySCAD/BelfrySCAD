@@ -1150,6 +1150,33 @@ class TestRangeEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Function literal values (`function (params) expr`)
+# ---------------------------------------------------------------------------
+
+class TestFunctionLiterals:
+    def test_call_stored_function_literal(self):
+        _, lines = run("g = function(x) x*2; echo(g(3));")
+        assert lines == ["ECHO: 6"]
+
+    def test_function_literal_closure(self):
+        # The literal closes over the scope where it was written, not the call site.
+        _, lines = run("y = 10; h = function(x) x + y; echo(h(5));")
+        assert lines == ["ECHO: 15"]
+
+    def test_function_literal_default_param(self):
+        _, lines = run("k = function(x, y=100) x + y; echo(k(1));")
+        assert lines == ["ECHO: 101"]
+
+    def test_function_literal_named_arg(self):
+        _, lines = run("k = function(x, y=100) x + y; echo(k(1, y=5));")
+        assert lines == ["ECHO: 6"]
+
+    def test_pass_function_literal_as_argument(self):
+        _, lines = run("function apply(fn, v) = fn(v); echo(apply(function(x) x*x, 4));")
+        assert lines == ["ECHO: 16"]
+
+
+# ---------------------------------------------------------------------------
 # Function call edge cases
 # ---------------------------------------------------------------------------
 
@@ -1351,8 +1378,15 @@ class TestNewBuiltins:
         assert lines1 == lines2
 
     def test_is_function_true(self):
-        _, lines = run("function f(x) = x*2; echo(is_function(f));")
+        _, lines = run("g = function(x) x*2; echo(is_function(g));")
         assert lines == ["ECHO: true"]
+
+    def test_is_function_false_on_named_function_reference(self):
+        # Real OpenSCAD: variables and functions live in separate namespaces,
+        # so a bare reference to `function f(x) = ...` is an unknown variable
+        # (-> undef), not a callable value.
+        _, lines = run("function f(x) = x*2; echo(is_function(f));")
+        assert lines == ["ECHO: false"]
 
     def test_is_function_false_on_num(self):
         _, lines = run("echo(is_function(42));")

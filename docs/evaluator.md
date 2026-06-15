@@ -19,8 +19,8 @@ Declarations are hoisted within their block (forward references work). Last-wins
 Recursive AST walker with a built-ins dispatch table:
 
 1. `ModularCall`: look up via `scope.lookup_module(name)` — `None` → dispatch to built-ins table; found → recursively evaluate the module body in a new child scope
-2. `Identifier` in an expression: `scope.lookup_variable(name)` then evaluate the bound value; if not found, fall back to `scope.lookup_function(name)` (lets named functions be passed as values, required for `is_function()`)
-3. Function call: look up via `scope.lookup_function(name)`, evaluate args in caller's scope, body in new scope
+2. `Identifier` in an expression: `scope.lookup_variable(name)` then evaluate the bound value; if not found, the identifier is `undef` (matches real OpenSCAD — variables and functions/modules live in separate namespaces, so a bare reference to `function f(x) = ...` is an unknown variable, not a value, and `is_function(f)` is `false`)
+3. Function call: if `name` resolves via `scope.lookup_function(name)`, evaluate args in caller's scope, body in new scope (`_eval_user_function`). Otherwise, if the callee expression evaluates to a `FunctionLiteral` (e.g. a variable holding `function (params) expr`), call it via `_eval_function_literal`, closing over the literal's own `.scope` — this is how function *values* (`g = function(x) x*2; g(3)`) are invoked
 4. Default parameter values are evaluated in the **caller's** scope, not the callee's
 
 ## Assignment execution order
@@ -73,6 +73,8 @@ Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `unde
 **Type checks**: `is_undef`, `is_bool`, `is_num`, `is_string`, `is_list`, `is_function`
 
 Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins despite the `is_*` naming convention — they're ordinary functions defined by BOSL2 (`utility.scad`). Calling them without BOSL2's `std.scad` included raises an "undefined function" error here (matching this evaluator's stricter-than-OpenSCAD treatment of undefined functions; real OpenSCAD would warn and return `undef`). Do not add them to `math_fns` — doing so would shadow BOSL2's own definitions.
+
+`is_function(x)` is `isinstance(x, (FunctionDeclaration, FunctionLiteral))`. In practice only `FunctionLiteral` values (`g = function(x) ...`) ever reach it as a value — a `FunctionDeclaration` (`function f(x) = ...`) is never returned by identifier lookup (see Architecture #2), so `is_function(f)` for a named function `f` is `false`, matching real OpenSCAD.
 
 **Constants**: `PI`
 
