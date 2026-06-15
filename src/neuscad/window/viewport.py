@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor
+from PySide6.QtGui import QMouseEvent, QWheelEvent
 
 from neuscad.engine.renderer import SceneRenderer
 
@@ -78,8 +78,6 @@ class Viewport(QOpenGLWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
-        if self._ctx is not None and self._renderer.show_axes and self._renderer.show_scale_markers:
-            self._draw_axis_labels()
 
     def closeEvent(self, event):
         self.makeCurrent()
@@ -252,25 +250,6 @@ class Viewport(QOpenGLWidget):
         factor = 1.03 if delta < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
         self.update()
-
-    def _draw_axis_labels(self):
-        w, h = self.width(), self.height()
-        labels = self._renderer.axis_tick_labels(w, h)
-        if not labels:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        font = QFont("Helvetica", 12)
-        painter.setFont(font)
-        painter.setPen(QColor("#222222"))
-        fm = painter.fontMetrics()
-        asc = fm.ascent()
-        for sx, sy, text in labels:
-            tw = fm.horizontalAdvance(text)
-            px, py = int(sx) + 4, int(sy) + asc // 2
-            if 0 <= px + tw < w and 0 <= py - asc < h:
-                painter.drawText(px, py, text)
-        painter.end()
 
     # ------------------------------------------------------------------
     # Selection

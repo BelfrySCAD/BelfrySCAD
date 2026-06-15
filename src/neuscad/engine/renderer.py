@@ -7,6 +7,8 @@ import numpy as np
 from typing import Optional
 
 import moderngl as mgl
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
 from neuscad.engine.evaluator import ColoredBody
 
@@ -86,6 +88,35 @@ void main() {
 }
 """
 
+_LABEL_VERT = """
+#version 330 core
+in vec2 in_position;
+in vec2 in_uv;
+uniform mat4 mvp;
+uniform vec3 center;
+uniform vec3 right;
+uniform vec3 up;
+uniform vec2 half_size;
+out vec2 v_uv;
+void main() {
+    vec3 world = center
+        + right * (in_position.x * half_size.x)
+        + up    * (in_position.y * half_size.y);
+    gl_Position = mvp * vec4(world, 1.0);
+    v_uv = in_uv;
+}
+"""
+
+_LABEL_FRAG = """
+#version 330 core
+in vec2 v_uv;
+uniform sampler2D tex;
+out vec4 fragColor;
+void main() {
+    fragColor = texture(tex, v_uv);
+}
+"""
+
 
 class Camera:
     """Spherical-coordinate orbit camera."""
@@ -160,6 +191,11 @@ class SceneRenderer:
         self._prog: Optional[mgl.Program] = None
         self._gizmo_prog: Optional[mgl.Program] = None
         self._edge_prog: Optional[mgl.Program] = None
+        self._label_prog: Optional[mgl.Program] = None
+        self._label_quad_vbo: Optional[mgl.Buffer] = None
+        self._label_quad_vao: Optional[mgl.VertexArray] = None
+        self._label_tex_cache: dict[str, tuple[mgl.Texture, int, int]] = {}
+        self._label_texture_scale = 4
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._buffers: list[MeshBuffer] = []
@@ -188,6 +224,20 @@ class SceneRenderer:
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
         self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
+        self._label_prog = ctx.program(vertex_shader=_LABEL_VERT, fragment_shader=_LABEL_FRAG)
+
+        # Unit quad (-1..1) for label billboards, fanned around vertex 0.
+        quad = np.array([
+            [-1.0, -1.0, 0.0, 1.0],
+            [ 1.0, -1.0, 1.0, 1.0],
+            [ 1.0,  1.0, 1.0, 0.0],
+            [-1.0,  1.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        self._label_quad_vbo = ctx.buffer(quad.tobytes())
+        self._label_quad_vao = ctx.vertex_array(
+            self._label_prog,
+            [(self._label_quad_vbo, "2f 2f", "in_position", "in_uv")],
+        )
 
     def set_viewport(self, w: int, h: int):
         self._viewport = (w, h)
@@ -366,6 +416,9 @@ class SceneRenderer:
         if self.show_axes and self._gizmo_prog is not None:
             self._render_axes(mvp)
 
+        if self.show_axes and self.show_scale_markers and self._label_prog is not None:
+            self._render_axis_labels(mvp)
+
         if self.show_crosshairs and self._gizmo_prog is not None:
             self._render_crosshairs(mvp)
 
@@ -407,9 +460,9 @@ class SceneRenderer:
     def _render_axes(self, mvp: np.ndarray):
         L       = self.camera.distance * 2.5
         _label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
-        red   = np.array([0.3, 0.1, 0.1], dtype=np.float32)
-        green   = np.array([0.1, 0.3, 0.1], dtype=np.float32)
-        blue   = np.array([0.2, 0.2, 0.5], dtype=np.float32)
+        red   = np.array([0.85, 0.15, 0.15], dtype=np.float32)
+        green   = np.array([0.15, 0.65, 0.15], dtype=np.float32)
+        blue   = np.array([0.25, 0.35, 0.9], dtype=np.float32)
         gray    = np.array([0.2, 0.2, 0.2], dtype=np.float32)
         axis_colors = [red, green, blue];
 
@@ -483,9 +536,10 @@ class SceneRenderer:
 
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         self._ctx.enable(mgl.BLEND)
-        self._ctx.enable_direct(0x0B20)  # GL_LINE_SMOOTH
+        # GL_LINE_SMOOTH is intentionally left off here: its coverage-based
+        # antialiasing halves the alpha of axis-aligned lines (which fall
+        # exactly between pixel columns/rows), washing out the axis colors.
         self._axes_vao.render(mgl.LINES)
-        self._ctx.disable_direct(0x0B20)  # GL_LINE_SMOOTH
         self._ctx.disable(mgl.BLEND)
 
     def _render_crosshairs(self, mvp: np.ndarray):
@@ -521,33 +575,22 @@ class SceneRenderer:
         vao.release()
         vbo.release()
 
-    def _ray_blocked(self, ray_o: np.ndarray, ray_d: np.ndarray, max_t: float) -> bool:
-        """Return True if any triangle intersects the ray at t < max_t."""
-        for buf in self._buffers:
-            if len(buf.tri_ids) == 0:
-                continue
-            _, t = _moller_trumbore_batch(ray_o, ray_d, buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)
-            if t < max_t - 1e-3:
-                return True
-        return False
-
-    def axis_tick_labels(self, w: int, h: int) -> list[tuple[float, float, str]]:
-        """Return (screen_x, screen_y, text) for every unoccluded tick label."""
+    def _axis_tick_world_points(self) -> list[tuple[np.ndarray, str]]:
+        """Return (world_position, text) for every tick that should be labeled."""
         L = self.camera.distance * 2.5
         spacing, _, _ = _nice_spacings(L)
-        aspect = w / h if h > 0 else 1.0
-        vp = (self.camera.projection_matrix(aspect) @ self.camera.view_matrix()).astype(np.float64)
         eye = self.camera.eye_position().astype(np.float64)
 
-        def project(world):
-            p4 = np.array([*world, 1.0], dtype=np.float64)
-            clip = vp @ p4
-            if clip[3] < 1e-6:
-                return None
-            ndc = clip[:3] / clip[3]
-            if abs(ndc[0]) > 1.05 or abs(ndc[1]) > 1.05 or ndc[2] > 1.0:
-                return None
-            return ((ndc[0] + 1) * 0.5 * w, (1 - ndc[1]) * 0.5 * h)
+        # Skip tick labels for an axis the camera is looking nearly straight
+        # down — its ticks all project on top of each other near the origin.
+        view_dir = eye - self.camera.target.astype(np.float64)
+        view_norm = np.linalg.norm(view_dir)
+        end_on_axis = [False, False, False]
+        if view_norm > 1e-9:
+            view_dir /= view_norm
+            for ai in range(3):
+                if abs(view_dir[ai]) > math.cos(math.radians(1.0)):
+                    end_on_axis[ai] = True
 
         result = []
         t = spacing
@@ -556,21 +599,72 @@ class SceneRenderer:
                 pos = sign * t
                 lbl = _fmt_tick(pos, spacing)
                 for ai in range(3):
-                    world = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+                    if end_on_axis[ai]:
+                        continue
+                    world = np.zeros(3, dtype=np.float64)
                     world[ai] = pos
-                    sc = project(world)
-                    if sc is None:
-                        continue
-                    to_tick = world - eye
-                    dist = float(np.linalg.norm(to_tick))
-                    if dist < 1e-6:
-                        continue
-                    ray_d = (to_tick / dist).astype(np.float32)
-                    ray_o = eye.astype(np.float32)
-                    if not self._ray_blocked(ray_o, ray_d, dist):
-                        result.append((sc[0], sc[1], lbl))
+                    result.append((world, lbl))
             t += spacing
         return result
+
+    def _get_label_texture(self, text: str) -> tuple[mgl.Texture, int, int]:
+        """Return (texture, pixel_width, pixel_height) for a tick-label string, cached."""
+        cached = self._label_tex_cache.get(text)
+        if cached is not None:
+            return cached
+
+        font = QFont("Helvetica")
+        font.setPixelSize(12 * self._label_texture_scale)
+        fm = QFontMetrics(font)
+        tw = max(1, fm.horizontalAdvance(text))
+        th = max(1, fm.height())
+
+        img = QImage(tw, th, QImage.Format.Format_RGBA8888)
+        img.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setFont(font)
+        painter.setPen(QColor("#222222"))
+        painter.drawText(0, fm.ascent(), text)
+        painter.end()
+
+        tex = self._ctx.texture((tw, th), 4, bytes(img.constBits()))
+        tex.filter = (mgl.LINEAR, mgl.LINEAR)
+
+        result = (tex, tw, th)
+        self._label_tex_cache[text] = result
+        return result
+
+    def _render_axis_labels(self, mvp: np.ndarray):
+        w, h = self._viewport
+        px_to_world = (self.camera.distance
+                       * math.tan(math.radians(self.camera.fov / 2))
+                       / max(h, 1))
+
+        view = self.camera.view_matrix()
+        right = view[0, :3].astype(np.float64)
+        up = view[1, :3].astype(np.float64)
+        label_scale = 3.0
+        gap = 4 * px_to_world * label_scale
+
+        self._ctx.enable(mgl.BLEND)
+        self._label_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._label_prog["tex"].value = 0
+
+        for world_pos, text in self._axis_tick_world_points():
+            tex, tw, th = self._get_label_texture(text)
+            half_w = (tw / self._label_texture_scale / 2) * px_to_world * label_scale
+            half_h = (th / self._label_texture_scale / 2) * px_to_world * label_scale
+            center = world_pos + right * (half_w + gap)
+
+            tex.use(location=0)
+            self._label_prog["center"].write(center.astype(np.float32).tobytes())
+            self._label_prog["right"].write(right.astype(np.float32).tobytes())
+            self._label_prog["up"].write(up.astype(np.float32).tobytes())
+            self._label_prog["half_size"].write(np.array([half_w, half_h], dtype=np.float32).tobytes())
+            self._label_quad_vao.render(mgl.TRIANGLE_FAN)
+
+        self._ctx.disable(mgl.BLEND)
 
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
         if self.selected_id is None:
@@ -730,6 +824,14 @@ class SceneRenderer:
             self._axes_vbo.release()
             self._axes_vao = None
             self._axes_vbo = None
+        if self._label_quad_vbo is not None:
+            self._label_quad_vao.release()
+            self._label_quad_vbo.release()
+            self._label_quad_vao = None
+            self._label_quad_vbo = None
+        for tex, _, _ in self._label_tex_cache.values():
+            tex.release()
+        self._label_tex_cache.clear()
 
 
 # ------------------------------------------------------------------

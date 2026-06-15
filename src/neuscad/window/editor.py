@@ -872,8 +872,8 @@ class CodeEditor(QPlainTextEdit):
             i += step
 
         fmt_ok = QTextCharFormat()
-        fmt_ok.setBackground(QColor("#3a6040"))  # matched — green tint
-        fmt_ok.setForeground(QColor("#ffffff"))
+        fmt_ok.setBackground(QColor("#adceb7"))  # matched — green tint
+        fmt_ok.setForeground(QColor("#102010"))
         fmt_err = QTextCharFormat()
         fmt_err.setBackground(QColor("#7a2020"))  # unmatched — red tint
         fmt_err.setForeground(QColor("#ffffff"))
@@ -896,7 +896,7 @@ class CodeEditor(QPlainTextEdit):
     def _refresh_extra_selections(self):
         self.setExtraSelections(
             self._error_selections + self._selection_extra
-            + self._find_selections + self._bracket_selections + self._exec_selection
+            + self._find_selections + self._exec_selection + self._bracket_selections
         )
 
     def _reposition_find_bar(self):
