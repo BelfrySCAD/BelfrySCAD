@@ -2283,7 +2283,7 @@ class Evaluator:
         if isinstance(node, UnaryMinusOp):
             v = self._eval_expr(node.expr, ctx)
             if isinstance(v, list):
-                return [-x for x in v]
+                return self._negate_list(v)
             if isinstance(v, bool):
                 return None
             try:
@@ -2439,7 +2439,8 @@ class Evaluator:
             elif isinstance(elem, ListCompLet):
                 let_ctx = ctx.child_ctx()
                 for assign in elem.assignments:
-                    let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+                    # Evaluate in let_ctx so each binding sees previous ones.
+                    let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, let_ctx)
                     self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
@@ -2481,7 +2482,8 @@ class Evaluator:
         if isinstance(body, ListCompLet):
             let_ctx = ctx.child_ctx()
             for assign in body.assignments:
-                let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, ctx)
+                # Evaluate in let_ctx so each binding sees previous ones in the same let().
+                let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, let_ctx)
                 self._check_debug(assign, let_ctx, expr_level=True)
             return self._eval_list_comp_body(body.body, let_ctx)
         if isinstance(body, ListCompIf):
@@ -2742,6 +2744,20 @@ class Evaluator:
         if rn == n:
             return table[int(rn) % 4]
         return fallback(math.radians(x))
+
+    def _negate_list(self, v):
+        result = []
+        for x in v:
+            if isinstance(x, list):
+                result.append(self._negate_list(x))
+            elif isinstance(x, bool) or x is None:
+                result.append(None)
+            else:
+                try:
+                    result.append(-x)
+                except TypeError:
+                    result.append(None)
+        return result
 
     def _builtin_sin(self, x):
         return self._deg_trig(x, self._SIN_90, math.sin)
