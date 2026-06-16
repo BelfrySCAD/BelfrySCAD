@@ -396,13 +396,16 @@ class _RenderWorker(QObject):
         try:
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
         except RecursionError:
-            self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during evaluation).")
+            elapsed_ms = (_time.perf_counter() - _t0) * 1000
+            self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  ({elapsed_ms:.0f} ms)")
             return
         except EvalError as e:
-            self.logged.emit(f"Eval error:\n{e}")
+            elapsed_ms = (_time.perf_counter() - _t0) * 1000
+            self.logged.emit(f"Eval error:  ({elapsed_ms:.0f} ms)\n{e}")
             return
         except Exception as e:
-            self.logged.emit(f"Runtime error: {e}\n{traceback.format_exc()}")
+            elapsed_ms = (_time.perf_counter() - _t0) * 1000
+            self.logged.emit(f"Runtime error:  ({elapsed_ms:.0f} ms)\n{e}\n{traceback.format_exc()}")
             return
 
         if self._cancel.is_set():
