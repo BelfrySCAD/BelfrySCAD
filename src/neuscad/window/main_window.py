@@ -408,13 +408,13 @@ class _RenderWorker(QObject):
         if self._cancel.is_set():
             return
 
+        elapsed_ms = (_time.perf_counter() - _t0) * 1000
+
         if not bodies:
-            self.logged.emit("Render: no geometry produced.")
+            self.logged.emit(f"Render: no geometry produced.  ({elapsed_ms:.0f} ms)")
             return
 
         bodies = to_renderable_bodies(bodies)
-
-        elapsed_ms = (_time.perf_counter() - _t0) * 1000
         self.finished.emit(bodies, id_to_node, elapsed_ms)
 
 
