@@ -2445,12 +2445,23 @@ class Evaluator:
             elif isinstance(elem, ListCompEach):
                 self._expr_depth += 1
                 self._check_debug(elem, ctx, expr_level=True)
-                v = self._eval_expr(elem.body, ctx)
+                inner = elem.body
+                if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
+                                      ListCompCFor, ListCompLet, ListCompEach)):
+                    # `each if (cond) expr` etc. — inner is a comprehension element,
+                    # not a plain expression; evaluate it as such, then spread results.
+                    for item in self._eval_list_comp_body(inner, ctx):
+                        if isinstance(item, list):
+                            result.extend(item)
+                        elif item is not None:
+                            result.append(item)
+                else:
+                    v = self._eval_expr(inner, ctx)
+                    if isinstance(v, list):
+                        result.extend(v)
+                    elif v is not None:
+                        result.append(v)
                 self._expr_depth -= 1
-                if isinstance(v, list):
-                    result.extend(v)
-                elif v is not None:
-                    result.append(v)
             else:
                 self._check_debug(elem, ctx, expr_level=True)
                 result.append(self._eval_expr(elem, ctx))
@@ -2493,7 +2504,20 @@ class Evaluator:
         if isinstance(body, ListCompEach):
             self._expr_depth += 1
             self._check_debug(body, ctx, expr_level=True)
-            v = self._eval_expr(body.body, ctx)
+            inner = body.body
+            if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
+                                   ListCompCFor, ListCompLet, ListCompEach)):
+                # `each if (cond) expr` etc. — inner is a comprehension element;
+                # evaluate it, then spread (each item may itself be a list to flatten).
+                result = []
+                for item in self._eval_list_comp_body(inner, ctx):
+                    if isinstance(item, list):
+                        result.extend(item)
+                    elif item is not None:
+                        result.append(item)
+                self._expr_depth -= 1
+                return result
+            v = self._eval_expr(inner, ctx)
             self._expr_depth -= 1
             if isinstance(v, list):
                 return v
