@@ -1134,6 +1134,10 @@ class Evaluator:
                 msg = self._get_arg(args, 1, "message", None)
                 err = f"Assertion '{cond_text}' failed" + (f': "{msg}"' if msg is not None else "")
                 self.error(err, node, innermost_frame="assert")
+                return []
+            # Assertion passed — propagate any chained child geometry (e.g. assert(...) translate(...) children())
+            if node.children:
+                return self._eval_children(node.children, ctx)
             return []
         if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
             return self._eval_statement(node.child, ctx)

@@ -921,9 +921,10 @@ class TestAssert:
         assert len(bodies) == 1
 
     def test_assert_modular_call(self):
-        # assert() as a modular call (with children) passes through nothing
+        # assert(true) with a child module propagates the child's geometry
         bodies, _ = run("assert(true) cube(1);")
-        assert bodies == []
+        assert len(bodies) == 1
+        assert abs(bodies[0].body.volume() - 1.0) < 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -1904,9 +1905,10 @@ class TestRemainingBuiltins:
         assert lines == ["ECHO: 2"]
 
     def test_modular_assert_passes(self):
-        # assert with true condition — children pass through, no error
+        # assert with true condition — children's geometry passes through
         bodies, _ = run("assert(true) cube(1);")
-        assert len(bodies) == 0  # modular assert has no geometry of its own
+        assert len(bodies) == 1
+        assert abs(bodies[0].body.volume() - 1.0) < 0.01
 
     def test_modular_assert_fails(self):
         import pytest
