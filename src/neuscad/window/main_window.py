@@ -27,6 +27,12 @@ _TOOL_ICONS = {
 }
 
 
+def _fmt_elapsed(elapsed_ms: float) -> str:
+    if elapsed_ms >= 1000:
+        return f"({elapsed_ms / 1000:.3f}s)"
+    return f"({elapsed_ms:.0f} ms)"
+
+
 def _resolve_use_scopes(nodes, current_file, log_fn):
     """Resolve `use <file>` statements per OpenSCAD semantics.
 
@@ -397,15 +403,15 @@ class _RenderWorker(QObject):
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
         except RecursionError:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  ({elapsed_ms:.0f} ms)")
+            self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  {_fmt_elapsed(elapsed_ms)}")
             return
         except EvalError as e:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Eval error:  ({elapsed_ms:.0f} ms)\n{e}")
+            self.logged.emit(f"Eval error:  {_fmt_elapsed(elapsed_ms)}\n{e}")
             return
         except Exception as e:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Runtime error:  ({elapsed_ms:.0f} ms)\n{e}\n{traceback.format_exc()}")
+            self.logged.emit(f"Runtime error:  {_fmt_elapsed(elapsed_ms)}\n{e}\n{traceback.format_exc()}")
             return
 
         if self._cancel.is_set():
@@ -414,7 +420,7 @@ class _RenderWorker(QObject):
         elapsed_ms = (_time.perf_counter() - _t0) * 1000
 
         if not bodies:
-            self.logged.emit(f"Render: no geometry produced.  ({elapsed_ms:.0f} ms)")
+            self.logged.emit(f"Render: no geometry produced.  {_fmt_elapsed(elapsed_ms)}")
             return
 
         bodies = to_renderable_bodies(bodies)
@@ -1299,7 +1305,7 @@ class MainWindow(QMainWindow):
                     tab,
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
                     f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  size {extent:.2f}  "
-                    f"({elapsed_ms:.0f} ms)"
+                    f"{_fmt_elapsed(elapsed_ms)}"
                 )
         except Exception as e:
             import traceback
