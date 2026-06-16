@@ -2941,7 +2941,10 @@ class Evaluator:
         fn_scope = decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope
         child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope)
         for k, v in bound.items():
-            child_ctx.dyn[f"__let_{k}"] = v
+            if k.startswith("$"):
+                child_ctx.dyn[k] = v
+            else:
+                child_ctx.dyn[f"__let_{k}"] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
         self._call_stack.append(("function", name, pos, getattr(decl, 'position', None)))
@@ -2964,7 +2967,10 @@ class Evaluator:
         fn_scope = func_node.scope if func_node.scope else ctx.scope
         child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope)
         for k, v in bound.items():
-            child_ctx.dyn[f"__let_{k}"] = v
+            if k.startswith("$"):
+                child_ctx.dyn[k] = v
+            else:
+                child_ctx.dyn[f"__let_{k}"] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
         self._call_stack.append(("function", name or "<function>", pos, func_node.position))
