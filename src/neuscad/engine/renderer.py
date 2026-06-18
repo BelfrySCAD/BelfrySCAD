@@ -459,7 +459,7 @@ class SceneRenderer:
 
     def _render_axes(self, mvp: np.ndarray):
         L       = self.camera.distance * 2.5
-        _label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
+        label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
         red   = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         green   = np.array([0.15, 0.65, 0.15], dtype=np.float32)
         blue   = np.array([0.25, 0.35, 0.9], dtype=np.float32)
@@ -512,6 +512,10 @@ class SceneRenderer:
         perp_axis = [1, 0, 1]   # which axis the tick extends along
         minor_len_actual = tick_len * 0.5
         major_steps = max(1, round(major_spacing / minor_spacing))
+        if major_steps <= 2:
+            minor_spacing = major_spacing
+            major_spacing = label_spacing
+            major_steps = max(1, round(major_spacing / minor_spacing))
 
         k = 1
         while True:
