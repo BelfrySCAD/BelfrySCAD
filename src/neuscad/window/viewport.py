@@ -26,6 +26,7 @@ class Viewport(QOpenGLWidget):
     translate_committed = Signal(float, float, float)    # world-space delta
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
+    camera_changed      = Signal()                       # emitted on any camera movement
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -98,6 +99,7 @@ class Viewport(QOpenGLWidget):
 
     def frame_scene(self, bb_min, bb_max):
         self._renderer.camera.frame_bounds(bb_min, bb_max)
+        self.camera_changed.emit()
         self.update()
 
     def set_background_color(self, r, g, b):
@@ -144,9 +146,11 @@ class Viewport(QOpenGLWidget):
             cam.azimuth, cam.elevation = 295, 35
         elif preset == "all":
             self._frame_all(cam)
+            self.camera_changed.emit()
             self.update()
             return
         cam.target = [0, 0, 0]
+        self.camera_changed.emit()
         self.update()
 
     def _frame_all(self, cam):
@@ -166,6 +170,7 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         factor = 1.03 if direction < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
+        self.camera_changed.emit()
         self.update()
 
     # ------------------------------------------------------------------
@@ -242,6 +247,7 @@ class Viewport(QOpenGLWidget):
             cam.target -= right * dx * scale
             cam.target += up_approx * dy * scale
 
+        self.camera_changed.emit()
         self.update()
 
     def wheelEvent(self, event: QWheelEvent):
@@ -250,6 +256,7 @@ class Viewport(QOpenGLWidget):
         deadspot = 5
         factor = 1.01 if delta < -deadspot else 0.99 if delta > deadspot else 1.0
         cam.distance = max(0.1, cam.distance * factor)
+        self.camera_changed.emit()
         self.update()
 
     # ------------------------------------------------------------------

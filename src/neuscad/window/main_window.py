@@ -502,6 +502,9 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
+        self._camera_label = QLabel("")
+        self._status_bar.addWidget(self._camera_label)
+
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
 
@@ -748,6 +751,7 @@ class MainWindow(QMainWindow):
         tab.viewport.scale_committed.connect(
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
+        tab.viewport.camera_changed.connect(self._update_camera_label)
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
@@ -784,6 +788,23 @@ class MainWindow(QMainWindow):
     def _current_tab(self):
         return self._tabs.currentWidget()
 
+    def _update_camera_label(self):
+        tab = self._tabs.currentWidget()
+        if tab is None:
+            self._camera_label.setText("")
+            return
+        import numpy as np
+        cam = tab.viewport._renderer.camera
+        vpt = np.asarray(cam.target)
+        vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
+        vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
+        vpd = float(cam.distance)
+        self._camera_label.setText(
+            f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}],  "
+            f"$vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}],  "
+            f"$vpd = {vpd:.2f}"
+        )
+
     def _tab_changed(self, index):
         tab = self._tabs.widget(index)
         if tab:
@@ -791,6 +812,7 @@ class MainWindow(QMainWindow):
             self._console_stack.setCurrentWidget(tab.console)
             self._debugger_stack.setCurrentWidget(tab.debugger_pane)
             self._animate_stack.setCurrentWidget(tab.animate_pane)
+            self._update_camera_label()
         # Animation playback re-renders the active tab on every frame, so
         # pause any other tab's animation while it's not visible.
         for i in range(self._tabs.count()):
@@ -877,6 +899,7 @@ class MainWindow(QMainWindow):
         tab.viewport.scale_committed.connect(
             lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
         )
+        tab.viewport.camera_changed.connect(self._update_camera_label)
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
         self._debugger_stack.addWidget(tab.debugger_pane)
