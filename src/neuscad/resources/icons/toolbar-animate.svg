@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Film frame -->
+  <rect x="4" y="6" width="24" height="20" rx="2" fill="none" stroke="#444" stroke-width="2"/>
+  <!-- Sprocket holes -->
+  <rect x="6" y="8" width="3" height="3" rx="0.5" fill="#444"/>
+  <rect x="6" y="21" width="3" height="3" rx="0.5" fill="#444"/>
+  <rect x="23" y="8" width="3" height="3" rx="0.5" fill="#444"/>
+  <rect x="23" y="21" width="3" height="3" rx="0.5" fill="#444"/>
+  <!-- Play triangle -->
+  <polygon points="13,11 13,21 22,16" fill="#444"/>
+</svg>

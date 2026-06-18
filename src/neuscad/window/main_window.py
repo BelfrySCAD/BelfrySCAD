@@ -547,16 +547,6 @@ class MainWindow(QMainWindow):
         self._act_export.triggered.connect(self._export)
         tb.addAction(self._act_export)
 
-        self._act_render = QAction(self._toolbar_icon("render"), "Render", self)
-        self._act_render.setToolTip("Render (F6)")
-        self._act_render.triggered.connect(self._render)
-        tb.addAction(self._act_render)
-
-        self._act_debug_tb = QAction(self._toolbar_icon("debug"), "Debug", self)
-        self._act_debug_tb.setToolTip("Debug (F5)")
-        self._act_debug_tb.triggered.connect(self._start_debug)
-        tb.addAction(self._act_debug_tb)
-
         tb.addSeparator()
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
@@ -570,6 +560,23 @@ class MainWindow(QMainWindow):
         self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_redo)
+
+        tb.addSeparator()
+
+        self._act_render = QAction(self._toolbar_icon("render"), "Render", self)
+        self._act_render.setToolTip("Render (F6)")
+        self._act_render.triggered.connect(self._render)
+        tb.addAction(self._act_render)
+
+        self._act_debug_tb = QAction(self._toolbar_icon("debug"), "Debug", self)
+        self._act_debug_tb.setToolTip("Debug (F5)")
+        self._act_debug_tb.triggered.connect(self._start_debug)
+        tb.addAction(self._act_debug_tb)
+
+        self._act_animate_tb = QAction(self._toolbar_icon("animate"), "Animate", self)
+        self._act_animate_tb.setToolTip("Animate")
+        self._act_animate_tb.triggered.connect(self._show_animate)
+        tb.addAction(self._act_animate_tb)
 
         return tb
 
@@ -1570,6 +1577,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Debug session
     # ------------------------------------------------------------------
+
+    def _show_animate(self):
+        self._animate_dock.show()
+        self._animate_dock.raise_()
+        tab = self._current_tab()
+        if tab:
+            tab.animate_pane._fps_edit.setFocus()
+            tab.animate_pane._fps_edit.selectAll()
 
     def _start_debug(self):
         tab = self._current_tab()
