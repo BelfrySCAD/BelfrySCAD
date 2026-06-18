@@ -574,7 +574,9 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act_debug_tb)
 
         self._act_animate_tb = QAction(self._toolbar_icon("animate"), "Animate", self)
-        self._act_animate_tb.setToolTip("Animate")
+        self._act_animate_tb.setToolTip("Animate (F7)")
+        self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F7))
+        self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_animate_tb.triggered.connect(self._show_animate)
         tb.addAction(self._act_animate_tb)
 
