@@ -21,7 +21,7 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.
 
-**Axis tick labels**: rendered as depth-aware, camera-facing textured billboards in the 3D scene (not a QPainter screen-space overlay). Each label is a `QImage` rasterized once into a ModernGL texture, drawn as a unit quad oriented via `right`/`up` vectors derived from the view matrix. Labels on axes nearly end-on to the camera are suppressed. Positive axis lines are colored (red/green/blue); negative axes are gray.
+**Axis ticks and labels**: each axis has perpendicular tick marks (X/Z ticks extend along Y; Y ticks extend along X). Ticks are one-sided, extending only in the positive perpendicular direction; minor ticks are ~24 px, major ticks ~48 px. Tick labels are depth-aware, camera-facing textured billboards rendered in the 3D scene (not a QPainter screen-space overlay) — each `QImage` is rasterized once into a ModernGL texture and drawn as a unit quad oriented via `right`/`up` vectors from the view matrix. Labels are positioned on the negative perpendicular side (opposite the ticks). Labels on axes nearly end-on to the camera are suppressed. Positive axis lines are colored (red/green/blue); negative axes are gray.
 
 **Mouse-wheel zoom**: fixed ±1% step (`factor = 1.01` or `0.99`) with a 5-unit deadspot on `angleDelta` to avoid jitter on near-zero deltas.
 
