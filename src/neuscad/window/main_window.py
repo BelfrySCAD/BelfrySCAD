@@ -644,6 +644,10 @@ class MainWindow(QMainWindow):
         bool_menu = design_menu.addMenu("Boolean Operation")
         for op in ("Union", "Difference", "Intersection"):
             bool_menu.addAction(op)
+        design_menu.addSeparator()
+        self._use_library_menu = design_menu.addMenu("Use Library")
+        self._use_library_menu.aboutToShow.connect(self._populate_use_library_menu)
+        self._add_action(design_menu, "Manage Libraries…", self._open_library_manager)
 
         # View
         view_menu = mb.addMenu("View")
@@ -1378,6 +1382,54 @@ class MainWindow(QMainWindow):
                 tab.id_to_node = {}
         clear_ast_cache()
         self.log("Flushed AST caches — render or debug to rebuild.")
+
+    def _open_library_manager(self):
+        from neuscad.window.library_manager import LibraryManagerWindow
+        if not hasattr(self, '_library_manager') or self._library_manager is None:
+            self._library_manager = LibraryManagerWindow(parent=self)
+            self._library_manager.destroyed.connect(lambda: setattr(self, '_library_manager', None))
+        self._library_manager.show()
+        self._library_manager.raise_()
+        self._library_manager.activateWindow()
+
+    def _populate_use_library_menu(self):
+        from neuscad.window.library_manager import _library_dir, _load_catalog
+        menu = self._use_library_menu
+        menu.clear()
+        lib_dir = _library_dir()
+        catalog = _load_catalog()
+        found = False
+        for lib in catalog:
+            install_as = lib.get("install_as", lib["name"])
+            if (lib_dir / install_as).is_dir():
+                stmt = lib.get("include_statement", f"use <{install_as}/{install_as}.scad>")
+                act = menu.addAction(lib["name"])
+                act.triggered.connect(lambda checked=False, s=stmt: self._insert_use_statement(s))
+                found = True
+        if not found:
+            act = menu.addAction("(No libraries installed)")
+            act.setEnabled(False)
+
+    def _insert_use_statement(self, statement: str):
+        tab = self._current_tab()
+        if not tab:
+            return
+        import re
+        editor = tab.editor
+        text = editor.toPlainText()
+        lines = text.split("\n")
+        insert_line = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if re.match(r"^(use|include)\s+<", stripped):
+                insert_line = i + 1
+            elif stripped and not stripped.startswith("//"):
+                break
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        for _ in range(insert_line):
+            cursor.movePosition(cursor.MoveOperation.Down)
+        cursor.insertText(statement + "\n")
 
     def _parse_error_to_editor(self, tab, captured: str):
         """Parse the error text from openscad_parser and mark the editor."""

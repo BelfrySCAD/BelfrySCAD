@@ -19,6 +19,7 @@ dependencies = [
     "openscad_parser>=2.5.2",
     "fonttools>=4.0",
     "shapely-polyskel>=0.1.2",
+    "certifi",
 ]
 
 [project.scripts]
@@ -67,6 +68,7 @@ requires = [
     "fonttools>=4.0",
     "./vendor/wheels/euclid3-0.1-py3-none-any.whl",
     "shapely-polyskel>=0.1.2",
+    "certifi",
 ]
 
 [tool.briefcase.app.neuscad.macOS]

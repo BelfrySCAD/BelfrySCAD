@@ -6,7 +6,11 @@
     "license": "BSD-2-Clause",
     "download_url": "https://github.com/revarbat/BOSL",
     "documentation_url": "https://github.com/revarbat/BOSL/wiki",
-    "thumbnail_url": "https://openscad.org/images/bosl.gif"
+    "thumbnail_url": "https://openscad.org/images/bosl.gif",
+    "version": "v1.0.3",
+    "default_branch": "master",
+    "install_as": "BOSL",
+    "include_statement": "include <BOSL/constants.scad>"
   },
   {
     "name": "BOSL2",
@@ -21,7 +25,11 @@
         "url": "https://github.com/BelfrySCAD/BOSL2/wiki/Tutorials"
       }
     ],
-    "thumbnail_url": "https://openscad.org/images/bosl2.gif"
+    "thumbnail_url": "https://openscad.org/images/bosl2.gif",
+    "version": "v2.0.745",
+    "default_branch": "master",
+    "install_as": "BOSL2",
+    "include_statement": "include <BOSL2/std.scad>"
   },
   {
     "name": "dotSCAD",
@@ -30,7 +38,11 @@
     "license": "LGPL-3.0-only",
     "download_url": "https://github.com/JustinSDK/dotSCAD",
     "documentation_url": "https://openhome.cc/eGossip/OpenSCAD/",
-    "thumbnail_url": "https://openscad.org/images/dotscad.gif"
+    "thumbnail_url": "https://openscad.org/images/dotscad.gif",
+    "version": "v3.3",
+    "default_branch": "master",
+    "install_as": "dotSCAD",
+    "include_statement": "use <dotSCAD/dotSCAD.scad>"
   },
   {
     "name": "NopSCADlib",
@@ -39,7 +51,11 @@
     "license": "GPL-3.0-or-later",
     "download_url": "https://github.com/nophead/NopSCADlib",
     "documentation_url": "https://github.com/nophead/NopSCADlib/blob/master/readme.md",
-    "thumbnail_url": "https://raw.githubusercontent.com/nophead/NopSCADlib/master/libtest.png"
+    "thumbnail_url": "https://raw.githubusercontent.com/nophead/NopSCADlib/master/libtest.png",
+    "version": "v21.41.1",
+    "default_branch": "master",
+    "install_as": "NopSCADlib",
+    "include_statement": "include <NopSCADlib/lib.scad>"
   },
   {
     "name": "UB.scad",
@@ -48,7 +64,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/UBaer21/UB.scad",
     "documentation_url": "https://github.com/UBaer21/UB.scad/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/ub.gif"
+    "thumbnail_url": "https://openscad.org/images/ub.gif",
+    "version": "\u03b2315|21",
+    "default_branch": "main",
+    "install_as": "UB.scad",
+    "include_statement": "include <UB.scad/UB.scad>"
   },
   {
     "name": "Functional OpenSCAD",
@@ -57,7 +77,11 @@
     "license": "MIT",
     "download_url": "https://github.com/thehans/FunctionalOpenSCAD",
     "documentation_url": "https://github.com/thehans/FunctionalOpenSCAD/blob/master/README.md",
-    "thumbnail_url": "https://openscad.org/images/functional_openscad.gif"
+    "thumbnail_url": "https://openscad.org/images/functional_openscad.gif",
+    "version": "51588ff",
+    "default_branch": "master",
+    "install_as": "FunctionalOpenSCAD",
+    "include_statement": "use <FunctionalOpenSCAD/functional.scad>"
   },
   {
     "name": "Constructive Library",
@@ -80,7 +104,11 @@
         "url": "https://github.com/solidboredom/constructive/blob/main/tutorials/tutorial-partIII.md"
       }
     ],
-    "thumbnail_url": "https://raw.githubusercontent.com/solidboredom/constructive/main/img/mount.gif"
+    "thumbnail_url": "https://raw.githubusercontent.com/solidboredom/constructive/main/img/mount.gif",
+    "version": "8aad3ca",
+    "default_branch": "main",
+    "install_as": "constructive",
+    "include_statement": "include <constructive/constructive-compiled.scad>"
   },
   {
     "name": "StoneAgeLib",
@@ -89,7 +117,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/Stone-Age-Sculptor/StoneAgeLib",
     "documentation_url": "https://github.com/Stone-Age-Sculptor/StoneAgeLib/tree/main/examples",
-    "thumbnail_url": "https://openscad.org/images/stone-age-lib.gif"
+    "thumbnail_url": "https://openscad.org/images/stone-age-lib.gif",
+    "version": "37cbbfb",
+    "default_branch": "main",
+    "install_as": "StoneAgeLib",
+    "include_statement": "use <StoneAgeLib/StoneAgeLib.scad>"
   },
   {
     "name": "BOLTS",
@@ -98,7 +130,11 @@
     "license": "LGPL-2.1-or-later | GPL-3.0-only",
     "download_url": "https://github.com/boltsparts/BOLTS",
     "documentation_url": "https://boltsparts.github.io/en/index.html",
-    "thumbnail_url": "https://openscad.org/images/bolts.gif"
+    "thumbnail_url": "https://openscad.org/images/bolts.gif",
+    "version": "v0.4.1",
+    "default_branch": "master",
+    "install_as": "BOLTS",
+    "include_statement": "include <BOLTS/BOLTS.scad>"
   },
   {
     "name": "Asset Collection",
@@ -107,7 +143,11 @@
     "license": "MIT",
     "download_url": "https://github.com/AngeloNicoli/OpenSCAD-Snippet",
     "documentation_url": "https://github.com/AngeloNicoli/OpenSCAD-Snippet/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/angelo-nicoli-assets.gif"
+    "thumbnail_url": "https://openscad.org/images/angelo-nicoli-assets.gif",
+    "version": "714acd7",
+    "default_branch": "main",
+    "install_as": "OpenSCAD-Snippet",
+    "include_statement": "use <OpenSCAD-Snippet/openscad-snippet.scad>"
   },
   {
     "name": "Board game toolkit",
@@ -116,7 +156,11 @@
     "license": "Apache-2.0",
     "download_url": "https://github.com/pinkfish/openscad_boardgame_toolkit",
     "documentation_url": "https://github.com/pinkfish/openscad_boardgame_toolkit/wiki",
-    "thumbnail_url": "https://openscad.org/images/board_game_toolkit.png"
+    "thumbnail_url": "https://openscad.org/images/board_game_toolkit.png",
+    "version": "cc9b533",
+    "default_branch": "main",
+    "install_as": "openscad_boardgame_toolkit",
+    "include_statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>"
   },
   {
     "name": "Round Anything",
@@ -125,7 +169,11 @@
     "license": "MIT",
     "download_url": "https://github.com/Irev-Dev/Round-Anything",
     "documentation_url": "https://learn.cadhub.xyz/docs/round-anything/api-reference/",
-    "thumbnail_url": "https://openscad.org/images/round-anything.gif"
+    "thumbnail_url": "https://openscad.org/images/round-anything.gif",
+    "version": "1.0.4",
+    "default_branch": "master",
+    "install_as": "Round-Anything",
+    "include_statement": "use <Round-Anything/polyround.scad>"
   },
   {
     "name": "Mark's Enclosure Helper",
@@ -134,7 +182,11 @@
     "license": "GPL-3.0-only",
     "download_url": "https://github.com/sbambach/MarksEnclosureHelper",
     "documentation_url": "https://github.com/sbambach/MarksEnclosureHelper/blob/master/REFERENCE.md",
-    "thumbnail_url": "https://openscad.org/images/marks-enclosure-helper.gif"
+    "thumbnail_url": "https://openscad.org/images/marks-enclosure-helper.gif",
+    "version": "77f016d",
+    "default_branch": "master",
+    "install_as": "MarksEnclosureHelper",
+    "include_statement": "use <MarksEnclosureHelper/enclosure_helper.scad>"
   },
   {
     "name": "funcutils",
@@ -143,7 +195,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/thehans/funcutils",
     "documentation_url": "https://github.com/thehans/funcutils/blob/master/README.md",
-    "thumbnail_url": null
+    "thumbnail_url": null,
+    "version": "fac6ac1",
+    "default_branch": "master",
+    "install_as": "funcutils",
+    "include_statement": "use <funcutils/funcutils.scad>"
   },
   {
     "name": "OpenSCAD threads.scad Module",
@@ -152,7 +208,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/rcolyer/threads-scad",
     "documentation_url": "https://github.com/rcolyer/threads-scad/blob/master/README.md",
-    "thumbnail_url": "https://openscad.org/images/rcolyer_threads.gif"
+    "thumbnail_url": "https://openscad.org/images/rcolyer_threads.gif",
+    "version": "4ae9aeb",
+    "default_branch": "master",
+    "install_as": "threads-scad",
+    "include_statement": "use <threads-scad/threads.scad>"
   },
   {
     "name": "OpenSCAD Smooth Primitives Library",
@@ -161,7 +221,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/rcolyer/smooth-prim",
     "documentation_url": "https://github.com/rcolyer/smooth-prim/blob/master/README.md",
-    "thumbnail_url": "https://openscad.org/images/rcolyer_smooth_prim.gif"
+    "thumbnail_url": "https://openscad.org/images/rcolyer_smooth_prim.gif",
+    "version": "0d0038f",
+    "default_branch": "master",
+    "install_as": "smooth-prim",
+    "include_statement": "use <smooth-prim/smooth_prim.scad>"
   },
   {
     "name": "OpenSCAD Function Plotting Library",
@@ -170,7 +234,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/rcolyer/plot-function",
     "documentation_url": "https://github.com/rcolyer/plot-function/blob/master/README.md",
-    "thumbnail_url": "https://openscad.org/images/rcolyer_plot_function.gif"
+    "thumbnail_url": "https://openscad.org/images/rcolyer_plot_function.gif",
+    "version": "5f78d03",
+    "default_branch": "master",
+    "install_as": "plot-function",
+    "include_statement": "use <plot-function/plot_function.scad>"
   },
   {
     "name": "OpenSCAD ClosePoints Library",
@@ -179,7 +247,11 @@
     "license": "CC0-1.0",
     "download_url": "https://github.com/rcolyer/closepoints",
     "documentation_url": "https://github.com/rcolyer/closepoints/blob/master/README.md",
-    "thumbnail_url": "https://openscad.org/images/rcolyer_closepoints.gif"
+    "thumbnail_url": "https://openscad.org/images/rcolyer_closepoints.gif",
+    "version": "8ce827f",
+    "default_branch": "master",
+    "install_as": "closepoints",
+    "include_statement": "use <closepoints/closepoints.scad>"
   },
   {
     "name": "Tray Library",
@@ -188,7 +260,11 @@
     "license": "LGPL-3.0-or-later",
     "download_url": "https://github.com/sofian/openscad-tray",
     "documentation_url": "https://github.com/sofian/openscad-tray/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/sofian_tray.gif"
+    "thumbnail_url": "https://openscad.org/images/sofian_tray.gif",
+    "version": "9fc4720",
+    "default_branch": "main",
+    "install_as": "openscad-tray",
+    "include_statement": "use <openscad-tray/tray.scad>"
   },
   {
     "name": "Yet Another Parametric Projectbox generator",
@@ -197,7 +273,11 @@
     "license": "MIT",
     "download_url": "https://github.com/mrWheel/YAPP_Box",
     "documentation_url": "https://github.com/mrWheel/YAPP_Box/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/yapp.gif"
+    "thumbnail_url": "https://openscad.org/images/yapp.gif",
+    "version": "v3.3",
+    "default_branch": "main",
+    "install_as": "YAPP_Box",
+    "include_statement": "include <YAPP_Box/YAPPgenerator_v3.scad>"
   },
   {
     "name": "STEMFIE Parts Library",
@@ -206,7 +286,11 @@
     "license": "GPL-3.0-or-later",
     "download_url": "https://github.com/Cantareus/Stemfie_OpenSCAD",
     "documentation_url": "https://github.com/Cantareus/Stemfie_OpenSCAD/blob/main/docs/stemfie.scad.md",
-    "thumbnail_url": "https://openscad.org/images/stemfie.gif"
+    "thumbnail_url": "https://openscad.org/images/stemfie.gif",
+    "version": "440c084",
+    "default_branch": "main",
+    "install_as": "Stemfie_OpenSCAD",
+    "include_statement": "include <Stemfie_OpenSCAD/stemfie.scad>"
   },
   {
     "name": "Catch'n'Hole",
@@ -215,7 +299,11 @@
     "license": "MIT",
     "download_url": "https://github.com/mmalecki/catchnhole",
     "documentation_url": "https://github.com/mmalecki/catchnhole/blob/latest/README.md",
-    "thumbnail_url": "https://openscad.org/images/catchnhole.gif"
+    "thumbnail_url": "https://openscad.org/images/catchnhole.gif",
+    "version": "v3.0.2",
+    "default_branch": "latest",
+    "install_as": "catchnhole",
+    "include_statement": "use <catchnhole/catchnhole.scad>"
   },
   {
     "name": "Pathbuilder",
@@ -224,7 +312,11 @@
     "license": "MIT",
     "download_url": "https://github.com/dinther/pathbuilder",
     "documentation_url": "https://github.com/dinther/pathbuilder/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/pathbuilder.gif"
+    "thumbnail_url": "https://openscad.org/images/pathbuilder.gif",
+    "default_branch": "main",
+    "install_as": "pathbuilder",
+    "version": "V1.0",
+    "include_statement": "use <pathbuilder/pathbuilder.scad>"
   },
   {
     "name": "SCON - JSON for OpenSCAD",
@@ -233,7 +325,11 @@
     "license": "MIT",
     "download_url": "https://github.com/wmacevoy/openscad-scon/",
     "documentation_url": "https://github.com/wmacevoy/openscad-scon/blob/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/scon.gif"
+    "thumbnail_url": "https://openscad.org/images/scon.gif",
+    "install_as": "openscad-scon",
+    "version": "v1.0.0",
+    "default_branch": "main",
+    "include_statement": "use <openscad-scon/scon.scad>"
   },
   {
     "name": "Altair's 2D Library for OpenSCAD",
@@ -242,7 +338,11 @@
     "license": "MIT",
     "download_url": "https://github.com/ridercz/A2D",
     "documentation_url": "https://github.com/ridercz/A2D/wiki",
-    "thumbnail_url": null
+    "thumbnail_url": null,
+    "install_as": "A2D",
+    "version": "v1.6.2",
+    "default_branch": "main",
+    "include_statement": "use <A2D/a2d.scad>"
   },
   {
     "name": "Doll house",
@@ -251,7 +351,11 @@
     "license": "GPL-3.0-only",
     "download_url": "https://codeberg.org/adrien-delhorme/openscad-doll-house",
     "documentation_url": "https://codeberg.org/adrien-delhorme/openscad-doll-house/src/branch/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/doll-house.png"
+    "thumbnail_url": "https://openscad.org/images/doll-house.png",
+    "version": "a866a80",
+    "default_branch": "main",
+    "install_as": "openscad-doll-house",
+    "include_statement": "use <openscad-doll-house/doll-house.scad>"
   },
   {
     "name": "Dimensions",
@@ -260,6 +364,10 @@
     "license": "MIT",
     "download_url": "https://codeberg.org/adrien-delhorme/openscad-new-dimensions",
     "documentation_url": "https://codeberg.org/adrien-delhorme/openscad-new-dimensions/src/branch/main/README.md",
-    "thumbnail_url": "https://openscad.org/images/dimensions.png"
+    "thumbnail_url": "https://openscad.org/images/dimensions.png",
+    "version": "d37828e",
+    "default_branch": "main",
+    "install_as": "openscad-new-dimensions",
+    "include_statement": "use <openscad-new-dimensions/dimensions.scad>"
   }
 ]
