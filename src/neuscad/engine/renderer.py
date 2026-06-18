@@ -493,6 +493,18 @@ class SceneRenderer:
             rows.append(np.concatenate([p0, gray]))
             rows.append(np.concatenate([p1, gray]))
 
+        # Suppress minor ticks for axes nearly end-on to the camera (same
+        # threshold used by _axis_tick_world_points to suppress labels).
+        eye = self.camera.eye_position().astype(np.float64)
+        view_dir = eye - np.asarray(self.camera.target, dtype=np.float64)
+        view_norm = np.linalg.norm(view_dir)
+        end_on_axis = [False, False, False]
+        if view_norm > 1e-9:
+            view_dir /= view_norm
+            for ai in range(3):
+                if abs(view_dir[ai]) > math.cos(math.radians(5.0)):
+                    end_on_axis[ai] = True
+
         # Tick marks:
         #   X-axis → perpendicular in Y
         #   Y-axis → perpendicular in X
@@ -511,6 +523,8 @@ class SceneRenderer:
             for sign in (1.0, -1.0):
                 pos = sign * t
                 for ai in range(3):
+                    if not is_major and end_on_axis[ai]:
+                        continue
                     pi = perp_axis[ai]
                     p0 = np.zeros(3, dtype=np.float32)
                     p1 = np.zeros(3, dtype=np.float32)
@@ -582,13 +596,13 @@ class SceneRenderer:
         spacing, _, _ = _nice_spacings(L)
         eye = self.camera.eye_position().astype(np.float64)
 
-        view_dir = eye - self.camera.target.astype(np.float64)
+        view_dir = eye - np.asarray(self.camera.target, dtype=np.float64)
         view_norm = np.linalg.norm(view_dir)
         end_on_axis = [False, False, False]
         if view_norm > 1e-9:
             view_dir /= view_norm
             for ai in range(3):
-                if abs(view_dir[ai]) > math.cos(math.radians(1.0)):
+                if abs(view_dir[ai]) > math.cos(math.radians(5.0)):
                     end_on_axis[ai] = True
 
         result = []

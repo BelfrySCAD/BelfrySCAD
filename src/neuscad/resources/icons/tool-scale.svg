@@ -8,7 +8,7 @@
    height="48"
    viewBox="0 0 32 32"
    sodipodi:docname="tool-scale.svg"
-   inkscape:version="1.4.2 (ebf0e940, 2025-05-08)"
+   inkscape:version="1.4.3 (0d15f750, 2025-12-25)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -25,112 +25,61 @@
      inkscape:pagecheckerboard="1"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="13"
-     inkscape:cx="16"
-     inkscape:cy="15.807692"
-     inkscape:window-width="1152"
-     inkscape:window-height="786"
+     inkscape:cx="24.923077"
+     inkscape:cy="23"
+     inkscape:window-width="2021"
+     inkscape:window-height="901"
      inkscape:window-x="0"
-     inkscape:window-y="25"
+     inkscape:window-y="30"
      inkscape:window-maximized="0"
      inkscape:current-layer="g1" />
   <g
      inkscape:groupmode="layer"
      inkscape:label="Image"
      id="g1">
-    <text
-       xml:space="preserve"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:Arial;-inkscape-font-specification:Helvetica;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-       x="26.181791"
-       y="11.922026"
-       id="text3-2-1"><tspan
-         sodipodi:role="line"
-         id="tspan3-6-2"
-         x="26.181791"
-         y="11.922026">3</tspan></text>
-    <text
-       xml:space="preserve"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:Arial;-inkscape-font-specification:Helvetica;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-       x="18.412561"
-       y="15.998948"
-       id="text3-2-1-5"><tspan
-         sodipodi:role="line"
-         id="tspan3-6-2-1"
-         x="18.412561"
-         y="15.998948">2</tspan></text>
-    <text
-       xml:space="preserve"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:Arial;-inkscape-font-specification:Helvetica;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-       x="0.95102149"
-       y="27.614332"
-       id="text3-2-1-5-7"><tspan
-         sodipodi:role="line"
-         id="tspan3-6-2-1-9"
-         x="0.95102149"
-         y="27.614332">1</tspan></text>
     <g
-       id="g4"
-       transform="translate(0.07692307,-1.9941399)">
-      <g
-         id="g3">
-        <rect
-           style="fill:none;stroke:#808080"
-           id="rect1"
-           width="19.146276"
-           height="19.037491"
-           x="5.8000588"
-           y="7.8727803" />
-        <rect
-           style="fill:none;stroke:#000000;stroke-opacity:1"
-           id="rect2"
-           width="11.204922"
-           height="11.204924"
-           x="5.8000588"
-           y="15.705347" />
-      </g>
-      <circle
-         style="fill:#ff0000;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-         id="path2"
-         cx="24.970255"
-         cy="7.879807"
-         r="1.5" />
-      <circle
-         style="fill:#ff0000;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-         id="path2-4"
-         cx="16.970255"
-         cy="15.649038"
-         r="1.5" />
-      <circle
-         style="fill:#ff0000;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-opacity:1"
-         id="path2-4-7"
-         cx="5.8164082"
-         cy="26.879807"
-         r="1.5" />
+       id="g2"
+       transform="translate(-1.9268613,-4.0000002)"
+       style="stroke-width:1.66666667;stroke-dasharray:none">
+      <rect
+         style="fill:none;stroke:#808080;stroke-width:1.66666667;stroke-dasharray:none"
+         id="rect1"
+         width="23.036621"
+         height="23.036621"
+         x="6.4085507"
+         y="8.4816895"
+         ry="0" />
+      <rect
+         style="fill:none;stroke:#000000;stroke-opacity:1;stroke-width:1.66666667;stroke-dasharray:none"
+         id="rect2"
+         width="11.204922"
+         height="11.204924"
+         x="6.4268618"
+         y="20.295076" />
     </g>
     <g
-       id="g6"
-       transform="translate(0.7692308,0.11538462)">
+       id="g4">
       <path
-         style="fill:none;stroke:#000000;stroke-opacity:1"
-         d="M 10.076923,12.307692 V 7.9230771"
+         style="fill:none;stroke:#000000;stroke-width:1.66667;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         d="M 12.729367,13.025691 V 8.6410759"
          id="path5"
          sodipodi:nodetypes="cc" />
       <path
-         style="fill:none;stroke:#000000;stroke-opacity:1"
-         d="m 8.1923077,9.7307684 1.9230763,-1.923077 1.846154,1.8461539"
+         style="fill:none;stroke:#000000;stroke-width:1.66667;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         d="m 10.844752,10.448767 1.923076,-1.9230768 1.846154,1.8461538"
          id="path6"
          sodipodi:nodetypes="ccc" />
     </g>
     <g
-       id="g6-3"
-       transform="rotate(90,10.265533,20.446002)">
+       id="g3">
       <path
-         style="fill:none;stroke:#000000;stroke-opacity:1"
-         d="M 10.076923,12.307692 V 7.9230771"
+         style="fill:none;stroke:#000000;stroke-opacity:1;stroke-linejoin:round;stroke-linecap:round;stroke-width:1.66666667;stroke-dasharray:none"
+         d="m 18.953723,19.526672 h 4.384615"
          id="path5-6"
          sodipodi:nodetypes="cc" />
       <path
-         style="fill:none;stroke:#000000;stroke-opacity:1"
-         d="m 8.1923077,9.7307684 1.9230763,-1.923077 1.846154,1.8461539"
+         style="fill:none;stroke:#000000;stroke-opacity:1;stroke-linejoin:round;stroke-linecap:round;stroke-width:1.66666667;stroke-dasharray:none"
+         d="m 21.530647,17.642057 1.923077,1.923076 -1.846154,1.846154"
          id="path6-3"
          sodipodi:nodetypes="ccc" />
     </g>

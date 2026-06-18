@@ -771,7 +771,7 @@ requires-dist = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-parser", specifier = ">=2.5.1" },
+    { name = "openscad-parser", specifier = ">=2.5.2" },
     { name = "pillow" },
     { name = "pyside6" },
     { name = "setproctitle", specifier = ">=1.3.7" },
@@ -866,14 +866,14 @@ wheels = [
 
 [[package]]
 name = "openscad-parser"
-version = "2.5.1"
+version = "2.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arpeggio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/6e/791dd10b1d9138480d7c77aead9aa7374f914a29ad57ac9b4ad7e27ad9e1/openscad_parser-2.5.1.tar.gz", hash = "sha256:f4e128543ef6dd850e8dbaf26091262666cb7e7708b440ba41d218184c9aceb5", size = 63146, upload-time = "2026-06-09T16:27:16.81Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/8c/dfbf85f4ee6dc7b49cb318f9808f47848c2be7d134c8b654f5488bb2e488/openscad_parser-2.5.2.tar.gz", hash = "sha256:a23e8112d3d8ac1e8302893f99a2a2310693e71dde032ef52af9b607157380fe", size = 63163, upload-time = "2026-06-18T01:16:41.841Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/ce/98a4f59bd479a841599b04aa20f1f6ea9f8c41d882871a5955e87d4f513b/openscad_parser-2.5.1-py3-none-any.whl", hash = "sha256:5d8612270e4c1c04a8255883c607b295189c5124c48de06c1bb05908b43a1f23", size = 60017, upload-time = "2026-06-09T16:27:15.475Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/eb/6becb02ddd16e2ed4653f00621b657b445d1d72eacecf79b8724655fd174/openscad_parser-2.5.2-py3-none-any.whl", hash = "sha256:dbb2bcd7a6b791a34943956ed3bb2ce5740d5a3bf999150c2742b58c7b20c77d", size = 60030, upload-time = "2026-06-18T01:16:40.415Z" },
 ]
 
 [[package]]

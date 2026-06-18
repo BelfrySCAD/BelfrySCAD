@@ -457,6 +457,7 @@ class MainWindow(QMainWindow):
 
         # Viewport tabs are the central widget; all panels live in dock widgets.
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(True)
         self._tabs.tabCloseRequested.connect(self._close_tab)
