@@ -109,7 +109,9 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+[ | Zoom Out |
 | Cmd+] | Zoom In |
 | Shift+Cmd+V | View All |
+| F5 | Debug |
 | F6 | Render |
+| F7 | Animate |
 
 ## Application Preferences
 
@@ -139,7 +141,7 @@ Opens with a single blank untitled document.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  [Open] [Render] [Export]  |  [Undo] [Redo]                 │  ← toolbar
+│  [New] [Open] [Export] | [Undo] [Redo] | [Render] [Debug] [Animate] │  ← toolbar
 ├──────────────────────────────────────────────────────────────┤
 │  [file1.scad ×]  [file2.scad ×]  [+]                        │  ← tabs
 ├──────────────────────────┬──────────────────────────┬────────┤
@@ -151,11 +153,11 @@ Opens with a single blank untitled document.
 ├──────────────────────────┴──────────────────────────┴────────┤
 │  Console                                                      │
 ├──────────────────────────────────────────────────────────────┤
-│  x: 10.0  y: 5.0  z: 2.5                                    │  ← status bar
+│  $vpt = [0.00, 0.00, 0.00]  $vpr = [55.00, 0.00, 25.00]  $vpd = 50.00  │  ← status bar
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Toolbar**: across the top — Open, Render, Export, Undo, Redo
+- **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate
 - **Tabs**: one per open file; can be torn off into separate windows
 - **Code editor**: left pane (QScintilla)
 - **3D viewport**: center pane; always visible; contains:
@@ -165,7 +167,7 @@ Opens with a single blank untitled document.
 - **Console**: bottom pane
 - **Status bar**: bottom strip; shows 3D coordinates of the last clicked point on the mesh
 
-The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The Animate dock starts hidden; toggle via View ▸ Show Animate.
+The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 
