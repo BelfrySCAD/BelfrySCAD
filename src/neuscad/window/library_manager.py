@@ -261,18 +261,24 @@ class _UpdateCheckWorker(QObject):
             self.done.emit()
 
     def _check_github(self, owner, repo, branch, headers):
-        tags = self._api_get(f"https://api.github.com/repos/{owner}/{repo}/tags?per_page=1", headers)
-        if tags:
-            return tags[0]["name"]
+        try:
+            release = self._api_get(f"https://api.github.com/repos/{owner}/{repo}/releases/latest", headers)
+            if release and "tag_name" in release:
+                return release["tag_name"]
+        except HTTPError:
+            pass
         commits = self._api_get(f"https://api.github.com/repos/{owner}/{repo}/commits?per_page=1&sha={branch}", headers)
         if commits:
             return commits[0]["sha"][:7]
         return None
 
     def _check_codeberg(self, owner, repo, branch, headers):
-        tags = self._api_get(f"https://codeberg.org/api/v1/repos/{owner}/{repo}/tags?limit=1", headers)
-        if tags:
-            return tags[0]["name"]
+        try:
+            releases = self._api_get(f"https://codeberg.org/api/v1/repos/{owner}/{repo}/releases?limit=1", headers)
+            if releases and "tag_name" in releases[0]:
+                return releases[0]["tag_name"]
+        except (HTTPError, IndexError, KeyError):
+            pass
         info = self._api_get(f"https://codeberg.org/api/v1/repos/{owner}/{repo}/branches/{branch}", headers)
         if info and "commit" in info:
             return info["commit"]["id"][:7]
@@ -544,7 +550,7 @@ class LibraryManagerWindow(QDialog):
         links_parts = []
         doc_url = lib.get("documentation_url")
         if doc_url:
-            links_parts.append(f'Documentation: <a href="{doc_url}">{doc_url}</a>')
+            links_parts.append(f'<a href="{doc_url}">Documentation</a>')
         tutorials = lib.get("tutorials", [])
         if tutorials:
             tuts = ", ".join(f'<a href="{t["url"]}">{t["name"]}</a>' for t in tutorials)
