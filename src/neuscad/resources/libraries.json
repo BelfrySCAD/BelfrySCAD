@@ -131,7 +131,7 @@
     "download_url": "https://github.com/boltsparts/BOLTS",
     "documentation_url": "https://boltsparts.github.io/en/index.html",
     "thumbnail_url": "https://openscad.org/images/bolts.gif",
-    "version": "v0.4.1",
+    "version": "dd53a1d",
     "default_branch": "master",
     "install_as": "BOLTS",
     "include_statement": "include <BOLTS/BOLTS.scad>"
@@ -341,7 +341,7 @@
     "thumbnail_url": null,
     "install_as": "A2D",
     "version": "v1.6.2",
-    "default_branch": "main",
+    "default_branch": "master",
     "include_statement": "use <A2D/a2d.scad>"
   },
   {
