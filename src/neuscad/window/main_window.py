@@ -246,7 +246,12 @@ class DocumentTab(QWidget):
             btn = QToolButton()
             btn.setToolTip(tooltip)
             btn.setCheckable(True)
+            btn.setAutoRaise(True)
             btn.setFixedSize(36, 36)
+            btn.setStyleSheet(
+                "QToolButton { border: none; }"
+                "QToolButton:checked { background: palette(highlight); border-radius: 4px; }"
+            )
             icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
             if icon_path.exists():
                 btn.setIcon(QIcon(str(icon_path)))
