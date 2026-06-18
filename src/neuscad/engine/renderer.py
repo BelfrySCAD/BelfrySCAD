@@ -662,7 +662,7 @@ class SceneRenderer:
         right = view[0, :3].astype(np.float64)
         up = view[1, :3].astype(np.float64)
         label_scale = 3.0
-        gap = 4 * px_to_world * label_scale
+        gap = 6 * px_to_world * label_scale
 
         # Labels sit on the negative perpendicular side (opposite the ticks).
         perp_axis = [1, 0, 1]  # must match _render_axes

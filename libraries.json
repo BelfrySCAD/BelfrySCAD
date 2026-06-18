@@ -1,0 +1,265 @@
+[
+  {
+    "name": "BOSL",
+    "description": "The Belfry OpenScad Library - A library of tools, shapes, and helpers to make OpenScad easier to use.",
+    "type": "General",
+    "license": "BSD-2-Clause",
+    "download_url": "https://github.com/revarbat/BOSL",
+    "documentation_url": "https://github.com/revarbat/BOSL/wiki",
+    "thumbnail_url": "https://openscad.org/images/bosl.gif"
+  },
+  {
+    "name": "BOSL2",
+    "description": "Belfry OpenScad Library v2 - A library of tools, shapes, and helpers to make OpenScad easier to use.",
+    "type": "General",
+    "license": "BSD-2-Clause",
+    "download_url": "https://github.com/BelfrySCAD/BOSL2/",
+    "documentation_url": "https://github.com/BelfrySCAD/BOSL2/wiki",
+    "tutorials": [
+      {
+        "name": "Tutorials",
+        "url": "https://github.com/BelfrySCAD/BOSL2/wiki/Tutorials"
+      }
+    ],
+    "thumbnail_url": "https://openscad.org/images/bosl2.gif"
+  },
+  {
+    "name": "dotSCAD",
+    "description": "Reduce the burden of 3D modeling in mathematics.",
+    "type": "General",
+    "license": "LGPL-3.0-only",
+    "download_url": "https://github.com/JustinSDK/dotSCAD",
+    "documentation_url": "https://openhome.cc/eGossip/OpenSCAD/",
+    "thumbnail_url": "https://openscad.org/images/dotscad.gif"
+  },
+  {
+    "name": "NopSCADlib",
+    "description": "An ever expanding library of parts modelled in OpenSCAD useful for 3D printers and enclosures for electronics, etc.",
+    "type": "General",
+    "license": "GPL-3.0-or-later",
+    "download_url": "https://github.com/nophead/NopSCADlib",
+    "documentation_url": "https://github.com/nophead/NopSCADlib/blob/master/readme.md",
+    "thumbnail_url": "https://raw.githubusercontent.com/nophead/NopSCADlib/master/libtest.png"
+  },
+  {
+    "name": "UB.scad",
+    "description": "This library is a full 3D printing workflow solution for OpenSCAD, bringing tools for modifying and generating 3D objects, view helpers and a selection of mechanical parts.",
+    "type": "General",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/UBaer21/UB.scad",
+    "documentation_url": "https://github.com/UBaer21/UB.scad/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/ub.gif"
+  },
+  {
+    "name": "Functional OpenSCAD",
+    "description": "Implementing OpenSCAD in OpenSCAD.",
+    "type": "General",
+    "license": "MIT",
+    "download_url": "https://github.com/thehans/FunctionalOpenSCAD",
+    "documentation_url": "https://github.com/thehans/FunctionalOpenSCAD/blob/master/README.md",
+    "thumbnail_url": "https://openscad.org/images/functional_openscad.gif"
+  },
+  {
+    "name": "Constructive Library",
+    "description": "Extends OpenScad Language for complex and complementary mechanical parts with less mathematical code.",
+    "type": "General",
+    "license": "GPL-2.0-only",
+    "download_url": "https://github.com/solidboredom/constructive",
+    "documentation_url": "https://github.com/solidboredom/constructive/blob/main/README.md",
+    "tutorials": [
+      {
+        "name": "Basics",
+        "url": "https://github.com/solidboredom/constructive/blob/main/tutorials/basic-tutorial.md"
+      },
+      {
+        "name": "Part II",
+        "url": "https://github.com/solidboredom/constructive/blob/main/tutorials/tutorial-partII.md"
+      },
+      {
+        "name": "Part III",
+        "url": "https://github.com/solidboredom/constructive/blob/main/tutorials/tutorial-partIII.md"
+      }
+    ],
+    "thumbnail_url": "https://raw.githubusercontent.com/solidboredom/constructive/main/img/mount.gif"
+  },
+  {
+    "name": "StoneAgeLib",
+    "description": "All sorts of scripts for OpenSCAD. The scripts are for 3D models for 3D printing.",
+    "type": "General",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/Stone-Age-Sculptor/StoneAgeLib",
+    "documentation_url": "https://github.com/Stone-Age-Sculptor/StoneAgeLib/tree/main/examples",
+    "thumbnail_url": "https://openscad.org/images/stone-age-lib.gif"
+  },
+  {
+    "name": "BOLTS",
+    "description": "BOLTS is an Open Library of Technical Specifications.",
+    "type": "General",
+    "license": "LGPL-2.1-or-later | GPL-3.0-only",
+    "download_url": "https://github.com/boltsparts/BOLTS",
+    "documentation_url": "https://boltsparts.github.io/en/index.html",
+    "thumbnail_url": "https://openscad.org/images/bolts.gif"
+  },
+  {
+    "name": "Asset Collection",
+    "description": "A collection of OpenSCAD Scripts. There are some mechanical parts, as well as furniture and models that can be used as base mesh for 3D animations and game design.",
+    "type": "General",
+    "license": "MIT",
+    "download_url": "https://github.com/AngeloNicoli/OpenSCAD-Snippet",
+    "documentation_url": "https://github.com/AngeloNicoli/OpenSCAD-Snippet/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/angelo-nicoli-assets.gif"
+  },
+  {
+    "name": "Board game toolkit",
+    "description": "A collection of openscad scripts to make it easier to make boxes, targeting board games specifically.",
+    "type": "General",
+    "license": "Apache-2.0",
+    "download_url": "https://github.com/pinkfish/openscad_boardgame_toolkit",
+    "documentation_url": "https://github.com/pinkfish/openscad_boardgame_toolkit/wiki",
+    "thumbnail_url": "https://openscad.org/images/board_game_toolkit.png"
+  },
+  {
+    "name": "Round Anything",
+    "description": "Round-Anything is primarily a set of OpenSCAD utilities that help with rounding parts.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/Irev-Dev/Round-Anything",
+    "documentation_url": "https://learn.cadhub.xyz/docs/round-anything/api-reference/",
+    "thumbnail_url": "https://openscad.org/images/round-anything.gif"
+  },
+  {
+    "name": "Mark's Enclosure Helper",
+    "description": "A script for generating a two piece hinged box, with rounded corners, lid, interlocking rims, snap fit, magnet, or screw closures.",
+    "type": "Single Topic",
+    "license": "GPL-3.0-only",
+    "download_url": "https://github.com/sbambach/MarksEnclosureHelper",
+    "documentation_url": "https://github.com/sbambach/MarksEnclosureHelper/blob/master/REFERENCE.md",
+    "thumbnail_url": "https://openscad.org/images/marks-enclosure-helper.gif"
+  },
+  {
+    "name": "funcutils",
+    "description": "This library is a collection of OpenSCAD functions for use with the function-literals feature.",
+    "type": "Single Topic",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/thehans/funcutils",
+    "documentation_url": "https://github.com/thehans/funcutils/blob/master/README.md",
+    "thumbnail_url": null
+  },
+  {
+    "name": "OpenSCAD threads.scad Module",
+    "description": "An efficient OpenSCAD threading library intended primarily to be used as a component in other designs.",
+    "type": "Single Topic",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/rcolyer/threads-scad",
+    "documentation_url": "https://github.com/rcolyer/threads-scad/blob/master/README.md",
+    "thumbnail_url": "https://openscad.org/images/rcolyer_threads.gif"
+  },
+  {
+    "name": "OpenSCAD Smooth Primitives Library",
+    "description": "This is a collection of some smooth primitives, i.e. having specified rounded edges, for use in other designs.",
+    "type": "Single Topic",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/rcolyer/smooth-prim",
+    "documentation_url": "https://github.com/rcolyer/smooth-prim/blob/master/README.md",
+    "thumbnail_url": "https://openscad.org/images/rcolyer_smooth_prim.gif"
+  },
+  {
+    "name": "OpenSCAD Function Plotting Library",
+    "description": "This is a general purpose function plotting library for OpenSCAD which will render functions with Cartesian coordinates, polar/cylindrical coordinates, or axial coordinates.",
+    "type": "Single Topic",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/rcolyer/plot-function",
+    "documentation_url": "https://github.com/rcolyer/plot-function/blob/master/README.md",
+    "thumbnail_url": "https://openscad.org/images/rcolyer_plot_function.gif"
+  },
+  {
+    "name": "OpenSCAD ClosePoints Library",
+    "description": "This is a general purpose OpenSCAD library for easily creating diverse shapes by simply creating lists of points which trace out layers.",
+    "type": "Single Topic",
+    "license": "CC0-1.0",
+    "download_url": "https://github.com/rcolyer/closepoints",
+    "documentation_url": "https://github.com/rcolyer/closepoints/blob/master/README.md",
+    "thumbnail_url": "https://openscad.org/images/rcolyer_closepoints.gif"
+  },
+  {
+    "name": "Tray Library",
+    "description": "Allows the design of trays with optional subdivisions for efficient storing of parts, such as hardware, small tools, board game inserts.",
+    "type": "Single Topic",
+    "license": "LGPL-3.0-or-later",
+    "download_url": "https://github.com/sofian/openscad-tray",
+    "documentation_url": "https://github.com/sofian/openscad-tray/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/sofian_tray.gif"
+  },
+  {
+    "name": "Yet Another Parametric Projectbox generator",
+    "description": "A generator for electronic project boxes, based on a definition of a PCB and lots of options for defining PCB standoffs and case cutouts.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/mrWheel/YAPP_Box",
+    "documentation_url": "https://github.com/mrWheel/YAPP_Box/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/yapp.gif"
+  },
+  {
+    "name": "STEMFIE Parts Library",
+    "description": "OpenSCAD library to create parts for the STEMFIE project, a free educational construction-set toy.",
+    "type": "Single Topic",
+    "license": "GPL-3.0-or-later",
+    "download_url": "https://github.com/Cantareus/Stemfie_OpenSCAD",
+    "documentation_url": "https://github.com/Cantareus/Stemfie_OpenSCAD/blob/main/docs/stemfie.scad.md",
+    "thumbnail_url": "https://openscad.org/images/stemfie.gif"
+  },
+  {
+    "name": "Catch'n'Hole",
+    "description": "An ergonomic way to create nutcatches, screw holes and countersinks in OpenSCAD.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/mmalecki/catchnhole",
+    "documentation_url": "https://github.com/mmalecki/catchnhole/blob/latest/README.md",
+    "thumbnail_url": "https://openscad.org/images/catchnhole.gif"
+  },
+  {
+    "name": "Pathbuilder",
+    "description": "A fast way to create complex 2D shapes with fillets and chamfers using SVG syntax.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/dinther/pathbuilder",
+    "documentation_url": "https://github.com/dinther/pathbuilder/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/pathbuilder.gif"
+  },
+  {
+    "name": "SCON - JSON for OpenSCAD",
+    "description": "SCON is a convenient configuration data subset for OpenSCAD similar to JSON for Javascript.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/wmacevoy/openscad-scon/",
+    "documentation_url": "https://github.com/wmacevoy/openscad-scon/blob/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/scon.gif"
+  },
+  {
+    "name": "Altair's 2D Library for OpenSCAD",
+    "description": "A library of useful functions, modules and constants for 2D drawing in OpenSCAD.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://github.com/ridercz/A2D",
+    "documentation_url": "https://github.com/ridercz/A2D/wiki",
+    "thumbnail_url": null
+  },
+  {
+    "name": "Doll house",
+    "description": "A library for creating wooden doll houses in OpenSCAD.",
+    "type": "Single Topic",
+    "license": "GPL-3.0-only",
+    "download_url": "https://codeberg.org/adrien-delhorme/openscad-doll-house",
+    "documentation_url": "https://codeberg.org/adrien-delhorme/openscad-doll-house/src/branch/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/doll-house.png"
+  },
+  {
+    "name": "Dimensions",
+    "description": "A library for drawing dimensions in OpenSCAD.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://codeberg.org/adrien-delhorme/openscad-new-dimensions",
+    "documentation_url": "https://codeberg.org/adrien-delhorme/openscad-new-dimensions/src/branch/main/README.md",
+    "thumbnail_url": "https://openscad.org/images/dimensions.png"
+  }
+]
