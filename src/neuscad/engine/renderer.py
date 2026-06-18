@@ -466,13 +466,14 @@ class SceneRenderer:
         gray    = np.array([0.2, 0.2, 0.2], dtype=np.float32)
         axis_colors = [red, green, blue];
 
-        # Tick sizes: minor ~8 px half-length, major exactly 2×
+        # Tick sizes: minor ~24 px, major exactly 2×; ticks extend in the
+        # positive perpendicular direction only.
         w, h = self._viewport
         px_to_world = (self.camera.distance
                        * math.tan(math.radians(self.camera.fov / 2))
                        / max(h, 1))
-        minor_half = px_to_world * 8
-        tick_half  = minor_half * 2
+        minor_len = px_to_world * 24
+        tick_len  = minor_len * 2
 
         rows: list[np.ndarray] = []
 
@@ -497,7 +498,7 @@ class SceneRenderer:
         #   Y-axis → perpendicular in X
         #   Z-axis → perpendicular in Y
         perp_axis = [1, 0, 1]   # which axis the tick extends along
-        minor_half = tick_half * 0.5
+        minor_len_actual = tick_len * 0.5
         major_steps = max(1, round(major_spacing / minor_spacing))
 
         k = 1
@@ -506,7 +507,7 @@ class SceneRenderer:
             if t > L + 1e-9:
                 break
             is_major = (k % major_steps == 0)
-            half = tick_half if is_major else minor_half
+            length = tick_len if is_major else minor_len_actual
             for sign in (1.0, -1.0):
                 pos = sign * t
                 for ai in range(3):
@@ -515,8 +516,8 @@ class SceneRenderer:
                     p1 = np.zeros(3, dtype=np.float32)
                     p0[ai] = float(pos)
                     p1[ai] = float(pos)
-                    p0[pi] = -float(half)
-                    p1[pi] =  float(half)
+                    p0[pi] = 0.0
+                    p1[pi] = float(length)
                     color = axis_colors[ai] if sign > 0.0 else gray
                     rows.append(np.concatenate([p0, color]))
                     rows.append(np.concatenate([p1, color]))
@@ -575,14 +576,12 @@ class SceneRenderer:
         vao.release()
         vbo.release()
 
-    def _axis_tick_world_points(self) -> list[tuple[np.ndarray, str]]:
-        """Return (world_position, text) for every tick that should be labeled."""
+    def _axis_tick_world_points(self) -> list[tuple[np.ndarray, str, int]]:
+        """Return (world_position, text, axis_index) for every tick that should be labeled."""
         L = self.camera.distance * 2.5
         spacing, _, _ = _nice_spacings(L)
         eye = self.camera.eye_position().astype(np.float64)
 
-        # Skip tick labels for an axis the camera is looking nearly straight
-        # down — its ticks all project on top of each other near the origin.
         view_dir = eye - self.camera.target.astype(np.float64)
         view_norm = np.linalg.norm(view_dir)
         end_on_axis = [False, False, False]
@@ -603,7 +602,7 @@ class SceneRenderer:
                         continue
                     world = np.zeros(3, dtype=np.float64)
                     world[ai] = pos
-                    result.append((world, lbl))
+                    result.append((world, lbl, ai))
             t += spacing
         return result
 
@@ -647,15 +646,21 @@ class SceneRenderer:
         label_scale = 3.0
         gap = 4 * px_to_world * label_scale
 
+        # Labels sit on the negative perpendicular side (opposite the ticks).
+        perp_axis = [1, 0, 1]  # must match _render_axes
+
         self._ctx.enable(mgl.BLEND)
         self._label_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         self._label_prog["tex"].value = 0
 
-        for world_pos, text in self._axis_tick_world_points():
+        for world_pos, text, ai in self._axis_tick_world_points():
             tex, tw, th = self._get_label_texture(text)
             half_w = (tw / self._label_texture_scale / 2) * px_to_world * label_scale
             half_h = (th / self._label_texture_scale / 2) * px_to_world * label_scale
-            center = world_pos + right * (half_w + gap)
+
+            perp_dir = np.zeros(3, dtype=np.float64)
+            perp_dir[perp_axis[ai]] = -1.0
+            center = world_pos + perp_dir * (half_h + gap)
 
             tex.use(location=0)
             self._label_prog["center"].write(center.astype(np.float32).tobytes())
