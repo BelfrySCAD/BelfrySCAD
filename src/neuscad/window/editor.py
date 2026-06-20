@@ -782,6 +782,12 @@ class CodeEditor(QPlainTextEdit):
                     for _ in range(n):
                         cursor.deletePreviousChar()
                     return
+        if event.key() == Qt.Key.Key_Tab and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._indent_lines()
+            return
+        if event.key() == Qt.Key.Key_Backtab:
+            self._unindent_lines()
+            return
         if event.text() in ('}', ']', ')'):
             cursor = self.textCursor()
             block_text = cursor.block().text()
@@ -793,6 +799,55 @@ class CodeEditor(QPlainTextEdit):
                                     cursor.MoveMode.KeepAnchor, n)
                 cursor.removeSelectedText()
         super().keyPressEvent(event)
+
+    def _indent_lines(self):
+        cursor = self.textCursor()
+        spaces = " " * self._indent_size
+        doc = self.document()
+        cursor.beginEditBlock()
+        if cursor.hasSelection():
+            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
+            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
+            end_cur = QTextCursor(doc)
+            end_cur.setPosition(cursor.selectionEnd())
+            if end_cur.atBlockStart() and end_bn > start_bn:
+                end_bn -= 1
+            for bn in range(start_bn, end_bn + 1):
+                bc = QTextCursor(doc.findBlockByNumber(bn))
+                bc.insertText(spaces)
+        else:
+            bc = QTextCursor(cursor.block())
+            bc.insertText(spaces)
+        cursor.endEditBlock()
+
+    def _unindent_lines(self):
+        cursor = self.textCursor()
+        n = self._indent_size
+        doc = self.document()
+        cursor.beginEditBlock()
+        if cursor.hasSelection():
+            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
+            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
+            end_cur = QTextCursor(doc)
+            end_cur.setPosition(cursor.selectionEnd())
+            if end_cur.atBlockStart() and end_bn > start_bn:
+                end_bn -= 1
+            for bn in range(start_bn, end_bn + 1):
+                block = doc.findBlockByNumber(bn)
+                text = block.text()
+                n_sp = min(n, len(text) - len(text.lstrip()))
+                if n_sp > 0:
+                    bc = QTextCursor(block)
+                    bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
+                    bc.removeSelectedText()
+        else:
+            text = cursor.block().text()
+            n_sp = min(n, len(text) - len(text.lstrip()))
+            if n_sp > 0:
+                bc = QTextCursor(cursor.block())
+                bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
+                bc.removeSelectedText()
+        cursor.endEditBlock()
 
     def toggle_breakpoint(self, block_number: int):
         if block_number in self._breakpoints:
