@@ -67,11 +67,11 @@ The definition node's `.position.origin` gives the source file path, `.position.
 
 `QCompleter` with a `QStringListModel` provides prefix-based autocomplete. The popup appears after 2+ identifier characters are typed and hides when there are no matches or an exact match.
 
-**Word list**: 87 built-in names (keywords, modules, functions, constants from `_BUILTIN_WORDS`) plus user-defined names from the last successful `build_scopes()`. `update_user_names(scope)` extracts names from `scope.variables`, `scope.functions`, and `scope.modules` dicts; called from `_RenderCallback.on_ast_ready` after each successful parse.
+**Word list**: 96 built-in names (keywords, modules, functions, constants, and `$`-variables like `$fn`/`$fa`/`$fs`/`$t`/`$children`/`$vpt`/`$vpr`/`$vpd` from `_BUILTIN_WORDS`) plus user-defined names (including user `$`-variables) from the last successful `build_scopes()`. `update_user_names(scope)` extracts names from `scope.variables`, `scope.functions`, and `scope.modules` dicts; called from `_RenderCallback.on_ast_ready` after each successful parse.
 
-**Key handling in `keyPressEvent`**: when the popup is visible, Enter/Tab select the current completion and Escape dismisses. Other keys pass through to the editor and then `_update_completer_popup()` refreshes the prefix/popup state.
+**Key handling in `keyPressEvent`**: when the popup is visible, Enter/Tab accept the selected completion and Escape dismisses. Tab for indent only fires when the popup is not visible. Other keys pass through to the editor and then `_update_completer_popup()` refreshes the prefix/popup state.
 
-`_text_under_cursor()` walks backward from the cursor to find the current identifier prefix (alphanumeric + underscore). `_insert_completion()` replaces the prefix with the selected completion.
+`_text_under_cursor()` walks backward from the cursor to find the current identifier prefix (alphanumeric + underscore + leading `$`). `_insert_completion()` replaces the prefix with the selected completion.
 
 ## Undo/Redo
 
