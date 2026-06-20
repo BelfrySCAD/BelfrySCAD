@@ -2066,16 +2066,22 @@ class Evaluator:
             self.error(f"minkowski: {e}", node)
             return None
 
+    @staticmethod
+    def _copy_body(b: ColoredBody) -> ColoredBody:
+        return ColoredBody(body=b.body, color=b.color, section=b.section,
+                           flat_preview=b.flat_preview)
+
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
         if not ctx.children_bodies:
             return None
+        copies = [self._copy_body(b) for b in ctx.children_bodies]
         idx = self._get_arg(args, 0, "index", None)
         if idx is not None:
             idx = int(idx)
-            if 0 <= idx < len(ctx.children_bodies):
-                return ctx.children_bodies[idx]
+            if 0 <= idx < len(copies):
+                return copies[idx]
             return None
-        return self._combine(ctx.children_bodies)
+        return self._combine(copies)
 
     def _builtin_breakpoint(self, args: dict, node, ctx: EvalContext):
         cond = self._get_arg(args, 0, "condition", default=None)
@@ -2109,7 +2115,7 @@ class Evaluator:
 
         result = []
         for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx()
+            loop_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
             result.extend(self._eval_children(node.body, loop_ctx))
@@ -2144,7 +2150,7 @@ class Evaluator:
         body_node = node.body if isinstance(node.body, list) else [node.body]
         iterations = []
         for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx()
+            loop_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
             children = self._eval_children(body_node, loop_ctx)
@@ -2172,7 +2178,7 @@ class Evaluator:
     # --- let ---
 
     def _eval_let_block(self, node: ModularLet, ctx: EvalContext) -> list[ColoredBody]:
-        child_ctx = ctx.child_ctx()
+        child_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
         for assign in node.assignments:
             v = self._eval_expr(assign.expr, ctx)
             child_ctx.dyn[f"__let_{assign.name.name}"] = v
@@ -2588,17 +2594,8 @@ class Evaluator:
     def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> OscRange:
         start = self._eval_expr(node.start, ctx)
 
-        # Detect 2-part [start:end] vs 3-part [start:increment:end]:
-        # The parser stores 3-part [A:B:C] as start=A, end=B, step=C
-        # where B is the OpenSCAD increment and C is the OpenSCAD end.
-        # For 2-part, step.position == range.position (synthetic default=1).
-        is_3part = (node.step.position != node.position)
-        if is_3part:
-            increment = self._eval_expr(node.end, ctx)   # middle value = increment
-            stop = self._eval_expr(node.step, ctx)        # last value = end
-        else:
-            stop = self._eval_expr(node.end, ctx)
-            increment = self._eval_expr(node.step, ctx)   # default 1.0
+        stop = self._eval_expr(node.end, ctx)
+        increment = self._eval_expr(node.step, ctx)
 
         start = float(start) if start is not None else 0.0
         stop = float(stop) if stop is not None else 0.0
