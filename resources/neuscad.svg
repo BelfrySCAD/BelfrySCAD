@@ -1,118 +1,172 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-
-    <!-- Background -->
     <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#1b2333"/>
+      <stop offset="0%" stop-color="#2a2a2a"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
     </linearGradient>
 
-    <!-- Cube top face: bright cyan, lit from above -->
-    <linearGradient id="cube-top" x1="390" y1="285" x2="555" y2="475" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#ade8f4"/>
-      <stop offset="100%" stop-color="#48cae4"/>
+    <!-- Cube faces: olive/yellow-green tones -->
+    <linearGradient id="cube-top" x1="350" y1="200" x2="512" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c8c820"/>
+      <stop offset="100%" stop-color="#a0a010"/>
+    </linearGradient>
+    <linearGradient id="cube-right" x1="512" y1="380" x2="720" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#909010"/>
+      <stop offset="100%" stop-color="#707008"/>
+    </linearGradient>
+    <linearGradient id="cube-left" x1="300" y1="380" x2="512" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#606008"/>
+      <stop offset="100%" stop-color="#808010"/>
     </linearGradient>
 
-    <!-- Cube right face: medium blue -->
-    <linearGradient id="cube-right" x1="390" y1="428" x2="555" y2="428" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#0096c7"/>
-      <stop offset="100%" stop-color="#023e8a"/>
-    </linearGradient>
-
-    <!-- Cube left / front face: dark blue, in shadow -->
-    <linearGradient id="cube-left" x1="225" y1="428" x2="390" y2="428" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#03045e"/>
-      <stop offset="100%" stop-color="#0077b6"/>
-    </linearGradient>
-
-    <!-- Sphere: warm orange, radial highlight upper-left -->
-    <radialGradient id="sphere" cx="585" cy="348" r="220" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#ffd166"/>
-      <stop offset="28%"  stop-color="#f4a261"/>
-      <stop offset="62%"  stop-color="#e76f51"/>
-      <stop offset="100%" stop-color="#9b2226"/>
+    <!-- Sphere gradient -->
+    <radialGradient id="sphere" cx="460" cy="420" r="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d0d030"/>
+      <stop offset="40%" stop-color="#b0b018"/>
+      <stop offset="80%" stop-color="#888810"/>
+      <stop offset="100%" stop-color="#686808"/>
     </radialGradient>
 
-    <!-- Cone body: magenta to violet, lit from left -->
-    <linearGradient id="cone-body" x1="364" y1="355" x2="660" y2="760" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#f72585"/>
-      <stop offset="52%"  stop-color="#b5179e"/>
-      <stop offset="100%" stop-color="#560bad"/>
-    </linearGradient>
-
-    <!-- Cone base disc: purple -->
-    <radialGradient id="cone-base" cx="497" cy="748" r="158" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#e0aaff"/>
-      <stop offset="48%"  stop-color="#9d4edd"/>
-      <stop offset="100%" stop-color="#3a0ca3"/>
+    <!-- Hole interior shading -->
+    <radialGradient id="hole-interior" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#a0a018"/>
+      <stop offset="100%" stop-color="#505008"/>
     </radialGradient>
 
-    <!-- Drop shadow -->
-    <filter id="shadow" x="-22%" y="-22%" width="144%" height="144%">
-      <feDropShadow dx="2" dy="8" stdDeviation="14" flood-color="#000000" flood-opacity="0.55"/>
+    <!-- Rim highlight for holes -->
+    <linearGradient id="rim-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d0d028"/>
+      <stop offset="100%" stop-color="#808010"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="4" dy="8" stdDeviation="18" flood-color="#000000" flood-opacity="0.5"/>
     </filter>
-
   </defs>
 
-  <!-- Background rounded square -->
+  <!-- Background -->
   <rect width="1024" height="1024" rx="200" fill="url(#bg)"/>
-  <rect width="1024" height="1024" rx="200" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="3"/>
 
-  <!-- ── CUBE ────────────────────────────────────────────────────────
-       Isometric cube, visual centre (390, 475), side = 190 px.
-       e_h = cos30 × 190 ≈ 165    e_v = sin30 × 190 = 95
-       Vertices:
-         top apex     (390, 285)
-         right apex   (555, 380)
-         front corner (390, 475)
-         left apex    (225, 380)
-         right bot    (555, 570)
-         front bot    (390, 665)
-         left bot     (225, 570)
+  <!--
+    Isometric cube with sphere-in-box (cage).
+    Cube centre ~(512, 500), side ~330px isometric.
+    e_h = cos30 * 330 ≈ 286, e_v = sin30 * 330 = 165
+
+    Vertices:
+      Top:    (512, 170)
+      Right:  (798, 335)
+      Front:  (512, 500)
+      Left:   (226, 335)
+      RBot:   (798, 665)
+      FBot:   (512, 830)
+      LBot:   (226, 665)
   -->
 
-  <!-- right face -->
-  <polygon points="555,380 555,570 390,665 390,475" fill="url(#cube-right)"/>
-  <!-- top face -->
-  <polygon points="390,285 555,380 390,475 225,380" fill="url(#cube-top)"/>
-  <!-- left / front face -->
-  <polygon points="225,380 390,475 390,665 225,570" fill="url(#cube-left)"/>
+  <!-- BACK FACES (visible through holes) -->
 
-  <!-- edge highlights -->
-  <polyline points="390,285 555,380 390,475 225,380 390,285"
-            fill="none" stroke="rgba(173,232,244,0.40)" stroke-width="2" stroke-linejoin="round"/>
-  <line x1="390" y1="475" x2="390"  y2="665" stroke="rgba(173,232,244,0.32)" stroke-width="2"/>
-  <line x1="555" y1="380" x2="555"  y2="570" stroke="rgba(0,150,199,0.28)"   stroke-width="1.5"/>
-  <line x1="555" y1="570" x2="390"  y2="665" stroke="rgba(0,150,199,0.22)"   stroke-width="1.5"/>
-  <line x1="225" y1="380" x2="225"  y2="570" stroke="rgba(0,150,199,0.22)"   stroke-width="1.5"/>
-  <line x1="225" y1="570" x2="390"  y2="665" stroke="rgba(0,150,199,0.18)"   stroke-width="1.5"/>
+  <!-- Back-right face (behind left face holes) -->
+  <polygon points="798,335 798,665 512,830 512,500" fill="#585808" opacity="0.4"/>
+  <!-- Back-left face (behind right face holes) -->
+  <polygon points="226,335 512,500 512,830 226,665" fill="#484808" opacity="0.4"/>
+  <!-- Bottom face (behind top face holes) -->
+  <polygon points="226,665 512,830 798,665 512,500" fill="#404008" opacity="0.3"/>
 
-  <!-- ── SPHERE ──────────────────────────────────────────────────────
-       Centre (630, 415) radius 175.  Overlaps the cube's right face,
-       suggesting a boolean difference / intersection operation.
-  -->
-  <circle cx="630" cy="415" r="175" fill="url(#sphere)" filter="url(#shadow)"/>
-  <!-- specular highlight -->
-  <ellipse cx="565" cy="352" rx="62" ry="44" fill="rgba(255,255,255,0.16)"
-           transform="rotate(-28,565,352)"/>
-  <!-- rim -->
-  <circle cx="630" cy="415" r="175" fill="none" stroke="rgba(255,200,100,0.18)" stroke-width="2"/>
+  <!-- SPHERE (rendered behind front cube faces, visible through holes) -->
+  <circle cx="512" cy="490" r="220" fill="url(#sphere)" filter="url(#shadow)"/>
+  <!-- Specular highlight on sphere -->
+  <ellipse cx="445" cy="410" rx="80" ry="55" fill="rgba(255,255,200,0.15)"
+           transform="rotate(-20,445,410)"/>
 
-  <!-- ── CONE ───────────────────────────────────────────────────────
-       Apex (512, 350) – inside the sphere (distance ≈ 134 < 175),
-       so the cone pierces the sphere: a CSG-style intersection moment.
-       Base ellipse centre (512, 755), rx=148, ry=54.
+  <!-- LEFT FACE with circular hole -->
+  <path d="M 226,335 L 512,500 L 512,830 L 226,665 Z" fill="url(#cube-left)"/>
+  <!-- Cut elliptical hole in left face -->
+  <!-- Hole centre: midpoint of left face = (369, 582.5) -->
+  <!-- Ellipse on isometric left face: skewed circle -->
+  <clipPath id="left-face-clip">
+    <path d="M 226,335 L 512,500 L 512,830 L 226,665 Z"/>
+  </clipPath>
+  <!-- Hole in left face: ellipse approximating a circle on the iso plane -->
+  <g clip-path="url(#left-face-clip)">
+    <!-- Fill face, then cut hole by overlaying background -->
+    <ellipse cx="369" cy="582" rx="135" ry="78"
+             transform="rotate(60,369,582)"
+             fill="#1a1a1a"/>
+    <ellipse cx="369" cy="582" rx="135" ry="78"
+             transform="rotate(60,369,582)"
+             fill="none" stroke="#a0a018" stroke-width="4"/>
+  </g>
 
-       Body: apex → left-base-tangent → bottom arc → right-base-tangent → Z
-             (sweep 0 = CCW traces the lower half of the base ellipse)
-  -->
-  <path d="M 512,350 L 364,755 A 148,54 0 0,0 660,755 Z"
-        fill="url(#cone-body)" filter="url(#shadow)"/>
-  <!-- base disc drawn on top for the 3-D cap illusion -->
-  <ellipse cx="512" cy="755" rx="148" ry="54" fill="url(#cone-base)"/>
-  <!-- lit left edge -->
-  <line x1="512" y1="350" x2="364" y2="755" stroke="rgba(247,37,133,0.48)" stroke-width="2.5"/>
-  <!-- dim right edge -->
-  <line x1="512" y1="350" x2="660" y2="755" stroke="rgba(114,9,183,0.28)"  stroke-width="1.5"/>
+  <!-- RIGHT FACE with circular hole -->
+  <path d="M 512,500 L 798,335 L 798,665 L 512,830 Z" fill="url(#cube-right)"/>
+  <clipPath id="right-face-clip">
+    <path d="M 512,500 L 798,335 L 798,665 L 512,830 Z"/>
+  </clipPath>
+  <g clip-path="url(#right-face-clip)">
+    <ellipse cx="655" cy="582" rx="135" ry="78"
+             transform="rotate(120,655,582)"
+             fill="#1a1a1a"/>
+    <ellipse cx="655" cy="582" rx="135" ry="78"
+             transform="rotate(120,655,582)"
+             fill="none" stroke="#707008" stroke-width="3"/>
+  </g>
+
+  <!-- TOP FACE with circular hole -->
+  <path d="M 512,170 L 798,335 L 512,500 L 226,335 Z" fill="url(#cube-top)"/>
+  <clipPath id="top-face-clip">
+    <path d="M 512,170 L 798,335 L 512,500 L 226,335 Z"/>
+  </clipPath>
+  <g clip-path="url(#top-face-clip)">
+    <ellipse cx="512" cy="335" rx="140" ry="80"
+             fill="#1a1a1a"/>
+    <ellipse cx="512" cy="335" rx="140" ry="80"
+             fill="none" stroke="#c8c828" stroke-width="4"/>
+  </g>
+
+  <!-- Sphere parts visible through holes (drawn on top for depth) -->
+  <!-- Sphere visible through top hole -->
+  <clipPath id="top-hole-sphere">
+    <ellipse cx="512" cy="335" rx="138" ry="78"/>
+  </clipPath>
+  <g clip-path="url(#top-face-clip)">
+    <g clip-path="url(#top-hole-sphere)">
+      <circle cx="512" cy="490" r="220" fill="url(#sphere)"/>
+      <ellipse cx="470" cy="380" rx="60" ry="35" fill="rgba(255,255,200,0.12)"
+               transform="rotate(-15,470,380)"/>
+    </g>
+  </g>
+
+  <!-- Sphere visible through left hole -->
+  <clipPath id="left-hole-sphere">
+    <ellipse cx="369" cy="582" rx="133" ry="76"
+             transform="rotate(60,369,582)"/>
+  </clipPath>
+  <g clip-path="url(#left-face-clip)">
+    <g clip-path="url(#left-hole-sphere)">
+      <circle cx="512" cy="490" r="220" fill="url(#sphere)"/>
+    </g>
+  </g>
+
+  <!-- Sphere visible through right hole -->
+  <clipPath id="right-hole-sphere">
+    <ellipse cx="655" cy="582" rx="133" ry="76"
+             transform="rotate(120,655,582)"/>
+  </clipPath>
+  <g clip-path="url(#right-face-clip)">
+    <g clip-path="url(#right-hole-sphere)">
+      <circle cx="512" cy="490" r="220" fill="url(#sphere)"/>
+    </g>
+  </g>
+
+  <!-- CUBE EDGE HIGHLIGHTS -->
+  <!-- Top edges -->
+  <polyline points="512,170 798,335 512,500 226,335 512,170"
+            fill="none" stroke="rgba(220,220,40,0.35)" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Vertical edges -->
+  <line x1="512" y1="500" x2="512" y2="830" stroke="rgba(200,200,30,0.30)" stroke-width="2.5"/>
+  <line x1="798" y1="335" x2="798" y2="665" stroke="rgba(160,160,20,0.25)" stroke-width="2"/>
+  <line x1="226" y1="335" x2="226" y2="665" stroke="rgba(140,140,15,0.20)" stroke-width="2"/>
+  <!-- Bottom edges -->
+  <line x1="798" y1="665" x2="512" y2="830" stroke="rgba(140,140,15,0.20)" stroke-width="2"/>
+  <line x1="226" y1="665" x2="512" y2="830" stroke="rgba(120,120,10,0.18)" stroke-width="2"/>
 
 </svg>
