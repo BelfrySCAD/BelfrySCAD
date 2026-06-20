@@ -141,6 +141,10 @@ Preferences live under the `editor/` key group in `QSettings("NeuSCAD", "NeuSCAD
 
 `CodeEditor.set_indent_size(n)` stores `_indent_size` and updates `tabStopDistance`. Indent/unindent logic lives in `CodeEditor._indent_lines()`/`_unindent_lines()`, called both from `keyPressEvent` (Tab/Shift+Tab) and the Edit menu actions. Both handle single-line and multi-line selections.
 
+**Auto-indent on Return**: the new line inherits the current line's indentation. An extra indent level is added when the current line ends with `{`, `[`, `(`, or starts with the keyword `function` or `module`. Typing `}`, `]`, `)` on a whitespace-only line removes one indent level.
+
+**Down arrow on last line**: pressing Down on the last line appends an empty line and moves the cursor to it, so the user doesn't need to move to the end and press Return to extend the file.
+
 The Preferences action uses `QAction.MenuRole.PreferencesRole` so Qt places it in the macOS application menu (Cmd+,).
 
 **Word Wrap** is a checkable Edit menu item stored at the top level in `QSettings` under `"wordWrap"` (default `False`), not under `editor/`. Persisted/restored in `closeEvent`/`_restore_settings` using the same `blockSignals` pattern as `perspective`, and applied via `_apply_word_wrap_to_tab(tab)` (also called for new tabs in `_new_document` and `_create_and_add_tab`).

@@ -805,7 +805,8 @@ class CodeEditor(QPlainTextEdit):
             block_text = cursor.block().text()
             indent = len(block_text) - len(block_text.lstrip())
             stripped = block_text.rstrip()
-            if stripped.endswith(("{", "[", "(")):
+            first_word = stripped.lstrip().split()[0] if stripped.strip() else ""
+            if stripped.endswith(("{", "[", "(")) or first_word in ("function", "module"):
                 indent += self._indent_size
             super().keyPressEvent(event)
             self.insertPlainText(" " * indent)
@@ -821,6 +822,13 @@ class CodeEditor(QPlainTextEdit):
                     for _ in range(n):
                         cursor.deletePreviousChar()
                     return
+        if event.key() == Qt.Key.Key_Down:
+            cursor = self.textCursor()
+            if cursor.block() == self.document().lastBlock():
+                cursor.movePosition(cursor.MoveOperation.EndOfBlock)
+                cursor.insertText("\n")
+                self.setTextCursor(cursor)
+                return
         if event.key() == Qt.Key.Key_Tab and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._indent_lines()
             return
