@@ -74,5 +74,10 @@ requires = [
 [tool.briefcase.app.neuscad.macOS]
 min_os_version = "12.0"
 
+[tool.briefcase.app.neuscad.macOS.info]
+CFBundleDocumentTypes = [
+    { CFBundleTypeName = "OpenSCAD File", CFBundleTypeExtensions = ["scad"], CFBundleTypeRole = "Editor", LSHandlerRank = "Default" },
+]
+
 [tool.briefcase.app.neuscad.windows]
 installer_type = "msi"

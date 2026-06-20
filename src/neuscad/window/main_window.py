@@ -439,6 +439,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("NeuSCAD")
         self.resize(1400, 900)
 
+        self.setAcceptDrops(True)
         self._undo_stack = self._create_undo_stack()
         self._render_cancel: threading.Event | None = None
         self._render_id: int = 0
@@ -968,6 +969,16 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self.open_file_by_path(path)
+
+    def open_file_by_path(self, path: str):
+        """Open a .scad file by path. If already open, switch to its tab."""
+        resolved = str(Path(path).resolve())
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab and tab.file_path and str(Path(tab.file_path).resolve()) == resolved:
+                self._tabs.setCurrentIndex(i)
+                return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -1050,11 +1061,7 @@ class MainWindow(QMainWindow):
         self._recent_menu.addAction(clear_act)
 
     def _open_recent(self, path: str):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except OSError as e:
-            QMessageBox.critical(self, "Open Error", str(e))
+        if not os.path.isfile(path):
             settings = QSettings("NeuSCAD", "NeuSCAD")
             recents = settings.value("recentFiles", [], type=list)
             if path in recents:
@@ -1062,9 +1069,7 @@ class MainWindow(QMainWindow):
             settings.setValue("recentFiles", recents)
             self._rebuild_recent_menu()
             return
-        self._create_and_add_tab(path, text)
-        self._update_recent_files(path)
-        self._render()
+        self.open_file_by_path(path)
 
     def _clear_recent_files(self):
         settings = QSettings("NeuSCAD", "NeuSCAD")
@@ -1848,6 +1853,25 @@ class MainWindow(QMainWindow):
         self._apply_preferences()
 
     def closeEvent(self, event):
+        # Prompt to save any modified tabs before quitting
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab and tab.is_modified:
+                reply = QMessageBox.question(
+                    self, "Unsaved Changes",
+                    f"Save changes to {tab.display_name()}?",
+                    QMessageBox.StandardButton.Save |
+                    QMessageBox.StandardButton.Discard |
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if reply == QMessageBox.StandardButton.Cancel:
+                    event.ignore()
+                    return
+                if reply == QMessageBox.StandardButton.Save:
+                    self._tabs.setCurrentIndex(i)
+                    if not self._save_file():
+                        event.ignore()
+                        return
         # Stop animation playback (no more renders get queued) and let any
         # in-flight render thread finish — Qt aborts if a QThread is
         # destroyed while still running.
@@ -1883,6 +1907,21 @@ class MainWindow(QMainWindow):
                 tab._bodies = []
                 tab.viewport.load_geometry([])
         super().closeEvent(event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().endswith('.scad'):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.endswith('.scad'):
+                self.open_file_by_path(path)
+        event.acceptProposedAction()
 
     def _apply_perspective_to_tab(self, tab):
         tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()

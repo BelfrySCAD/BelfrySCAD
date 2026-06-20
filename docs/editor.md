@@ -159,6 +159,22 @@ Multi-line `/* ... */` block comments use `QSyntaxHighlighter` block state track
 
 Opens with a single blank untitled document. When opening a file while the only tab is an empty, unmodified "Untitled" tab, that tab is replaced by the new file tab (in `_create_and_add_tab`).
 
+## File Opening
+
+Files can be opened in several ways:
+
+- **File > Open** — standard file dialog
+- **File > Recent Files** — reopens previously opened files; stale entries are auto-pruned
+- **Drag and drop** — `.scad` files dropped onto the window open as new tabs
+- **macOS file association** — `.scad` files opened from Finder (double-click or Open With) send a `QFileOpenEvent` to `NeuSCADApp`, which forwards to `MainWindow.open_file_by_path()`; the Info.plist declares `CFBundleDocumentTypes` for `.scad` via briefcase config in `pyproject.toml`
+- **Command-line arguments** — `NeuSCAD foo.scad bar.scad` opens each file at launch
+
+All paths converge on `open_file_by_path(path)`, which resolves the path and checks for an already-open tab before creating a new one.
+
+## Quit Behavior
+
+When the user quits the app and there are modified editors open, a Save/Discard/Cancel dialog is shown for each unsaved tab. Cancel aborts the quit.
+
 ## GUI Layout
 
 ```
