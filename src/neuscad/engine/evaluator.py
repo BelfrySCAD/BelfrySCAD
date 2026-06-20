@@ -884,19 +884,24 @@ class EvalContext:
     dyn_positions: dict[str, Any] = field(default_factory=dict)
     # Optional color propagated from parent color() call
     color: Optional[tuple[float, float, float, float]] = None
-    # Children passed into a module call (for children() built-in)
-    children_bodies: list[ColoredBody] = field(default_factory=list)
+    # Deferred children for children() built-in: AST nodes + caller context.
+    # Evaluated lazily so $-variables from the module body are visible.
+    children_nodes: list = field(default_factory=list)
+    children_caller_ctx: Optional['EvalContext'] = None
 
-    def child_ctx(self, scope=None, dyn=None, color=None, children_bodies=None):
+    def child_ctx(self, scope=None, dyn=None, color=None,
+                  children_nodes=None, children_caller_ctx=None):
         return EvalContext(
             scope=scope if scope is not None else self.scope,
             dyn=dyn if dyn is not None else dict(self.dyn),
             dyn_positions={} if dyn is None else self.dyn_positions,
             color=color if color is not None else self.color,
-            children_bodies=children_bodies if children_bodies is not None else [],
+            children_nodes=children_nodes if children_nodes is not None else [],
+            children_caller_ctx=children_caller_ctx,
         )
 
-    def call_ctx(self, scope=None, color=None, children_bodies=None):
+    def call_ctx(self, scope=None, color=None,
+                 children_nodes=None, children_caller_ctx=None):
         """Child context for a module/function call: inherits only $-prefixed
         dynamic bindings, not __let_* variable bindings from the caller's scope."""
         dyn = {k: v for k, v in self.dyn.items() if k.startswith('$')}
@@ -905,7 +910,8 @@ class EvalContext:
             dyn=dyn,
             dyn_positions={},
             color=color if color is not None else self.color,
-            children_bodies=children_bodies if children_bodies is not None else [],
+            children_nodes=children_nodes if children_nodes is not None else [],
+            children_caller_ctx=children_caller_ctx,
         )
 
 
@@ -1163,7 +1169,8 @@ class Evaluator:
                     dyn=ctx.dyn,
                     dyn_positions=ctx.dyn_positions,
                     color=ctx.color,
-                    children_bodies=ctx.children_bodies,
+                    children_nodes=ctx.children_nodes,
+                    children_caller_ctx=ctx.children_caller_ctx,
                 )
             else:
                 child_ctx = ctx
@@ -1197,7 +1204,8 @@ class Evaluator:
             return False
         return outer.start_offset <= inner.start_offset and inner.end_offset <= outer.end_offset
 
-    def _call_ctx_for(self, decl, ctx: EvalContext, scope=None, children_bodies=None) -> EvalContext:
+    def _call_ctx_for(self, decl, ctx: EvalContext, scope=None,
+                      children_nodes=None, children_caller_ctx=None) -> EvalContext:
         """Build the child context for a module/function call.
 
         A declaration nested inside the body of a currently-executing
@@ -1213,8 +1221,10 @@ class Evaluator:
         decl_pos = getattr(decl, 'position', None)
         nested = any(self._pos_contains(frame[-1], decl_pos) for frame in self._call_stack)
         if nested:
-            return ctx.child_ctx(scope=scope, children_bodies=children_bodies)
-        return ctx.call_ctx(scope=scope, children_bodies=children_bodies)
+            return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
+                                 children_caller_ctx=children_caller_ctx)
+        return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
+                            children_caller_ctx=children_caller_ctx)
 
     def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         # Bind parameters
@@ -1222,13 +1232,11 @@ class Evaluator:
         params = decl.parameters if hasattr(decl, 'parameters') else []
         args = self._bind_args(params, call.arguments, ctx)
 
-        # Evaluate children in caller's ctx so they become available via children()
-        caller_bodies = self._eval_children(call.children, ctx)
-
         child_ctx = self._call_ctx_for(
             decl, ctx,
             scope=child_scope,
-            children_bodies=caller_bodies,
+            children_nodes=call.children,
+            children_caller_ctx=ctx,
         )
         # $children is the number of module-instantiation children passed in
         # `{}`, not the number of geometries they produced — e.g. `children()`
@@ -2071,17 +2079,33 @@ class Evaluator:
         return ColoredBody(body=b.body, color=b.color, section=b.section,
                            flat_preview=b.flat_preview)
 
+    def _eval_children_lazy(self, ctx: EvalContext) -> list[ColoredBody]:
+        """Evaluate deferred children nodes with current $-variables injected."""
+        if not ctx.children_nodes:
+            return []
+        caller_ctx = ctx.children_caller_ctx
+        if caller_ctx is None:
+            return []
+        eval_ctx = caller_ctx.child_ctx()
+        # Inject current $-variables so dynamic scoping works.
+        # $-vars may be stored as "$name" (direct assignment) or
+        # "__let_$name" (for-loop / let binding).
+        for k, v in ctx.dyn.items():
+            if k.startswith('$') or k.startswith('__let_$'):
+                eval_ctx.dyn[k] = v
+        return self._eval_children(ctx.children_nodes, eval_ctx)
+
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
-        if not ctx.children_bodies:
+        bodies = self._eval_children_lazy(ctx)
+        if not bodies:
             return None
-        copies = [self._copy_body(b) for b in ctx.children_bodies]
         idx = self._get_arg(args, 0, "index", None)
         if idx is not None:
             idx = int(idx)
-            if 0 <= idx < len(copies):
-                return copies[idx]
+            if 0 <= idx < len(bodies):
+                return bodies[idx]
             return None
-        return self._combine(copies)
+        return self._combine(bodies)
 
     def _builtin_breakpoint(self, args: dict, node, ctx: EvalContext):
         cond = self._get_arg(args, 0, "condition", default=None)
@@ -2115,7 +2139,8 @@ class Evaluator:
 
         result = []
         for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
+            loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
+                                     children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
             result.extend(self._eval_children(node.body, loop_ctx))
@@ -2150,7 +2175,8 @@ class Evaluator:
         body_node = node.body if isinstance(node.body, list) else [node.body]
         iterations = []
         for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
+            loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
+                                     children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
                 loop_ctx.dyn[f"__let_{vname}"] = val
             children = self._eval_children(body_node, loop_ctx)
@@ -2178,7 +2204,8 @@ class Evaluator:
     # --- let ---
 
     def _eval_let_block(self, node: ModularLet, ctx: EvalContext) -> list[ColoredBody]:
-        child_ctx = ctx.child_ctx(children_bodies=ctx.children_bodies)
+        child_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
+                                 children_caller_ctx=ctx.children_caller_ctx)
         for assign in node.assignments:
             v = self._eval_expr(assign.expr, ctx)
             child_ctx.dyn[f"__let_{assign.name.name}"] = v
