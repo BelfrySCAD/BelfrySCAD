@@ -2545,3 +2545,114 @@ class TestText:
         bb1 = bbox(run('linear_extrude(height=1) text("AA", size=10, spacing=1);')[0])
         bb2 = bbox(run('linear_extrude(height=1) text("AA", size=10, spacing=2);')[0])
         assert bb2[3] > bb1[3]
+
+
+# ---------------------------------------------------------------------------
+# $-variable dynamic scoping into children()
+# ---------------------------------------------------------------------------
+
+class TestDollarVarChildren:
+    def test_dollar_var_visible_to_children(self):
+        src = """
+        module m() { $x = 42; children(); }
+        m() echo($x);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 42"]
+
+    def test_dollar_var_from_for_loop_visible_to_children(self):
+        src = """
+        module xcopies(spacing, n=2) {
+            for ($idx = [0:1:n-1]) {
+                translate([($idx - n/2 + 0.5) * spacing, 0, 0])
+                    children();
+            }
+        }
+        xcopies(10, n=3) sphere(d=$idx+1);
+        """
+        bodies, lines = run(src)
+        assert bodies
+        parts = bodies[0].body.decompose()
+        assert len(parts) == 3
+        widths = sorted(
+            p.bounding_box()[3] - p.bounding_box()[0] for p in parts
+        )
+        assert widths[0] < widths[1] < widths[2]
+
+    def test_dollar_var_assignment_in_for_body_visible_to_children(self):
+        src = """
+        module m() {
+            for (i = [0:2]) {
+                $val = i * 10;
+                children();
+            }
+        }
+        m() echo($val);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 0", "ECHO: 10", "ECHO: 20"]
+
+    def test_dollar_var_overrides_in_nested_module(self):
+        src = """
+        module outer() { $x = 1; children(); }
+        module inner() { $x = 2; children(); }
+        outer() inner() echo($x);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 2"]
+
+    def test_dollar_var_from_caller_visible_without_override(self):
+        src = """
+        module m() { children(); }
+        $x = 99;
+        m() echo($x);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 99"]
+
+    def test_children_in_for_loop_produces_multiple_bodies(self):
+        src = """
+        module triple() {
+            for (i = [0:2]) {
+                translate([i * 10, 0, 0]) children();
+            }
+        }
+        triple() cube(1);
+        """
+        bodies, _ = run(src)
+        assert bodies
+        parts = bodies[0].body.decompose()
+        assert len(parts) == 3
+
+    def test_children_in_let_block_preserves_dollar_vars(self):
+        src = """
+        module m() {
+            $v = 5;
+            let (x = 1) { children(); }
+        }
+        m() echo($v);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 5"]
+
+    def test_three_part_range_in_for(self):
+        src = """
+        vals = [];
+        for (i = [0:2:6]) echo(i);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 0", "ECHO: 2", "ECHO: 4", "ECHO: 6"]
+
+    def test_two_part_range_in_for(self):
+        src = "for (i = [0:3]) echo(i);"
+        _, lines = run(src)
+        assert lines == ["ECHO: 0", "ECHO: 1", "ECHO: 2", "ECHO: 3"]
+
+    def test_children_indexed_with_dollar_var(self):
+        src = """
+        module m() { $x = 10; children(0); }
+        m() { cube($x); cube(1); }
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(10)
