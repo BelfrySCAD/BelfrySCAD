@@ -46,6 +46,8 @@ Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `unde
 | `child_ctx()` | Yes (full copy) | `for`/`let` iterations, `_eval_let_block`, list comprehension scopes — outer bindings must stay visible |
 | `call_ctx()` | No (only `$*` dynamic vars) | Module/function calls — callee has its own variable scope; inheriting caller `__let_*` would trigger spurious double-assignment warnings |
 
+Both methods accept `children_nodes` and `children_caller_ctx` to propagate deferred children through `for`/`let`/`intersection_for` blocks (so `children()` works inside loops).
+
 `_call_ctx_for(decl, ctx, ...)` picks between the two for a module/function call: it walks `_call_stack` and uses `child_ctx()` (inherit `__let_*`) if `decl`'s source span is *strictly contained* within an already-active frame's declaration span — i.e. `decl` is a module/function declared lexically inside the body of a module/function currently being evaluated (a closure over that call's locals), otherwise `call_ctx()` (isolated). Direct recursion (a declaration's span containing itself) is excluded from "nested" so a recursive call doesn't inherit its own in-progress locals as if they were its caller's. This is what lets BOSL2's `cuboid()` — which reassigns its `edges` parameter (`edges = _edges(edges, ...)`) and then calls a nested `module corner_shape() { ... }` referencing `edges` — see the *reassigned* value instead of recursing forever back into `scope.lookup_variable("edges")` → the same reassignment's own RHS.
 
 ## Built-ins implemented
@@ -139,6 +141,8 @@ Unknown variables emit `WARNING: Ignoring unknown variable 'name' in file ..., l
 `$`-prefixed variables (`$fn`, `$fa`, `$fs`, `$t`, `$children`, etc.) use **dynamic scoping** — inherited down the **call chain**, not the lexical scope chain, unlike regular variables.
 
 The evaluator maintains a separate dynamic binding context threaded through each module call. `$fn=32` on a module invocation propagates to all nested calls within it, regardless of lexical scope. `scope.lookup_variable()` must not be used for `$`-prefixed names.
+
+`children()` uses **deferred evaluation** to support this: a module's children AST nodes and caller context are stored in `EvalContext.children_nodes` / `children_caller_ctx` and only evaluated when `children()` is called (`_eval_children_lazy`). At that point, current `$`-variables (both `$name` direct assignments and `__let_$name` for-loop/let bindings) are injected into the caller's context, so `$`-variables set in the module body are visible to children — e.g. `for ($idx = ...) { children(); }` makes `$idx` available in `sphere(d=$idx+1)`.
 
 ## `include` vs `use`
 
