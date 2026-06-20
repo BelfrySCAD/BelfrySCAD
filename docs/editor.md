@@ -61,7 +61,7 @@ The definition node's `.position.origin` gives the source file path, `.position.
 - Same file (or origin `None` / untitled tab): scroll current editor to the line
 - Different file: switch to a matching open tab by `file_path`, or open via `_create_and_add_tab()` (view-only, no render)
 
-`_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport/debugger-pane signals, perspective, Go-to-Definition) and adds it to the UI. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
+`_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport/debugger-pane signals, perspective, Go-to-Definition) and adds it to the UI. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
 
 ## Undo/Redo
 
@@ -109,6 +109,8 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+[ | Zoom Out |
 | Cmd+] | Zoom In |
 | Shift+Cmd+V | View All |
+| Tab | Indent line/selection |
+| Shift+Tab | Unindent line/selection |
 | F5 | Debug |
 | F6 | Render |
 | F7 | Animate |
@@ -127,15 +129,21 @@ Preferences live under the `editor/` key group in `QSettings("NeuSCAD", "NeuSCAD
 
 `MainWindow._apply_preferences()` reads all settings and pushes them to every open tab via `_apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)`. Called on startup (end of `_restore_settings()`) and after the dialog is accepted. New tabs from `_new_document()` and `_create_and_add_tab()` also call it to inherit current settings immediately.
 
-`CodeEditor.set_indent_size(n)` stores `_indent_size` and updates `tabStopDistance`. All indent/unindent logic in `keyPressEvent` reads `self._indent_size`.
+`CodeEditor.set_indent_size(n)` stores `_indent_size` and updates `tabStopDistance`. Indent/unindent logic lives in `CodeEditor._indent_lines()`/`_unindent_lines()`, called both from `keyPressEvent` (Tab/Shift+Tab) and the Edit menu actions. Both handle single-line and multi-line selections.
 
 The Preferences action uses `QAction.MenuRole.PreferencesRole` so Qt places it in the macOS application menu (Cmd+,).
 
 **Word Wrap** is a checkable Edit menu item stored at the top level in `QSettings` under `"wordWrap"` (default `False`), not under `editor/`. Persisted/restored in `closeEvent`/`_restore_settings` using the same `blockSignals` pattern as `perspective`, and applied via `_apply_word_wrap_to_tab(tab)` (also called for new tabs in `_new_document` and `_create_and_add_tab`).
 
+## Syntax Highlighting
+
+`OpenSCADHighlighter(QSyntaxHighlighter)` applies keyword/type/number/string/comment formatting via regex rules processed per block in `highlightBlock()`.
+
+Multi-line `/* ... */` block comments use `QSyntaxHighlighter` block state tracking (`previousBlockState`/`setCurrentBlockState`) so highlighting persists across lines. Both `//` line comments and `/* */` block comments render in the same green (`#6A9955`).
+
 ## Startup Behavior
 
-Opens with a single blank untitled document.
+Opens with a single blank untitled document. When opening a file while the only tab is an empty, unmodified "Untitled" tab, that tab is replaced by the new file tab (in `_create_and_add_tab`).
 
 ## GUI Layout
 
@@ -147,7 +155,7 @@ Opens with a single blank untitled document.
 ├──────────────────────────┬──────────────────────────┬────────┤
 │                          │                          │   T    │
 │                          │                  [cube]  │   R    │
-│   QScintilla             │   3D Viewport            │   S    │
+│   QPlainTextEdit             │   3D Viewport            │   S    │
 │   Code Editor            │                          │   ·    │
 │                          │                          │   ·    │
 ├──────────────────────────┴──────────────────────────┴────────┤
@@ -159,7 +167,7 @@ Opens with a single blank untitled document.
 
 - **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate
 - **Tabs**: one per open file; can be torn off into separate windows
-- **Code editor**: left pane (QScintilla)
+- **Code editor**: left pane (QPlainTextEdit)
 - **3D viewport**: center pane; always visible; contains:
   - Cube gizmo in a corner for view angle control
   - Camera icon next to the cube gizmo; clicking opens a popup with current viewport translation, rotation, distance, and FOV

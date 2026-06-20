@@ -22,7 +22,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 The pipeline flows strictly one direction during normal operation:
 
 ```
-Source Code → QScintilla Editor → openscad_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
+Source Code → Code Editor → openscad_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
 ```
 
 **The AST is the single source of truth** — not the rendered geometry, not the editor text.

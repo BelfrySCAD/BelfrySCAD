@@ -947,6 +947,16 @@ class MainWindow(QMainWindow):
             load_preference("editor/columnGuide", int),
         )
         self._apply_word_wrap_to_tab(tab)
+        # Replace a lone empty Untitled tab instead of adding alongside it
+        if self._tabs.count() == 1:
+            old = self._tabs.widget(0)
+            if old and not old.file_path and not old.is_modified and not old.editor.toPlainText():
+                old.animate_pane.pause()
+                self._editor_stack.removeWidget(old.editor)
+                self._console_stack.removeWidget(old.console)
+                self._debugger_stack.removeWidget(old.debugger_pane)
+                self._animate_stack.removeWidget(old.animate_pane)
+                self._tabs.removeTab(0)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
         return tab
