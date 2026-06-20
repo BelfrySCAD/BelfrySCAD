@@ -267,12 +267,14 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
             string_format,
         ))
 
-        comment_format = QTextCharFormat()
-        comment_format.setForeground(QColor("#6A9955"))
+        self._comment_format = QTextCharFormat()
+        self._comment_format.setForeground(QColor("#6A9955"))
         self._rules.append((
             QRegularExpression(r"//[^\n]*"),
-            comment_format,
+            self._comment_format,
         ))
+        self._block_comment_start = QRegularExpression(r"/\*")
+        self._block_comment_end = QRegularExpression(r"\*/")
 
         self._special_var_format = QTextCharFormat()
         self._special_var_format.setForeground(QColor("#C586C0"))
@@ -287,6 +289,23 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
             while it.hasNext():
                 match = it.next()
                 self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
+
+        # Multi-line /* ... */ comments
+        self.setCurrentBlockState(0)
+        start_idx = 0
+        if self.previousBlockState() != 1:
+            m = self._block_comment_start.match(text)
+            start_idx = m.capturedStart() if m.hasMatch() else -1
+        while start_idx >= 0:
+            m_end = self._block_comment_end.match(text, start_idx + 2)
+            if m_end.hasMatch():
+                length = m_end.capturedEnd() - start_idx
+            else:
+                self.setCurrentBlockState(1)
+                length = len(text) - start_idx
+            self.setFormat(start_idx, length, self._comment_format)
+            m = self._block_comment_start.match(text, start_idx + length)
+            start_idx = m.capturedStart() if m.hasMatch() else -1
 
 
 class FindBar(QWidget):
