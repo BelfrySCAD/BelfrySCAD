@@ -71,13 +71,20 @@ requires = [
     "certifi",
 ]
 
+[tool.briefcase.app.neuscad.document_type.scad]
+extension = "scad"
+description = "OpenSCAD File"
+icon = "resources/neuscad"
+url = "https://openscad.org"
+mime_type = "text/x-openscad"
+
+[tool.briefcase.app.neuscad.document_type.scad.macOS]
+CFBundleTypeRole = "Editor"
+LSHandlerRank = "Alternate"
+UTTypeConformsTo = ["public.plain-text", "public.source-code"]
+
 [tool.briefcase.app.neuscad.macOS]
 min_os_version = "12.0"
-
-[tool.briefcase.app.neuscad.macOS.info]
-CFBundleDocumentTypes = [
-    { CFBundleTypeName = "OpenSCAD File", CFBundleTypeExtensions = ["scad"], CFBundleTypeRole = "Editor", LSHandlerRank = "Default" },
-]
 
 [tool.briefcase.app.neuscad.windows]
 installer_type = "msi"
