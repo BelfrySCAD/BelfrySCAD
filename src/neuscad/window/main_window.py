@@ -309,6 +309,7 @@ class _RenderCallback(QObject):
     def on_ast_ready(self, nodes, root_scope):
         if self._render_id == self._mw._render_id:
             self._tab.root_scope = root_scope
+            self._tab.editor.update_user_names(root_scope)
 
     @Slot(object, object, float)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float):

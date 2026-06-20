@@ -63,6 +63,16 @@ The definition node's `.position.origin` gives the source file path, `.position.
 
 `_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport/debugger-pane signals, perspective, Go-to-Definition) and adds it to the UI. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
 
+## Code Completion
+
+`QCompleter` with a `QStringListModel` provides prefix-based autocomplete. The popup appears after 2+ identifier characters are typed and hides when there are no matches or an exact match.
+
+**Word list**: 87 built-in names (keywords, modules, functions, constants from `_BUILTIN_WORDS`) plus user-defined names from the last successful `build_scopes()`. `update_user_names(scope)` extracts names from `scope.variables`, `scope.functions`, and `scope.modules` dicts; called from `_RenderCallback.on_ast_ready` after each successful parse.
+
+**Key handling in `keyPressEvent`**: when the popup is visible, Enter/Tab select the current completion and Escape dismisses. Other keys pass through to the editor and then `_update_completer_popup()` refreshes the prefix/popup state.
+
+`_text_under_cursor()` walks backward from the cursor to find the current identifier prefix (alphanumeric + underscore). `_insert_completion()` replaces the prefix with the selected completion.
+
 ## Undo/Redo
 
 Code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Each operation is a `QUndoCommand` subclass:

@@ -3,14 +3,14 @@ import re
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
-    QMenu,
+    QMenu, QCompleter,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
     QAction, QFontMetricsF,
 )
-from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal
+from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
 
 
 def _compute_fold_regions(doc) -> dict[int, int]:
@@ -583,6 +583,16 @@ class CodeEditor(QPlainTextEdit):
         self._indent_guides = _IndentGuides(self)
         self._column_guide = _ColumnGuide(self)
 
+        self._completer = QCompleter(self)
+        self._completer.setWidget(self)
+        self._completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseSensitive)
+        self._completer_model = QStringListModel(self)
+        self._completer.setModel(self._completer_model)
+        self._completer.activated.connect(self._insert_completion)
+        self._user_names: list[str] = []
+        self._update_completer_words()
+
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
 
         self._fold_regions: dict[int, int] = {}
@@ -776,6 +786,16 @@ class CodeEditor(QPlainTextEdit):
         return super().event(event)
 
     def keyPressEvent(self, event):
+        if self._completer.popup().isVisible():
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
+                idx = self._completer.popup().currentIndex()
+                if idx.isValid():
+                    self._insert_completion(idx.data())
+                self._completer.popup().hide()
+                return
+            if event.key() == Qt.Key.Key_Escape:
+                self._completer.popup().hide()
+                return
         if (event.matches(QKeySequence.StandardKey.Undo)
                 or event.matches(QKeySequence.StandardKey.Redo)):
             event.ignore()
@@ -818,6 +838,7 @@ class CodeEditor(QPlainTextEdit):
                                     cursor.MoveMode.KeepAnchor, n)
                 cursor.removeSelectedText()
         super().keyPressEvent(event)
+        self._update_completer_popup()
 
     def _indent_lines(self):
         cursor = self.textCursor()
@@ -867,6 +888,96 @@ class CodeEditor(QPlainTextEdit):
                 bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
                 bc.removeSelectedText()
         cursor.endEditBlock()
+
+    # ------------------------------------------------------------------
+    # Code completion
+    # ------------------------------------------------------------------
+
+    _BUILTIN_WORDS = sorted(set(
+        # keywords
+        ["module", "function", "if", "else", "for", "let",
+         "each", "true", "false", "undef", "include", "use"]
+        # built-in modules
+        + ["cube", "sphere", "cylinder", "cone", "polyhedron",
+           "translate", "rotate", "scale", "mirror", "multmatrix",
+           "color", "hull", "minkowski", "resize", "offset",
+           "union", "difference", "intersection",
+           "echo", "assert", "children", "render",
+           "circle", "square", "polygon", "text",
+           "linear_extrude", "rotate_extrude", "roof", "surface",
+           "projection", "import"]
+        # built-in functions
+        + ["abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
+           "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+           "max", "min", "pow", "norm", "cross", "rands",
+           "concat", "len", "str", "chr", "ord",
+           "is_undef", "is_bool", "is_num", "is_string", "is_list", "is_function",
+           "is_object", "search", "lookup",
+           "version", "version_num", "parent_module",
+           "object", "textmetrics", "fontmetrics"]
+        # constants
+        + ["PI"]
+        # built-in $-variables
+        + ["$fn", "$fa", "$fs", "$t", "$children", "$parent_modules",
+           "$vpt", "$vpr", "$vpd"]
+    ))
+
+    def _update_completer_words(self):
+        words = sorted(set(self._BUILTIN_WORDS + self._user_names))
+        self._completer_model.setStringList(words)
+
+    def update_user_names(self, scope):
+        """Extract user-defined names from a root scope and refresh the completer."""
+        if scope is None:
+            self._user_names = []
+            self._update_completer_words()
+            return
+        names = set()
+        for attr in ('variables', 'functions', 'modules'):
+            table = getattr(scope, attr, None)
+            if isinstance(table, dict):
+                names.update(table.keys())
+        self._user_names = [n for n in names if n not in self._BUILTIN_WORDS]
+        self._update_completer_words()
+
+    def _text_under_cursor(self) -> str:
+        cursor = self.textCursor()
+        block_text = cursor.block().text()
+        pos = cursor.positionInBlock()
+        start = pos
+        while start > 0 and (block_text[start - 1].isalnum() or block_text[start - 1] == '_'):
+            start -= 1
+        if start > 0 and block_text[start - 1] == '$':
+            start -= 1
+        return block_text[start:pos]
+
+    def _insert_completion(self, completion: str):
+        prefix = self._text_under_cursor()
+        cursor = self.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Left, cursor.MoveMode.KeepAnchor, len(prefix))
+        cursor.insertText(completion)
+        self.setTextCursor(cursor)
+
+    def _update_completer_popup(self):
+        prefix = self._text_under_cursor()
+        if len(prefix) < 2:
+            self._completer.popup().hide()
+            return
+        if prefix != self._completer.completionPrefix():
+            self._completer.setCompletionPrefix(prefix)
+            self._completer.popup().setCurrentIndex(
+                self._completer.completionModel().index(0, 0))
+        if self._completer.completionCount() == 0:
+            self._completer.popup().hide()
+            return
+        if (self._completer.completionCount() == 1
+                and self._completer.currentCompletion() == prefix):
+            self._completer.popup().hide()
+            return
+        cr = self.cursorRect()
+        cr.setWidth(self._completer.popup().sizeHintForColumn(0)
+                     + self._completer.popup().verticalScrollBar().sizeHint().width())
+        self._completer.complete(cr)
 
     def toggle_breakpoint(self, block_number: int):
         if block_number in self._breakpoints:
