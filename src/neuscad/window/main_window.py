@@ -1260,7 +1260,7 @@ class MainWindow(QMainWindow):
         return params
 
     def _render(self, tab=None):
-        if tab is None:
+        if not isinstance(tab, QWidget):
             tab = self._current_tab()
         if not tab:
             return
@@ -1867,6 +1867,16 @@ class MainWindow(QMainWindow):
         self._act_word_wrap.blockSignals(False)
         self._toggle_word_wrap(word_wrap)
         self._apply_preferences()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
+            self._render_cancel.set()
+            self._set_render_busy(False)
+            tab = self._current_tab()
+            if tab:
+                self.log_to_tab(tab, "Render cancelled.")
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         # Prompt to save any modified tabs before quitting
