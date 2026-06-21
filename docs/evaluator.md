@@ -16,7 +16,9 @@ Declarations are hoisted within their block (forward references work). Last-wins
 
 ## Architecture
 
-Recursive AST walker with a built-ins dispatch table:
+Recursive AST walker with a type→method dispatch table (`_EXPR_DISPATCH`):
+
+`_eval_expr(node, ctx)` does a single `dict.get(type(node))` to look up a handler method (e.g. `AdditionOp` → `_expr_add`), replacing the earlier `isinstance` chain. The dispatch table is a module-level dict built after the `Evaluator` class definition. Statement dispatch (`_eval_statement`) still uses `isinstance` since its node-type set is smaller.
 
 1. `ModularCall`: look up via `scope.lookup_module(name)` — `None` → dispatch to built-ins table; found → recursively evaluate the module body in a new child scope
 2. `Identifier` in an expression: `scope.lookup_variable(name)` then evaluate the bound value; if not found, the identifier is `undef` (matches real OpenSCAD — variables and functions/modules live in separate namespaces, so a bare reference to `function f(x) = ...` is an unknown variable, not a value, and `is_function(f)` is `false`)
@@ -39,7 +41,7 @@ Every declared parameter gets a `__let_*` entry from `_apply_defaults` — `unde
 
 `_eval_children` shares `ctx.dyn` (not a copy) across siblings so eager assignments are immediately visible to subsequent siblings.
 
-`EvalContext` has two context-creation methods with different inheritance rules:
+`EvalContext` uses `__slots__` for fast attribute access and has two context-creation methods with different inheritance rules:
 
 | Method | `__let_*` inherited | Use for |
 |---|---|---|
@@ -52,7 +54,7 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 ## Built-ins implemented
 
-**3D Primitives** (→ `ColoredBody.body`): `cube`, `sphere`, `cylinder`, `polyhedron`
+**3D Primitives** (→ `ColoredBody.body`): `cube`, `sphere`, `cylinder`, `polyhedron`. `polyhedron` deduplicates coincident vertices (within 1e-6 after rounding to 6 decimal places) and discards degenerate triangles before constructing a Manifold, since VNF meshes from libraries like BOSL2 often have coincident vertices at seams/poles that would otherwise cause `NotManifold` errors.
 
 **2D Primitives** (→ `ColoredBody.section`): `circle`, `square`, `polygon`, `text`
 
@@ -144,6 +146,8 @@ The evaluator maintains a separate dynamic binding context threaded through each
 
 `children()` uses **deferred evaluation** to support this: a module's children AST nodes and caller context are stored in `EvalContext.children_nodes` / `children_caller_ctx` and only evaluated when `children()` is called (`_eval_children_lazy`). At that point, current `$`-variables (both `$name` direct assignments and `__let_$name` for-loop/let bindings) are injected into the caller's context, so `$`-variables set in the module body are visible to children — e.g. `for ($idx = ...) { children(); }` makes `$idx` available in `sphere(d=$idx+1)`.
 
+`_eval_children_lazy` also passes the caller's own `children_nodes` / `children_caller_ctx` through to the eval context, enabling nested `children()` forwarding chains (e.g. BOSL2's `attachable → multmatrix → _multmatrix → builtin multmatrix` where each layer forwards its caller's children via `children()`).
+
 ## `include` vs `use`
 
 Exact OpenSCAD semantics:
@@ -165,7 +169,8 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
 - `sys.setrecursionlimit(10000)` is set in `main()` for BOSL2 compatibility. `RecursionError` around `build_scopes()`/`evaluate()` is treated as a runtime error (shows last-valid geometry).
 - **Ranges** are an `OscRange(start, step, end)` object, not an expanded list. `echo([1:3])` prints `[1 : 1 : 3]`. Expanded to a list only when iterated (`for`, list comprehensions, `intersection_for`). A zero-step range echoes as `[1 : 0 : 5]` and iterates to nothing. **Indexing** a range with `[0]`/`[1]`/`[2]` returns its `start`/`step`/`end` components (not iterated values) — e.g. `[2:3:11][0]` → `2`, `[1]` → `3`, `[2]` → `11`, matching real OpenSCAD. This is what BOSL2's `is_finite()`/`is_range()` inspect to detect range values.
 - **C-style `for` in list comprehensions** — `[for (a=v[0], i=1; i<=len(v); a = cond?a+v[i]:a, i=i+1) a]` — parses as a `ListCompCFor` node (`inits`, `condition`, `incrs`, `body`), distinct from the assignment-style `ListCompFor`. `_eval_listcomp_cfor()` binds `inits` once into a child context, then loops while `condition` is true, evaluating `body` (via `_eval_list_comp_body`) and then `incrs` *sequentially* (each `incrs` assignment sees the previous ones' new values, matching source order) each iteration. Capped at `_MAX_CFOR_ITERATIONS` (1,000,000) to avoid hangs on a malformed `incrs`/`condition`. Used by BOSL2's `cumsum()`, `product()`, etc.
-- **Boolean arithmetic** returns `undef` (`None`): `true + 1` → `undef`. The evaluator checks `isinstance(a, bool) or isinstance(b, bool)` before any arithmetic op.
+- **Boolean arithmetic** returns `undef` (`None`): `true + 1` → `undef`. The evaluator checks `type(a) is bool or type(b) is bool` before any arithmetic op.
+- **Vector math fast paths**: `_vec_add`, `_vec_sub`, `_scale`, `_div_scale`, and `_negate_list` use `_is_flat_numeric()` to detect flat lists of `int`/`float` (no bools, None, or nested lists) and use direct list comprehensions (`[x + y for x, y in zip(a, b)]`) instead of recursing element-by-element. This avoids per-element function call overhead for the common case of 3D/4D vector arithmetic in BOSL2.
 - **`+`/`-` between lists** recurse element-wise into nested lists (`_vec_add()`/`_vec_sub()`), like `_scale()`/`_div_scale()`: `[[0,0,0,0],[0,0,0,0]] + [[1,1,1,1],[2,2,2,2]]` → `[[1,1,1,1],[2,2,2,2]]`. (A naive `zip`+Python-`+` would *concatenate* each row instead — `[0,0,0,0,1,1,1,1]` — which silently corrupted BOSL2's `_edges()`/`sum()` on edge-set matrices.)
 - **Scalar × matrix/vector** multiplication recurses into nested lists (`_scale()`): `2 * [[1,2],[3,4]]` → `[[2,4],[6,8]]`, not just flat vectors.
 - **List × list** multiplication (`_matmul()`) implements OpenSCAD's vector/matrix algebra: vector·vector → scalar dot product (`[1,2,3]*[4,5,6]` → `32`), matrix·vector and vector·matrix → vector, matrix·matrix → matrix. Dimension mismatches return `undef`.
