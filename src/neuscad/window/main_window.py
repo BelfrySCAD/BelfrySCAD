@@ -1276,6 +1276,7 @@ class MainWindow(QMainWindow):
         render_id = self._render_id
         tab.editor.clear_errors()
         tab.console.clear()
+        tab.viewport.load_geometry([])
         self.log_to_tab(tab, "Rendering…")
 
         cancel = threading.Event()
