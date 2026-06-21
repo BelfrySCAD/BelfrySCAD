@@ -124,6 +124,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | F5 | Debug |
 | F6 | Render |
 | F7 | Animate |
+| Escape | Cancel in-progress render |
 
 ## Application Preferences
 
@@ -230,7 +231,7 @@ self._toggle_perspective(perspective)
 **View**:
 - Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console / Show Debugger / Show Animate
 - —
-- Top / Bottom / Left / Right / Front / Back / Isometric / View All
+- Top / Bottom / Left / Right / Front / Back / Isometric (change azimuth/elevation only; preserve target and distance) / View All (frame geometry at 1.2× extent)
 - —
 - Perspective (toggle perspective/orthographic projection)
 - —

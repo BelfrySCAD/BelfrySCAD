@@ -7,6 +7,7 @@ Detailed design for viewport interaction, selection, and gizmo-driven AST edits.
 | Input | Action |
 |---|---|
 | Left-button drag | Orbit |
+| Option+left-button drag | Rotate lighting |
 | Right-button drag | Pan |
 | Scroll wheel | Zoom |
 | Trackpad click+drag | Orbit |
