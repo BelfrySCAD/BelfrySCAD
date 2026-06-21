@@ -984,6 +984,12 @@ class MainWindow(QMainWindow):
                 text = f.read()
         except OSError as e:
             QMessageBox.critical(self, "Open Error", str(e))
+            settings = QSettings("NeuSCAD", "NeuSCAD")
+            recents = settings.value("recentFiles", [], type=list)
+            if path in recents:
+                recents.remove(path)
+                settings.setValue("recentFiles", recents)
+                self._rebuild_recent_menu()
             return
         self._create_and_add_tab(path, text)
         self._update_recent_files(path)
@@ -1061,14 +1067,6 @@ class MainWindow(QMainWindow):
         self._recent_menu.addAction(clear_act)
 
     def _open_recent(self, path: str):
-        if not os.path.isfile(path):
-            settings = QSettings("NeuSCAD", "NeuSCAD")
-            recents = settings.value("recentFiles", [], type=list)
-            if path in recents:
-                recents.remove(path)
-            settings.setValue("recentFiles", recents)
-            self._rebuild_recent_menu()
-            return
         self.open_file_by_path(path)
 
     def _clear_recent_files(self):
