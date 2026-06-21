@@ -151,7 +151,6 @@ class Viewport(QOpenGLWidget):
             self.camera_changed.emit()
             self.update()
             return
-        cam.target = [0, 0, 0]
         self.camera_changed.emit()
         self.update()
 
