@@ -34,6 +34,7 @@ in vec3 v_normal;
 in vec3 v_world_pos;
 uniform vec4 object_color;
 uniform vec3 light_dir;
+uniform vec3 eye_pos;
 uniform bool flat_preview;
 out vec4 fragColor;
 void main() {
@@ -45,12 +46,19 @@ void main() {
         }
         n = -n;
     }
-    float diff_key  = max(dot(n, normalize(light_dir)), 0.0);
+    vec3 L = normalize(light_dir);
+    float diff_key  = max(dot(n, L), 0.0);
     float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
     vec3 col = object_color.rgb;
     vec3 lit = 0.35 * col
              + 0.50 * diff_key  * col
              + 0.20 * diff_fill * col;
+
+    vec3 V = normalize(eye_pos - v_world_pos);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(n, H), 0.0), 64.0) * 0.5;
+    lit += vec3(spec);
+
     fragColor = vec4(lit, object_color.a);
 }
 """
@@ -367,6 +375,7 @@ class SceneRenderer:
             Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float32)
             L_world = Rz @ Rx @ L_world
         self._prog["light_dir"].value = tuple(L_world)
+        self._prog["eye_pos"].value = tuple(self.camera.eye_position())
 
         has_drag = np.any(self.drag_offset != 0)
         has_rotation = self.drag_rotation_axis >= 0 and self.drag_rotation_angle != 0.0
