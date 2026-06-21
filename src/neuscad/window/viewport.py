@@ -233,6 +233,11 @@ class Viewport(QOpenGLWidget):
 
         cam = self._renderer.camera
         if self._mouse_button == Qt.MouseButton.LeftButton:
+            if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                self._renderer.light_az_offset -= dx * 0.5
+                self._renderer.light_el_offset += dy * 0.5
+                self.update()
+                return
             cam.azimuth -= dx * 0.5
             cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
         elif self._mouse_button == Qt.MouseButton.RightButton:

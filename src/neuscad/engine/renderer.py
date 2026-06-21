@@ -216,6 +216,8 @@ class SceneRenderer:
         self.show_scale_markers: bool = True
         self.show_edges: bool = False
         self.show_crosshairs: bool = False
+        self.light_az_offset: float = 0.0
+        self.light_el_offset: float = 0.0
         self._axes_vbo: Optional[mgl.Buffer] = None
         self._axes_vao: Optional[mgl.VertexArray] = None
 
@@ -356,6 +358,14 @@ class SceneRenderer:
         L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
         L_world = (view[:3, :3].T @ L_view).astype(np.float32)
         L_world /= np.linalg.norm(L_world)
+        if self.light_az_offset != 0.0 or self.light_el_offset != 0.0:
+            a = math.radians(self.light_az_offset)
+            e = math.radians(self.light_el_offset)
+            ca, sa = math.cos(a), math.sin(a)
+            ce, se = math.cos(e), math.sin(e)
+            Rz = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float32)
+            Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float32)
+            L_world = Rz @ Rx @ L_world
         self._prog["light_dir"].value = tuple(L_world)
 
         has_drag = np.any(self.drag_offset != 0)
