@@ -369,9 +369,9 @@ class SceneRenderer:
             e = math.radians(self.light_el_offset)
             ca, sa = math.cos(a), math.sin(a)
             ce, se = math.cos(e), math.sin(e)
-            Rz = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float64)
+            Ry = np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]], dtype=np.float64)
             Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float64)
-            L_view = Rz @ Rx @ L_view
+            L_view = Ry @ Rx @ L_view
         L_world = (view[:3, :3].T @ L_view).astype(np.float32)
         L_world /= np.linalg.norm(L_world)
         self._prog["light_dir"].value = tuple(L_world)
