@@ -364,16 +364,16 @@ class SceneRenderer:
         self._ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
         L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
-        L_world = (view[:3, :3].T @ L_view).astype(np.float32)
-        L_world /= np.linalg.norm(L_world)
         if self.light_az_offset != 0.0 or self.light_el_offset != 0.0:
             a = math.radians(self.light_az_offset)
             e = math.radians(self.light_el_offset)
             ca, sa = math.cos(a), math.sin(a)
             ce, se = math.cos(e), math.sin(e)
-            Rz = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float32)
-            Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float32)
-            L_world = Rz @ Rx @ L_world
+            Rz = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float64)
+            Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float64)
+            L_view = Rz @ Rx @ L_view
+        L_world = (view[:3, :3].T @ L_view).astype(np.float32)
+        L_world /= np.linalg.norm(L_world)
         self._prog["light_dir"].value = tuple(L_world)
         self._prog["eye_pos"].value = tuple(self.camera.eye_position())
 
