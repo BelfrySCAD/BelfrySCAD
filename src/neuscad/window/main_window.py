@@ -1371,11 +1371,10 @@ class MainWindow(QMainWindow):
                 # auto-fit on explicit (non-animation) renders.
                 if not tab.animate_pane.is_playing():
                     tab.viewport.frame_scene(bb_min, bb_max)
-                extent = float(np.linalg.norm(bb_max - bb_min))
                 self.log_to_tab(
                     tab,
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
-                    f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  size {extent:.2f}  "
+                    f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  "
                     f"{_fmt_elapsed(elapsed_ms)}"
                 )
         except Exception as e:
