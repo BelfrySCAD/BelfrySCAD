@@ -84,8 +84,8 @@ class DebugSession(QObject):
     """Runs the evaluator in a daemon worker thread, pausing at breakpoints."""
 
     # All emitted from the worker thread — PySide6 queues these to the main thread.
-    paused = Signal(int, object, object)       # line, all_frame_locals (list, innermost first), call_stack
-    error_break = Signal(int, str, object, object)  # line, error header, all_frame_locals, call_stack
+    paused = Signal(str, int, object, object)       # origin, line, all_frame_locals (list, innermost first), call_stack
+    error_break = Signal(str, int, str, object, object)  # origin, line, error header, all_frame_locals, call_stack
     finished = Signal(object, object)          # bodies, id_to_node
     errored = Signal(str)
 
@@ -106,7 +106,8 @@ class DebugSession(QObject):
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
 
-    def start(self, nodes, root_scope, breakpoints: set[int], echo_fn, viewport_params: dict | None = None):
+    def start(self, nodes, root_scope, breakpoints: set[int], echo_fn, viewport_params: dict | None = None, current_file: str | None = None):
+        self._current_file = current_file
         self._breakpoints = set(breakpoints)
         self._break_on_first = True   # always pause at the very first statement
         self._step_mode = False
@@ -123,10 +124,11 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False, expr_depth: int = 0) -> tuple[str, dict]:
+        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False, expr_depth: int = 0, origin: str | None = None) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
+            in_current_file = (origin is None or origin == self._current_file)
             depth = len(call_stack)
             pause_now = self._pause_requested
             if pause_now:
@@ -134,12 +136,12 @@ class DebugSession(QObject):
             should_pause = (
                 forced
                 or pause_now
-                or (self._break_on_first and not expr_level)
-                or (line in self._breakpoints and not expr_level)
-                or self._step_mode  # step_into pauses at expression checkpoints too
-                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
-                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level)
-                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth)
+                or (self._break_on_first and not expr_level and in_current_file)
+                or (line in self._breakpoints and not expr_level and in_current_file)
+                or (self._step_mode and in_current_file)
+                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level and in_current_file)
+                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level and in_current_file)
+                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth and in_current_file)
             )
 
             if not should_pause:
@@ -154,7 +156,7 @@ class DebugSession(QObject):
             self._current_pause_expr_depth = expr_depth
 
             display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
-            self.paused.emit(line, list(all_frame_locals), display_stack)
+            self.paused.emit(origin or "", line, list(all_frame_locals), display_stack)
             self._pause_event.clear()
             self._pause_event.wait()
 
@@ -179,7 +181,7 @@ class DebugSession(QObject):
             return ("continue", mods)   # evaluator only needs to know about "stop"
         return hook
 
-    def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
+    def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str | None = None):
         """Called by the evaluator on any runtime error in debug mode.
         Pauses so the user can inspect state; returns when the user resumes.
         The EvalError is raised by the evaluator after this returns.
@@ -187,7 +189,7 @@ class DebugSession(QObject):
         if self._stopped:
             return
         display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
-        self.error_break.emit(line, msg, list(all_frame_locals), display_stack)
+        self.error_break.emit(origin or "", line, msg, list(all_frame_locals), display_stack)
         self._pause_event.clear()
         self._pause_event.wait()
 

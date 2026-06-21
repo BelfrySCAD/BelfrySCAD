@@ -8,8 +8,8 @@ Signals (emitted from the worker thread; Qt queues them to main):
 
 | Signal | Args | When |
 |---|---|---|
-| `paused` | `line, all_frame_locals, call_stack` | Hit a breakpoint or step |
-| `error_break` | `line, msg, all_frame_locals, call_stack` | Any runtime error |
+| `paused` | `origin, line, all_frame_locals, call_stack` | Hit a breakpoint or step |
+| `error_break` | `origin, line, msg, all_frame_locals, call_stack` | Any runtime error |
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
 
@@ -21,7 +21,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars editable via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals) → (cmd, mods)`. `locals_dict` = dyn-bound locals (used for `mods`); `call_stack` = real call stack (used for step-depth math). The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`. It pauses on breakpoints, step-into/over/out, and user-requested pauses, blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals, ..., origin=None) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. The hook only pauses on breakpoints, step events, and break-on-first when `origin` matches the current file (or is `None`). `MainWindow` compares `origin` against `tab.file_path` and clears the editor highlight when debugging code from an included file. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
 
 **Pause during execution** — `DebugSession.pause()` sets `_pause_requested`. The hook checks/consumes this flag at the top of every call, triggering an immediate pause regardless of breakpoints or step state — useful for interrupting a long-running evaluation.
 

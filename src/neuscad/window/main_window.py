@@ -1680,10 +1680,10 @@ class MainWindow(QMainWindow):
 
         tab.debug_session = DebugSession(self)
         tab.debug_session.paused.connect(
-            lambda line, frames, stk, t=tab: self._on_debug_paused(t, line, frames, stk)
+            lambda origin, line, frames, stk, t=tab: self._on_debug_paused(t, origin, line, frames, stk)
         )
         tab.debug_session.error_break.connect(
-            lambda line, msg, frames, stk, t=tab: self._on_debug_error_break(t, line, msg, frames, stk)
+            lambda origin, line, msg, frames, stk, t=tab: self._on_debug_error_break(t, origin, line, msg, frames, stk)
         )
         tab.debug_session.finished.connect(
             lambda bodies, id2node, t=tab: self._on_debug_finished(t, bodies, id2node)
@@ -1693,15 +1693,24 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.set_running()
         tab.debug_session.start(nodes, root_scope, breakpoints,
                                 lambda msg, t=tab: self.log_to_tab(t, msg),
-                                self._viewport_params(tab))
+                                self._viewport_params(tab),
+                                current_file=current_file)
 
-    def _on_debug_paused(self, tab, line: int, all_frame_locals: list, call_stack: list):
+    def _on_debug_paused(self, tab, origin: str, line: int, all_frame_locals: list, call_stack: list):
         tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
-        tab.editor.set_execution_line(line)
+        current_file = tab.file_path
+        if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
+            tab.editor.set_execution_line(line)
+        else:
+            tab.editor.clear_execution_line()
 
-    def _on_debug_error_break(self, tab, line: int, msg: str, all_frame_locals: list, call_stack: list):
+    def _on_debug_error_break(self, tab, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
         tab.debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack)
-        tab.editor.set_execution_line(line)
+        current_file = tab.file_path
+        if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
+            tab.editor.set_execution_line(line)
+        else:
+            tab.editor.clear_execution_line()
 
     def _on_debug_finished(self, tab, bodies, id_to_node):
         from neuscad.engine.evaluator import to_renderable_bodies

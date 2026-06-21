@@ -938,6 +938,7 @@ class Evaluator:
         line = getattr(pos, 'line', None) if pos else None
         if line is None:
             return
+        origin = getattr(pos, 'origin', None)
 
         # local_scope: all eagerly-assigned vars in the current frame's dyn
         # outer_scope: global vars from the root context (shown when inside a call)
@@ -987,7 +988,7 @@ class Evaluator:
         self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level, expr_depth=self._expr_depth)
+        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level, expr_depth=self._expr_depth, origin=origin)
         for k, v in mods.items():
             ctx.dyn[f'__let_{k}'] = v
         if cmd == "stop":
@@ -1025,7 +1026,8 @@ class Evaluator:
         self._errors.append(full)
         if self._error_break_fn is not None:
             line = getattr(pos, 'line', 0) if pos else 0
-            self._error_break_fn(int(line), header, self._last_all_frame_locals, list(self._call_stack))
+            origin = getattr(pos, 'origin', None) if pos else None
+            self._error_break_fn(int(line), header, self._last_all_frame_locals, list(self._call_stack), origin=origin)
         raise EvalError(full)
 
     def _fmt_val(self, v) -> str:
