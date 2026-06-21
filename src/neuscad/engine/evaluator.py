@@ -50,9 +50,16 @@ def _is_flat_numeric(v):
     return bool(v) and all(type(x) in (int, float) for x in v)
 
 
+# numpy array creation has ~3-5µs fixed overhead; list comprehensions
+# cost ~30ns/element.  Crossover is around 100-200 elements.
+_NP_VEC_THRESHOLD = 128
+
+
 def _scale(scalar, value):
     if isinstance(value, list):
         if _is_flat_numeric(value):
+            if len(value) >= _NP_VEC_THRESHOLD:
+                return (scalar * np.asarray(value)).tolist()
             return [scalar * x for x in value]
         return [_scale(scalar, v) for v in value]
     if isinstance(scalar, bool) or isinstance(value, bool):
@@ -66,6 +73,11 @@ def _scale(scalar, value):
 def _div_scale(value, divisor):
     if isinstance(value, list):
         if _is_flat_numeric(value):
+            if len(value) >= _NP_VEC_THRESHOLD:
+                arr = np.asarray(value, dtype=np.float64)
+                if divisor == 0:
+                    return np.where(arr == 0, np.nan, np.copysign(np.inf, arr)).tolist()
+                return (arr / divisor).tolist()
             if divisor == 0:
                 return [float('nan') if x == 0 else math.copysign(float('inf'), x) for x in value]
             return [x / divisor for x in value]
@@ -83,6 +95,9 @@ def _div_scale(value, divisor):
 def _vec_add(a, b):
     if isinstance(a, list) and isinstance(b, list):
         if _is_flat_numeric(a) and _is_flat_numeric(b):
+            if len(a) >= _NP_VEC_THRESHOLD:
+                n = min(len(a), len(b))
+                return (np.asarray(a[:n]) + np.asarray(b[:n])).tolist()
             return [x + y for x, y in zip(a, b)]
         return [_vec_add(x, y) for x, y in zip(a, b)]
     if isinstance(a, bool) or isinstance(b, bool):
@@ -476,6 +491,9 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
 def _vec_sub(a, b):
     if isinstance(a, list) and isinstance(b, list):
         if _is_flat_numeric(a) and _is_flat_numeric(b):
+            if len(a) >= _NP_VEC_THRESHOLD:
+                n = min(len(a), len(b))
+                return (np.asarray(a[:n]) - np.asarray(b[:n])).tolist()
             return [x - y for x, y in zip(a, b)]
         return [_vec_sub(x, y) for x, y in zip(a, b)]
     if isinstance(a, bool) or isinstance(b, bool):
@@ -608,25 +626,18 @@ def _matmul(a, b):
             n = len(a)
             if n != len(b):
                 return None
+            if n >= _NP_VEC_THRESHOLD:
+                return np.dot(np.asarray(a), np.asarray(b)).tolist()
             s = 0
             for i in range(n):
                 s += a[i] * b[i]
             return s
-        if a_is_mat and not b_is_mat:
-            nb = len(b)
-            return [sum(row[i] * b[i] for i in range(nb)) for row in a]
-        if not a_is_mat and b_is_mat:
-            if len(a) != len(b):
-                return None
-            cols = len(b[0])
-            na = len(a)
-            return [sum(a[i] * b[i][j] for i in range(na)) for j in range(cols)]
-        if not a or not b or len(a[0]) != len(b):
+        na = np.asarray(a)
+        nb = np.asarray(b)
+        if na.dtype == object or nb.dtype == object:
             return None
-        cols = len(b[0])
-        nb = len(b)
-        return [[sum(arow[k] * b[k][j] for k in range(nb)) for j in range(cols)] for arow in a]
-    except TypeError:
+        return np.dot(na, nb).tolist()
+    except (TypeError, ValueError, IndexError):
         return None
 
 
@@ -2845,6 +2856,8 @@ class Evaluator:
 
     def _negate_list(self, v):
         if _is_flat_numeric(v):
+            if len(v) >= _NP_VEC_THRESHOLD:
+                return (-np.asarray(v)).tolist()
             return [-x for x in v]
         result = []
         for x in v:
