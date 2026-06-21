@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QDockWidget, QStackedWidget, QProgressBar, QApplication,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand, QTextCursor
-from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, Signal, Slot
+from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
 import threading
 import time
 
@@ -522,6 +522,12 @@ class MainWindow(QMainWindow):
         self._render_progress.hide()
         self._status_bar.addPermanentWidget(self._render_progress)
 
+        self._fps_label = QLabel("")
+        self._status_bar.addPermanentWidget(self._fps_label)
+        self._fps_timer = QTimer(self)
+        self._fps_timer.timeout.connect(self._update_fps)
+        self._fps_timer.start(1000)
+
     @staticmethod
     def _toolbar_icon(name: str) -> QIcon:
         path = _ICONS_DIR / f"toolbar-{name}.svg"
@@ -824,6 +830,15 @@ class MainWindow(QMainWindow):
             f"$vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}],  "
             f"$vpd = {vpd:.2f}"
         )
+
+    def _update_fps(self):
+        tab = self._tabs.currentWidget()
+        if tab is None:
+            self._fps_label.setText("")
+            return
+        count = tab.viewport._frame_count
+        tab.viewport._frame_count = 0
+        self._fps_label.setText(f"{count} FPS")
 
     def _tab_changed(self, index):
         tab = self._tabs.widget(index)

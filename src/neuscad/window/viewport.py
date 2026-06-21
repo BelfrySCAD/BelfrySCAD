@@ -36,6 +36,7 @@ class Viewport(QOpenGLWidget):
         self._last_mouse: QPoint | None = None
         self._mouse_button: Qt.MouseButton | None = None
         self.setMouseTracking(True)
+        self._frame_count: int = 0
 
         # Tool state
         self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale
@@ -73,6 +74,7 @@ class Viewport(QOpenGLWidget):
         try:
             fbo_id = self.defaultFramebufferObject()
             self._renderer.paint(qt_fbo_id=fbo_id)
+            self._frame_count += 1
         except Exception as e:
             import traceback
             print("paintGL error:", traceback.format_exc())
