@@ -62,8 +62,7 @@ class Viewport(QOpenGLWidget):
         self._render_start: float = 0.0
         self._render_timer = QTimer(self)
         self._render_timer.timeout.connect(self.update)
-        _CLOCK_FACES = "\U0001F55B\U0001F550\U0001F551\U0001F552\U0001F553\U0001F554\U0001F555\U0001F556\U0001F557\U0001F558\U0001F559\U0001F55A"
-        self._clock_faces = list(_CLOCK_FACES)
+        self._spinner_frames = ["|", "/", "-", "\\"]
 
     # ------------------------------------------------------------------
     # GL lifecycle
@@ -148,9 +147,8 @@ class Viewport(QOpenGLWidget):
 
     def _paint_render_overlay(self):
         elapsed = time.monotonic() - self._render_start
-        clock_idx = int(elapsed) % len(self._clock_faces)
-        clock = self._clock_faces[clock_idx]
-        text = f"{clock}  {elapsed:.1f}s"
+        frame = int(elapsed * 4) % len(self._spinner_frames)
+        text = f" {self._spinner_frames[frame]}  {int(elapsed)}s"
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
