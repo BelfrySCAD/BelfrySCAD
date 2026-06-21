@@ -158,7 +158,7 @@ class Camera:
         center = (bb_min + bb_max) / 2
         extent = np.linalg.norm(bb_max - bb_min)
         self.target = center.astype(np.float32)
-        self.distance = max(extent * 0.9, 1.0)
+        self.distance = max(extent, 1.0)
 
 
 class MeshBuffer:
