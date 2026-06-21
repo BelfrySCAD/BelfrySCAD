@@ -45,13 +45,15 @@ class EvalError(Exception):
     pass
 
 
-def _scale(scalar, value):
-    """Recursively multiply `scalar` into `value`, OpenSCAD-style.
+def _is_flat_numeric(v):
+    """True if `v` is a list of int/float with no bools or None."""
+    return bool(v) and all(type(x) in (int, float) for x in v)
 
-    `value` may be a (possibly nested) list, e.g. a matrix — each element is
-    scaled in turn so `2 * [[1,2],[3,4]]` returns `[[2,4],[6,8]]`.
-    """
+
+def _scale(scalar, value):
     if isinstance(value, list):
+        if _is_flat_numeric(value):
+            return [scalar * x for x in value]
         return [_scale(scalar, v) for v in value]
     if isinstance(scalar, bool) or isinstance(value, bool):
         return None
@@ -62,12 +64,11 @@ def _scale(scalar, value):
 
 
 def _div_scale(value, divisor):
-    """Recursively divide `value` (a number or nested list) by `divisor`, OpenSCAD-style.
-
-    `[1,2,3] / 2` -> `[0.5, 1, 1.5]`; nested lists (matrices) recurse like `_scale()`.
-    Division by zero follows IEEE 754 (`inf`/`-inf`/`nan`) element-wise.
-    """
     if isinstance(value, list):
+        if _is_flat_numeric(value):
+            if divisor == 0:
+                return [float('nan') if x == 0 else math.copysign(float('inf'), x) for x in value]
+            return [x / divisor for x in value]
         return [_div_scale(v, divisor) for v in value]
     if isinstance(value, bool):
         return None
@@ -80,18 +81,13 @@ def _div_scale(value, divisor):
 
 
 def _vec_add(a, b):
-    """OpenSCAD `+` between two values, recursing element-wise into nested lists.
-
-    `[1,2,3] + [4,5,6]` -> `[5,7,9]`; matrices (lists of vectors) recurse so
-    `[[0,0,0,0]] + [[1,1,1,1]]` -> `[[1,1,1,1]]` rather than concatenating
-    each row's elements.
-    """
     if isinstance(a, list) and isinstance(b, list):
+        if _is_flat_numeric(a) and _is_flat_numeric(b):
+            return [x + y for x, y in zip(a, b)]
         return [_vec_add(x, y) for x, y in zip(a, b)]
     if isinstance(a, bool) or isinstance(b, bool):
         return None
     if isinstance(a, str) or isinstance(b, str):
-        # OpenSCAD has no `+` for strings (unlike Python's `str.__add__`).
         return None
     try:
         return a + b
@@ -478,11 +474,9 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
 
 
 def _vec_sub(a, b):
-    """OpenSCAD `-` between two values, recursing element-wise into nested lists.
-
-    See `_vec_add()` — matrices (lists of vectors) recurse row-by-row.
-    """
     if isinstance(a, list) and isinstance(b, list):
+        if _is_flat_numeric(a) and _is_flat_numeric(b):
+            return [x - y for x, y in zip(a, b)]
         return [_vec_sub(x, y) for x, y in zip(a, b)]
     if isinstance(a, bool) or isinstance(b, bool):
         return None
@@ -607,39 +601,31 @@ def _format_number(v: float) -> str:
 
 
 def _matmul(a, b):
-    """OpenSCAD `*` between two lists: vector/matrix (dot/matrix) product.
-
-    - vector * vector -> scalar (dot product)
-    - matrix * vector -> vector (matrix-vector product)
-    - vector * matrix -> vector (vector-matrix product)
-    - matrix * matrix -> matrix (matrix product)
-    Returns `None` (undef) on dimension mismatches or non-numeric entries.
-    """
     a_is_mat = bool(a) and isinstance(a[0], list)
     b_is_mat = bool(b) and isinstance(b[0], list)
     try:
         if not a_is_mat and not b_is_mat:
-            if len(a) != len(b):
+            n = len(a)
+            if n != len(b):
                 return None
-            return sum(x * y for x, y in zip(a, b))
+            s = 0
+            for i in range(n):
+                s += a[i] * b[i]
+            return s
         if a_is_mat and not b_is_mat:
-            if any(len(row) != len(b) for row in a):
-                return None
-            return [sum(x * y for x, y in zip(row, b)) for row in a]
+            nb = len(b)
+            return [sum(row[i] * b[i] for i in range(nb)) for row in a]
         if not a_is_mat and b_is_mat:
             if len(a) != len(b):
                 return None
             cols = len(b[0])
-            if any(len(row) != cols for row in b):
-                return None
-            return [sum(a[i] * b[i][j] for i in range(len(a))) for j in range(cols)]
-        # matrix * matrix
+            na = len(a)
+            return [sum(a[i] * b[i][j] for i in range(na)) for j in range(cols)]
         if not a or not b or len(a[0]) != len(b):
             return None
         cols = len(b[0])
-        if any(len(row) != cols for row in b) or any(len(row) != len(a[0]) for row in a):
-            return None
-        return [[sum(arow[k] * b[k][j] for k in range(len(b))) for j in range(cols)] for arow in a]
+        nb = len(b)
+        return [[sum(arow[k] * b[k][j] for k in range(nb)) for j in range(cols)] for arow in a]
     except TypeError:
         return None
 
@@ -873,21 +859,22 @@ def to_renderable_bodies(bodies: list[ColoredBody]) -> list[ColoredBody]:
     ]
 
 
-@dataclass
+_DEFAULT_DOLLAR = {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_modules": 0}
+
+
 class EvalContext:
     """Mutable evaluation state threaded through recursive calls."""
-    # Lexical scope (from build_scopes)
-    scope: Any
-    # Dynamic variables ($fn, $fa, $fs, $t, etc.) — call-chain inherited
-    dyn: dict[str, Any] = field(default_factory=lambda: {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_modules": 0})
-    # Positions of assignments stored in dyn (for double-assignment warnings)
-    dyn_positions: dict[str, Any] = field(default_factory=dict)
-    # Optional color propagated from parent color() call
-    color: Optional[tuple[float, float, float, float]] = None
-    # Deferred children for children() built-in: AST nodes + caller context.
-    # Evaluated lazily so $-variables from the module body are visible.
-    children_nodes: list = field(default_factory=list)
-    children_caller_ctx: Optional['EvalContext'] = None
+    __slots__ = ('scope', 'dyn', 'dyn_positions', 'color',
+                 'children_nodes', 'children_caller_ctx')
+
+    def __init__(self, scope, dyn=None, dyn_positions=None, color=None,
+                 children_nodes=None, children_caller_ctx=None):
+        self.scope = scope
+        self.dyn = dyn if dyn is not None else dict(_DEFAULT_DOLLAR)
+        self.dyn_positions = dyn_positions if dyn_positions is not None else {}
+        self.color = color
+        self.children_nodes = children_nodes if children_nodes is not None else []
+        self.children_caller_ctx = children_caller_ctx
 
     def child_ctx(self, scope=None, dyn=None, color=None,
                   children_nodes=None, children_caller_ctx=None):
@@ -902,9 +889,7 @@ class EvalContext:
 
     def call_ctx(self, scope=None, color=None,
                  children_nodes=None, children_caller_ctx=None):
-        """Child context for a module/function call: inherits only $-prefixed
-        dynamic bindings, not __let_* variable bindings from the caller's scope."""
-        dyn = {k: v for k, v in self.dyn.items() if k.startswith('$')}
+        dyn = {k: v for k, v in self.dyn.items() if k[0] == '$'}
         return EvalContext(
             scope=scope if scope is not None else self.scope,
             dyn=dyn,
@@ -1208,23 +1193,18 @@ class Evaluator:
 
     def _call_ctx_for(self, decl, ctx: EvalContext, scope=None,
                       children_nodes=None, children_caller_ctx=None) -> EvalContext:
-        """Build the child context for a module/function call.
-
-        A declaration nested inside the body of a currently-executing
-        module/function (e.g. BOSL2's `cuboid()` defines a local `module
-        corner_shape() {...}` that references `cuboid`'s local `edges`
-        variable) is a closure over that call's locals, so it inherits
-        `ctx.dyn` (including `__let_*` bindings) via `child_ctx`. A
-        top-level declaration, or a declaration calling itself
-        (recursion), only inherits `$`-prefixed dynamic vars, per
-        `call_ctx` — otherwise a recursive call would see its own
-        in-progress local variables as if they were its caller's.
-        """
         decl_pos = getattr(decl, 'position', None)
-        nested = any(self._pos_contains(frame[-1], decl_pos) for frame in self._call_stack)
-        if nested:
-            return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
-                                 children_caller_ctx=children_caller_ctx)
+        if decl_pos is not None:
+            dp_origin = decl_pos.origin
+            dp_start = decl_pos.start_offset
+            dp_end = decl_pos.end_offset
+            for frame in self._call_stack:
+                outer = frame[-1]
+                if outer is not None and outer.origin == dp_origin:
+                    o_start, o_end = outer.start_offset, outer.end_offset
+                    if (o_start, o_end) != (dp_start, dp_end) and o_start <= dp_start and dp_end <= o_end:
+                        return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
+                                             children_caller_ctx=children_caller_ctx)
         return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
                             children_caller_ctx=children_caller_ctx)
 
@@ -2259,189 +2239,270 @@ class Evaluator:
     # Expression evaluator
     # ------------------------------------------------------------------
 
-    def _eval_expr(self, node: ASTNode, ctx: EvalContext) -> Any:
-        if isinstance(node, CommentedExpr):
-            return self._eval_expr(node.expr, ctx)
-        if isinstance(node, NumberLiteral):
-            return node.val
-        if isinstance(node, BooleanLiteral):
-            return node.val
-        if isinstance(node, StringLiteral):
-            return node.val
-        if isinstance(node, UndefinedLiteral):
+    def _eval_expr(self, node, ctx: EvalContext):
+        handler = _EXPR_DISPATCH.get(type(node))
+        if handler is not None:
+            return handler(self, node, ctx)
+        return None
+
+    def _expr_commented(self, node, ctx):
+        return self._eval_expr(node.expr, ctx)
+
+    def _expr_number(self, node, ctx):
+        return node.val
+
+    def _expr_boolean(self, node, ctx):
+        return node.val
+
+    def _expr_string(self, node, ctx):
+        return node.val
+
+    def _expr_undefined(self, node, ctx):
+        return None
+
+    def _expr_identifier(self, node, ctx):
+        name = node.name
+        dyn = ctx.dyn
+        let_key = f"__let_{name}"
+        v = dyn.get(let_key)
+        if v is not None:
+            return v
+        if let_key in dyn:
             return None
-        if isinstance(node, Identifier):
-            return self._eval_identifier(node, ctx)
-        if isinstance(node, ListComprehension):
-            return self._eval_list_comp(node, ctx)
-        if isinstance(node, RangeLiteral):
-            return self._eval_range(node, ctx)
-        if isinstance(node, AdditionOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return _vec_add(a, b)
-        if isinstance(node, SubtractionOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return _vec_sub(a, b)
-        if isinstance(node, MultiplicationOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, list) and isinstance(b, list):
-                return _matmul(a, b)
-            if isinstance(a, list) and isinstance(b, (int, float)) and not isinstance(b, bool):
-                return [_scale(b, x) for x in a]
-            if isinstance(b, list) and isinstance(a, (int, float)) and not isinstance(a, bool):
-                return [_scale(a, x) for x in b]
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            try:
-                return a * b
-            except TypeError:
-                return None
-        if isinstance(node, DivisionOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            if isinstance(a, list) and isinstance(b, (int, float)):
-                return _div_scale(a, b)
-            if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
-                return None
-            if b == 0:
-                if a == 0:
-                    return float('nan')
-                return math.copysign(float('inf'), a)
-            return a / b
-        if isinstance(node, ModuloOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            try:
-                return a % b
-            except (TypeError, ZeroDivisionError):
-                return None
-        if isinstance(node, ExponentOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            if isinstance(a, bool) or isinstance(b, bool):
-                return None
-            try:
-                result = a ** b
-                return float('nan') if isinstance(result, complex) else result
-            except (TypeError, ZeroDivisionError):
-                return None
-        if isinstance(node, UnaryMinusOp):
-            v = self._eval_expr(node.expr, ctx)
-            if isinstance(v, list):
-                return self._negate_list(v)
-            if isinstance(v, bool):
-                return None
-            try:
-                return -v
-            except TypeError:
-                return None
-        if isinstance(node, LogicalAndOp):
-            return bool(self._eval_expr(node.left, ctx)) and bool(self._eval_expr(node.right, ctx))
-        if isinstance(node, LogicalOrOp):
-            return bool(self._eval_expr(node.left, ctx)) or bool(self._eval_expr(node.right, ctx))
-        if isinstance(node, LogicalNotOp):
-            return not bool(self._eval_expr(node.expr, ctx))
-        if isinstance(node, EqualityOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return _osc_equal(a, b)
-        if isinstance(node, InequalityOp):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            return not _osc_equal(a, b)
-        if isinstance(node, (GreaterThanOp, GreaterThanOrEqualOp, LessThanOp, LessThanOrEqualOp)):
-            a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
-            symbol = {
-                GreaterThanOp: ">", GreaterThanOrEqualOp: ">=",
-                LessThanOp: "<", LessThanOrEqualOp: "<=",
-            }[type(node)]
-            if not _osc_comparable(a, b):
-                pos = getattr(node, 'position', None)
-                self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} {symbol} {_osc_type_name(b)}){self._loc(pos)}")
-                return None
-            try:
-                if isinstance(node, GreaterThanOp):
-                    return a > b
-                if isinstance(node, GreaterThanOrEqualOp):
-                    return a >= b
-                if isinstance(node, LessThanOp):
-                    return a < b
-                return a <= b
-            except TypeError:
-                return None
-        if isinstance(node, TernaryOp):
-            self._check_debug(node, ctx, expr_level=True)
-            cond = self._eval_expr(node.condition, ctx)
-            branch = node.true_expr if cond else node.false_expr
-            self._check_debug(branch, ctx, expr_level=True)
-            return self._eval_expr(branch, ctx)
-        if isinstance(node, PrimaryCall):
-            return self._eval_function_call(node, ctx)
-        if isinstance(node, PrimaryIndex):
-            obj = self._eval_expr(node.left, ctx)
-            idx = self._eval_expr(node.index, ctx)
-            if isinstance(obj, OscRange) and isinstance(idx, (int, float)):
-                return obj[int(idx)]
-            if isinstance(obj, (list, str)) and isinstance(idx, (int, float)):
+        if name[0] == '$':
+            v = dyn.get(name)
+            if v is not None:
+                return v
+            if name in dyn:
+                return v
+        if name in self._CONSTANTS:
+            return self._CONSTANTS[name]
+        decl = ctx.scope.lookup_variable(name)
+        if decl is None:
+            pos = getattr(node, 'position', None)
+            self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
+            return None
+        if isinstance(decl, ParameterDeclaration):
+            return None
+        return self._eval_expr(decl.expr, ctx)
+
+    def _expr_listcomp(self, node, ctx):
+        return self._eval_list_comp(node, ctx)
+
+    def _expr_range(self, node, ctx):
+        return self._eval_range(node, ctx)
+
+    def _expr_add(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        return _vec_add(a, b)
+
+    def _expr_sub(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        return _vec_sub(a, b)
+
+    def _expr_mul(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        ta, tb = type(a), type(b)
+        if ta is list and tb is list:
+            return _matmul(a, b)
+        if ta is list and tb in (int, float):
+            return [_scale(b, x) for x in a]
+        if tb is list and ta in (int, float):
+            return [_scale(a, x) for x in b]
+        if ta is bool or tb is bool:
+            return None
+        try:
+            return a * b
+        except TypeError:
+            return None
+
+    def _expr_div(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        ta, tb = type(a), type(b)
+        if ta is bool or tb is bool:
+            return None
+        if ta is list and tb in (int, float):
+            return _div_scale(a, b)
+        if ta not in (int, float) or tb not in (int, float):
+            return None
+        if b == 0:
+            return float('nan') if a == 0 else math.copysign(float('inf'), a)
+        return a / b
+
+    def _expr_mod(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if type(a) is bool or type(b) is bool:
+            return None
+        try:
+            return a % b
+        except (TypeError, ZeroDivisionError):
+            return None
+
+    def _expr_exp(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if type(a) is bool or type(b) is bool:
+            return None
+        try:
+            result = a ** b
+            return float('nan') if type(result) is complex else result
+        except (TypeError, ZeroDivisionError):
+            return None
+
+    def _expr_unary_minus(self, node, ctx):
+        v = self._eval_expr(node.expr, ctx)
+        if type(v) is list:
+            return self._negate_list(v)
+        if type(v) is bool:
+            return None
+        try:
+            return -v
+        except TypeError:
+            return None
+
+    def _expr_and(self, node, ctx):
+        return bool(self._eval_expr(node.left, ctx)) and bool(self._eval_expr(node.right, ctx))
+
+    def _expr_or(self, node, ctx):
+        return bool(self._eval_expr(node.left, ctx)) or bool(self._eval_expr(node.right, ctx))
+
+    def _expr_not(self, node, ctx):
+        return not bool(self._eval_expr(node.expr, ctx))
+
+    def _expr_eq(self, node, ctx):
+        return _osc_equal(self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx))
+
+    def _expr_neq(self, node, ctx):
+        return not _osc_equal(self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx))
+
+    def _expr_gt(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if not _osc_comparable(a, b):
+            self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} > {_osc_type_name(b)}){self._loc(getattr(node, 'position', None))}")
+            return None
+        try:
+            return a > b
+        except TypeError:
+            return None
+
+    def _expr_gte(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if not _osc_comparable(a, b):
+            self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} >= {_osc_type_name(b)}){self._loc(getattr(node, 'position', None))}")
+            return None
+        try:
+            return a >= b
+        except TypeError:
+            return None
+
+    def _expr_lt(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if not _osc_comparable(a, b):
+            self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} < {_osc_type_name(b)}){self._loc(getattr(node, 'position', None))}")
+            return None
+        try:
+            return a < b
+        except TypeError:
+            return None
+
+    def _expr_lte(self, node, ctx):
+        a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        if not _osc_comparable(a, b):
+            self._echo_fn(f"WARNING: undefined operation ({_osc_type_name(a)} <= {_osc_type_name(b)}){self._loc(getattr(node, 'position', None))}")
+            return None
+        try:
+            return a <= b
+        except TypeError:
+            return None
+
+    def _expr_ternary(self, node, ctx):
+        self._check_debug(node, ctx, expr_level=True)
+        cond = self._eval_expr(node.condition, ctx)
+        branch = node.true_expr if cond else node.false_expr
+        self._check_debug(branch, ctx, expr_level=True)
+        return self._eval_expr(branch, ctx)
+
+    def _expr_call(self, node, ctx):
+        return self._eval_function_call(node, ctx)
+
+    _SWIZZLE = {"x": 0, "y": 1, "z": 2, "w": 3}
+
+    def _expr_index(self, node, ctx):
+        obj = self._eval_expr(node.left, ctx)
+        idx = self._eval_expr(node.index, ctx)
+        tobj, tidx = type(obj), type(idx)
+        if tobj is list or tobj is str:
+            if tidx is int or tidx is float:
                 i = int(idx)
                 if i < 0:
-                    return None  # OpenSCAD does not support negative indexing
+                    return None
                 try:
                     return obj[i]
                 except IndexError:
                     return None
-            if isinstance(obj, OscObject) and isinstance(idx, str):
-                return obj.get(idx)
-            return None
-        if isinstance(node, PrimaryMember):
-            obj = self._eval_expr(node.left, ctx)
-            member = node.member.name if hasattr(node.member, 'name') else str(node.member)
-            if isinstance(obj, (list, tuple)):
-                swizzle = {"x": 0, "y": 1, "z": 2, "w": 3}
-                if member in swizzle and swizzle[member] < len(obj):
-                    return obj[swizzle[member]]
-            if isinstance(obj, OscObject):
-                return obj.get(member)
-            return None
-        if isinstance(node, LetOp):
-            child_ctx = ctx.child_ctx()
-            for assign in node.assignments:
-                # Evaluate in child_ctx (not ctx) so each binding can see
-                # earlier bindings in the same let(), e.g. let(a=1, b=a+1).
-                v = self._eval_expr(assign.expr, child_ctx)
-                child_ctx.dyn[f"__let_{assign.name.name}"] = v
-                self._check_debug(assign, child_ctx, expr_level=True)
-            return self._eval_expr(node.body, child_ctx)
-        if isinstance(node, EchoOp):
-            self._do_echo(node.arguments, ctx)
-            return self._eval_expr(node.body, ctx)
-        if isinstance(node, AssertOp):
-            raw = node.arguments
-            condition = self._eval_expr(raw[0].expr, ctx) if raw else True
-            if not condition:
-                cond_text = to_openscad([raw[0].expr]).strip() if raw else "false"
-                msg = self._eval_expr(raw[1].expr, ctx) if len(raw) > 1 else None
-                err = f"Assertion '{cond_text}' failed" + (f': "{msg}"' if msg is not None else "")
-                self.error(err, node, innermost_frame="assert")
-            return self._eval_expr(node.body, ctx)
-        if isinstance(node, FunctionLiteral):
-            return node  # lambda — store for later call
-        # Unknown — return None
+        if isinstance(obj, OscRange) and (tidx is int or tidx is float):
+            return obj[int(idx)]
+        if isinstance(obj, OscObject) and tidx is str:
+            return obj.get(idx)
         return None
+
+    def _expr_member(self, node, ctx):
+        obj = self._eval_expr(node.left, ctx)
+        member = node.member.name if hasattr(node.member, 'name') else str(node.member)
+        if type(obj) is list or type(obj) is tuple:
+            idx = self._SWIZZLE.get(member)
+            if idx is not None and idx < len(obj):
+                return obj[idx]
+        if isinstance(obj, OscObject):
+            return obj.get(member)
+        return None
+
+    def _expr_let(self, node, ctx):
+        child_ctx = ctx.child_ctx()
+        for assign in node.assignments:
+            v = self._eval_expr(assign.expr, child_ctx)
+            child_ctx.dyn[f"__let_{assign.name.name}"] = v
+            self._check_debug(assign, child_ctx, expr_level=True)
+        return self._eval_expr(node.body, child_ctx)
+
+    def _expr_echo(self, node, ctx):
+        self._do_echo(node.arguments, ctx)
+        return self._eval_expr(node.body, ctx)
+
+    def _expr_assert(self, node, ctx):
+        raw = node.arguments
+        condition = self._eval_expr(raw[0].expr, ctx) if raw else True
+        if not condition:
+            cond_text = to_openscad([raw[0].expr]).strip() if raw else "false"
+            msg = self._eval_expr(raw[1].expr, ctx) if len(raw) > 1 else None
+            err = f"Assertion '{cond_text}' failed" + (f': "{msg}"' if msg is not None else "")
+            self.error(err, node, innermost_frame="assert")
+        return self._eval_expr(node.body, ctx)
+
+    def _expr_function_literal(self, node, ctx):
+        return node
 
     _CONSTANTS = {"PI": math.pi}
 
     def _eval_identifier(self, node: Identifier, ctx: EvalContext, warn_if_undef: bool = True) -> Any:
         name = node.name
+        dyn = ctx.dyn
+        # Let-bound (most common path)
+        let_key = f"__let_{name}"
+        v = dyn.get(let_key)
+        if v is not None:
+            return v
+        if let_key in dyn:
+            return None
+        # Dynamic variable ($fn etc.)
+        if name[0] == '$':
+            v = dyn.get(name)
+            if v is not None:
+                return v
+            if name in dyn:
+                return v
         # Built-in constants
         if name in self._CONSTANTS:
             return self._CONSTANTS[name]
-        # Dynamic variable ($fn etc.)
-        if name.startswith("$") and name in ctx.dyn:
-            return ctx.dyn[name]
-        # Let-bound
-        let_key = f"__let_{name}"
-        if let_key in ctx.dyn:
-            return ctx.dyn[let_key]
         # Lexical variable
         decl = ctx.scope.lookup_variable(name)
         if decl is None:
@@ -2783,6 +2844,8 @@ class Evaluator:
         return fallback(math.radians(x))
 
     def _negate_list(self, v):
+        if _is_flat_numeric(v):
+            return [-x for x in v]
         result = []
         for x in v:
             if isinstance(x, list):
@@ -3058,3 +3121,39 @@ class Evaluator:
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
+
+
+_EXPR_DISPATCH: dict[type, callable] = {
+    CommentedExpr: Evaluator._expr_commented,
+    NumberLiteral: Evaluator._expr_number,
+    BooleanLiteral: Evaluator._expr_boolean,
+    StringLiteral: Evaluator._expr_string,
+    UndefinedLiteral: Evaluator._expr_undefined,
+    Identifier: Evaluator._expr_identifier,
+    ListComprehension: Evaluator._expr_listcomp,
+    RangeLiteral: Evaluator._expr_range,
+    AdditionOp: Evaluator._expr_add,
+    SubtractionOp: Evaluator._expr_sub,
+    MultiplicationOp: Evaluator._expr_mul,
+    DivisionOp: Evaluator._expr_div,
+    ModuloOp: Evaluator._expr_mod,
+    ExponentOp: Evaluator._expr_exp,
+    UnaryMinusOp: Evaluator._expr_unary_minus,
+    LogicalAndOp: Evaluator._expr_and,
+    LogicalOrOp: Evaluator._expr_or,
+    LogicalNotOp: Evaluator._expr_not,
+    EqualityOp: Evaluator._expr_eq,
+    InequalityOp: Evaluator._expr_neq,
+    GreaterThanOp: Evaluator._expr_gt,
+    GreaterThanOrEqualOp: Evaluator._expr_gte,
+    LessThanOp: Evaluator._expr_lt,
+    LessThanOrEqualOp: Evaluator._expr_lte,
+    TernaryOp: Evaluator._expr_ternary,
+    PrimaryCall: Evaluator._expr_call,
+    PrimaryIndex: Evaluator._expr_index,
+    PrimaryMember: Evaluator._expr_member,
+    LetOp: Evaluator._expr_let,
+    EchoOp: Evaluator._expr_echo,
+    AssertOp: Evaluator._expr_assert,
+    FunctionLiteral: Evaluator._expr_function_literal,
+}
