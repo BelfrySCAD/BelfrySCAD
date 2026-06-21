@@ -5,7 +5,7 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor
+from PySide6.QtGui import QMouseEvent, QWheelEvent
 
 from neuscad.engine.renderer import SceneRenderer
 
@@ -60,9 +60,16 @@ class Viewport(QOpenGLWidget):
         # Render-busy overlay
         self._render_busy: bool = False
         self._render_start: float = 0.0
+        self._spinner_frames = ["|", "/", "—", "\\"]
+        self._render_label = QLabel("", self)
+        self._render_label.setStyleSheet(
+            "QLabel { background: rgba(0,0,0,160); color: white;"
+            " padding: 8px 18px; border-radius: 8px;"
+            " font-family: Menlo; font-size: 18px; }"
+        )
+        self._render_label.hide()
         self._render_timer = QTimer(self)
-        self._render_timer.timeout.connect(self.update)
-        self._spinner_frames = ["|", "/", "-", "\\"]
+        self._render_timer.timeout.connect(self._update_render_overlay)
 
     # ------------------------------------------------------------------
     # GL lifecycle
@@ -89,8 +96,6 @@ class Viewport(QOpenGLWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
-        if self._render_busy:
-            self._paint_render_overlay()
 
     def closeEvent(self, event):
         self.makeCurrent()
@@ -140,32 +145,21 @@ class Viewport(QOpenGLWidget):
         self._render_busy = busy
         if busy:
             self._render_start = time.monotonic()
+            self._update_render_overlay()
+            self._render_label.show()
             self._render_timer.start(100)
         else:
             self._render_timer.stop()
-        self.update()
+            self._render_label.hide()
 
-    def _paint_render_overlay(self):
+    def _update_render_overlay(self):
         elapsed = time.monotonic() - self._render_start
         frame = int(elapsed * 4) % len(self._spinner_frames)
-        text = f" {self._spinner_frames[frame]}  {int(elapsed)}s"
-
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        font = QFont("Menlo", 18)
-        p.setFont(font)
-        fm = p.fontMetrics()
-        tw = fm.horizontalAdvance(text)
-        th = fm.height()
-        pad_x, pad_y = 16, 10
-        rx = (self.width() - tw) // 2 - pad_x
-        ry = (self.height() - th) // 2 - pad_y
-        p.setBrush(QColor(0, 0, 0, 160))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(rx, ry, tw + pad_x * 2, th + pad_y * 2, 8, 8)
-        p.setPen(QColor(255, 255, 255))
-        p.drawText(rx + pad_x, ry + pad_y + fm.ascent(), text)
-        p.end()
+        self._render_label.setText(f" {self._spinner_frames[frame]}  {int(elapsed)}s")
+        self._render_label.adjustSize()
+        x = (self.width() - self._render_label.width()) // 2
+        y = (self.height() - self._render_label.height()) // 2
+        self._render_label.move(x, y)
 
     # ------------------------------------------------------------------
     # Camera view presets
