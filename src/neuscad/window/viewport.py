@@ -1,10 +1,11 @@
 from __future__ import annotations
+import time
 import numpy as np
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
-from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtCore import Qt, QPoint, Signal, QTimer
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QFont, QColor
 
 from neuscad.engine.renderer import SceneRenderer
 
@@ -56,6 +57,14 @@ class Viewport(QOpenGLWidget):
         self._drag_gizmo_center: np.ndarray = np.zeros(3, dtype=np.float32)
         self._drag_start_1d: float = 0.0
 
+        # Render-busy overlay
+        self._render_busy: bool = False
+        self._render_start: float = 0.0
+        self._render_timer = QTimer(self)
+        self._render_timer.timeout.connect(self.update)
+        _CLOCK_FACES = "\U0001F55B\U0001F550\U0001F551\U0001F552\U0001F553\U0001F554\U0001F555\U0001F556\U0001F557\U0001F558\U0001F559\U0001F55A"
+        self._clock_faces = list(_CLOCK_FACES)
+
     # ------------------------------------------------------------------
     # GL lifecycle
     # ------------------------------------------------------------------
@@ -81,6 +90,8 @@ class Viewport(QOpenGLWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
+        if self._render_busy:
+            self._paint_render_overlay()
 
     def closeEvent(self, event):
         self.makeCurrent()
@@ -125,6 +136,38 @@ class Viewport(QOpenGLWidget):
             "target": cam.target.tolist(),
             "fov": cam.fov,
         }
+
+    def set_render_busy(self, busy: bool):
+        self._render_busy = busy
+        if busy:
+            self._render_start = time.monotonic()
+            self._render_timer.start(100)
+        else:
+            self._render_timer.stop()
+        self.update()
+
+    def _paint_render_overlay(self):
+        elapsed = time.monotonic() - self._render_start
+        clock_idx = int(elapsed) % len(self._clock_faces)
+        clock = self._clock_faces[clock_idx]
+        text = f"{clock}  {elapsed:.1f}s"
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont("Menlo", 18)
+        p.setFont(font)
+        fm = p.fontMetrics()
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+        pad_x, pad_y = 16, 10
+        rx = (self.width() - tw) // 2 - pad_x
+        ry = (self.height() - th) // 2 - pad_y
+        p.setBrush(QColor(0, 0, 0, 160))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(rx, ry, tw + pad_x * 2, th + pad_y * 2, 8, 8)
+        p.setPen(QColor(255, 255, 255))
+        p.drawText(rx + pad_x, ry + pad_y + fm.ascent(), text)
+        p.end()
 
     # ------------------------------------------------------------------
     # Camera view presets

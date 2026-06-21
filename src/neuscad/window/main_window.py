@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QStackedWidget, QProgressBar, QApplication,
+    QDockWidget, QStackedWidget, QApplication,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -514,13 +514,6 @@ class MainWindow(QMainWindow):
 
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
-
-        self._render_progress = QProgressBar()
-        self._render_progress.setRange(0, 0)  # indeterminate / busy mode
-        self._render_progress.setFixedWidth(120)
-        self._render_progress.setTextVisible(False)
-        self._render_progress.hide()
-        self._status_bar.addPermanentWidget(self._render_progress)
 
         self._fps_label = QLabel("")
         self._status_bar.addPermanentWidget(self._fps_label)
@@ -1337,11 +1330,12 @@ class MainWindow(QMainWindow):
         self.log_to_tab(tab, "Animation frame dump complete.")
 
     def _set_render_busy(self, busy: bool):
+        tab = self._current_tab()
+        if tab:
+            tab.viewport.set_render_busy(busy)
         if busy:
-            self._render_progress.show()
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         else:
-            self._render_progress.hide()
             QApplication.restoreOverrideCursor()
 
     def _on_render_done(self, tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
