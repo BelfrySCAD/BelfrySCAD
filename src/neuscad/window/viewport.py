@@ -60,7 +60,7 @@ class Viewport(QOpenGLWidget):
         # Render-busy overlay
         self._render_busy: bool = False
         self._render_start: float = 0.0
-        self._spinner_frames = ["|", "/", "—", "\\"]
+        self._spinner_frames = [".  ", ".. ", "..."]
         self._render_label = QLabel("", self)
         self._render_label.setStyleSheet(
             "QLabel { background: rgba(0,0,0,160); color: white;"
@@ -155,7 +155,7 @@ class Viewport(QOpenGLWidget):
     def _update_render_overlay(self):
         elapsed = time.monotonic() - self._render_start
         frame = int(elapsed * 4) % len(self._spinner_frames)
-        self._render_label.setText(f" {self._spinner_frames[frame]}  {int(elapsed)}s")
+        self._render_label.setText(f" {int(elapsed)}s {self._spinner_frames[frame]}")
         self._render_label.adjustSize()
         x = (self.width() - self._render_label.width()) // 2
         y = (self.height() - self._render_label.height()) // 2
