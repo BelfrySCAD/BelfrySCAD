@@ -1706,15 +1706,23 @@ class Evaluator:
                 self.error(f"polyhedron: point[{i}] is not a valid [x,y,z] coordinate", node)
                 return None
         try:
-            verts = np.array([[float(c) for c in p] for p in points], dtype=np.float32)
+            verts = np.array([[float(c) for c in p] for p in points], dtype=np.float64)
+            # Deduplicate vertices — VNF meshes (e.g. from BOSL2) often have
+            # coincident vertices at seams/poles that must be merged for Manifold.
+            rounded = np.round(verts, decimals=6)
+            _, unique_idx, remap = np.unique(rounded, axis=0, return_index=True, return_inverse=True)
+            verts = verts[unique_idx].astype(np.float32)
             # Fan-triangulate faces, reversing winding to convert OpenSCAD's
             # CW-from-outside convention to Manifold's CCW-from-outside convention.
             tris = []
             for face in faces:
-                face = list(face)
-                for i in range(1, len(face) - 1):
-                    tris.append([face[0], face[i + 1], face[i]])
-            tri_arr = np.array(tris, dtype=np.uint32)
+                face = [int(x) for x in face]
+                remapped = [int(remap[idx]) for idx in face]
+                for i in range(1, len(remapped) - 1):
+                    a, b, c = remapped[0], remapped[i + 1], remapped[i]
+                    if a != b and b != c and a != c:
+                        tris.append([a, b, c])
+            tri_arr = np.array(tris, dtype=np.uint32) if tris else np.zeros((0, 3), dtype=np.uint32)
             mesh = m3d.Mesh(vert_properties=verts, tri_verts=tri_arr)
             body = m3d.Manifold(mesh)
             return self._tag(body, node, ctx)
@@ -2088,7 +2096,10 @@ class Evaluator:
         caller_ctx = ctx.children_caller_ctx
         if caller_ctx is None:
             return []
-        eval_ctx = caller_ctx.child_ctx()
+        eval_ctx = caller_ctx.child_ctx(
+            children_nodes=caller_ctx.children_nodes,
+            children_caller_ctx=caller_ctx.children_caller_ctx,
+        )
         # Inject current $-variables so dynamic scoping works.
         # $-vars may be stored as "$name" (direct assignment) or
         # "__let_$name" (for-loop / let binding).
