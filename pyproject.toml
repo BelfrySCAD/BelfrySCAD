@@ -88,3 +88,6 @@ min_os_version = "12.0"
 
 [tool.briefcase.app.neuscad.windows]
 installer_type = "msi"
+
+[tool.briefcase.app.neuscad.linux.appimage]
+manylinux = "manylinux_2_28"
