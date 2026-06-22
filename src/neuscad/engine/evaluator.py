@@ -17,7 +17,7 @@ from fontTools.pens.basePen import BasePen
 from PySide6.QtGui import QColor
 from shapely_polyskel import skeletonize
 
-from openscad_parser.ast import to_openscad
+from openscad_parser.ast import to_openscad, findLibraryFile, getASTfromFile, build_scopes
 from openscad_parser.ast.nodes import (
     ASTNode, Assignment, Identifier,
     NumberLiteral, BooleanLiteral, StringLiteral, UndefinedLiteral,
@@ -36,6 +36,7 @@ from openscad_parser.ast.nodes import (
     ModularModifierShowOnly, ModularModifierHighlight,
     ModularModifierBackground, ModularModifierDisable,
     ModuleDeclaration, FunctionDeclaration, ParameterDeclaration,
+    UseStatement,
     VectorElement,
     LetOp, EchoOp, AssertOp,
     FunctionLiteral,
@@ -1104,8 +1105,38 @@ class Evaluator:
     # Public entry point
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_use_statements(nodes: list[ASTNode], root_scope) -> None:
+        """Inject modules/functions from `use`d files into root_scope.
+
+        OpenSCAD makes `use`d modules globally visible across the entire
+        compilation unit.  The parser's build_scopes only hoists top-level
+        declarations and skips UseStatement nodes, so we resolve them here.
+        """
+        seen: set[str] = set()
+        for node in nodes:
+            if type(node) is not UseStatement:
+                continue
+            filepath = node.filepath.val
+            origin = getattr(node.position, 'origin', '') if node.position else ''
+            lib_file = findLibraryFile(origin, filepath)
+            if lib_file is None or lib_file in seen:
+                continue
+            seen.add(lib_file)
+            used_ast = getASTfromFile(lib_file)
+            if not used_ast:
+                continue
+            used_scope = build_scopes(used_ast)
+            for name, decl in used_scope.modules.items():
+                if name not in root_scope.modules:
+                    root_scope.define_module(name, decl)
+            for name, decl in used_scope.functions.items():
+                if name not in root_scope.functions:
+                    root_scope.define_function(name, decl)
+
     def evaluate(self, nodes: list[ASTNode], root_scope, viewport_params: dict | None = None) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
         """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
+        self._resolve_use_statements(nodes, root_scope)
         self._call_stack.clear()
         self._frame_ctxs.clear()
         ctx = EvalContext(scope=root_scope)
