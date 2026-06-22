@@ -5,6 +5,7 @@ Returns (manifold_body, id_to_node, colored_meshes) or raises EvalError.
 from __future__ import annotations
 import math
 import random
+from itertools import product as _product
 from pathlib import Path
 from typing import Any, Optional
 from dataclasses import dataclass, field
@@ -875,23 +876,25 @@ _DEFAULT_DOLLAR = {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_module
 
 class EvalContext:
     """Mutable evaluation state threaded through recursive calls."""
-    __slots__ = ('scope', 'dyn', 'dyn_positions', 'color',
+    __slots__ = ('scope', 'dyn', 'let', 'dyn_positions', 'color',
                  'children_nodes', 'children_caller_ctx')
 
-    def __init__(self, scope, dyn=None, dyn_positions=None, color=None,
+    def __init__(self, scope, dyn=None, let=None, dyn_positions=None, color=None,
                  children_nodes=None, children_caller_ctx=None):
         self.scope = scope
         self.dyn = dyn if dyn is not None else dict(_DEFAULT_DOLLAR)
+        self.let = let if let is not None else {}
         self.dyn_positions = dyn_positions if dyn_positions is not None else {}
         self.color = color
         self.children_nodes = children_nodes if children_nodes is not None else []
         self.children_caller_ctx = children_caller_ctx
 
-    def child_ctx(self, scope=None, dyn=None, color=None,
+    def child_ctx(self, scope=None, dyn=None, let=None, color=None,
                   children_nodes=None, children_caller_ctx=None):
         return EvalContext(
             scope=scope if scope is not None else self.scope,
             dyn=dyn if dyn is not None else dict(self.dyn),
+            let=let if let is not None else dict(self.let),
             dyn_positions={} if dyn is None else self.dyn_positions,
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else [],
@@ -900,10 +903,10 @@ class EvalContext:
 
     def call_ctx(self, scope=None, color=None,
                  children_nodes=None, children_caller_ctx=None):
-        dyn = {k: v for k, v in self.dyn.items() if k[0] == '$'}
         return EvalContext(
             scope=scope if scope is not None else self.scope,
-            dyn=dyn,
+            dyn=dict(self.dyn),
+            let={},
             dyn_positions={},
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else [],
@@ -916,16 +919,56 @@ class Evaluator:
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
-        # Module frames: ("module", name, call_pos, decl_pos); function frames: ("function", name, call_pos)
         self._call_stack: list = []
-        # EvalContext for each live call-stack frame (parallel to _call_stack)
         self._frame_ctxs: list = []
-        self._debug_hook = debug_hook  # callable(line, locals_dict, call_stack, all_frame_locals) -> (cmd, mods)
-        self._error_break_fn = error_break_fn  # callable(line, msg, all_frame_locals, call_stack); returns, then EvalError raised
+        self._debug_hook = debug_hook
+        self._debugging = debug_hook is not None
+        self._error_break_fn = error_break_fn
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
         self._root_ctx: EvalContext | None = None
-        self._expr_depth: int = 0  # nesting depth inside listcomp for/if/each/listcomp bodies
+        self._expr_depth: int = 0
+        self._math_fns = {
+            "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
+            "ceil": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.ceil(x),
+            "floor": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.floor(x),
+            "round": lambda x: x if (math.isnan(x) or math.isinf(x))
+                else (math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)),
+            "sqrt": lambda x: float('nan') if x < 0 else math.sqrt(x),
+            "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
+            "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),
+            "exp": math.exp,
+            "sin": self._builtin_sin,
+            "cos": self._builtin_cos,
+            "tan": self._builtin_tan,
+            "asin": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.asin(x)),
+            "acos": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.acos(x)),
+            "atan": lambda x: math.degrees(math.atan(x)),
+            "atan2": lambda y, x: math.degrees(math.atan2(y, x)),
+            "max": self._builtin_max, "min": self._builtin_min,
+            "pow": self._builtin_pow,
+            "norm": lambda v: math.sqrt(sum(x*x for x in v)),
+            "cross": self._builtin_cross,
+            "rands": self._builtin_rands,
+            "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
+            "len": lambda x: len(x) if isinstance(x, (list, str, OscObject)) else None,
+            "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
+            "chr": lambda x: "".join(chr(int(c)) for c in x) if isinstance(x, list) else chr(int(x)),
+            "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
+            "is_undef": lambda x: x is None,
+            "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and not math.isnan(x),
+            "is_bool": lambda x: isinstance(x, bool),
+            "is_string": lambda x: isinstance(x, str),
+            "is_list": lambda x: isinstance(x, list),
+            "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
+            "is_object": lambda x: isinstance(x, OscObject),
+            "search": self._builtin_search,
+            "lookup": self._builtin_lookup,
+            "version": lambda: [2025, 1, 1],
+            "version_num": lambda: 20250101,
+            "parent_module": self._builtin_parent_module,
+        }
+        self._BUILTIN_FN_NAMES = frozenset(self._math_fns) | {"object", "textmetrics", "fontmetrics"}
 
     def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
         if self._debug_hook is None:
@@ -942,33 +985,29 @@ class Evaluator:
         local_scope: dict = {}
         dyn_names: set = set()
 
+        for k, v in ctx.let.items():
+            local_scope[k] = v
+            dyn_names.add(k)
         for k, v in ctx.dyn.items():
-            if k.startswith('__let_'):
-                name = k[6:]
-                local_scope[name] = v
-                dyn_names.add(name)
-            elif k.startswith('$'):
+            if k.startswith('$'):
                 local_scope[k] = v
 
         outer_scope: dict = {}
         if self._call_stack and self._root_ctx is not None:
-            for k, v in self._root_ctx.dyn.items():
-                if k.startswith('__let_'):
-                    name = k[6:]
-                    if name not in local_scope:
-                        outer_scope[name] = v
+            for k, v in self._root_ctx.let.items():
+                if k not in local_scope:
+                    outer_scope[k] = v
 
         current_frame = {"local_scope": local_scope, "outer_scope": outer_scope, "dyn_names": dyn_names}
         all_frame_locals = [current_frame]
         for frame_ctx in reversed(self._frame_ctxs[:-1]):
             p_local: dict = {}
             p_dyn: set = set()
+            for k, v in frame_ctx.let.items():
+                p_local[k] = v
+                p_dyn.add(k)
             for k, v in frame_ctx.dyn.items():
-                if k.startswith('__let_'):
-                    name = k[6:]
-                    p_local[name] = v
-                    p_dyn.add(name)
-                elif k.startswith('$'):
+                if k.startswith('$'):
                     p_local[k] = v
             all_frame_locals.append({"local_scope": p_local, "outer_scope": {}, "dyn_names": p_dyn})
 
@@ -986,7 +1025,7 @@ class Evaluator:
 
         cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level, expr_depth=self._expr_depth, origin=origin)
         for k, v in mods.items():
-            ctx.dyn[f'__let_{k}'] = v
+            ctx.let[k] = v
         if cmd == "stop":
             raise EvalError("Debugging stopped.")
 
@@ -1082,28 +1121,23 @@ class Evaluator:
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
         if not isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
-            self._check_debug(node, ctx)
+            if self._debugging:
+                self._check_debug(node, ctx)
         if isinstance(node, Assignment):
             name = node.name.name
             if name.startswith("$"):
                 ctx.dyn[name] = self._eval_expr(node.expr, ctx)
             else:
-                key = f'__let_{name}'
                 pos = getattr(node, 'position', None)
-                # Only warn on a genuine double-assignment within this scope.
-                # A parameter binding (from _bind_args/_apply_defaults) also
-                # sets ctx.dyn[key] but has no dyn_positions entry — a body
-                # assignment shadowing a parameter (e.g. `anchor =
-                # default(anchor, CENTER);`) is normal and not a warning.
-                if key in ctx.dyn_positions:
-                    first_pos = ctx.dyn_positions[key]
+                if name in ctx.dyn_positions:
+                    first_pos = ctx.dyn_positions[name]
                     first_line = getattr(first_pos, 'line', '?') if first_pos else '?'
                     self._echo_fn(
                         f"WARNING: {name} was assigned on line {first_line}"
                         f" but was overwritten{self._loc(pos)}"
                     )
-                ctx.dyn[key] = self._eval_expr(node.expr, ctx)
-                ctx.dyn_positions[key] = pos
+                ctx.let[name] = self._eval_expr(node.expr, ctx)
+                ctx.dyn_positions[name] = pos
             return []
         if isinstance(node, ModularCall):
             body = self._eval_modular_call(node, ctx)
@@ -1112,13 +1146,15 @@ class Evaluator:
             cond = self._eval_expr(node.condition, ctx)
             if cond:
                 branch = node.true_branch
-                self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
                 return self._eval_children(branch, ctx)
             return []
         if isinstance(node, ModularIfElse):
             cond = self._eval_expr(node.condition, ctx)
             branch = node.true_branch if cond else node.false_branch
-            self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
             return self._eval_children(branch, ctx)
         if isinstance(node, ModularFor):
             return self._eval_for(node, ctx)
@@ -1161,10 +1197,12 @@ class Evaluator:
             # each node evaluates in its correct lexical scope. Share ctx.dyn
             # (not a copy) so that eager assignments in one sibling are visible
             # to subsequent siblings in the same block.
-            if hasattr(child, 'scope') and child.scope is not None:
+            child_scope = getattr(child, 'scope', None)
+            if child_scope is not None:
                 child_ctx = EvalContext(
-                    scope=child.scope,
+                    scope=child_scope,
                     dyn=ctx.dyn,
+                    let=ctx.let,
                     dyn_positions=ctx.dyn_positions,
                     color=ctx.color,
                     children_nodes=ctx.children_nodes,
@@ -1221,8 +1259,8 @@ class Evaluator:
 
     def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         # Bind parameters
-        child_scope = decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope
-        params = decl.parameters if hasattr(decl, 'parameters') else []
+        child_scope = getattr(decl, 'scope', None) or ctx.scope
+        params = getattr(decl, 'parameters', None) or []
         args = self._bind_args(params, call.arguments, ctx)
 
         child_ctx = self._call_ctx_for(
@@ -1238,12 +1276,11 @@ class Evaluator:
             c for c in call.children
             if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))
         ])
-        # Bind all args; $-prefixed go into dyn directly, others as __let_
         for k, v in args.items():
             if k.startswith("$"):
                 child_ctx.dyn[k] = v
             else:
-                child_ctx.dyn[f"__let_{k}"] = v
+                child_ctx.let[k] = v
         # Apply defaults for missing params
         self._apply_defaults(params, child_ctx, ctx)
 
@@ -1272,7 +1309,7 @@ class Evaluator:
             elif isinstance(arg, PositionalArgument):
                 if positional_idx < len(params):
                     param = params[positional_idx]
-                    pname = param.name.name if hasattr(param, 'name') else str(positional_idx)
+                    pname = param.name.name if getattr(param, 'name', None) else str(positional_idx)
                     result[pname] = self._eval_expr(arg.expr, ctx)
                 positional_idx += 1
         return result
@@ -2097,12 +2134,12 @@ class Evaluator:
             children_nodes=caller_ctx.children_nodes,
             children_caller_ctx=caller_ctx.children_caller_ctx,
         )
-        # Inject current $-variables so dynamic scoping works.
-        # $-vars may be stored as "$name" (direct assignment) or
-        # "__let_$name" (for-loop / let binding).
         for k, v in ctx.dyn.items():
-            if k.startswith('$') or k.startswith('__let_$'):
+            if k.startswith('$'):
                 eval_ctx.dyn[k] = v
+        for k, v in ctx.let.items():
+            if k.startswith('$'):
+                eval_ctx.let[k] = v
         return self._eval_children(ctx.children_nodes, eval_ctx)
 
     def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
@@ -2121,7 +2158,8 @@ class Evaluator:
         cond = self._get_arg(args, 0, "condition", default=None)
         if cond is not None and not cond:
             return None
-        self._check_debug(node, ctx, forced=True)
+        if self._debugging:
+            self._check_debug(node, ctx, forced=True)
         return None
 
     # --- for loops ---
@@ -2152,20 +2190,18 @@ class Evaluator:
             loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                      children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
-                loop_ctx.dyn[f"__let_{vname}"] = val
+                loop_ctx.let[vname] = val
             result.extend(self._eval_children(node.body, loop_ctx))
         return result
 
-    def _cartesian(self, var_seqs: list[tuple[str, list]]):
-        """Yield [(name, value), ...] tuples for all combinations."""
+    @staticmethod
+    def _cartesian(var_seqs: list[tuple[str, list]]):
         if not var_seqs:
             yield []
             return
-        name, values = var_seqs[0]
-        rest = var_seqs[1:]
-        for v in values:
-            for tail in self._cartesian(rest):
-                yield [(name, v)] + tail
+        names, value_lists = zip(*var_seqs)
+        for combo in _product(*value_lists):
+            yield list(zip(names, combo))
 
     def _eval_intersection_for(self, node: ModularIntersectionFor, ctx: EvalContext) -> list[ColoredBody]:
         var_seqs: list[tuple[str, list]] = []
@@ -2188,7 +2224,7 @@ class Evaluator:
             loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                      children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
-                loop_ctx.dyn[f"__let_{vname}"] = val
+                loop_ctx.let[vname] = val
             children = self._eval_children(body_node, loop_ctx)
             if children:
                 iterations.append(self._combine(children))
@@ -2218,7 +2254,7 @@ class Evaluator:
                                  children_caller_ctx=ctx.children_caller_ctx)
         for assign in node.assignments:
             v = self._eval_expr(assign.expr, ctx)
-            child_ctx.dyn[f"__let_{assign.name.name}"] = v
+            child_ctx.let[assign.name.name] = v
         body = getattr(node, 'children', None) or getattr(node, 'body', None) or []
         return self._eval_children(body, child_ctx)
 
@@ -2279,18 +2315,16 @@ class Evaluator:
 
     def _expr_identifier(self, node, ctx):
         name = node.name
-        dyn = ctx.dyn
-        let_key = f"__let_{name}"
-        v = dyn.get(let_key)
+        v = ctx.let.get(name)
         if v is not None:
             return v
-        if let_key in dyn:
+        if name in ctx.let:
             return None
         if name[0] == '$':
-            v = dyn.get(name)
+            v = ctx.dyn.get(name)
             if v is not None:
                 return v
-            if name in dyn:
+            if name in ctx.dyn:
                 return v
         if name in self._CONSTANTS:
             return self._CONSTANTS[name]
@@ -2303,11 +2337,7 @@ class Evaluator:
             return None
         return self._eval_expr(decl.expr, ctx)
 
-    def _expr_listcomp(self, node, ctx):
-        return self._eval_list_comp(node, ctx)
-
-    def _expr_range(self, node, ctx):
-        return self._eval_range(node, ctx)
+    # _expr_listcomp and _expr_range removed — dispatch table points directly
 
     def _expr_add(self, node, ctx):
         a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
@@ -2432,14 +2462,15 @@ class Evaluator:
             return None
 
     def _expr_ternary(self, node, ctx):
-        self._check_debug(node, ctx, expr_level=True)
+        if self._debugging:
+            self._check_debug(node, ctx, expr_level=True)
         cond = self._eval_expr(node.condition, ctx)
         branch = node.true_expr if cond else node.false_expr
-        self._check_debug(branch, ctx, expr_level=True)
+        if self._debugging:
+            self._check_debug(branch, ctx, expr_level=True)
         return self._eval_expr(branch, ctx)
 
-    def _expr_call(self, node, ctx):
-        return self._eval_function_call(node, ctx)
+    # _expr_call removed — dispatch table points directly to _eval_function_call
 
     _SWIZZLE = {"x": 0, "y": 1, "z": 2, "w": 3}
 
@@ -2464,7 +2495,7 @@ class Evaluator:
 
     def _expr_member(self, node, ctx):
         obj = self._eval_expr(node.left, ctx)
-        member = node.member.name if hasattr(node.member, 'name') else str(node.member)
+        member = getattr(node.member, 'name', None) or str(node.member)
         if type(obj) is list or type(obj) is tuple:
             idx = self._SWIZZLE.get(member)
             if idx is not None and idx < len(obj):
@@ -2477,8 +2508,9 @@ class Evaluator:
         child_ctx = ctx.child_ctx()
         for assign in node.assignments:
             v = self._eval_expr(assign.expr, child_ctx)
-            child_ctx.dyn[f"__let_{assign.name.name}"] = v
-            self._check_debug(assign, child_ctx, expr_level=True)
+            child_ctx.let[assign.name.name] = v
+            if self._debugging:
+                self._check_debug(assign, child_ctx, expr_level=True)
         return self._eval_expr(node.body, child_ctx)
 
     def _expr_echo(self, node, ctx):
@@ -2502,40 +2534,26 @@ class Evaluator:
 
     def _eval_identifier(self, node: Identifier, ctx: EvalContext, warn_if_undef: bool = True) -> Any:
         name = node.name
-        dyn = ctx.dyn
-        # Let-bound (most common path)
-        let_key = f"__let_{name}"
-        v = dyn.get(let_key)
+        v = ctx.let.get(name)
         if v is not None:
             return v
-        if let_key in dyn:
+        if name in ctx.let:
             return None
-        # Dynamic variable ($fn etc.)
         if name[0] == '$':
-            v = dyn.get(name)
+            v = ctx.dyn.get(name)
             if v is not None:
                 return v
-            if name in dyn:
+            if name in ctx.dyn:
                 return v
-        # Built-in constants
         if name in self._CONSTANTS:
             return self._CONSTANTS[name]
-        # Lexical variable
         decl = ctx.scope.lookup_variable(name)
         if decl is None:
-            # Real OpenSCAD: variables and functions live in separate namespaces,
-            # so a bare reference to a `function f(x) = ...` declaration is an
-            # "unknown variable" -> undef (matches is_function(f) == false there).
-            # Warn the same way for any unresolved identifier, matching real
-            # OpenSCAD's "Ignoring unknown variable" (no TRACE lines). Suppressed
-            # when probing for a function-value (see _eval_function_call), which
-            # emits its own "Ignoring unknown function" warning instead.
             if warn_if_undef:
                 pos = getattr(node, 'position', None)
                 self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
             return None
         if isinstance(decl, ParameterDeclaration):
-            # Params are bound via __let_ above; reaching here means no value was provided and no default
             return None
         return self._eval_expr(decl.expr, ctx)
 
@@ -2547,29 +2565,35 @@ class Evaluator:
             elif isinstance(elem, ListCompCFor):
                 result.extend(self._eval_listcomp_cfor(elem, ctx))
             elif isinstance(elem, ListCompIf):
-                self._check_debug(elem, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(elem, ctx, expr_level=True)
                 if self._eval_expr(elem.condition, ctx):
                     self._expr_depth += 1
-                    self._check_debug(elem.true_expr, ctx, expr_level=True)
+                    if self._debugging:
+                        self._check_debug(elem.true_expr, ctx, expr_level=True)
                     result.extend(self._eval_list_comp_body(elem.true_expr, ctx))
                     self._expr_depth -= 1
             elif isinstance(elem, ListCompIfElse):
-                self._check_debug(elem, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(elem, ctx, expr_level=True)
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
                 self._expr_depth += 1
-                self._check_debug(branch, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(branch, ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(branch, ctx))
                 self._expr_depth -= 1
             elif isinstance(elem, ListCompLet):
                 let_ctx = ctx.child_ctx()
                 for assign in elem.assignments:
                     # Evaluate in let_ctx so each binding sees previous ones.
-                    let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, let_ctx)
-                    self._check_debug(assign, let_ctx, expr_level=True)
+                    let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
+                    if self._debugging:
+                        self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif isinstance(elem, ListCompEach):
                 self._expr_depth += 1
-                self._check_debug(elem, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(elem, ctx, expr_level=True)
                 inner = elem.body
                 if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
                                       ListCompCFor, ListCompLet, ListCompEach)):
@@ -2588,7 +2612,8 @@ class Evaluator:
                         result.append(v)
                 self._expr_depth -= 1
             else:
-                self._check_debug(elem, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(elem, ctx, expr_level=True)
                 result.append(self._eval_expr(elem, ctx))
         return result
 
@@ -2607,29 +2632,35 @@ class Evaluator:
             let_ctx = ctx.child_ctx()
             for assign in body.assignments:
                 # Evaluate in let_ctx so each binding sees previous ones in the same let().
-                let_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, let_ctx)
-                self._check_debug(assign, let_ctx, expr_level=True)
+                let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
+                if self._debugging:
+                    self._check_debug(assign, let_ctx, expr_level=True)
             return self._eval_list_comp_body(body.body, let_ctx)
         if isinstance(body, ListCompIf):
-            self._check_debug(body, ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(body, ctx, expr_level=True)
             if self._eval_expr(body.condition, ctx):
                 self._expr_depth += 1
-                self._check_debug(body.true_expr, ctx, expr_level=True)
+                if self._debugging:
+                    self._check_debug(body.true_expr, ctx, expr_level=True)
                 result = self._eval_list_comp_body(body.true_expr, ctx)
                 self._expr_depth -= 1
                 return result
             return []
         if isinstance(body, ListCompIfElse):
-            self._check_debug(body, ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(body, ctx, expr_level=True)
             branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
             self._expr_depth += 1
-            self._check_debug(branch, ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(branch, ctx, expr_level=True)
             result = self._eval_list_comp_body(branch, ctx)
             self._expr_depth -= 1
             return result
         if isinstance(body, ListCompEach):
             self._expr_depth += 1
-            self._check_debug(body, ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(body, ctx, expr_level=True)
             inner = body.body
             if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
                                    ListCompCFor, ListCompLet, ListCompEach)):
@@ -2648,7 +2679,8 @@ class Evaluator:
             if isinstance(v, list):
                 return v
             return [v] if v is not None else []
-        self._check_debug(body, ctx, expr_level=True)
+        if self._debugging:
+            self._check_debug(body, ctx, expr_level=True)
         v = self._eval_expr(body, ctx)
         return [v] if v is not None else []
 
@@ -2671,26 +2703,23 @@ class Evaluator:
         for combo in self._cartesian(var_seqs):
             loop_ctx = ctx.child_ctx()
             for vname, val in combo:
-                loop_ctx.dyn[f"__let_{vname}"] = val
+                loop_ctx.let[vname] = val
             self._expr_depth += 1
-            self._check_debug(node, loop_ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(node, loop_ctx, expr_level=True)
             if isinstance(node.body, ListComprehension):
-                # Bracketed inner comprehension — yields one list element per iteration.
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
             self._expr_depth -= 1
         return result
 
-    # OpenSCAD has no native loop-iteration cap; this just guards against a
-    # runaway condition/increment (e.g. `i = i+1` typo'd as `i = i-1`) hanging
-    # the evaluator forever.
     _MAX_CFOR_ITERATIONS = 1_000_000
 
     def _eval_listcomp_cfor(self, node: ListCompCFor, ctx: EvalContext) -> list:
         loop_ctx = ctx.child_ctx()
         for assign in node.inits:
-            loop_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, loop_ctx)
+            loop_ctx.let[assign.name.name] = self._eval_expr(assign.expr, loop_ctx)
 
         result = []
         iterations = 0
@@ -2699,14 +2728,15 @@ class Evaluator:
             if iterations > self._MAX_CFOR_ITERATIONS:
                 self.error("C-style for loop exceeded maximum iteration count", node)
             self._expr_depth += 1
-            self._check_debug(node, loop_ctx, expr_level=True)
+            if self._debugging:
+                self._check_debug(node, loop_ctx, expr_level=True)
             if isinstance(node.body, ListComprehension):
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
             self._expr_depth -= 1
             for assign in node.incrs:
-                loop_ctx.dyn[f"__let_{assign.name.name}"] = self._eval_expr(assign.expr, loop_ctx)
+                loop_ctx.let[assign.name.name] = self._eval_expr(assign.expr, loop_ctx)
         return result
 
     def _eval_range(self, node: RangeLiteral, ctx: EvalContext) -> OscRange:
@@ -2722,83 +2752,30 @@ class Evaluator:
 
     def _eval_function_call(self, node: PrimaryCall, ctx: EvalContext) -> Any:
         name = node.left.name if isinstance(node.left, Identifier) else None
-        args = self._resolve_args(node.arguments, ctx)
 
-        if name == "object":
-            return self._builtin_object(args, node)
-        if name == "textmetrics":
-            return self._builtin_textmetrics(args, node)
-        if name == "fontmetrics":
-            return self._builtin_fontmetrics(args, node)
-
-        # Built-in math functions
-        math_fns = {
-            "abs": abs, "sign": lambda x: (1 if x > 0 else -1 if x < 0 else 0),
-            # math.ceil()/math.floor() raise on nan/inf (Python wants a finite
-            # result to convert to int); OpenSCAD passes nan/inf through unchanged.
-            "ceil": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.ceil(x),
-            "floor": lambda x: x if (math.isnan(x) or math.isinf(x)) else math.floor(x),
-            # OpenSCAD rounds half away from zero (round(2.5)==3, round(-2.5)==-3),
-            # unlike Python's round-half-to-even (round(2.5)==2).
-            "round": lambda x: x if (math.isnan(x) or math.isinf(x))
-                else (math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)),
-            "sqrt": lambda x: float('nan') if x < 0 else math.sqrt(x),
-            "ln": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log(x)),
-            "log": lambda x: float('-inf') if x == 0 else (float('nan') if x < 0 else math.log10(x)),
-            "exp": math.exp,
-            "sin": self._builtin_sin,
-            "cos": self._builtin_cos,
-            "tan": self._builtin_tan,
-            "asin": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.asin(x)),
-            "acos": lambda x: float('nan') if abs(x) > 1 else math.degrees(math.acos(x)),
-            "atan": lambda x: math.degrees(math.atan(x)),
-            "atan2": lambda y, x: math.degrees(math.atan2(y, x)),
-            "max": self._builtin_max, "min": self._builtin_min,
-            "pow": self._builtin_pow,
-            "norm": lambda v: math.sqrt(sum(x*x for x in v)),
-            "cross": self._builtin_cross,
-            "rands": self._builtin_rands,
-            "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
-            "len": lambda x: len(x) if isinstance(x, (list, str, OscObject)) else None,
-            "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
-            # chr() accepts either a single code point or a vector of them.
-            "chr": lambda x: "".join(chr(int(c)) for c in x) if isinstance(x, list) else chr(int(x)),
-            # ord() of a multi-character string returns the code of its first character.
-            "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
-            "is_undef": lambda x: x is None,
-            # nan fails is_num() in real OpenSCAD (inf/-inf pass).
-            "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and not math.isnan(x),
-            "is_bool": lambda x: isinstance(x, bool),
-            "is_string": lambda x: isinstance(x, str),
-            "is_list": lambda x: isinstance(x, list),
-            "is_function": lambda x: isinstance(x, (FunctionDeclaration, FunctionLiteral)),
-            "is_object": lambda x: isinstance(x, OscObject),
-            "search": self._builtin_search,
-            "lookup": self._builtin_lookup,
-            "version": lambda: [2025, 1, 1],
-            "version_num": lambda: 20250101,
-            "parent_module": self._builtin_parent_module,
-        }
-        if name and name in math_fns:
-            positional = [args[k] for k in sorted(k for k in args if isinstance(k, int))]
-            if not positional:
-                # OpenSCAD: named args fall back to positional order for built-ins
-                positional = [args[k] for k in args if isinstance(k, str)]
-            try:
-                return math_fns[name](*positional)
-            except Exception:
-                return None
-
-        # User-defined function
         if name:
-            decl = ctx.scope.lookup_function(name)
-            if decl is not None:
-                return self._eval_user_function(name, decl, node.arguments, ctx, node)
+            if name not in self._BUILTIN_FN_NAMES:
+                decl = ctx.scope.lookup_function(name)
+                if decl is not None:
+                    return self._eval_user_function(name, decl, node.arguments, ctx, node)
+            else:
+                args = self._resolve_args(node.arguments, ctx)
+                if name == "object":
+                    return self._builtin_object(args, node)
+                if name == "textmetrics":
+                    return self._builtin_textmetrics(args, node)
+                if name == "fontmetrics":
+                    return self._builtin_fontmetrics(args, node)
+                fn = self._math_fns.get(name)
+                if fn is not None:
+                    positional = [args[i] for i in range(len(args)) if i in args]
+                    if not positional:
+                        positional = [args[k] for k in args if isinstance(k, str)]
+                    try:
+                        return fn(*positional)
+                    except Exception:
+                        return None
 
-        # Function value, e.g. `g = function(x) x*2; g(3)`. For a plain
-        # identifier, look up the variable directly (suppressing the
-        # "unknown variable" warning) — an unresolved name here means this
-        # is an unknown *function*, warned about below instead.
         if isinstance(node.left, Identifier):
             func_node = self._eval_identifier(node.left, ctx, warn_if_undef=False)
         else:
@@ -2807,9 +2784,6 @@ class Evaluator:
             return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
 
         if name and func_node is None:
-            # Unknown function — warn and evaluate to undef, matching real
-            # OpenSCAD's "Ignoring unknown function" behavior (no TRACE,
-            # execution continues), rather than aborting the whole render.
             pos = getattr(node, 'position', None)
             self._echo_fn(f"WARNING: Ignoring unknown function '{name}'{self._loc(pos)}")
 
@@ -3075,52 +3049,38 @@ class Evaluator:
         })
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
-        """Bind default values for any params not already set in child_ctx.dyn.
-
-        Every declared parameter gets a `__let_*` entry — `undef` (`None`) if
-        it has no default and the caller didn't supply one — so
-        `_eval_identifier`'s eager `ctx.dyn` check always wins for parameter
-        names. Without this, a body statement that shadows a parameter name
-        (e.g. BOSL2's `chamfer = approx(chamfer,0) ? undef : chamfer;`) would
-        hit the hoisted Assignment via `scope.lookup_variable` when
-        evaluating its own right-hand side, recursing forever.
-        """
         for param in params:
-            pname = param.name.name if hasattr(param, 'name') else None
-            if pname and f"__let_{pname}" not in child_ctx.dyn:
+            pname = param.name.name if getattr(param, 'name', None) else None
+            if pname and pname not in child_ctx.let:
                 default = getattr(param, 'default', None)
                 if default is not None:
-                    child_ctx.dyn[f"__let_{pname}"] = self._eval_expr(default, caller_ctx)
+                    child_ctx.let[pname] = self._eval_expr(default, caller_ctx)
                 else:
-                    child_ctx.dyn[f"__let_{pname}"] = None
+                    child_ctx.let[pname] = None
 
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
-        params = decl.parameters if hasattr(decl, 'parameters') else []
+        params = getattr(decl, 'parameters', None) or []
         bound = self._bind_args(params, arguments, ctx)
-        fn_scope = decl.scope if hasattr(decl, 'scope') and decl.scope else ctx.scope
+        fn_scope = getattr(decl, 'scope', None) or ctx.scope
         child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope)
         for k, v in bound.items():
             if k.startswith("$"):
                 child_ctx.dyn[k] = v
             else:
-                child_ctx.dyn[f"__let_{k}"] = v
+                child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
         self._call_stack.append(("function", name, pos, getattr(decl, 'position', None)))
         self._frame_ctxs.append(child_ctx)
         try:
-            self._check_debug(decl.expr, child_ctx)
+            if self._debugging:
+                self._check_debug(decl.expr, child_ctx)
             return self._eval_expr(decl.expr, child_ctx)
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
 
     def _eval_function_literal(self, func_node: FunctionLiteral, arguments, ctx: EvalContext, call_node=None, name: str | None = None) -> Any:
-        """Call a `function (...) expr` value, e.g. `g = function(x) x*2; g(3)`.
-
-        Closes over `func_node.scope` (where the literal was written), like
-        `_eval_user_function()` does for named functions via `decl.scope`.
-        """
         params = func_node.parameters
         bound = self._bind_args(params, arguments, ctx)
         fn_scope = func_node.scope if func_node.scope else ctx.scope
@@ -3129,13 +3089,14 @@ class Evaluator:
             if k.startswith("$"):
                 child_ctx.dyn[k] = v
             else:
-                child_ctx.dyn[f"__let_{k}"] = v
+                child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = getattr(call_node, 'position', None)
         self._call_stack.append(("function", name or "<function>", pos, func_node.position))
         self._frame_ctxs.append(child_ctx)
         try:
-            self._check_debug(func_node.body, child_ctx)
+            if self._debugging:
+                self._check_debug(func_node.body, child_ctx)
             return self._eval_expr(func_node.body, child_ctx)
         finally:
             self._call_stack.pop()
@@ -3149,8 +3110,8 @@ _EXPR_DISPATCH: dict[type, callable] = {
     StringLiteral: Evaluator._expr_string,
     UndefinedLiteral: Evaluator._expr_undefined,
     Identifier: Evaluator._expr_identifier,
-    ListComprehension: Evaluator._expr_listcomp,
-    RangeLiteral: Evaluator._expr_range,
+    ListComprehension: Evaluator._eval_list_comp,
+    RangeLiteral: Evaluator._eval_range,
     AdditionOp: Evaluator._expr_add,
     SubtractionOp: Evaluator._expr_sub,
     MultiplicationOp: Evaluator._expr_mul,
@@ -3168,7 +3129,7 @@ _EXPR_DISPATCH: dict[type, callable] = {
     LessThanOp: Evaluator._expr_lt,
     LessThanOrEqualOp: Evaluator._expr_lte,
     TernaryOp: Evaluator._expr_ternary,
-    PrimaryCall: Evaluator._expr_call,
+    PrimaryCall: Evaluator._eval_function_call,
     PrimaryIndex: Evaluator._expr_index,
     PrimaryMember: Evaluator._expr_member,
     LetOp: Evaluator._expr_let,
