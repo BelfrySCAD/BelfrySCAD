@@ -1375,14 +1375,18 @@ class Evaluator:
             self.id_to_node[int(orig_id)] = node
         return ColoredBody(body=body, color=ctx.color)
 
-    def _fn(self, ctx: EvalContext) -> int:
+    def _fn(self, ctx: EvalContext, r: float = 0.0) -> int:
         fn = ctx.dyn.get("$fn", 0)
+        if isinstance(fn, (int, float)) and fn > 0:
+            return max(3, int(fn))
         fa = ctx.dyn.get("$fa", 12.0)
         fs = ctx.dyn.get("$fs", 2.0)
-        if fn > 0:
-            return max(3, int(fn))
-        # approximate from $fa/$fs: use OpenSCAD formula later, default 16
-        return 16
+        if not isinstance(fa, (int, float)) or fa <= 0:
+            fa = 12.0
+        if not isinstance(fs, (int, float)) or fs <= 0:
+            fs = 2.0
+        r = abs(r) if isinstance(r, (int, float)) and math.isfinite(r) else 0.0
+        return int(math.ceil(max(5, min(360.0 / fa, r * 2.0 * math.pi / fs))))
 
     def _builtin_cube(self, args: dict, node: ModularCall, ctx: EvalContext) -> ColoredBody:
         size = self._get_arg(args, 0, "size", 1.0)
@@ -1401,7 +1405,7 @@ class Evaluator:
         if r is None:
             r = 1.0
         r = float(r)
-        n = self._fn(ctx)  # longitude segments
+        n = self._fn(ctx, r)  # longitude segments
         stacks = max(2, int(math.ceil(n / 2)))  # number of latitude rings (no single-point poles)
 
         # OpenSCAD-compatible sphere: polygon caps at top/bottom (no triangulated poles),
@@ -1457,7 +1461,6 @@ class Evaluator:
         d1 = self._get_arg(args, None, "d1", None)
         d2 = self._get_arg(args, None, "d2", None)
         center = bool(self._get_arg(args, None, "center", False))
-        segs = self._fn(ctx)
 
         if d is not None and r is None:
             r = d / 2
@@ -1471,6 +1474,7 @@ class Evaluator:
             r1 = 1.0
         if r2 is None:
             r2 = r1
+        segs = self._fn(ctx, max(float(r1), float(r2)))
 
         body = m3d.Manifold.cylinder(h, float(r1), float(r2), circular_segments=segs, center=center)
         return self._tag(body, node, ctx)
@@ -1862,8 +1866,8 @@ class Evaluator:
         r = self._get_arg(args, None, "r", None)
         delta = self._get_arg(args, None, "delta", None)
         chamfer = bool(self._get_arg(args, None, "chamfer", False))
-        segs = self._fn(ctx)
         if r is not None:
+            segs = self._fn(ctx, abs(float(r)))
             result = cs.offset(float(r), m3d.JoinType.Round, circular_segments=segs)
         elif delta is not None:
             jt = m3d.JoinType.Miter if chamfer else m3d.JoinType.Square
@@ -1893,7 +1897,6 @@ class Evaluator:
             return None
 
     def _builtin_2d(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        segs = self._fn(ctx)
         try:
             if name == "circle":
                 r = self._get_arg(args, 0, "r", None)
@@ -1902,6 +1905,7 @@ class Evaluator:
                     r = d / 2
                 if r is None:
                     r = 1.0
+                segs = self._fn(ctx, float(r))
                 cs = m3d.CrossSection.circle(float(r), segs)
             elif name == "square":
                 size = self._get_arg(args, 0, "size", 1.0)
