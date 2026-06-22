@@ -1120,12 +1120,13 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
-        if not isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
+        t = type(node)
+        if t is not ModuleDeclaration and t is not FunctionDeclaration:
             if self._debugging:
                 self._check_debug(node, ctx)
-        if isinstance(node, Assignment):
+        if t is Assignment:
             name = node.name.name
-            if name.startswith("$"):
+            if name[0] == '$':
                 ctx.dyn[name] = self._eval_expr(node.expr, ctx)
             else:
                 pos = getattr(node, 'position', None)
@@ -1139,10 +1140,10 @@ class Evaluator:
                 ctx.let[name] = self._eval_expr(node.expr, ctx)
                 ctx.dyn_positions[name] = pos
             return []
-        if isinstance(node, ModularCall):
+        if t is ModularCall:
             body = self._eval_modular_call(node, ctx)
             return [body] if body is not None else []
-        if isinstance(node, ModularIf):
+        if t is ModularIf:
             cond = self._eval_expr(node.condition, ctx)
             if cond:
                 branch = node.true_branch
@@ -1150,22 +1151,22 @@ class Evaluator:
                     self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
                 return self._eval_children(branch, ctx)
             return []
-        if isinstance(node, ModularIfElse):
+        if t is ModularIfElse:
             cond = self._eval_expr(node.condition, ctx)
             branch = node.true_branch if cond else node.false_branch
             if self._debugging:
                 self._check_debug(branch[0] if branch else node, ctx, expr_level=True)
             return self._eval_children(branch, ctx)
-        if isinstance(node, ModularFor):
+        if t is ModularFor:
             return self._eval_for(node, ctx)
-        if isinstance(node, ModularIntersectionFor):
+        if t is ModularIntersectionFor:
             return self._eval_intersection_for(node, ctx)
-        if isinstance(node, ModularLet):
+        if t is ModularLet:
             return self._eval_let_block(node, ctx)
-        if isinstance(node, ModularEcho):
+        if t is ModularEcho:
             self._do_echo(node.arguments, ctx)
             return []
-        if isinstance(node, ModularAssert):
+        if t is ModularAssert:
             args = self._resolve_args(node.arguments, ctx)
             cond = self._get_arg(args, 0, "condition", True)
             if not cond:
@@ -1242,18 +1243,20 @@ class Evaluator:
 
     def _call_ctx_for(self, decl, ctx: EvalContext, scope=None,
                       children_nodes=None, children_caller_ctx=None) -> EvalContext:
-        decl_pos = getattr(decl, 'position', None)
-        if decl_pos is not None:
-            dp_origin = decl_pos.origin
-            dp_start = decl_pos.start_offset
-            dp_end = decl_pos.end_offset
-            for frame in self._call_stack:
-                outer = frame[-1]
-                if outer is not None and outer.origin == dp_origin:
-                    o_start, o_end = outer.start_offset, outer.end_offset
-                    if (o_start, o_end) != (dp_start, dp_end) and o_start <= dp_start and dp_end <= o_end:
-                        return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
-                                             children_caller_ctx=children_caller_ctx)
+        call_stack = self._call_stack
+        if call_stack:
+            decl_pos = getattr(decl, 'position', None)
+            if decl_pos is not None:
+                dp_origin = decl_pos.origin
+                dp_start = decl_pos.start_offset
+                dp_end = decl_pos.end_offset
+                for frame in call_stack:
+                    outer = frame[-1]
+                    if outer is not None and outer.origin == dp_origin:
+                        o_start, o_end = outer.start_offset, outer.end_offset
+                        if (o_start, o_end) != (dp_start, dp_end) and o_start <= dp_start and dp_end <= o_end:
+                            return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
+                                                 children_caller_ctx=children_caller_ctx)
         return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
                             children_caller_ctx=children_caller_ctx)
 
@@ -1303,14 +1306,14 @@ class Evaluator:
     def _bind_args(self, params, arguments, ctx: EvalContext) -> dict[str, Any]:
         result = {}
         positional_idx = 0
+        nparams = len(params)
+        _eval = self._eval_expr
         for arg in arguments:
-            if isinstance(arg, NamedArgument):
-                result[arg.name.name] = self._eval_expr(arg.expr, ctx)
-            elif isinstance(arg, PositionalArgument):
-                if positional_idx < len(params):
-                    param = params[positional_idx]
-                    pname = param.name.name if getattr(param, 'name', None) else str(positional_idx)
-                    result[pname] = self._eval_expr(arg.expr, ctx)
+            if type(arg) is NamedArgument:
+                result[arg.name.name] = _eval(arg.expr, ctx)
+            else:
+                if positional_idx < nparams:
+                    result[params[positional_idx].name.name] = _eval(arg.expr, ctx)
                 positional_idx += 1
         return result
 
@@ -1387,15 +1390,15 @@ class Evaluator:
         return None
 
     def _resolve_args(self, arguments, ctx: EvalContext) -> dict:
-        """Resolve call arguments into a dict: positional args keyed 0, 1, ... and named by name."""
         result = {}
         pos = 0
+        _eval = self._eval_expr
         for arg in arguments:
-            if isinstance(arg, PositionalArgument):
-                result[pos] = self._eval_expr(arg.expr, ctx)
+            if type(arg) is PositionalArgument:
+                result[pos] = _eval(arg.expr, ctx)
                 pos += 1
-            elif isinstance(arg, NamedArgument):
-                result[arg.name.name] = self._eval_expr(arg.expr, ctx)
+            else:
+                result[arg.name.name] = _eval(arg.expr, ctx)
         return result
 
     def _get_arg(self, args: dict, pos: int, name: str, default=None):
@@ -2293,49 +2296,42 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _eval_expr(self, node, ctx: EvalContext):
-        handler = _EXPR_DISPATCH.get(type(node))
+        t = type(node)
+        if t is NumberLiteral or t is BooleanLiteral or t is StringLiteral:
+            return node.val
+        if t is Identifier:
+            name = node.name
+            let = ctx.let
+            v = let.get(name)
+            if v is not None:
+                return v
+            if name in let:
+                return None
+            if name[0] == '$':
+                dyn = ctx.dyn
+                v = dyn.get(name)
+                if v is not None:
+                    return v
+                if name in dyn:
+                    return v
+            if name in self._CONSTANTS:
+                return self._CONSTANTS[name]
+            decl = ctx.scope.lookup_variable(name)
+            if decl is None:
+                pos = getattr(node, 'position', None)
+                self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
+                return None
+            if type(decl) is ParameterDeclaration:
+                return None
+            return self._eval_expr(decl.expr, ctx)
+        if t is UndefinedLiteral:
+            return None
+        if t is CommentedExpr:
+            return self._eval_expr(node.expr, ctx)
+        handler = _EXPR_DISPATCH.get(t)
         if handler is not None:
             return handler(self, node, ctx)
         return None
-
-    def _expr_commented(self, node, ctx):
-        return self._eval_expr(node.expr, ctx)
-
-    def _expr_number(self, node, ctx):
-        return node.val
-
-    def _expr_boolean(self, node, ctx):
-        return node.val
-
-    def _expr_string(self, node, ctx):
-        return node.val
-
-    def _expr_undefined(self, node, ctx):
-        return None
-
-    def _expr_identifier(self, node, ctx):
-        name = node.name
-        v = ctx.let.get(name)
-        if v is not None:
-            return v
-        if name in ctx.let:
-            return None
-        if name[0] == '$':
-            v = ctx.dyn.get(name)
-            if v is not None:
-                return v
-            if name in ctx.dyn:
-                return v
-        if name in self._CONSTANTS:
-            return self._CONSTANTS[name]
-        decl = ctx.scope.lookup_variable(name)
-        if decl is None:
-            pos = getattr(node, 'position', None)
-            self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
-            return None
-        if isinstance(decl, ParameterDeclaration):
-            return None
-        return self._eval_expr(decl.expr, ctx)
 
     # _expr_listcomp and _expr_range removed — dispatch table points directly
 
@@ -2560,11 +2556,12 @@ class Evaluator:
     def _eval_list_comp(self, node: ListComprehension, ctx: EvalContext) -> list:
         result = []
         for elem in node.elements:
-            if isinstance(elem, ListCompFor):
+            te = type(elem)
+            if te is ListCompFor:
                 result.extend(self._eval_listcomp_for(elem, ctx))
-            elif isinstance(elem, ListCompCFor):
+            elif te is ListCompCFor:
                 result.extend(self._eval_listcomp_cfor(elem, ctx))
-            elif isinstance(elem, ListCompIf):
+            elif te is ListCompIf:
                 if self._debugging:
                     self._check_debug(elem, ctx, expr_level=True)
                 if self._eval_expr(elem.condition, ctx):
@@ -2573,7 +2570,7 @@ class Evaluator:
                         self._check_debug(elem.true_expr, ctx, expr_level=True)
                     result.extend(self._eval_list_comp_body(elem.true_expr, ctx))
                     self._expr_depth -= 1
-            elif isinstance(elem, ListCompIfElse):
+            elif te is ListCompIfElse:
                 if self._debugging:
                     self._check_debug(elem, ctx, expr_level=True)
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
@@ -2582,31 +2579,28 @@ class Evaluator:
                     self._check_debug(branch, ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(branch, ctx))
                 self._expr_depth -= 1
-            elif isinstance(elem, ListCompLet):
+            elif te is ListCompLet:
                 let_ctx = ctx.child_ctx()
                 for assign in elem.assignments:
-                    # Evaluate in let_ctx so each binding sees previous ones.
                     let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                     if self._debugging:
                         self._check_debug(assign, let_ctx, expr_level=True)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
-            elif isinstance(elem, ListCompEach):
+            elif te is ListCompEach:
                 self._expr_depth += 1
                 if self._debugging:
                     self._check_debug(elem, ctx, expr_level=True)
                 inner = elem.body
-                if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
-                                      ListCompCFor, ListCompLet, ListCompEach)):
-                    # `each if (cond) expr` etc. — inner is a comprehension element,
-                    # not a plain expression; evaluate it as such, then spread results.
+                ti = type(inner)
+                if ti is ListCompIf or ti is ListCompIfElse or ti is ListCompFor or ti is ListCompCFor or ti is ListCompLet or ti is ListCompEach:
                     for item in self._eval_list_comp_body(inner, ctx):
-                        if isinstance(item, list):
+                        if type(item) is list:
                             result.extend(item)
                         elif item is not None:
                             result.append(item)
                 else:
                     v = self._eval_expr(inner, ctx)
-                    if isinstance(v, list):
+                    if type(v) is list:
                         result.extend(v)
                     elif v is not None:
                         result.append(v)
@@ -2618,25 +2612,24 @@ class Evaluator:
         return result
 
     def _eval_list_comp_body(self, body, ctx: EvalContext) -> list:
-        if isinstance(body, ListComprehension):
-            # Bracketed body is a single element — wrap so caller's extend adds it as one item.
+        t = type(body)
+        if t is ListComprehension:
             self._expr_depth += 1
             result = [self._eval_list_comp(body, ctx)]
             self._expr_depth -= 1
             return result
-        if isinstance(body, ListCompFor):
+        if t is ListCompFor:
             return self._eval_listcomp_for(body, ctx)
-        if isinstance(body, ListCompCFor):
+        if t is ListCompCFor:
             return self._eval_listcomp_cfor(body, ctx)
-        if isinstance(body, ListCompLet):
+        if t is ListCompLet:
             let_ctx = ctx.child_ctx()
             for assign in body.assignments:
-                # Evaluate in let_ctx so each binding sees previous ones in the same let().
                 let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                 if self._debugging:
                     self._check_debug(assign, let_ctx, expr_level=True)
             return self._eval_list_comp_body(body.body, let_ctx)
-        if isinstance(body, ListCompIf):
+        if t is ListCompIf:
             if self._debugging:
                 self._check_debug(body, ctx, expr_level=True)
             if self._eval_expr(body.condition, ctx):
@@ -2647,7 +2640,7 @@ class Evaluator:
                 self._expr_depth -= 1
                 return result
             return []
-        if isinstance(body, ListCompIfElse):
+        if t is ListCompIfElse:
             if self._debugging:
                 self._check_debug(body, ctx, expr_level=True)
             branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
@@ -2657,18 +2650,16 @@ class Evaluator:
             result = self._eval_list_comp_body(branch, ctx)
             self._expr_depth -= 1
             return result
-        if isinstance(body, ListCompEach):
+        if t is ListCompEach:
             self._expr_depth += 1
             if self._debugging:
                 self._check_debug(body, ctx, expr_level=True)
             inner = body.body
-            if isinstance(inner, (ListCompIf, ListCompIfElse, ListCompFor,
-                                   ListCompCFor, ListCompLet, ListCompEach)):
-                # `each if (cond) expr` etc. — inner is a comprehension element;
-                # evaluate it, then spread (each item may itself be a list to flatten).
+            ti = type(inner)
+            if ti is ListCompIf or ti is ListCompIfElse or ti is ListCompFor or ti is ListCompCFor or ti is ListCompLet or ti is ListCompEach:
                 result = []
                 for item in self._eval_list_comp_body(inner, ctx):
-                    if isinstance(item, list):
+                    if type(item) is list:
                         result.extend(item)
                     elif item is not None:
                         result.append(item)
@@ -2676,7 +2667,7 @@ class Evaluator:
                 return result
             v = self._eval_expr(inner, ctx)
             self._expr_depth -= 1
-            if isinstance(v, list):
+            if type(v) is list:
                 return v
             return [v] if v is not None else []
         if self._debugging:
@@ -2751,7 +2742,8 @@ class Evaluator:
         return OscRange(start, increment, stop)
 
     def _eval_function_call(self, node: PrimaryCall, ctx: EvalContext) -> Any:
-        name = node.left.name if isinstance(node.left, Identifier) else None
+        left = node.left
+        name = left.name if type(left) is Identifier else None
 
         if name:
             if name not in self._BUILTIN_FN_NAMES:
@@ -2770,17 +2762,17 @@ class Evaluator:
                 if fn is not None:
                     positional = [args[i] for i in range(len(args)) if i in args]
                     if not positional:
-                        positional = [args[k] for k in args if isinstance(k, str)]
+                        positional = [args[k] for k in args if type(k) is str]
                     try:
                         return fn(*positional)
                     except Exception:
                         return None
 
-        if isinstance(node.left, Identifier):
-            func_node = self._eval_identifier(node.left, ctx, warn_if_undef=False)
+        if type(left) is Identifier:
+            func_node = self._eval_identifier(left, ctx, warn_if_undef=False)
         else:
-            func_node = self._eval_expr(node.left, ctx)
-        if isinstance(func_node, FunctionLiteral):
+            func_node = self._eval_expr(left, ctx)
+        if type(func_node) is FunctionLiteral:
             return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
 
         if name and func_node is None:
@@ -3104,12 +3096,6 @@ class Evaluator:
 
 
 _EXPR_DISPATCH: dict[type, callable] = {
-    CommentedExpr: Evaluator._expr_commented,
-    NumberLiteral: Evaluator._expr_number,
-    BooleanLiteral: Evaluator._expr_boolean,
-    StringLiteral: Evaluator._expr_string,
-    UndefinedLiteral: Evaluator._expr_undefined,
-    Identifier: Evaluator._expr_identifier,
     ListComprehension: Evaluator._eval_list_comp,
     RangeLiteral: Evaluator._eval_range,
     AdditionOp: Evaluator._expr_add,
