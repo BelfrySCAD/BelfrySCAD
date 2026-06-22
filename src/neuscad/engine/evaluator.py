@@ -47,8 +47,13 @@ class EvalError(Exception):
 
 
 def _is_flat_numeric(v):
-    """True if `v` is a list of int/float with no bools or None."""
-    return bool(v) and all(type(x) in (int, float) for x in v)
+    if not v:
+        return False
+    for x in v:
+        t = type(x)
+        if t is not int and t is not float:
+            return False
+    return True
 
 
 # numpy array creation has ~3-5µs fixed overhead; list comprehensions
@@ -57,13 +62,13 @@ _NP_VEC_THRESHOLD = 128
 
 
 def _scale(scalar, value):
-    if isinstance(value, list):
+    if type(value) is list:
         if _is_flat_numeric(value):
             if len(value) >= _NP_VEC_THRESHOLD:
                 return (scalar * np.asarray(value)).tolist()
             return [scalar * x for x in value]
         return [_scale(scalar, v) for v in value]
-    if isinstance(scalar, bool) or isinstance(value, bool):
+    if type(scalar) is bool or type(value) is bool:
         return None
     try:
         return scalar * value
@@ -72,7 +77,7 @@ def _scale(scalar, value):
 
 
 def _div_scale(value, divisor):
-    if isinstance(value, list):
+    if type(value) is list:
         if _is_flat_numeric(value):
             if len(value) >= _NP_VEC_THRESHOLD:
                 arr = np.asarray(value, dtype=np.float64)
@@ -83,7 +88,7 @@ def _div_scale(value, divisor):
                 return [float('nan') if x == 0 else math.copysign(float('inf'), x) for x in value]
             return [x / divisor for x in value]
         return [_div_scale(v, divisor) for v in value]
-    if isinstance(value, bool):
+    if type(value) is bool:
         return None
     try:
         if divisor == 0:
@@ -94,16 +99,16 @@ def _div_scale(value, divisor):
 
 
 def _vec_add(a, b):
-    if isinstance(a, list) and isinstance(b, list):
+    if type(a) is list and type(b) is list:
         if _is_flat_numeric(a) and _is_flat_numeric(b):
             if len(a) >= _NP_VEC_THRESHOLD:
                 n = min(len(a), len(b))
                 return (np.asarray(a[:n]) + np.asarray(b[:n])).tolist()
             return [x + y for x, y in zip(a, b)]
         return [_vec_add(x, y) for x, y in zip(a, b)]
-    if isinstance(a, bool) or isinstance(b, bool):
+    if type(a) is bool or type(b) is bool:
         return None
-    if isinstance(a, str) or isinstance(b, str):
+    if type(a) is str or type(b) is str:
         return None
     try:
         return a + b
@@ -490,14 +495,14 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
 
 
 def _vec_sub(a, b):
-    if isinstance(a, list) and isinstance(b, list):
+    if type(a) is list and type(b) is list:
         if _is_flat_numeric(a) and _is_flat_numeric(b):
             if len(a) >= _NP_VEC_THRESHOLD:
                 n = min(len(a), len(b))
                 return (np.asarray(a[:n]) - np.asarray(b[:n])).tolist()
             return [x - y for x, y in zip(a, b)]
         return [_vec_sub(x, y) for x, y in zip(a, b)]
-    if isinstance(a, bool) or isinstance(b, bool):
+    if type(a) is bool or type(b) is bool:
         return None
     try:
         return a - b
@@ -546,16 +551,12 @@ def _object_arg_type_name(v) -> str:
 
 
 def _osc_equal(a, b) -> bool:
-    """OpenSCAD `==`: unlike Python, `bool` is not interchangeable with `int`/`float`,
-    so `1 == true` and `0 == false` are `false`. Recurses into lists element-wise.
-
-    `object()` equality is deep AND order-sensitive: two objects with the same
-    keys/values in a different order are NOT equal, matching real OpenSCAD."""
-    if isinstance(a, bool) != isinstance(b, bool):
+    ta, tb = type(a), type(b)
+    if (ta is bool) != (tb is bool):
         return False
-    if isinstance(a, list) and isinstance(b, list):
+    if ta is list and tb is list:
         return len(a) == len(b) and all(_osc_equal(x, y) for x, y in zip(a, b))
-    if isinstance(a, OscObject) and isinstance(b, OscObject):
+    if ta is OscObject and tb is OscObject:
         pairs_a, pairs_b = list(a.items()), list(b.items())
         return len(pairs_a) == len(pairs_b) and all(
             ka == kb and _osc_equal(va, vb)
@@ -565,20 +566,14 @@ def _osc_equal(a, b) -> bool:
 
 
 def _osc_comparable(a, b) -> bool:
-    """Whether `<`/`>`/`<=`/`>=` are defined between `a` and `b` in OpenSCAD.
-
-    Ordering is only defined between two values of the *same* type:
-    number-number (int/float mix ok), string-string, vector-vector, or
-    bool-bool. Any other pairing (e.g. `true > 0`, `"a" < 1`, `[1,2] < 5`)
-    is an "undefined operation".
-    """
-    if isinstance(a, bool) or isinstance(b, bool):
-        return isinstance(a, bool) and isinstance(b, bool)
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+    ta, tb = type(a), type(b)
+    if ta is bool or tb is bool:
+        return ta is bool and tb is bool
+    if (ta is int or ta is float) and (tb is int or tb is float):
         return True
-    if isinstance(a, str) and isinstance(b, str):
+    if ta is str and tb is str:
         return True
-    if isinstance(a, list) and isinstance(b, list):
+    if ta is list and tb is list:
         return True
     return False
 
@@ -900,6 +895,17 @@ class EvalContext:
             children_nodes=children_nodes if children_nodes is not None else [],
             children_caller_ctx=children_caller_ctx,
         )
+
+    def let_child_ctx(self):
+        ctx = EvalContext.__new__(EvalContext)
+        ctx.scope = self.scope
+        ctx.dyn = self.dyn
+        ctx.let = dict(self.let)
+        ctx.dyn_positions = self.dyn_positions
+        ctx.color = self.color
+        ctx.children_nodes = self.children_nodes
+        ctx.children_caller_ctx = self.children_caller_ctx
+        return ctx
 
     def call_ctx(self, scope=None, color=None,
                  children_nodes=None, children_caller_ctx=None):
@@ -1245,7 +1251,7 @@ class Evaluator:
                       children_nodes=None, children_caller_ctx=None) -> EvalContext:
         call_stack = self._call_stack
         if call_stack:
-            decl_pos = getattr(decl, 'position', None)
+            decl_pos = decl.position
             if decl_pos is not None:
                 dp_origin = decl_pos.origin
                 dp_start = decl_pos.start_offset
@@ -1280,7 +1286,7 @@ class Evaluator:
             if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))
         ])
         for k, v in args.items():
-            if k.startswith("$"):
+            if k[0] == '$':
                 child_ctx.dyn[k] = v
             else:
                 child_ctx.let[k] = v
@@ -2337,15 +2343,23 @@ class Evaluator:
 
     def _expr_add(self, node, ctx):
         a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        ta, tb = type(a), type(b)
+        if (ta is int or ta is float) and (tb is int or tb is float):
+            return a + b
         return _vec_add(a, b)
 
     def _expr_sub(self, node, ctx):
         a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
+        ta, tb = type(a), type(b)
+        if (ta is int or ta is float) and (tb is int or tb is float):
+            return a - b
         return _vec_sub(a, b)
 
     def _expr_mul(self, node, ctx):
         a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
         ta, tb = type(a), type(b)
+        if (ta is int or ta is float) and (tb is int or tb is float):
+            return a * b
         if ta is list and tb is list:
             return _matmul(a, b)
         if ta is list and tb in (int, float):
@@ -2362,6 +2376,10 @@ class Evaluator:
     def _expr_div(self, node, ctx):
         a, b = self._eval_expr(node.left, ctx), self._eval_expr(node.right, ctx)
         ta, tb = type(a), type(b)
+        if (ta is int or ta is float) and (tb is int or tb is float):
+            if b == 0:
+                return float('nan') if a == 0 else math.copysign(float('inf'), a)
+            return a / b
         if ta is bool or tb is bool:
             return None
         if ta is list and tb in (int, float):
@@ -2483,25 +2501,27 @@ class Evaluator:
                     return obj[i]
                 except IndexError:
                     return None
-        if isinstance(obj, OscRange) and (tidx is int or tidx is float):
+        tobj2 = type(obj)
+        if tobj2 is OscRange and (tidx is int or tidx is float):
             return obj[int(idx)]
-        if isinstance(obj, OscObject) and tidx is str:
+        if tobj2 is OscObject and tidx is str:
             return obj.get(idx)
         return None
 
     def _expr_member(self, node, ctx):
         obj = self._eval_expr(node.left, ctx)
         member = getattr(node.member, 'name', None) or str(node.member)
-        if type(obj) is list or type(obj) is tuple:
+        tobj = type(obj)
+        if tobj is list or tobj is tuple:
             idx = self._SWIZZLE.get(member)
             if idx is not None and idx < len(obj):
                 return obj[idx]
-        if isinstance(obj, OscObject):
+        if tobj is OscObject:
             return obj.get(member)
         return None
 
     def _expr_let(self, node, ctx):
-        child_ctx = ctx.child_ctx()
+        child_ctx = ctx.let_child_ctx()
         for assign in node.assignments:
             v = self._eval_expr(assign.expr, child_ctx)
             child_ctx.let[assign.name.name] = v
@@ -2549,7 +2569,7 @@ class Evaluator:
                 pos = getattr(node, 'position', None)
                 self._echo_fn(f"WARNING: Ignoring unknown variable '{name}'{self._loc(pos)}")
             return None
-        if isinstance(decl, ParameterDeclaration):
+        if type(decl) is ParameterDeclaration:
             return None
         return self._eval_expr(decl.expr, ctx)
 
@@ -2580,7 +2600,7 @@ class Evaluator:
                 result.extend(self._eval_list_comp_body(branch, ctx))
                 self._expr_depth -= 1
             elif te is ListCompLet:
-                let_ctx = ctx.child_ctx()
+                let_ctx = ctx.let_child_ctx()
                 for assign in elem.assignments:
                     let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                     if self._debugging:
@@ -2623,7 +2643,7 @@ class Evaluator:
         if t is ListCompCFor:
             return self._eval_listcomp_cfor(body, ctx)
         if t is ListCompLet:
-            let_ctx = ctx.child_ctx()
+            let_ctx = ctx.let_child_ctx()
             for assign in body.assignments:
                 let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                 if self._debugging:
@@ -2682,23 +2702,46 @@ class Evaluator:
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
                 values = []
-            elif isinstance(values, OscRange):
+            elif type(values) is list:
+                pass
+            elif type(values) is OscRange:
                 values = list(values)
-            elif isinstance(values, OscObject):
-                values = list(values)  # iterate over keys
-            elif not isinstance(values, list):
+            elif type(values) is OscObject:
+                values = list(values)
+            else:
                 values = [values]
             var_seqs.append((name, values))
 
         result = []
+        _debugging = self._debugging
+        is_lc = type(node.body) is ListComprehension
+
+        if len(var_seqs) == 1:
+            name, values = var_seqs[0]
+            if not values:
+                return result
+            loop_ctx = ctx.let_child_ctx()
+            let_dict = loop_ctx.let
+            for val in values:
+                let_dict[name] = val
+                self._expr_depth += 1
+                if _debugging:
+                    self._check_debug(node, loop_ctx, expr_level=True)
+                if is_lc:
+                    result.append(self._eval_list_comp(node.body, loop_ctx))
+                else:
+                    result.extend(self._eval_list_comp_body(node.body, loop_ctx))
+                self._expr_depth -= 1
+            return result
+
         for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx()
+            loop_ctx = ctx.let_child_ctx()
             for vname, val in combo:
                 loop_ctx.let[vname] = val
             self._expr_depth += 1
-            if self._debugging:
+            if _debugging:
                 self._check_debug(node, loop_ctx, expr_level=True)
-            if isinstance(node.body, ListComprehension):
+            if is_lc:
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
@@ -2708,20 +2751,22 @@ class Evaluator:
     _MAX_CFOR_ITERATIONS = 1_000_000
 
     def _eval_listcomp_cfor(self, node: ListCompCFor, ctx: EvalContext) -> list:
-        loop_ctx = ctx.child_ctx()
+        loop_ctx = ctx.let_child_ctx()
         for assign in node.inits:
             loop_ctx.let[assign.name.name] = self._eval_expr(assign.expr, loop_ctx)
 
         result = []
         iterations = 0
+        _debugging = self._debugging
+        is_lc = type(node.body) is ListComprehension
         while self._eval_expr(node.condition, loop_ctx):
             iterations += 1
             if iterations > self._MAX_CFOR_ITERATIONS:
                 self.error("C-style for loop exceeded maximum iteration count", node)
             self._expr_depth += 1
-            if self._debugging:
+            if _debugging:
                 self._check_debug(node, loop_ctx, expr_level=True)
-            if isinstance(node.body, ListComprehension):
+            if is_lc:
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
@@ -3041,28 +3086,27 @@ class Evaluator:
         })
 
     def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
+        let_dict = child_ctx.let
+        _eval = self._eval_expr
         for param in params:
-            pname = param.name.name if getattr(param, 'name', None) else None
-            if pname and pname not in child_ctx.let:
-                default = getattr(param, 'default', None)
-                if default is not None:
-                    child_ctx.let[pname] = self._eval_expr(default, caller_ctx)
-                else:
-                    child_ctx.let[pname] = None
+            pname = param.name.name
+            if pname not in let_dict:
+                default = param.default
+                let_dict[pname] = _eval(default, caller_ctx) if default is not None else None
 
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
-        params = getattr(decl, 'parameters', None) or []
+        params = decl.parameters or []
         bound = self._bind_args(params, arguments, ctx)
-        fn_scope = getattr(decl, 'scope', None) or ctx.scope
+        fn_scope = decl.scope or ctx.scope
         child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope)
         for k, v in bound.items():
-            if k.startswith("$"):
+            if k[0] == '$':
                 child_ctx.dyn[k] = v
             else:
                 child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx, ctx)
-        pos = getattr(call_node, 'position', None)
-        self._call_stack.append(("function", name, pos, getattr(decl, 'position', None)))
+        pos = call_node.position if call_node is not None else None
+        self._call_stack.append(("function", name, pos, decl.position))
         self._frame_ctxs.append(child_ctx)
         try:
             if self._debugging:
@@ -3075,15 +3119,15 @@ class Evaluator:
     def _eval_function_literal(self, func_node: FunctionLiteral, arguments, ctx: EvalContext, call_node=None, name: str | None = None) -> Any:
         params = func_node.parameters
         bound = self._bind_args(params, arguments, ctx)
-        fn_scope = func_node.scope if func_node.scope else ctx.scope
+        fn_scope = func_node.scope or ctx.scope
         child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope)
         for k, v in bound.items():
-            if k.startswith("$"):
+            if k[0] == '$':
                 child_ctx.dyn[k] = v
             else:
                 child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx, ctx)
-        pos = getattr(call_node, 'position', None)
+        pos = call_node.position if call_node is not None else None
         self._call_stack.append(("function", name or "<function>", pos, func_node.position))
         self._frame_ctxs.append(child_ctx)
         try:
