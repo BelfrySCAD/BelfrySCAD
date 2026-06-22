@@ -162,6 +162,8 @@ Exact OpenSCAD semantics:
 
 Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.build_scope` are idempotent: calling `.build_scope(scope)` a second time just creates a fresh child scope and reassigns `.scope` on the node and its descendants, overwriting the (incorrect) scope assigned by `current_file`'s combined `build_scopes()` call.
 
+`Evaluator._resolve_use_statements(nodes, root_scope)` is a lightweight fallback that runs at the start of `evaluate()`. It scans for any remaining `UseStatement` nodes in the AST, parses their targets, and injects their modules/functions into `root_scope`. When the full app path is used (`_resolve_use_scopes` already stripped `UseStatement` nodes and rebuilt the scope), this is a no-op. It exists so that standalone callers (profiling scripts, tests) that pass raw `getASTfromFile()` + `build_scopes()` output directly to `evaluate()` still get correct `use` resolution.
+
 ## Implementation quirks
 
 - `UseStatement.filepath` is a `StringLiteral` AST node, not a plain string — use `.filepath.val`.
