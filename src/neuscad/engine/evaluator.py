@@ -1998,7 +1998,9 @@ class Evaluator:
         if cs is None:
             return None
         angle = float(self._get_arg(args, 0, "angle", 360.0))
-        segs = self._fn(ctx)
+        bounds = cs.bounds()
+        max_x = max(abs(bounds[0]), abs(bounds[2])) if bounds else 0.0
+        segs = self._fn(ctx, max_x)
         try:
             body = cs.revolve(segs, angle)
             return self._tag(body, node, ctx)
