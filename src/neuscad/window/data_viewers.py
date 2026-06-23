@@ -1355,7 +1355,12 @@ class PathViewer(QDialog):
         self._vert_table = self._make_vert_table(path_value, self._is_2d)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
-        splitter.addWidget(self._vert_table)
+        table_container = QWidget()
+        tc_layout = QVBoxLayout(table_container)
+        tc_layout.setContentsMargins(0, 0, 0, 0)
+        tc_layout.addWidget(QLabel(f"Path Points ({len(path_value)})"))
+        tc_layout.addWidget(self._vert_table, 1)
+        splitter.addWidget(table_container)
         t = self._vert_table
         fm = t.fontMetrics()
         vh_w = max(fm.horizontalAdvance(str(max(len(path_value) - 1, 0))),
