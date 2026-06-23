@@ -736,7 +736,7 @@ class ListViewer(QDialog):
 
     def __init__(self, title: str, value, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title)
+        self.setWindowTitle(f"List Viewer: {title}")
         self.resize(500, 400)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._value = value
@@ -1125,7 +1125,7 @@ class VNFViewer(QDialog):
 
     def __init__(self, title: str, vnf_value: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"VNF: {title}")
+        self.setWindowTitle(f"VNF Viewer: {title}")
         self.resize(900, 560)
         self._vnf = vnf_value
         self._syncing = False
@@ -1339,7 +1339,7 @@ class PathViewer(QDialog):
 
     def __init__(self, title: str, path_value: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Path: {title}")
+        self.setWindowTitle(f"Path Viewer: {title}")
         self.resize(900, 520)
 
         self._path = path_value
