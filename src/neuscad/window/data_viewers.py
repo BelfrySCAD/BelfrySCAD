@@ -1365,7 +1365,7 @@ class PathViewer(QDialog):
         cols = data_cols + 1
         t = QTableWidget(len(path_value), cols)
         t.setFont(QFont("Menlo", 11))
-        headers = (["", "X", "Y"] if is_2d else ["", "X", "Y", "Z"])
+        headers = (["Idx", "X", "Y"] if is_2d else ["Idx", "X", "Y", "Z"])
         t.setHorizontalHeaderLabels(headers)
         t.verticalHeader().setVisible(False)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
