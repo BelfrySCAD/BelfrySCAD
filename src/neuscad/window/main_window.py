@@ -1622,6 +1622,11 @@ class MainWindow(QMainWindow):
             return
         # Stop any existing session before starting a new one
         if self._debug_session:
+            self._debug_session.paused.disconnect()
+            self._debug_session.error_break.disconnect()
+            self._debug_session.finished.disconnect()
+            self._debug_session.errored.disconnect()
+            self._debug_session.logged.disconnect()
             self._debug_session.stop()
             self._debug_session = None
 
@@ -1703,10 +1708,10 @@ class MainWindow(QMainWindow):
             lambda bodies, id2node: self._on_debug_finished(bodies, id2node)
         )
         self._debug_session.errored.connect(self._on_debug_error)
+        self._debug_session.logged.connect(self._on_debug_print)
 
         self._debugger_pane.set_running()
         self._debug_session.start(nodes, root_scope, breakpoints,
-                                lambda msg, t=tab: self.log_to_tab(t, msg),
                                 self._viewport_params(tab),
                                 current_file=current_file)
 
@@ -1845,6 +1850,7 @@ class MainWindow(QMainWindow):
             self._debug_session.error_break.disconnect()
             self._debug_session.finished.disconnect()
             self._debug_session.errored.disconnect()
+            self._debug_session.logged.disconnect()
             self._debug_session.stop()
             self._debug_session = None
         self._clear_all_execution_lines()
@@ -1859,6 +1865,7 @@ class MainWindow(QMainWindow):
         self._debug_session.error_break.disconnect()
         self._debug_session.finished.disconnect()
         self._debug_session.errored.disconnect()
+        self._debug_session.logged.disconnect()
         self._debug_session.stop()
         self._debug_session = None
         self._debug_tab = None

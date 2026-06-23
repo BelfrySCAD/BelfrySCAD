@@ -137,6 +137,7 @@ class DebugSession(QObject):
     error_break = Signal(str, int, str, object, object)  # origin, line, error header, all_frame_locals, call_stack
     finished = Signal(object, object)          # bodies, id_to_node
     errored = Signal(str)
+    logged = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -154,7 +155,7 @@ class DebugSession(QObject):
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
 
-    def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], echo_fn, viewport_params: dict | None = None, current_file: str | None = None):
+    def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], viewport_params: dict | None = None, current_file: str | None = None):
         self._current_file = os.path.realpath(current_file) if current_file else None
         self._breakpoints = dict(breakpoints)
         self._step_mode = False
@@ -166,7 +167,7 @@ class DebugSession(QObject):
         self._pause_requested = False
         self._pending_mods = {}
         self._thread = threading.Thread(
-            target=self._run, args=(nodes, root_scope, echo_fn, viewport_params or {}), daemon=True
+            target=self._run, args=(nodes, root_scope, viewport_params or {}), daemon=True
         )
         self._thread.start()
 
@@ -239,9 +240,9 @@ class DebugSession(QObject):
         self._pause_event.clear()
         self._pause_event.wait()
 
-    def _run(self, nodes, root_scope, echo_fn, viewport_params: dict):
+    def _run(self, nodes, root_scope, viewport_params: dict):
         from neuscad.engine.evaluator import Evaluator, EvalError
-        ev = Evaluator(echo_fn=echo_fn, debug_hook=self._make_hook(), error_break_fn=self._error_break)
+        ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break)
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
             if not self._stopped:
