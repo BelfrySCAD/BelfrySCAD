@@ -1,6 +1,6 @@
 # Debugger Reference
 
-The debugger runs the evaluator in a daemon worker thread (`DebugSession`) and surfaces a `DebuggerPane` with call-stack and variables panels. See `docs/evaluator.md` for the evaluator internals referenced below.
+The debugger runs the evaluator in a daemon worker thread (`DebugSession`) and surfaces a single shared `DebuggerPane` (owned by `MainWindow`, not per-tab) with call-stack and variables panels. `_debug_session` and `_debug_tab` on `MainWindow` track the active session and the tab that started it. See `docs/evaluator.md` for the evaluator internals referenced below.
 
 ## DebugSession (`debugger.py`)
 
@@ -21,7 +21,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars editable via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals, ..., origin=None) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. The hook only pauses on breakpoints, step events, and break-on-first when `origin` matches the current file (or is `None`). When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals, ..., origin=None) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. All pause conditions — breakpoints, step-into, step-over, step-out — work regardless of `origin`, so debugging follows execution across included files. Breakpoints are collected from all open tabs as a `{resolved_path: set(lines)}` dict, and the hook resolves `origin` before lookup. When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
 
 **Pause during execution** — `DebugSession.pause()` sets `_pause_requested`. The hook checks/consumes this flag at the top of every call, triggering an immediate pause regardless of breakpoints or step state — useful for interrupting a long-running evaluation.
 
@@ -29,7 +29,9 @@ Signals (emitted from the worker thread; Qt queues them to main):
 
 ## Call stack display
 
-Displayed **innermost-first** (current frame at row 0, `<toplevel>` at bottom). `_call_stack` in the evaluator is outermost-first; the display stack is `list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]`, built in both `_make_hook()` and `_error_break()`. `_populate_stack()` iterates it in order without reversing. `all_frame_locals[0]` always corresponds to row 0.
+Displayed **innermost-first** (current frame at row 0, `<toplevel>` at bottom). `_call_stack` in the evaluator is outermost-first; the display stack is `list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]`, built in both `_make_hook()` and `_error_break()`. `_populate_stack()` iterates it in order without reversing. `all_frame_locals[0]` always corresponds to row 0. Each non-toplevel entry shows `name()  file:line` when the call originates from a different file.
+
+**Frame navigation** — `_populate_stack` stores `(file_path, line)` per row in `_stack_positions`. Clicking a call-stack entry emits `frame_selected(file_path, line)`, which `MainWindow._on_debug_frame_selected` handles by opening/switching to the target file's tab and highlighting the line. Row 0 (innermost) navigates to the current pause point; other rows navigate to the call site (`call_pos`).
 
 When inside a call, a `<toplevel>` frame (`local_scope` = global scope vars) is appended to `all_frame_locals`. Clicking `<toplevel>` → Locals shows the file's global declarations.
 
@@ -39,7 +41,7 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 
 **Step Into for functions**: function bodies are expressions, so `_eval_statement`'s `_check_debug` never fires for them. `_eval_user_function` explicitly calls `self._check_debug(decl.expr, child_ctx)` after pushing the call frame, before `_eval_expr(decl.expr, child_ctx)` — giving Step Into a pause point at the start of every function body.
 
-**Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. The debug hook only honours these for `step_into` (`_step_mode`) — break-on-first, gutter breakpoints, step-over, and step-out filter them out (`and not expr_level`). Nodes calling `_check_debug(…, expr_level=True)`:
+**Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. The debug hook only honours these for `step_into` (`_step_mode`) — gutter breakpoints, step-over, and step-out filter them out (`and not expr_level`). Nodes calling `_check_debug(…, expr_level=True)`:
 - **`TernaryOp`** — before condition evaluation, then again at the chosen branch after resolution
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition, then at the chosen branch after; in both `_eval_list_comp` and `_eval_list_comp_body`
@@ -72,10 +74,10 @@ Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · St
 | Method | Status label | Continue/Pause btn | Step buttons | Stop | Restart |
 |---|---|---|---|---|---|
 | `set_running()` | "Running…" | **Pause** (enabled) | Disabled | Enabled | Enabled |
-| `set_paused(line, frames, stack)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |
-| `set_error_break(line, msg, frames, stack)` | "Line N: \<error\>" | **Continue** (enabled) | Disabled | Enabled | Enabled |
+| `set_paused(line, frames, stack, origin)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |
+| `set_error_break(line, msg, frames, stack, origin)` | "Line N: \<error\>" | **Continue** (enabled) | Disabled | Enabled | Enabled |
 | `set_idle()` | "Not debugging" | **Continue** (disabled) | Disabled | Disabled | Disabled |
 
 The Continue/Pause button is a single `_btn_continue` widget whose icon/behavior depends on state: running → pause icon, emits `pause_requested`; otherwise → continue icon, emits `continue_requested`. `_set_continue_mode()` restores the continue icon and clears `_is_running`; called at the start of `set_paused`, `set_error_break`, and `set_idle`.
 
-**Restart** — `_on_debug_restart()` in `main_window.py` stops the current session (`tab.debug_session.stop()`, sets `tab.debug_session = None`), clears the execution line highlight, then calls `_start_debug()`. Since `tab.debug_session` is already `None`, the "already running → continue" guard doesn't fire and a fresh parse + session starts from the top.
+**Restart** — `_on_debug_restart()` in `main_window.py` stops the current session (`self._debug_session.stop()`, sets `self._debug_session = None`), clears execution line highlights across all tabs, then calls `_start_debug()`. Since `_debug_session` is already `None`, the "already running → continue" guard doesn't fire and a fresh parse + session starts from the top.

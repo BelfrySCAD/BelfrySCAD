@@ -1,6 +1,7 @@
 """
 Debugger session (runs evaluator in a worker thread) and the debugger pane widget.
 """
+import os
 import threading
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -142,9 +143,8 @@ class DebugSession(QObject):
         self._pause_event = threading.Event()
         self._resume_command = "continue"
         self._pending_mods: dict = {}
-        self._breakpoints: set[int] = set()
+        self._breakpoints: dict[str, set[int]] = {}
         # Step-mode flags (all mutually exclusive, cleared on each pause)
-        self._break_on_first: bool = False
         self._step_mode: bool = False          # step_into: pause at very next statement
         self._step_over_depth: int | None = None  # step_over: pause when depth ≤ N
         self._step_out_depth: int | None = None   # step_out:  pause when call depth < N
@@ -154,10 +154,9 @@ class DebugSession(QObject):
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
 
-    def start(self, nodes, root_scope, breakpoints: set[int], echo_fn, viewport_params: dict | None = None, current_file: str | None = None):
-        self._current_file = current_file
-        self._breakpoints = set(breakpoints)
-        self._break_on_first = True   # always pause at the very first statement
+    def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], echo_fn, viewport_params: dict | None = None, current_file: str | None = None):
+        self._current_file = os.path.realpath(current_file) if current_file else None
+        self._breakpoints = dict(breakpoints)
         self._step_mode = False
         self._step_over_depth = None
         self._step_out_depth = None
@@ -172,11 +171,12 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
+        _resolve = os.path.realpath
         def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False, expr_depth: int = 0, origin: str | None = None) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
-            in_current_file = (origin is None or origin == self._current_file)
+            resolved_origin = _resolve(origin) if origin else (self._current_file or "")
             depth = len(call_stack)
             pause_now = self._pause_requested
             if pause_now:
@@ -184,19 +184,17 @@ class DebugSession(QObject):
             should_pause = (
                 forced
                 or pause_now
-                or (self._break_on_first and not expr_level and in_current_file)
-                or (line in self._breakpoints and not expr_level and in_current_file)
-                or (self._step_mode and in_current_file)
-                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level and in_current_file)
-                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level and in_current_file)
-                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth and in_current_file)
+                or (line in self._breakpoints.get(resolved_origin, set()) and not expr_level)
+                or self._step_mode
+                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
+                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level)
+                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth)
             )
 
             if not should_pause:
                 return ("continue", {})
 
             # Clear all step state before pausing
-            self._break_on_first = False
             self._step_mode = False
             self._step_over_depth = None
             self._step_out_depth = None
@@ -286,11 +284,13 @@ class DebuggerPane(QWidget):
     restart_requested = Signal()
     stop_requested = Signal()
     print_to_console = Signal(str)
+    frame_selected = Signal(str, int)  # file_path, line
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._original_locals: dict[str, str] = {}
         self._all_frame_locals: list[dict] = []
+        self._stack_positions: list[tuple[str, int]] = []  # (file_path, line) per row
         self._is_running: bool = False
         self._setup_ui()
         self.setMinimumWidth(180)
@@ -438,17 +438,29 @@ class DebuggerPane(QWidget):
                         mods[name] = parsed
         return mods
 
-    def _populate_stack(self, call_stack: list):
+    def _populate_stack(self, call_stack: list, pause_origin: str = "", pause_line: int = 0):
         self._stack_list.blockSignals(True)
         self._stack_list.clear()
-        for entry in call_stack:
+        self._stack_positions.clear()
+        for i, entry in enumerate(call_stack):
             if entry[0] == "toplevel":
                 self._stack_list.addItem("<toplevel>")
+                self._stack_positions.append(("", 0))
             else:
                 name = entry[1]
                 call_pos = entry[2]
                 line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
-                self._stack_list.addItem(f"{name}()  line {line_str}")
+                origin = getattr(call_pos, 'origin', '') if call_pos is not None else ''
+                line_num = int(getattr(call_pos, 'line', 0)) if call_pos is not None else 0
+                file_str = os.path.basename(origin) if origin else ''
+                if file_str:
+                    self._stack_list.addItem(f"{name}()  {file_str}:{line_str}")
+                else:
+                    self._stack_list.addItem(f"{name}()  line {line_str}")
+                if i == 0:
+                    self._stack_positions.append((pause_origin, pause_line))
+                else:
+                    self._stack_positions.append((origin, line_num))
         if self._stack_list.count() > 0:
             self._stack_list.setCurrentRow(0)
         self._stack_list.blockSignals(False)
@@ -474,6 +486,10 @@ class DebuggerPane(QWidget):
         if row < 0 or row >= len(self._all_frame_locals):
             return
         self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
+        if row < len(self._stack_positions):
+            fp, ln = self._stack_positions[row]
+            if fp and ln:
+                self.frame_selected.emit(fp, ln)
 
     def _on_filter_changed(self, _=None):
         row = self._stack_list.currentRow()
@@ -506,7 +522,7 @@ class DebuggerPane(QWidget):
         build_viewer_menu(menu, name, value, self)
         menu.exec(self._vars_table.viewport().mapToGlobal(pos))
 
-    def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
+    def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = ""):
         self._set_continue_mode()
         self._status.setText(f"Paused at line {line}")
         self._all_frame_locals = all_frame_locals
@@ -514,13 +530,13 @@ class DebuggerPane(QWidget):
         dyn_names = innermost.get("dyn_names", set())
         self._original_locals = {k: _fmt(v) for k, v in innermost.get("local_scope", {}).items()
                                   if k in dyn_names}
-        self._populate_stack(call_stack)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
         self._populate_vars(innermost, is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
-    def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list):
+    def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = ""):
         self._set_continue_mode()
         display = msg.removeprefix("ERROR: ")
         if len(display) > 80:
@@ -529,7 +545,7 @@ class DebuggerPane(QWidget):
         self._all_frame_locals = all_frame_locals
         innermost = all_frame_locals[0] if all_frame_locals else {}
         self._original_locals = {}
-        self._populate_stack(call_stack)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
         self._populate_vars(innermost, is_innermost=False)
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)

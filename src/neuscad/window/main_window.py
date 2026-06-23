@@ -198,17 +198,15 @@ class DocumentTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Editor, console, and debugger pane live in dock stacks, not here —
+        # Editor, console, and animate pane live in dock stacks, not here —
         # kept as attributes so MainWindow can access them via tab.editor /
-        # tab.console / tab.debugger_pane.
+        # tab.console.
         self.editor = CodeEditor()
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Menlo", 11))
         self.console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.console.customContextMenuRequested.connect(self._console_context_menu)
-        self.debugger_pane = DebuggerPane()
-        self.debug_session: DebugSession | None = None
         self.animate_pane = AnimatePane()
         self._dump_dir: Optional[str] = None
 
@@ -496,15 +494,27 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
         # --- Debugger dock (bottom, beside console) ---
-        self._debugger_stack = QStackedWidget()
+        self._debugger_pane = DebuggerPane()
+        self._debug_session: DebugSession | None = None
+        self._debug_tab = None  # the tab that started the debug session
         self._debugger_dock = QDockWidget("Debugger", self)
         self._debugger_dock.setObjectName("DebuggerDock")
-        self._debugger_dock.setWidget(self._debugger_stack)
+        self._debugger_dock.setWidget(self._debugger_pane)
         self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
         self._debugger_dock.hide()
         self._debugger_dock.dockLocationChanged.connect(self._on_debugger_dock_location_changed)
         self._debugger_dock.topLevelChanged.connect(self._on_debugger_top_level_changed)
+        self._debugger_pane.continue_requested.connect(self._on_debug_continue)
+        self._debugger_pane.pause_requested.connect(self._on_debug_pause)
+        self._debugger_pane.step_into_requested.connect(self._on_debug_step_into)
+        self._debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        self._debugger_pane.step_out_requested.connect(self._on_debug_step_out)
+        self._debugger_pane.restart_requested.connect(self._on_debug_restart)
+        self._debugger_pane.stop_requested.connect(self._on_debug_stop)
+        self._debugger_pane.print_to_console.connect(self._on_debug_print)
+        self._debugger_pane.frame_selected.connect(self._on_debug_frame_selected)
+        self._debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
 
         # --- Animate dock (bottom, beside console) ---
         self._animate_stack = QStackedWidget()
@@ -784,24 +794,12 @@ class MainWindow(QMainWindow):
         tab.viewport.camera_changed.connect(self._update_camera_label)
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
-        self._debugger_stack.addWidget(tab.debugger_pane)
         self._animate_stack.addWidget(tab.animate_pane)
         tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
         tab.animate_pane.dump_started.connect(
             lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
         )
         tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
-        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
-        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
-        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
-        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
-        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
-        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
-        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
-        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
-        tab.debugger_pane.print_to_console.connect(
-            lambda text, t=tab: self.log_to_tab(t, text)
-        )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
@@ -852,7 +850,6 @@ class MainWindow(QMainWindow):
         if tab:
             self._editor_stack.setCurrentWidget(tab.editor)
             self._console_stack.setCurrentWidget(tab.console)
-            self._debugger_stack.setCurrentWidget(tab.debugger_pane)
             self._animate_stack.setCurrentWidget(tab.animate_pane)
             self._update_camera_label()
         # Animation playback re-renders the active tab on every frame, so
@@ -879,10 +876,11 @@ class MainWindow(QMainWindow):
                 if not self._save_file():
                     return
         if tab:
+            if self._debug_tab is tab:
+                self._on_debug_stop()
             tab.animate_pane.pause()
             self._editor_stack.removeWidget(tab.editor)
             self._console_stack.removeWidget(tab.console)
-            self._debugger_stack.removeWidget(tab.debugger_pane)
             self._animate_stack.removeWidget(tab.animate_pane)
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
@@ -944,24 +942,12 @@ class MainWindow(QMainWindow):
         tab.viewport.camera_changed.connect(self._update_camera_label)
         self._editor_stack.addWidget(tab.editor)
         self._console_stack.addWidget(tab.console)
-        self._debugger_stack.addWidget(tab.debugger_pane)
         self._animate_stack.addWidget(tab.animate_pane)
         tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
         tab.animate_pane.dump_started.connect(
             lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
         )
         tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
-        tab.debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
-        tab.debugger_pane.continue_requested.connect(self._on_debug_continue)
-        tab.debugger_pane.pause_requested.connect(self._on_debug_pause)
-        tab.debugger_pane.step_into_requested.connect(self._on_debug_step_into)
-        tab.debugger_pane.step_over_requested.connect(self._on_debug_step_over)
-        tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
-        tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
-        tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
-        tab.debugger_pane.print_to_console.connect(
-            lambda text, t=tab: self.log_to_tab(t, text)
-        )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
@@ -981,7 +967,6 @@ class MainWindow(QMainWindow):
                 old.animate_pane.pause()
                 self._editor_stack.removeWidget(old.editor)
                 self._console_stack.removeWidget(old.console)
-                self._debugger_stack.removeWidget(old.debugger_pane)
                 self._animate_stack.removeWidget(old.animate_pane)
                 self._tabs.removeTab(0)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -1637,9 +1622,13 @@ class MainWindow(QMainWindow):
         if not tab:
             return
         # While paused, Shift+F6 acts as Continue
-        if tab.debug_session and tab.debug_session.is_running():
+        if self._debug_session and self._debug_session.is_running():
             self._on_debug_continue()
             return
+        # Stop any existing session before starting a new one
+        if self._debug_session:
+            self._debug_session.stop()
+            self._debug_session = None
 
         source = tab.editor.toPlainText()
         if not source.strip():
@@ -1695,27 +1684,33 @@ class MainWindow(QMainWindow):
         tab.editor.clear_errors()
         tab.root_scope = root_scope
 
-        # Convert 0-indexed block numbers to 1-indexed line numbers
-        breakpoints = {bn + 1 for bn in tab.editor._breakpoints}
+        # Collect breakpoints from all open tabs (per-file, 1-indexed)
+        breakpoints: dict[str, set[int]] = {}
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t and t.file_path and t.editor._breakpoints:
+                bp_set = {bn + 1 for bn in t.editor._breakpoints}
+                breakpoints[str(Path(t.file_path).resolve())] = bp_set
 
         # Show the debugger dock and bring it to the front
         self._debugger_dock.show()
         self._debugger_dock.raise_()
 
-        tab.debug_session = DebugSession(self)
-        tab.debug_session.paused.connect(
-            lambda origin, line, frames, stk, t=tab: self._on_debug_paused(t, origin, line, frames, stk)
+        self._debug_tab = tab
+        self._debug_session = DebugSession(self)
+        self._debug_session.paused.connect(
+            lambda origin, line, frames, stk: self._on_debug_paused(origin, line, frames, stk)
         )
-        tab.debug_session.error_break.connect(
-            lambda origin, line, msg, frames, stk, t=tab: self._on_debug_error_break(t, origin, line, msg, frames, stk)
+        self._debug_session.error_break.connect(
+            lambda origin, line, msg, frames, stk: self._on_debug_error_break(origin, line, msg, frames, stk)
         )
-        tab.debug_session.finished.connect(
-            lambda bodies, id2node, t=tab: self._on_debug_finished(t, bodies, id2node)
+        self._debug_session.finished.connect(
+            lambda bodies, id2node: self._on_debug_finished(bodies, id2node)
         )
-        tab.debug_session.errored.connect(self._on_debug_error)
+        self._debug_session.errored.connect(self._on_debug_error)
 
-        tab.debugger_pane.set_running()
-        tab.debug_session.start(nodes, root_scope, breakpoints,
+        self._debugger_pane.set_running()
+        self._debug_session.start(nodes, root_scope, breakpoints,
                                 lambda msg, t=tab: self.log_to_tab(t, msg),
                                 self._viewport_params(tab),
                                 current_file=current_file)
@@ -1761,21 +1756,31 @@ class MainWindow(QMainWindow):
                     target_tab.editor.setTextCursor(cursor)
                     target_tab.editor.ensureCursorVisible()
 
-    def _on_debug_paused(self, tab, origin: str, line: int, all_frame_locals: list, call_stack: list):
-        tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
+    def _on_debug_paused(self, origin: str, line: int, all_frame_locals: list, call_stack: list):
+        tab = self._debug_tab
+        if not tab:
+            return
+        self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
         self._show_debug_line(tab, origin, line)
 
-    def _on_debug_error_break(self, tab, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
-        tab.debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack)
+    def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
+        tab = self._debug_tab
+        if not tab:
+            return
+        self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin)
         self._show_debug_line(tab, origin, line)
 
-    def _on_debug_finished(self, tab, bodies, id_to_node):
+    def _on_debug_finished(self, bodies, id_to_node):
         from neuscad.engine.evaluator import to_renderable_bodies
 
+        tab = self._debug_tab
+        if not tab:
+            return
         tab.id_to_node = id_to_node
-        tab.editor.clear_execution_line()
-        tab.debugger_pane.set_idle()
-        tab.debug_session = None
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_idle()
+        self._debug_session = None
+        self._debug_tab = None
         if not bodies:
             self.log_to_tab(tab, "Debug: no geometry produced.")
             return
@@ -1802,73 +1807,85 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_debug_error(self, msg: str):
-        tab = self._current_tab()
-        if tab:
-            tab.editor.clear_execution_line()
-            tab.debugger_pane.set_idle()
-            tab.debug_session = None
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_idle()
+        self._debug_session = None
+        self._debug_tab = None
         self.log(f"Debug error:\n{msg}")
 
     def _on_debug_continue(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        mods = tab.debugger_pane.get_modifications()
-        tab.editor.clear_execution_line()
-        tab.debugger_pane.set_running()
-        tab.debug_session.resume("continue", mods)
+        mods = self._debugger_pane.get_modifications()
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("continue", mods)
 
     def _on_debug_pause(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        tab.debug_session.pause()
+        self._debug_session.pause()
 
     def _on_debug_step_into(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        mods = tab.debugger_pane.get_modifications()
-        tab.editor.clear_execution_line()
-        tab.debugger_pane.set_running()
-        tab.debug_session.resume("step_into", mods)
+        mods = self._debugger_pane.get_modifications()
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_into", mods)
 
     def _on_debug_step_over(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        mods = tab.debugger_pane.get_modifications()
-        tab.editor.clear_execution_line()
-        tab.debugger_pane.set_running()
-        tab.debug_session.resume("step_over", mods)
+        mods = self._debugger_pane.get_modifications()
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_over", mods)
 
     def _on_debug_step_out(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        mods = tab.debugger_pane.get_modifications()
-        tab.editor.clear_execution_line()
-        tab.debugger_pane.set_running()
-        tab.debug_session.resume("step_out", mods)
+        mods = self._debugger_pane.get_modifications()
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_running()
+        self._debug_session.resume("step_out", mods)
 
     def _on_debug_restart(self):
-        tab = self._current_tab()
-        if not tab:
-            return
-        if tab.debug_session:
-            tab.debug_session.stop()
-            tab.debug_session = None
-        tab.editor.clear_execution_line()
+        if self._debug_session:
+            self._debug_session.stop()
+            self._debug_session = None
+        self._clear_all_execution_lines()
+        self._debug_tab = None
         self._start_debug()
 
     def _on_debug_stop(self):
-        tab = self._current_tab()
-        if not tab or not tab.debug_session:
+        if not self._debug_session:
             return
-        tab.editor.clear_execution_line()
-        tab.debug_session.stop()
-        tab.debug_session = None
-        tab.debugger_pane.set_idle()
+        self._clear_all_execution_lines()
+        self._debug_session.stop()
+        self._debug_session = None
+        self._debug_tab = None
+        self._debugger_pane.set_idle()
+
+    def _on_debug_print(self, text: str):
+        tab = self._debug_tab or self._current_tab()
+        if tab:
+            self.log_to_tab(tab, text)
+
+    def _on_debug_frame_selected(self, file_path: str, line: int):
+        if not file_path or not line:
+            return
+        self._clear_all_execution_lines()
+        target_tab, idx = self._find_or_open_tab(file_path)
+        if target_tab is not None:
+            target_tab.editor.set_execution_line(line)
+            self._tabs.setCurrentIndex(idx)
+            block = target_tab.editor.document().findBlockByLineNumber(line - 1)
+            if block.isValid():
+                cursor = target_tab.editor.textCursor()
+                cursor.setPosition(block.position())
+                target_tab.editor.setTextCursor(cursor)
+                target_tab.editor.ensureCursorVisible()
 
     def _open_preferences(self):
         dialog = PreferencesDialog(parent=self)
@@ -2015,8 +2032,7 @@ class MainWindow(QMainWindow):
         return Qt.Orientation.Horizontal
 
     def _apply_debugger_splitter_orientation(self, orientation):
-        for i in range(self._debugger_stack.count()):
-            self._debugger_stack.widget(i).set_splitter_orientation(orientation)
+        self._debugger_pane.set_splitter_orientation(orientation)
 
     def _on_debugger_dock_location_changed(self, area):
         vertical = area in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea)
