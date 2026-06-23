@@ -1622,8 +1622,7 @@ class MainWindow(QMainWindow):
             return
         # Stop any existing session before starting a new one
         if self._debug_session:
-            if self._debug_tab:
-                self._debug_tab.viewport.set_debug_busy(False)
+            self._set_debug_busy(False)
             self._debug_session.paused.disconnect()
             self._debug_session.error_break.disconnect()
             self._debug_session.finished.disconnect()
@@ -1714,7 +1713,7 @@ class MainWindow(QMainWindow):
 
         self._debugger_pane.set_running()
         tab.viewport.load_geometry([])
-        tab.viewport.set_debug_busy(True)
+        self._set_debug_busy(True)
         self._debug_session.start(nodes, root_scope, breakpoints,
                                 self._viewport_params(tab),
                                 current_file=current_file)
@@ -1758,17 +1757,23 @@ class MainWindow(QMainWindow):
         tab = self._debug_tab
         if not tab:
             return
-        tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
         self._show_debug_line(tab, origin, line)
+        visible = self._current_tab()
+        if visible:
+            visible.viewport.set_debug_paused(True)
 
     def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
         tab = self._debug_tab
         if not tab:
             return
-        tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin)
         self._show_debug_line(tab, origin, line)
+        visible = self._current_tab()
+        if visible:
+            visible.viewport.set_debug_paused(True)
 
     def _on_debug_finished(self, bodies, id_to_node):
         from neuscad.engine.evaluator import to_renderable_bodies
@@ -1776,7 +1781,7 @@ class MainWindow(QMainWindow):
         tab = self._debug_tab
         if not tab:
             return
-        tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         tab.id_to_node = id_to_node
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
@@ -1810,8 +1815,7 @@ class MainWindow(QMainWindow):
 
     def _on_debug_error(self, msg: str):
         error_tab = self._debug_tab
-        if error_tab:
-            error_tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
         self._debug_session = None
@@ -1822,14 +1826,19 @@ class MainWindow(QMainWindow):
         else:
             self.log(f"Debug error:\n{msg}")
 
+    def _set_debug_busy(self, busy: bool):
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t:
+                t.viewport.set_debug_busy(busy)
+
     def _on_debug_continue(self):
         if not self._debug_session:
             return
         mods = self._debugger_pane.get_modifications()
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
-        if self._debug_tab:
-            self._debug_tab.viewport.set_debug_busy(True)
+        self._set_debug_busy(True)
         self._debug_session.resume("continue", mods)
 
     def _on_debug_pause(self):
@@ -1843,8 +1852,7 @@ class MainWindow(QMainWindow):
         mods = self._debugger_pane.get_modifications()
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
-        if self._debug_tab:
-            self._debug_tab.viewport.set_debug_busy(True)
+        self._set_debug_busy(True)
         self._debug_session.resume("step_into", mods)
 
     def _on_debug_step_over(self):
@@ -1853,8 +1861,7 @@ class MainWindow(QMainWindow):
         mods = self._debugger_pane.get_modifications()
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
-        if self._debug_tab:
-            self._debug_tab.viewport.set_debug_busy(True)
+        self._set_debug_busy(True)
         self._debug_session.resume("step_over", mods)
 
     def _on_debug_step_out(self):
@@ -1863,14 +1870,12 @@ class MainWindow(QMainWindow):
         mods = self._debugger_pane.get_modifications()
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
-        if self._debug_tab:
-            self._debug_tab.viewport.set_debug_busy(True)
+        self._set_debug_busy(True)
         self._debug_session.resume("step_out", mods)
 
     def _on_debug_restart(self):
         restart_tab = self._debug_tab
-        if restart_tab:
-            restart_tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         if self._debug_session:
             self._debug_session.paused.disconnect()
             self._debug_session.error_break.disconnect()
@@ -1889,8 +1894,7 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         stop_tab = self._debug_tab
-        if stop_tab:
-            stop_tab.viewport.set_debug_busy(False)
+        self._set_debug_busy(False)
         self._clear_all_execution_lines()
         self._debug_session.paused.disconnect()
         self._debug_session.error_break.disconnect()

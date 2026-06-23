@@ -166,6 +166,20 @@ class Viewport(QOpenGLWidget):
             self._busy_timer.stop()
             self._busy_label.hide()
 
+    def set_debug_paused(self, paused: bool):
+        self._debug_busy = False
+        self._render_busy = False
+        self._busy_timer.stop()
+        if paused:
+            self._busy_label.setText(" Paused ")
+            self._busy_label.adjustSize()
+            x = (self.width() - self._busy_label.width()) // 2
+            y = (self.height() - self._busy_label.height()) // 2
+            self._busy_label.move(x, y)
+            self._busy_label.show()
+        else:
+            self._busy_label.hide()
+
     def _update_busy_overlay(self):
         elapsed = time.monotonic() - self._busy_start
         frame = int(elapsed * 4) % len(self._spinner_frames)
