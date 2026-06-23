@@ -172,13 +172,24 @@ class DebugSession(QObject):
         self._thread.start()
 
     def _make_hook(self):
-        _resolve = os.path.realpath
-        def hook(line: int, locals_dict: dict, call_stack: list, all_frame_locals: list, forced: bool = False, expr_level: bool = False, expr_depth: int = 0, origin: str | None = None) -> tuple[str, dict]:
+        _resolve_cache: dict[str, str] = {}
+        _realpath = os.path.realpath
+        _current = self._current_file or ""
+        def _resolve(origin):
+            if not origin:
+                return _current
+            cached = _resolve_cache.get(origin)
+            if cached is not None:
+                return cached
+            resolved = _realpath(origin)
+            _resolve_cache[origin] = resolved
+            return resolved
+
+        def hook(line: int, depth: int, *, forced: bool = False, expr_level: bool = False, expr_depth: int = 0, origin: str | None = None, get_frames=None) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
-            resolved_origin = _resolve(origin) if origin else (self._current_file or "")
-            depth = len(call_stack)
+            resolved_origin = _resolve(origin)
             pause_now = self._pause_requested
             if pause_now:
                 self._pause_requested = False
@@ -202,6 +213,7 @@ class DebugSession(QObject):
             self._step_out_expr_depth = None
             self._current_pause_expr_depth = expr_depth
 
+            (locals_dict, all_frame_locals), call_stack = get_frames()
             display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
             self.paused.emit(origin or "", line, list(all_frame_locals), display_stack)
             self._pause_event.clear()
@@ -223,9 +235,8 @@ class DebugSession(QObject):
                     self._step_out_expr_depth = self._current_pause_expr_depth - 1
                 else:
                     self._step_out_depth = depth
-            # "continue" leaves all flags cleared
 
-            return ("continue", mods)   # evaluator only needs to know about "stop"
+            return ("continue", mods)
         return hook
 
     def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str | None = None):

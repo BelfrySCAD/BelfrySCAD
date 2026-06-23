@@ -977,21 +977,9 @@ class Evaluator:
         }
         self._BUILTIN_FN_NAMES = frozenset(self._math_fns) | {"object", "textmetrics", "fontmetrics"}
 
-    def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
-        if self._debug_hook is None:
-            return
-        pos = getattr(node, 'position', None)
-        line = getattr(pos, 'line', None) if pos else None
-        if line is None:
-            return
-        origin = getattr(pos, 'origin', None)
-
-        # local_scope: all eagerly-assigned vars in the current frame's dyn
-        # outer_scope: global vars from the root context (shown when inside a call)
-        # dyn_names:   subset of local_scope that live in dyn (user-modifiable)
+    def _build_frame_locals(self, ctx: EvalContext):
         local_scope: dict = {}
         dyn_names: set = set()
-
         for k, v in ctx.let.items():
             local_scope[k] = v
             dyn_names.add(k)
@@ -1018,7 +1006,6 @@ class Evaluator:
                     p_local[k] = v
             all_frame_locals.append({"local_scope": p_local, "outer_scope": {}, "dyn_names": p_dyn})
 
-        # When inside a call, append a <toplevel> frame whose locals are the global (outer) vars.
         if self._call_stack:
             toplevel_frame = {
                 "local_scope": dict(outer_scope),
@@ -1029,8 +1016,23 @@ class Evaluator:
 
         self._last_locals = {n: v for n, v in local_scope.items() if n in dyn_names}
         self._last_all_frame_locals = all_frame_locals
+        return self._last_locals, all_frame_locals
 
-        cmd, mods = self._debug_hook(int(line), self._last_locals, list(self._call_stack), all_frame_locals, forced=forced, expr_level=expr_level, expr_depth=self._expr_depth, origin=origin)
+    def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
+        if self._debug_hook is None:
+            return
+        pos = getattr(node, 'position', None)
+        line = getattr(pos, 'line', None) if pos else None
+        if line is None:
+            return
+        origin = getattr(pos, 'origin', None)
+
+        cmd, mods = self._debug_hook(
+            int(line), len(self._call_stack),
+            forced=forced, expr_level=expr_level,
+            expr_depth=self._expr_depth, origin=origin,
+            get_frames=lambda: (self._build_frame_locals(ctx), list(self._call_stack)),
+        )
         for k, v in mods.items():
             ctx.let[k] = v
         if cmd == "stop":
