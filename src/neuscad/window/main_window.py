@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act_render)
 
         self._act_debug_tb = QAction(self._toolbar_icon("debug"), "Debug", self)
-        self._act_debug_tb.setToolTip("Debug (F5)")
+        self._act_debug_tb.setToolTip("Debug (Shift+F6)")
         self._act_debug_tb.triggered.connect(self._start_debug)
         tb.addAction(self._act_debug_tb)
 
@@ -751,7 +751,7 @@ class MainWindow(QMainWindow):
         shortcut("Ctrl+-", self._font_size_decrease)
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
         shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
-        shortcut("F5", self._start_debug)
+        shortcut("Shift+F6", self._start_debug)
         shortcut("F10", self._on_debug_step_over)
         shortcut("F11", self._on_debug_step_into)
         shortcut("F12", self._on_debug_step_out)
@@ -1018,7 +1018,6 @@ class MainWindow(QMainWindow):
             return
         self._create_and_add_tab(path, text)
         self._update_recent_files(path)
-        self._render()
 
     def _save_file(self):
         tab = self._current_tab()
@@ -1052,7 +1051,6 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self._tabs.setTabText(idx, tab.display_name())
         self._update_recent_files(path)
-        self._render()
         return True
 
     # ------------------------------------------------------------------
@@ -1638,7 +1636,7 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if not tab:
             return
-        # While paused, F5 acts as Continue
+        # While paused, Shift+F6 acts as Continue
         if tab.debug_session and tab.debug_session.is_running():
             self._on_debug_continue()
             return
