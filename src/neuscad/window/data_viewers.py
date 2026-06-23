@@ -1377,6 +1377,7 @@ class PathViewer(QDialog):
         t.setColumnWidth(0, idx_w)
         for i, p in enumerate(path_value):
             idx_item = QTableWidgetItem(str(i))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             idx_item.setFlags(idx_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             t.setItem(i, 0, idx_item)
             for j in range(data_cols):
