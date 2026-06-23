@@ -55,8 +55,8 @@ def _resolve_use_scopes(nodes, current_file, log_fn):
       recursively), giving it access to its own file's globals without
       exposing them to `current_file`.
     """
-    from openscad_parser.ast import getASTfromLibraryFile, build_scopes
-    from openscad_parser.ast.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
+    from openscad_lalr_parser import getASTfromLibraryFile, build_scopes
+    from openscad_lalr_parser.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
 
     injected = []
     reanchor = []
@@ -346,7 +346,7 @@ class _RenderWorker(QObject):
 
     def _do_render(self):
         import io, sys as _sys, time as _time, os as _os, tempfile, traceback
-        from openscad_parser.ast import getASTfromFile
+        from openscad_lalr_parser import getASTfromFile
         from neuscad.engine.evaluator import Evaluator, EvalError, to_renderable_bodies
 
         _t0 = _time.perf_counter()
@@ -1396,8 +1396,8 @@ class MainWindow(QMainWindow):
             tab.animate_pane.advance_frame()
 
     def _flush_caches(self):
-        """Discard each tab's pre-calculated AST scope/node table and openscad_parser's AST cache."""
-        from openscad_parser.ast import clear_ast_cache
+        """Discard each tab's pre-calculated AST scope/node table and the parser's AST cache."""
+        from openscad_lalr_parser import clear_ast_cache
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
@@ -1455,7 +1455,7 @@ class MainWindow(QMainWindow):
         cursor.insertText(statement + "\n")
 
     def _parse_error_to_editor(self, tab, captured: str):
-        """Parse the error text from openscad_parser and mark the editor."""
+        """Parse the error text from the parser and mark the editor."""
         import re
         m = re.search(r"at line (\d+), column (\d+)", captured)
         if m:
@@ -1632,7 +1632,7 @@ class MainWindow(QMainWindow):
 
         tab.console.clear()
 
-        from openscad_parser.ast import getASTfromFile
+        from openscad_lalr_parser import getASTfromFile
         import tempfile, io, sys as _sys
 
         _tmp = None

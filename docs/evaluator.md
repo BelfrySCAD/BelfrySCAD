@@ -1,6 +1,6 @@
 # AST Evaluator Reference
 
-The evaluator sits between openscad_parser and Manifold: a recursive AST walker producing Manifold geometry from a parsed AST.
+The evaluator sits between openscad_lalr_parser and Manifold: a recursive AST walker producing Manifold geometry from a parsed AST.
 
 ## Scope processing
 
@@ -195,8 +195,8 @@ Re-anchoring works because `ModuleDeclaration.build_scope`/`FunctionDeclaration.
   - **String**: character array, each character searched independently. `num_returns=1` (default) drops not-found characters; `num_returns=0` includes them as `[]`. Only valid when the vector is also a string.
   - **List**: each element is searched for independently. If an element is itself a list/vector, it's compared via **direct equality** against each whole `vector[i]` entry (`index_col` is ignored) — correct idiom for finding a string in a list of strings (`search(["foo"], ["foo","bar","baz"])` → `[0]`) and for BOSL2's `in_list(v, [UP,RIGHT,BACK])`. If an element is a scalar, it's compared against `vector[i][index_col]` (or `vector[i]` if not a list).
   - **Scalar**: returns up to `num_returns` matching indices (`[]` if none); `num_returns=0` returns all matches.
-- **Assert message format**: `to_openscad([cond_expr]).strip()` recovers the condition source text for `Assertion 'expr' failed` (requires `from openscad_parser.ast import to_openscad`).
-- **String literals with leading/trailing whitespace**: arpeggio's `skipws=True` would strip whitespace before sub-rules in `(DQUOTE, contents, DQUOTE)`, eating leading spaces (`"  bar"` → `"bar"`). Fixed in openscad_parser 2.5.1 by collapsing `string_literal` into one regex terminal `"(?:[^"\\]|\\.|\\$)*"`, avoiding whitespace skipping inside quotes.
+- **Assert message format**: `to_openscad([cond_expr]).strip()` recovers the condition source text for `Assertion 'expr' failed` (requires `from openscad_lalr_parser import to_openscad`).
+- **String literals with leading/trailing whitespace**: the PEG parser's `skipws=True` would strip whitespace before sub-rules in `(DQUOTE, contents, DQUOTE)`, eating leading spaces (`"  bar"` → `"bar"`). Fixed in the LALR parser by using a regex terminal for string literals, avoiding whitespace skipping inside quotes.
 - **`chr()`** accepts either a single code point (`chr(65)` → `"A"`) or a vector of code points (`chr([65,66,67])` → `"ABC"`), converting and concatenating each element; `chr([])` → `""`. Floats are truncated via `int()` (`chr(65.7)` / each element of a vector → `"A"`).
 - **`+`/`-` involving strings**: OpenSCAD has no `+`/`-` operator for strings (unlike Python's `str.__add__`). `"ab" + "cd"` → `undef`, not Python-style concatenation `"abcd"`. `_vec_add()`/`_vec_sub()` check for `str` operands before falling back to Python's `+`/`-`.
 - **Number formatting (`echo()`/`str()`)**: `_format_number()` replicates OpenSCAD's number-to-string conversion, which differs from Python's `f"{v:g}"`:

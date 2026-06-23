@@ -20,15 +20,6 @@ wheels = [
 ]
 
 [[package]]
-name = "arpeggio"
-version = "2.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3b/58/ba011f3cf8291804ce80f9d81289ac15f0319a27f9d7e3c124aa5e4981cc/Arpeggio-2.0.3.tar.gz", hash = "sha256:9e85ad35cfc6c938676817c7ae9a1000a7c72a34c71db0c687136c460d12b85e", size = 766566, upload-time = "2025-09-12T12:45:20.594Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/4d/53b8186b41842f7a5e971b1d1c28e678364dcf841e4170f5d14d38ac1e2a/Arpeggio-2.0.3-py2.py3-none-any.whl", hash = "sha256:9374d9c531b62018b787635f37fd81c9a6ee69ef2d28c5db3cd18791b1f7db2f", size = 54656, upload-time = "2025-09-12T12:45:17.971Z" },
-]
-
-[[package]]
 name = "arrow"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -551,6 +542,15 @@ wheels = [
 ]
 
 [[package]]
+name = "lark"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/34/28fff3ab31ccff1fd4f6c7c7b0ceb2b6968d8ea4950663eadcb5720591a0/lark-1.3.1.tar.gz", hash = "sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905", size = 382732, upload-time = "2025-10-27T18:25:56.653Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/3d/14ce75ef66813643812f3093ab17e46d3a206942ce7376d31ec2d36229e7/lark-1.3.1-py3-none-any.whl", hash = "sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12", size = 113151, upload-time = "2025-10-27T18:25:54.882Z" },
+]
+
+[[package]]
 name = "lib3mf"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -751,7 +751,7 @@ dependencies = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-parser" },
+    { name = "openscad-lalr-parser" },
     { name = "pillow" },
     { name = "pyside6" },
     { name = "setproctitle" },
@@ -773,7 +773,7 @@ requires-dist = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-parser", specifier = ">=2.6.0" },
+    { name = "openscad-lalr-parser", specifier = ">=1.0.2" },
     { name = "pillow" },
     { name = "pyside6" },
     { name = "setproctitle", specifier = ">=1.3.7" },
@@ -867,15 +867,15 @@ wheels = [
 ]
 
 [[package]]
-name = "openscad-parser"
-version = "2.6.0"
+name = "openscad-lalr-parser"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "arpeggio" },
+    { name = "lark" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/44/b3dabb5ce476c3cb1860c2397e3182b85a670248f208a0b8528fd4f1317e/openscad_parser-2.6.0.tar.gz", hash = "sha256:baab0643c091512ee06d2840f502ad47a0597d697bc976e88f97f983f7926fd4", size = 64362, upload-time = "2026-06-21T15:03:10.647Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/15/8acfaa01ff7d06c37d56a87b4333fdbb5220dd0faf4949562ff992fed4d8/openscad_lalr_parser-1.0.2.tar.gz", hash = "sha256:011bb56f96cbac22b0d750c1f4c004ddc2548909bda39bd237e0d8a3a11f7016", size = 30923, upload-time = "2026-06-22T21:10:01.126Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/9d/4d71578bc39e50480cf4e49c0e92d89cae41a3bf40c02274d4f99659eb94/openscad_parser-2.6.0-py3-none-any.whl", hash = "sha256:09b3ae03e175fb0969e0d255402fb7767be6ff8a6d3dcf49e8e2b4b6ba932a44", size = 61185, upload-time = "2026-06-21T15:03:08.788Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/4a/69f6256f4d7f6b4547af6dce532723b2db68afe17ae9b1064d6cb4c44ca9/openscad_lalr_parser-1.0.2-py3-none-any.whl", hash = "sha256:41f158f04f9c8b46bb448cba757dbb475f64a835291c38f021ddbcbe3d76afeb", size = 35456, upload-time = "2026-06-22T21:09:59.878Z" },
 ]
 
 [[package]]

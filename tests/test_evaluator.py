@@ -6,7 +6,7 @@ returning (bodies, echo_lines). Geometry tests inspect bounding boxes;
 expression tests capture echo output.
 """
 import pytest
-from openscad_parser.ast import getASTfromString, build_scopes
+from openscad_lalr_parser import getASTfromString, build_scopes
 
 from neuscad.engine.evaluator import Evaluator, EvalError
 

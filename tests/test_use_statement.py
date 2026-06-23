@@ -9,7 +9,7 @@ Per the OpenSCAD docs, `use <file>`:
 - does not leak declarations the used file itself pulled in via a nested `use`
 """
 import pytest
-from openscad_parser.ast import getASTfromFile
+from openscad_lalr_parser import getASTfromFile
 
 from neuscad.engine.evaluator import Evaluator
 from neuscad.window.main_window import _resolve_use_scopes

@@ -12,7 +12,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
-- **Parser**: openscad_parser ≥2.5.1 (strict PEG-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Fetched from PyPI.
+- **Parser**: openscad_lalr_parser ≥1.0.2 (LALR-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Fetched from PyPI.
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
@@ -22,7 +22,7 @@ NeuSCAD is a hybrid procedural CAD application combining OpenSCAD-style script-b
 The pipeline flows strictly one direction during normal operation:
 
 ```
-Source Code → Code Editor → openscad_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
+Source Code → Code Editor → openscad_lalr_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
 ```
 
 **The AST is the single source of truth** — not the rendered geometry, not the editor text.

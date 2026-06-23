@@ -1,5 +1,5 @@
 """
-AST evaluator: walks the openscad_parser AST and produces Manifold geometry.
+AST evaluator: walks the openscad_lalr_parser AST and produces Manifold geometry.
 Returns (manifold_body, id_to_node, colored_meshes) or raises EvalError.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ from fontTools.pens.basePen import BasePen
 from PySide6.QtGui import QColor
 from shapely_polyskel import skeletonize
 
-from openscad_parser.ast import to_openscad, findLibraryFile, getASTfromFile, build_scopes
-from openscad_parser.ast.nodes import (
+from openscad_lalr_parser import to_openscad, findLibraryFile, getASTfromFile, build_scopes
+from openscad_lalr_parser.nodes import (
     ASTNode, Assignment, Identifier,
     NumberLiteral, BooleanLiteral, StringLiteral, UndefinedLiteral,
     CommentedExpr,

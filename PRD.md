@@ -77,7 +77,7 @@ QScintilla Editor (text layer)
    ↓
   [on Render trigger]
    ↓
-openscad_parser (strict PEG AST)
+openscad_lalr_parser (strict LALR AST)
    ↓
 AST evaluation layer
    ↓
@@ -148,7 +148,7 @@ Fallback behavior:
 
 ### Technology:
 
-* openscad_parser
+* openscad_lalr_parser
 
 ### Responsibilities:
 
@@ -168,7 +168,7 @@ Fallback behavior:
 
 ### Responsibilities:
 
-* Recursive AST walker — sits between openscad_parser and Manifold
+* Recursive AST walker — sits between openscad_lalr_parser and Manifold
 * Calls `build_scopes()` on the parsed AST to get scope annotations; uses `scope.lookup_variable()`, `scope.lookup_function()`, `scope.lookup_module()` for all name resolution
 * Evaluates all expressions (arithmetic, ternary, list comprehensions, etc.)
 * Dispatches built-in module calls to a built-ins table; recursively evaluates user-defined modules
