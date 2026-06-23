@@ -121,8 +121,8 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Shift+Cmd+V | View All |
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
-| F5 | Debug |
 | F6 | Render |
+| Shift+F6 | Debug |
 | F7 | Animate |
 | Escape | Cancel in-progress render |
 
@@ -260,6 +260,8 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 pe
 - **"Row Points (N)" label**: shows the point count for the selected row.
 - **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights individual vertices in the viewport.
 - **Viewport**: `_GridViewport(_SimpleViewport)`. Quad mesh faces (triangulated, yellow both sides) with black edge lines between adjacent grid points. Vertex markers are depth-tested (occluded by mesh). Green octahedrons for unselected, red↔white blink (250ms) for selected. Hovering shows `[row,col]: (x, y, z)` tooltip. Clicking a vertex switches the dropdown to that row and selects the vertex in the table.
+- **Col Wrap**: checkbox connects last column back to first, closing the grid horizontally.
+- **Row Wrap**: checkbox connects last row back to first, closing the grid vertically. Both wraps together form a torus.
 - 2D grids start in top-down orthographic; 3D grids start in perspective orbit.
 
 ## Menu Structure

@@ -62,8 +62,6 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
 No live preview. Full Manifold CSG processing runs when:
 
 - The user selects **Render** (toolbar or Design menu)
-- A file is **opened**
-- A file is **saved**
 - A **gizmo drag commits** (mouse-up)
 
 The viewport always shows the last render's result; it stays static while the user edits code.
