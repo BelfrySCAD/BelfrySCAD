@@ -1775,6 +1775,7 @@ class MainWindow(QMainWindow):
         self._debugger_pane.set_idle()
         self._debug_session = None
         self._debug_tab = None
+        self._tabs.setCurrentWidget(tab)
         if not bodies:
             self.log_to_tab(tab, "Debug: no geometry produced.")
             return
@@ -1801,11 +1802,16 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_debug_error(self, msg: str):
+        error_tab = self._debug_tab
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
         self._debug_session = None
         self._debug_tab = None
-        self.log(f"Debug error:\n{msg}")
+        if error_tab is not None:
+            self._tabs.setCurrentWidget(error_tab)
+            self.log_to_tab(error_tab, f"Debug error:\n{msg}")
+        else:
+            self.log(f"Debug error:\n{msg}")
 
     def _on_debug_continue(self):
         if not self._debug_session:
@@ -1845,6 +1851,7 @@ class MainWindow(QMainWindow):
         self._debug_session.resume("step_out", mods)
 
     def _on_debug_restart(self):
+        restart_tab = self._debug_tab
         if self._debug_session:
             self._debug_session.paused.disconnect()
             self._debug_session.error_break.disconnect()
@@ -1855,11 +1862,14 @@ class MainWindow(QMainWindow):
             self._debug_session = None
         self._clear_all_execution_lines()
         self._debug_tab = None
+        if restart_tab is not None:
+            self._tabs.setCurrentWidget(restart_tab)
         self._start_debug()
 
     def _on_debug_stop(self):
         if not self._debug_session:
             return
+        stop_tab = self._debug_tab
         self._clear_all_execution_lines()
         self._debug_session.paused.disconnect()
         self._debug_session.error_break.disconnect()
@@ -1870,6 +1880,8 @@ class MainWindow(QMainWindow):
         self._debug_session = None
         self._debug_tab = None
         self._debugger_pane.set_idle()
+        if stop_tab is not None:
+            self._tabs.setCurrentWidget(stop_tab)
 
     def _on_debug_print(self, text: str):
         tab = self._debug_tab or self._current_tab()
