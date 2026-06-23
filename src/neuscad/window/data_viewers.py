@@ -1372,7 +1372,8 @@ class PathViewer(QDialog):
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         fm = t.fontMetrics()
-        idx_w = fm.horizontalAdvance(str(max(len(path_value) - 1, 0))) + 16
+        idx_w = max(fm.horizontalAdvance(str(max(len(path_value) - 1, 0))),
+                    fm.horizontalAdvance("00000")) + 16
         t.setColumnWidth(0, idx_w)
         for i, p in enumerate(path_value):
             idx_item = QTableWidgetItem(str(i))
