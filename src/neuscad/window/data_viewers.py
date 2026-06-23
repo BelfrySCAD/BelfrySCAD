@@ -62,6 +62,20 @@ def _is_vnf(v) -> bool:
                and all(isinstance(i, (int, float)) for i in f) for f in faces)
 
 
+_HEADER_STYLE = (
+    "QHeaderView::section {"
+    "  background-color: #e8e8e8;"
+    "  border: 1px solid #c0c0c0;"
+    "  padding: 2px 4px;"
+    "}"
+)
+
+
+def _style_table_headers(table: QTableWidget):
+    table.horizontalHeader().setStyleSheet(_HEADER_STYLE)
+    table.verticalHeader().setStyleSheet(_HEADER_STYLE)
+
+
 # ---------------------------------------------------------------------------
 # Shared 3D viewport widget (orbit / pan / zoom, with labelled axes)
 # ---------------------------------------------------------------------------
@@ -1135,7 +1149,6 @@ class VNFViewer(QDialog):
 
         # Tables in a tab widget
         self._tab_widget = QTabWidget(splitter)
-        self._tab_widget.setFont(QFont("Menlo", 11))
 
         self._vert_table = self._make_vert_table(vnf_value[0])
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
@@ -1147,7 +1160,9 @@ class VNFViewer(QDialog):
 
         splitter.addWidget(self._tab_widget)
         vt = self._vert_table
-        table_w = (vt.verticalHeader().sizeHint().width()
+        fm = vt.fontMetrics()
+        vh_w = fm.horizontalAdvance(str(max(len(vnf_value[0]) - 1, 0))) + 20
+        table_w = (vh_w
                    + sum(vt.columnWidth(j) for j in range(vt.columnCount()))
                    + vt.frameWidth() * 2 + 2)
         splitter.setSizes([self.width() - table_w, table_w])
@@ -1171,6 +1186,7 @@ class VNFViewer(QDialog):
         t.setFont(QFont("Menlo", 11))
         t.setHorizontalHeaderLabels(["X", "Y", "Z"])
         t.setVerticalHeaderLabels([str(i) for i in range(len(verts))])
+        _style_table_headers(t)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1191,6 +1207,7 @@ class VNFViewer(QDialog):
         t.setFont(QFont("Menlo", 11))
         t.setHorizontalHeaderLabels(["Vertex Indices"])
         t.setVerticalHeaderLabels([str(i) for i in range(len(faces))])
+        _style_table_headers(t)
         t.horizontalHeader().setStretchLastSection(True)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1340,7 +1357,11 @@ class PathViewer(QDialog):
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vert_table)
         t = self._vert_table
-        table_w = (sum(t.columnWidth(j) for j in range(t.columnCount()))
+        fm = t.fontMetrics()
+        vh_w = max(fm.horizontalAdvance(str(max(len(path_value) - 1, 0))),
+                   fm.horizontalAdvance("0000")) + 20
+        table_w = (vh_w
+                   + sum(t.columnWidth(j) for j in range(t.columnCount()))
                    + t.frameWidth() * 2 + 2)
         splitter.setSizes([self.width() - table_w, table_w])
         splitter.setStretchFactor(0, 1)
@@ -1367,31 +1388,24 @@ class PathViewer(QDialog):
 
     @staticmethod
     def _make_vert_table(path_value: list, is_2d: bool) -> QTableWidget:
-        data_cols = 2 if is_2d else 3
-        cols = data_cols + 1
+        cols = 2 if is_2d else 3
         t = QTableWidget(len(path_value), cols)
         t.setFont(QFont("Menlo", 11))
-        headers = (["Idx", "X", "Y"] if is_2d else ["Idx", "X", "Y", "Z"])
+        headers = ["X", "Y"] if is_2d else ["X", "Y", "Z"]
         t.setHorizontalHeaderLabels(headers)
-        t.verticalHeader().setVisible(False)
+        t.setVerticalHeaderLabels([str(i) for i in range(len(path_value))])
+        _style_table_headers(t)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        fm = t.fontMetrics()
-        idx_w = max(fm.horizontalAdvance(str(max(len(path_value) - 1, 0))),
-                    fm.horizontalAdvance("0000")) + 16
-        t.setColumnWidth(0, idx_w)
         for i, p in enumerate(path_value):
-            idx_item = QTableWidgetItem(str(i))
-            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            idx_item.setFlags(idx_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            t.setItem(i, 0, idx_item)
-            for j in range(data_cols):
+            for j in range(cols):
                 item = QTableWidgetItem(f"{p[j]:g}")
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                t.setItem(i, j + 1, item)
+                t.setItem(i, j, item)
+        fm = t.fontMetrics()
         min_w = fm.horizontalAdvance("-00000.0") + 16
-        for j in range(1, cols):
+        for j in range(cols):
             t.setColumnWidth(j, min_w)
         return t
 
