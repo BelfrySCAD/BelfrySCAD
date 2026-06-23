@@ -1334,7 +1334,13 @@ class PathViewer(QDialog):
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vert_table)
-        splitter.setSizes([600, 300])
+        t = self._vert_table
+        table_w = (t.verticalHeader().sizeHint().width()
+                   + sum(t.columnWidth(j) for j in range(t.columnCount()))
+                   + t.frameWidth() * 2 + 2)
+        splitter.setSizes([self.width() - table_w, table_w])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
         btn_row = QHBoxLayout()
