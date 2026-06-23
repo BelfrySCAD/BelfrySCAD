@@ -1720,21 +1720,54 @@ class MainWindow(QMainWindow):
                                 self._viewport_params(tab),
                                 current_file=current_file)
 
-    def _on_debug_paused(self, tab, origin: str, line: int, all_frame_locals: list, call_stack: list):
-        tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
+    def _find_or_open_tab(self, file_path: str):
+        """Return the tab for *file_path*, opening it in a new tab if needed."""
+        resolved = str(Path(file_path).resolve())
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t and t.file_path and str(Path(t.file_path).resolve()) == resolved:
+                return t, i
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            return None, -1
+        new_tab = self._create_and_add_tab(file_path, text)
+        idx = self._tabs.indexOf(new_tab)
+        return new_tab, idx
+
+    def _clear_all_execution_lines(self):
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t:
+                t.editor.clear_execution_line()
+
+    def _show_debug_line(self, tab, origin: str, line: int):
+        """Switch to the correct tab for *origin* and highlight *line*."""
+        self._clear_all_execution_lines()
         current_file = tab.file_path
         if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
             tab.editor.set_execution_line(line)
+            self._tabs.setCurrentWidget(tab)
         else:
-            tab.editor.clear_execution_line()
+            target_tab, idx = self._find_or_open_tab(origin)
+            if target_tab is not None:
+                target_tab.editor.set_execution_line(line)
+                self._tabs.setCurrentIndex(idx)
+                block = target_tab.editor.document().findBlockByLineNumber(line - 1)
+                if block.isValid():
+                    cursor = target_tab.editor.textCursor()
+                    cursor.setPosition(block.position())
+                    target_tab.editor.setTextCursor(cursor)
+                    target_tab.editor.ensureCursorVisible()
+
+    def _on_debug_paused(self, tab, origin: str, line: int, all_frame_locals: list, call_stack: list):
+        tab.debugger_pane.set_paused(line, all_frame_locals, call_stack)
+        self._show_debug_line(tab, origin, line)
 
     def _on_debug_error_break(self, tab, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
         tab.debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack)
-        current_file = tab.file_path
-        if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
-            tab.editor.set_execution_line(line)
-        else:
-            tab.editor.clear_execution_line()
+        self._show_debug_line(tab, origin, line)
 
     def _on_debug_finished(self, tab, bodies, id_to_node):
         from neuscad.engine.evaluator import to_renderable_bodies
