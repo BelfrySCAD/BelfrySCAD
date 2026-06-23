@@ -417,7 +417,6 @@ class _SimpleViewport(QOpenGLWidget):
 
     def closeEvent(self, event):
         self._gl_ready = False
-        self._ctx = None
         super().closeEvent(event)
 
     def _release_all(self):
@@ -1335,8 +1334,7 @@ class PathViewer(QDialog):
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vert_table)
         t = self._vert_table
-        table_w = (t.verticalHeader().sizeHint().width()
-                   + sum(t.columnWidth(j) for j in range(t.columnCount()))
+        table_w = (sum(t.columnWidth(j) for j in range(t.columnCount()))
                    + t.frameWidth() * 2 + 2)
         splitter.setSizes([self.width() - table_w, table_w])
         splitter.setStretchFactor(0, 1)
@@ -1363,23 +1361,29 @@ class PathViewer(QDialog):
 
     @staticmethod
     def _make_vert_table(path_value: list, is_2d: bool) -> QTableWidget:
-        cols = 2 if is_2d else 3
+        data_cols = 2 if is_2d else 3
+        cols = data_cols + 1
         t = QTableWidget(len(path_value), cols)
         t.setFont(QFont("Menlo", 11))
-        headers = ["X", "Y"] if is_2d else ["X", "Y", "Z"]
+        headers = (["", "X", "Y"] if is_2d else ["", "X", "Y", "Z"])
         t.setHorizontalHeaderLabels(headers)
-        t.setVerticalHeaderLabels([str(i) for i in range(len(path_value))])
+        t.verticalHeader().setVisible(False)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        fm = t.fontMetrics()
+        idx_w = fm.horizontalAdvance(str(max(len(path_value) - 1, 0))) + 16
+        t.setColumnWidth(0, idx_w)
         for i, p in enumerate(path_value):
-            for j in range(cols):
+            idx_item = QTableWidgetItem(str(i))
+            idx_item.setFlags(idx_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            t.setItem(i, 0, idx_item)
+            for j in range(data_cols):
                 item = QTableWidgetItem(f"{p[j]:g}")
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                t.setItem(i, j, item)
-        fm = t.fontMetrics()
+                t.setItem(i, j + 1, item)
         min_w = fm.horizontalAdvance("-00000.0") + 16
-        for j in range(cols):
+        for j in range(1, cols):
             t.setColumnWidth(j, min_w)
         return t
 
