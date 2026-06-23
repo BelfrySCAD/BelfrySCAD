@@ -12,7 +12,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
-    QSplitter, QTabWidget, QWidget,
+    QSplitter, QTabWidget, QWidget, QComboBox,
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
@@ -47,6 +47,14 @@ def _is_path(v) -> bool:
     return (_is_list(v)
             and len(v) >= 2
             and all(_is_numeric_point(p) for p in v))
+
+
+def _is_grid(v) -> bool:
+    return (_is_list(v)
+            and len(v) >= 2
+            and all(_is_list(row) and len(row) >= 2
+                    and all(_is_numeric_point(p) for p in row) for row in v)
+            and len(set(len(row) for row in v)) == 1)
 
 
 def _is_vnf(v) -> bool:
@@ -99,6 +107,7 @@ class _SimpleViewport(QOpenGLWidget):
         self._buffers: list[dict] = []
         self._line_buffers: list[dict] = []
         self._point_buffers: list[dict] = []
+        self._depth_test_points = False
         self._axes_vbo = None
         self._axes_vao = None
         self._viewport = (400, 300)
@@ -221,11 +230,13 @@ class _SimpleViewport(QOpenGLWidget):
 
         # Points (rendered on top of lines)
         if self._point_buffers:
-            self._ctx.disable(mgl.DEPTH_TEST)
+            if not self._depth_test_points:
+                self._ctx.disable(mgl.DEPTH_TEST)
             self._line_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
             for buf in self._point_buffers:
                 buf["vao"].render(mgl.TRIANGLES)
-            self._ctx.enable(mgl.DEPTH_TEST)
+            if not self._depth_test_points:
+                self._ctx.enable(mgl.DEPTH_TEST)
 
         self._render_extra(mvp)
 
@@ -598,6 +609,7 @@ class _SimpleViewport(QOpenGLWidget):
 
     def upload_mesh(self, positions: np.ndarray, normals: np.ndarray,
                     color: tuple = (0.9, 0.85, 0.1, 1.0),
+                    backface_color: tuple | None = None,
                     edge_positions: np.ndarray | None = None,
                     edge_colors: np.ndarray | None = None):
         interleaved = np.concatenate([positions, normals], axis=1).astype(np.float32)
@@ -606,6 +618,8 @@ class _SimpleViewport(QOpenGLWidget):
             self._mesh_prog, [(vbo, "3f 3f", "in_position", "in_normal")],
         )
         buf = {"vbo": vbo, "vao": vao, "color": color}
+        if backface_color is not None:
+            buf["backface_color"] = backface_color
         if edge_positions is not None and edge_colors is not None:
             edge_data = np.concatenate([edge_positions, edge_colors], axis=1).astype(np.float32)
             edge_vbo = self._ctx.buffer(edge_data.tobytes())
@@ -736,6 +750,7 @@ class ListViewer(QDialog):
 
     def __init__(self, title: str, value, parent=None):
         super().__init__(parent)
+        self._title = title
         self.setWindowTitle(f"List Viewer: {title}")
         self.resize(500, 400)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -800,15 +815,16 @@ class ListViewer(QDialog):
         key, val = self._entries[row]
 
         menu = QMenu(self)
+        sub_title = f"{self._title}[{key}]"
         if _is_list(val) or _is_oscobject(val):
             menu.addAction("View in List...", lambda: _open_list_viewer(
-                f"{self.windowTitle()}[{key}]", val, self))
+                sub_title, val, self))
         if _is_vnf(val):
             menu.addAction("View as VNF...", lambda: _open_vnf_viewer(
-                f"{self.windowTitle()}[{key}]", val, self))
+                sub_title, val, self))
         if _is_path(val):
             menu.addAction("View as Path...", lambda: _open_path_viewer(
-                f"{self.windowTitle()}[{key}]", val, self))
+                sub_title, val, self))
         if menu.isEmpty():
             return
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -822,6 +838,7 @@ class _VNFViewport(_SimpleViewport):
     face_clicked = Signal(int)
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._depth_test_points = True
         self.setMouseTracking(True)
         self._cpu_positions: np.ndarray = np.zeros((0, 3), dtype=np.float32)
         self._tri_to_face: np.ndarray = np.zeros(0, dtype=np.int32)
@@ -977,9 +994,7 @@ class _VNFViewport(_SimpleViewport):
         vao = self._vert_marker_vao_r if self._vert_blink_red else self._vert_marker_vao_w
         if vao is not None:
             self._line_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
-            self._ctx.disable(mgl.DEPTH_TEST)
             vao.render(mgl.TRIANGLES)
-            self._ctx.enable(mgl.DEPTH_TEST)
 
         if self._highlight_vao is None:
             return
@@ -1766,6 +1781,441 @@ class _PathViewport(_SimpleViewport):
 
 
 # ---------------------------------------------------------------------------
+# Grid Viewer
+# ---------------------------------------------------------------------------
+
+class GridViewer(QDialog):
+    """3D grid viewer for lists of lists of points with quad mesh faces."""
+
+    def __init__(self, title: str, grid_value: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Grid Viewer: {title}")
+        self.resize(900, 520)
+
+        self._grid = grid_value
+        self._rows = len(grid_value)
+        self._cols = len(grid_value[0]) if self._rows > 0 else 0
+        all_pts = [p for row in grid_value for p in row]
+        self._is_2d = all(len(p) == 2 for p in all_pts)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._vp = _GridViewport(grid_value, self._is_2d, self)
+        splitter.addWidget(self._vp)
+
+        table_container = QWidget()
+        tc_layout = QVBoxLayout(table_container)
+        tc_layout.setContentsMargins(0, 0, 0, 0)
+
+        row_bar = QHBoxLayout()
+        row_bar.addWidget(QLabel("Row:"))
+        self._row_combo = QComboBox()
+        for i in range(self._rows):
+            self._row_combo.addItem(str(i))
+        self._row_combo.currentIndexChanged.connect(self._on_row_changed)
+        row_bar.addWidget(self._row_combo, 1)
+        tc_layout.addLayout(row_bar)
+
+        self._pts_label = QLabel()
+        tc_layout.addWidget(self._pts_label)
+
+        self._vert_table = self._make_vert_table(grid_value[0], self._is_2d)
+        self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
+        self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
+        tc_layout.addWidget(self._vert_table, 1)
+
+        splitter.addWidget(table_container)
+        t = self._vert_table
+        fm = t.fontMetrics()
+        vh_w = max(fm.horizontalAdvance(str(max(self._cols - 1, 0))),
+                   fm.horizontalAdvance("0000")) + 20
+        table_w = (vh_w
+                   + sum(t.columnWidth(j) for j in range(t.columnCount()))
+                   + t.frameWidth() * 2 + 2)
+        splitter.setSizes([self.width() - table_w, table_w])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        layout.addWidget(splitter, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row.addStretch()
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self.close)
+        btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+        self._on_row_changed(0)
+        self._vp.schedule_load(self._do_initial_load)
+
+    @staticmethod
+    def _make_vert_table(row_pts: list, is_2d: bool) -> QTableWidget:
+        cols = 2 if is_2d else 3
+        t = QTableWidget(len(row_pts), cols)
+        t.setFont(QFont("Menlo", 11))
+        headers = ["X", "Y"] if is_2d else ["X", "Y", "Z"]
+        t.setHorizontalHeaderLabels(headers)
+        t.setVerticalHeaderLabels([str(i) for i in range(len(row_pts))])
+        _style_table_headers(t)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        for i, p in enumerate(row_pts):
+            for j in range(cols):
+                item = QTableWidgetItem(f"{p[j]:g}")
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                t.setItem(i, j, item)
+        fm = t.fontMetrics()
+        min_w = fm.horizontalAdvance("-00000.0") + 16
+        for j in range(cols):
+            t.setColumnWidth(j, min_w)
+        return t
+
+    def _populate_table(self, row_pts: list):
+        cols = 2 if self._is_2d else 3
+        self._vert_table.setRowCount(len(row_pts))
+        self._vert_table.setVerticalHeaderLabels(
+            [str(i) for i in range(len(row_pts))])
+        for i, p in enumerate(row_pts):
+            for j in range(cols):
+                item = QTableWidgetItem(f"{p[j]:g}")
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._vert_table.setItem(i, j, item)
+
+    def _on_row_changed(self, row_idx: int):
+        if row_idx < 0 or row_idx >= self._rows:
+            return
+        row_pts = self._grid[row_idx]
+        self._pts_label.setText(f"Row Points ({len(row_pts)})")
+        self._populate_table(row_pts)
+        self._vp.set_selected_row(row_idx)
+
+    def _on_vert_table_selection(self):
+        rows = self._vert_table.selectionModel().selectedRows()
+        col_indices = sorted(r.row() for r in rows)
+        row_idx = self._row_combo.currentIndex()
+        global_indices = [row_idx * self._cols + c for c in col_indices]
+        self._vp.set_selected(global_indices)
+
+    def _on_viewport_vertex_clicked(self, vi: int):
+        if vi < 0:
+            return
+        row_idx = vi // self._cols
+        col_idx = vi % self._cols
+        if row_idx != self._row_combo.currentIndex():
+            self._row_combo.setCurrentIndex(row_idx)
+        self._vert_table.clearSelection()
+        if 0 <= col_idx < self._vert_table.rowCount():
+            self._vert_table.selectRow(col_idx)
+
+    def _do_initial_load(self):
+        self._vp.load_grid(self._grid)
+
+
+class _GridViewport(_SimpleViewport):
+    """Viewport for grid data with quad mesh faces and selectable vertex markers."""
+    vertex_clicked = Signal(int)
+
+    def __init__(self, grid_value: list, is_2d: bool, parent=None):
+        super().__init__(parent)
+        self._depth_test_points = True
+        self.setMouseTracking(True)
+        self._press_pos = None
+        self._drag_started = False
+        self._all_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        self._grid_rows = len(grid_value)
+        self._grid_cols = len(grid_value[0]) if self._grid_rows > 0 else 0
+        self._is_2d = is_2d
+        self._selected_indices: list[int] = []
+        self._selected_row: int = -1
+        self._blink_red = True
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(250)
+        self._blink_timer.timeout.connect(self._blink_tick)
+        self._sel_vao_r = None
+        self._sel_vbo_r = None
+        self._sel_vao_w = None
+        self._sel_vbo_w = None
+        if is_2d:
+            self.azimuth = 0.0
+            self.elevation = 90.0
+            self.orthographic = True
+        else:
+            self.orthographic = False
+
+    def _blink_tick(self):
+        self._blink_red = not self._blink_red
+        self.update()
+
+    def load_grid(self, grid_value: list):
+        self._release_all()
+        self._release_sel_markers()
+
+        pts_3d = []
+        for row in grid_value:
+            for p in row:
+                if len(p) == 2:
+                    pts_3d.append([p[0], p[1], 0.0])
+                else:
+                    pts_3d.append([p[0], p[1], p[2]])
+        pts = np.array(pts_3d, dtype=np.float32)
+        self._all_pts = pts
+        rows = self._grid_rows
+        cols = self._grid_cols
+
+        bb_min = pts.min(axis=0)
+        bb_max = pts.max(axis=0)
+        self.frame_bounds(bb_min, bb_max)
+
+        # Quad faces as triangulated mesh
+        if rows >= 2 and cols >= 2:
+            tris_pos = []
+            tris_norm = []
+            for r in range(rows - 1):
+                for c in range(cols - 1):
+                    i00 = r * cols + c
+                    i01 = r * cols + c + 1
+                    i10 = (r + 1) * cols + c
+                    i11 = (r + 1) * cols + c + 1
+                    p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
+                    # Triangle 1: p00, p01, p11
+                    n1 = np.cross(p01 - p00, p11 - p00)
+                    ln1 = np.linalg.norm(n1)
+                    if ln1 > 0:
+                        n1 /= ln1
+                    tris_pos.extend([p00, p01, p11])
+                    tris_norm.extend([n1, n1, n1])
+                    # Triangle 2: p00, p11, p10
+                    n2 = np.cross(p11 - p00, p10 - p00)
+                    ln2 = np.linalg.norm(n2)
+                    if ln2 > 0:
+                        n2 /= ln2
+                    tris_pos.extend([p00, p11, p10])
+                    tris_norm.extend([n2, n2, n2])
+            if tris_pos:
+                positions = np.array(tris_pos, dtype=np.float32)
+                normals = np.array(tris_norm, dtype=np.float32)
+                # Edge lines for quads
+                edge_verts = []
+                edge_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+                for r in range(rows - 1):
+                    for c in range(cols - 1):
+                        i00 = r * cols + c
+                        i01 = r * cols + c + 1
+                        i10 = (r + 1) * cols + c
+                        i11 = (r + 1) * cols + c + 1
+                        for a, b in [(i00, i01), (i01, i11),
+                                     (i11, i10), (i10, i00)]:
+                            edge_verts.append(pts[a])
+                            edge_verts.append(pts[b])
+                edge_pos = np.array(edge_verts, dtype=np.float32)
+                edge_cols = np.tile(edge_color, (len(edge_verts), 1))
+                self.upload_mesh(positions, normals,
+                                 backface_color=(0.9, 0.85, 0.1, 1.0),
+                                 edge_positions=edge_pos,
+                                 edge_colors=edge_cols)
+
+        self._build_point_markers()
+        self.update()
+
+    def _octa_faces(self, r):
+        px = np.array([r, 0, 0])
+        nx = np.array([-r, 0, 0])
+        py = np.array([0, r, 0])
+        ny = np.array([0, -r, 0])
+        pz = np.array([0, 0, r])
+        nz = np.array([0, 0, -r])
+        if self._is_2d:
+            return [
+                (py, px, ny), (ny, px, py),
+                (py, nx, ny), (ny, nx, py),
+            ]
+        return [
+            (pz, px, py), (pz, py, nx), (pz, nx, ny), (pz, ny, px),
+            (nz, py, px), (nz, nx, py), (nz, ny, nx), (nz, px, ny),
+        ]
+
+    def _world_per_px_radius(self):
+        _, vh = self._viewport
+        if vh > 0:
+            world_per_px = 2.0 * self.distance * math.tan(math.radians(self.fov / 2)) / vh
+        else:
+            world_per_px = self.distance * 0.003
+        return world_per_px * 3.5
+
+    def _build_point_markers(self):
+        for buf in self._point_buffers:
+            buf["vao"].release()
+            buf["vbo"].release()
+        self._point_buffers.clear()
+
+        pts = self._all_pts
+        if len(pts) == 0 or not self._gl_ready:
+            return
+
+        r = self._world_per_px_radius()
+        faces = self._octa_faces(r)
+        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        selected = set(self._selected_indices)
+
+        marker_tris = []
+        for i, pt in enumerate(pts):
+            if i in selected:
+                continue
+            for v0, v1, v2 in faces:
+                marker_tris.append(np.concatenate([pt + v0, green]))
+                marker_tris.append(np.concatenate([pt + v1, green]))
+                marker_tris.append(np.concatenate([pt + v2, green]))
+
+        if marker_tris:
+            self.upload_points(np.array(marker_tris, dtype=np.float32))
+
+    def set_selected_row(self, row_idx: int):
+        self._selected_row = row_idx
+        cols = self._grid_cols
+        self.set_selected([row_idx * cols + c for c in range(cols)])
+
+    def set_selected(self, indices: list[int]):
+        self._selected_indices = indices
+        self._release_sel_markers()
+        self._build_point_markers()
+
+        if not indices:
+            self._blink_timer.stop()
+            self.update()
+            return
+
+        self._blink_red = True
+        self._blink_timer.start()
+        self._build_sel_markers()
+        self.update()
+
+    def _release_sel_markers(self):
+        for attr in ("_sel_vao_r", "_sel_vao_w"):
+            vao = getattr(self, attr)
+            if vao is not None:
+                vao.release()
+                setattr(self, attr, None)
+        for attr in ("_sel_vbo_r", "_sel_vbo_w"):
+            vbo = getattr(self, attr)
+            if vbo is not None:
+                vbo.release()
+                setattr(self, attr, None)
+
+    def _build_sel_markers(self):
+        self._release_sel_markers()
+        if not self._selected_indices or not self._gl_ready:
+            return
+
+        r = self._world_per_px_radius()
+        faces = self._octa_faces(r)
+        pts = self._all_pts
+
+        for color_val, vao_attr, vbo_attr in [
+            (np.array([1.0, 0.0, 0.0], dtype=np.float32), "_sel_vao_r", "_sel_vbo_r"),
+            (np.array([1.0, 1.0, 1.0], dtype=np.float32), "_sel_vao_w", "_sel_vbo_w"),
+        ]:
+            tris = []
+            for vi in self._selected_indices:
+                if 0 <= vi < len(pts):
+                    pt = pts[vi]
+                    for v0, v1, v2 in faces:
+                        tris.append(np.concatenate([pt + v0, color_val]))
+                        tris.append(np.concatenate([pt + v1, color_val]))
+                        tris.append(np.concatenate([pt + v2, color_val]))
+            if tris:
+                data = np.array(tris, dtype=np.float32)
+                vbo = self._ctx.buffer(data.tobytes())
+                vao = self._ctx.vertex_array(
+                    self._line_prog,
+                    [(vbo, "3f 3f", "in_position", "in_color")],
+                )
+                setattr(self, vao_attr, vao)
+                setattr(self, vbo_attr, vbo)
+
+    def _render_extra(self, mvp: np.ndarray):
+        import moderngl as mgl
+        vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
+        if vao is not None:
+            self._line_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            vao.render(mgl.TRIANGLES)
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        if len(self._all_pts) > 0:
+            self._build_point_markers()
+            if self._selected_indices:
+                self._build_sel_markers()
+            self.update()
+
+    def closeEvent(self, event):
+        self._blink_timer.stop()
+        super().closeEvent(event)
+
+    def _pick_vertex(self, px: float, py: float) -> int:
+        if len(self._all_pts) == 0:
+            return -1
+        w, h = self._viewport
+        aspect = w / h if h > 0 else 1.0
+        mvp = self._mvp(aspect)
+        best_idx = -1
+        best_dist_sq = float("inf")
+        threshold = 12.0
+        for i, pt3 in enumerate(self._all_pts):
+            clip = mvp @ np.array([pt3[0], pt3[1], pt3[2], 1.0], dtype=np.float32)
+            if clip[3] == 0:
+                continue
+            ndc = clip[:2] / clip[3]
+            sx = (ndc[0] * 0.5 + 0.5) * w
+            sy = (1.0 - (ndc[1] * 0.5 + 0.5)) * h
+            dx, dy = sx - px, sy - py
+            d2 = dx * dx + dy * dy
+            if d2 < best_dist_sq:
+                best_dist_sq = d2
+                best_idx = i
+        if best_idx >= 0 and best_dist_sq < threshold * threshold:
+            return best_idx
+        return -1
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self._press_pos = event.position().toPoint()
+        self._drag_started = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._press_pos is not None and self._last_mouse is not None:
+            pos = event.position().toPoint()
+            dx = abs(pos.x() - self._press_pos.x())
+            dy = abs(pos.y() - self._press_pos.y())
+            if dx > 3 or dy > 3:
+                self._drag_started = True
+        if self._last_mouse is None:
+            pos = event.position().toPoint()
+            vi = self._pick_vertex(pos.x(), pos.y())
+            if vi >= 0:
+                pt = self._all_pts[vi]
+                r, c = vi // self._grid_cols, vi % self._grid_cols
+                coords = f"({pt[0]:g}, {pt[1]:g}" + (f", {pt[2]:g})" if not self._is_2d else ")")
+                self.setToolTip(f"[{r},{c}]: {coords}")
+            else:
+                self.setToolTip("")
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._drag_started
+                and self._press_pos is not None):
+            pos = event.position().toPoint()
+            vi = self._pick_vertex(pos.x(), pos.y())
+            self.vertex_clicked.emit(vi)
+        self._press_pos = None
+        self._drag_started = False
+        super().mouseReleaseEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # Factory helpers (used by debugger context menu)
 # ---------------------------------------------------------------------------
 
@@ -1784,11 +2234,18 @@ def _open_path_viewer(title: str, value, parent=None):
     dlg.show()
 
 
+def _open_grid_viewer(title: str, value, parent=None):
+    dlg = GridViewer(title, value, parent)
+    dlg.show()
+
+
 def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
     """Add viewer actions to a QMenu based on the value's type."""
     if _is_list(value) or _is_oscobject(value):
         menu.addAction("View in List...", lambda: _open_list_viewer(name, value, parent))
     if _is_vnf(value):
         menu.addAction("View as VNF...", lambda: _open_vnf_viewer(name, value, parent))
+    if _is_grid(value):
+        menu.addAction("View as Grid...", lambda: _open_grid_viewer(name, value, parent))
     if _is_path(value):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))

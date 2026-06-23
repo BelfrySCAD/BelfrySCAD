@@ -380,6 +380,8 @@ class DebuggerPane(QWidget):
         self._vars_table = QTableWidget(0, 2)
         self._vars_table.setFont(mono)
         self._vars_table.setHorizontalHeaderLabels(["Name", "Value"])
+        from neuscad.window.data_viewers import _style_table_headers
+        _style_table_headers(self._vars_table)
         self._vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._vars_table.horizontalHeader().setStretchLastSection(True)
         self._vars_table.horizontalHeader().resizeSection(0, 120)
