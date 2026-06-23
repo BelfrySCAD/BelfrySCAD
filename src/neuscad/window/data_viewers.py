@@ -1340,8 +1340,13 @@ class PathViewer(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
         self._closed_cb = QCheckBox("Close Path")
+        self._closed_cb.setStyleSheet("QCheckBox { padding-right: 10px; }")
         self._closed_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._closed_cb)
+        self._bezier_cb = QCheckBox("Bezier")
+        self._bezier_cb.setStyleSheet("QCheckBox { padding-right: 10px; }")
+        self._bezier_cb.toggled.connect(self._rebuild)
+        btn_row.addWidget(self._bezier_cb)
         btn_row.addStretch()
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self.close)
@@ -1383,11 +1388,13 @@ class PathViewer(QDialog):
             self._vert_table.selectRow(vi)
 
     def _do_initial_load(self):
-        self._vp.load_path(self._path, self._closed_cb.isChecked())
+        self._vp.load_path(self._path, self._closed_cb.isChecked(),
+                           self._bezier_cb.isChecked())
 
     def _rebuild(self, _=None):
         if self._vp._gl_ready:
-            self._vp.load_path(self._path, self._closed_cb.isChecked())
+            self._vp.load_path(self._path, self._closed_cb.isChecked(),
+                               self._bezier_cb.isChecked())
 
 
 
@@ -1424,7 +1431,47 @@ class _PathViewport(_SimpleViewport):
         self._blink_red = not self._blink_red
         self.update()
 
-    def load_path(self, path_value: list, closed: bool):
+    @staticmethod
+    def _tessellate_bezier(pts: np.ndarray, closed: bool,
+                           steps: int = 32) -> list[np.ndarray]:
+        """Return list of line-segment endpoint pairs for cubic Bezier curves.
+
+        Each group of 4 points (P0, C1, C2, P3) is one cubic segment, with
+        shared endpoints between consecutive segments (P3 of one = P0 of next).
+        Open path: needs 3k+1 points for k segments.
+        Closed path: needs 3k points (last segment wraps to pts[0]).
+        """
+        n = len(pts)
+        segments: list[tuple[int, int, int, int]] = []
+        if closed:
+            num_segs = n // 3
+            for s in range(num_segs):
+                i0 = (s * 3) % n
+                i1 = (s * 3 + 1) % n
+                i2 = (s * 3 + 2) % n
+                i3 = (s * 3 + 3) % n
+                segments.append((i0, i1, i2, i3))
+        else:
+            num_segs = (n - 1) // 3
+            for s in range(num_segs):
+                i0 = s * 3
+                segments.append((i0, i0 + 1, i0 + 2, i0 + 3))
+
+        pairs: list[np.ndarray] = []
+        t_vals = np.linspace(0.0, 1.0, steps + 1, dtype=np.float32)
+        for i0, i1, i2, i3 in segments:
+            p0, p1, p2, p3 = pts[i0], pts[i1], pts[i2], pts[i3]
+            omt = 1.0 - t_vals
+            curve = (omt**3)[:, None] * p0 + \
+                    (3 * omt**2 * t_vals)[:, None] * p1 + \
+                    (3 * omt * t_vals**2)[:, None] * p2 + \
+                    (t_vals**3)[:, None] * p3
+            for j in range(steps):
+                pairs.append(curve[j])
+                pairs.append(curve[j + 1])
+        return pairs
+
+    def load_path(self, path_value: list, closed: bool, bezier: bool = False):
         self._release_all()
         self._release_sel_markers()
 
@@ -1441,17 +1488,51 @@ class _PathViewport(_SimpleViewport):
         bb_max = pts.max(axis=0)
         self.frame_bounds(bb_min, bb_max)
 
-        # Line segments (yellow)
-        n = len(pts)
-        seg_count = n if closed else n - 1
         line_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        line_data = np.empty((seg_count * 2, 6), dtype=np.float32)
-        for i in range(seg_count):
-            j = (i + 1) % n
-            line_data[i * 2] = np.concatenate([pts[i], line_color])
-            line_data[i * 2 + 1] = np.concatenate([pts[j], line_color])
-        if seg_count > 0:
-            self.upload_lines(line_data)
+        if bezier and len(pts) >= 4:
+            pairs = self._tessellate_bezier(pts, closed)
+            if pairs:
+                line_data = np.empty((len(pairs), 6), dtype=np.float32)
+                for i, pt in enumerate(pairs):
+                    line_data[i] = np.concatenate([pt, line_color])
+                self.upload_lines(line_data)
+            handle_color = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+            handle_pairs = []
+            n = len(pts)
+            if closed:
+                num_segs = n // 3
+                for s in range(num_segs):
+                    i0 = (s * 3) % n
+                    i1 = (s * 3 + 1) % n
+                    i2 = (s * 3 + 2) % n
+                    i3 = (s * 3 + 3) % n
+                    handle_pairs.append(pts[i0])
+                    handle_pairs.append(pts[i1])
+                    handle_pairs.append(pts[i2])
+                    handle_pairs.append(pts[i3])
+            else:
+                num_segs = (n - 1) // 3
+                for s in range(num_segs):
+                    i0 = s * 3
+                    handle_pairs.append(pts[i0])
+                    handle_pairs.append(pts[i0 + 1])
+                    handle_pairs.append(pts[i0 + 2])
+                    handle_pairs.append(pts[i0 + 3])
+            if handle_pairs:
+                hdata = np.empty((len(handle_pairs), 6), dtype=np.float32)
+                for i, pt in enumerate(handle_pairs):
+                    hdata[i] = np.concatenate([pt, handle_color])
+                self.upload_lines(hdata)
+        else:
+            n = len(pts)
+            seg_count = n if closed else n - 1
+            line_data = np.empty((seg_count * 2, 6), dtype=np.float32)
+            for i in range(seg_count):
+                j = (i + 1) % n
+                line_data[i * 2] = np.concatenate([pts[i], line_color])
+                line_data[i * 2 + 1] = np.concatenate([pts[j], line_color])
+            if seg_count > 0:
+                self.upload_lines(line_data)
 
         self._build_point_markers()
         self.update()

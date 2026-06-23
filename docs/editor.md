@@ -249,6 +249,7 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 pe
 - **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights the corresponding vertices in the viewport.
 - **Viewport**: `_PathViewport(_SimpleViewport)`. Black lines at 2× width. Axis-aligned octahedron vertex markers (~7px screen size, rebuilt on zoom): green for unselected, red↔white blink (250ms) for selected. Hovering a marker shows a tooltip with index and coordinates. Clicking a marker in the viewport emits `vertex_clicked`, deselects all, and selects the clicked vertex.
 - **Close Path**: checkbox toggles whether the last vertex connects back to the first.
+- **Bezier**: checkbox switches line rendering from straight segments to cubic Bezier curves. Every 4 points form one cubic segment (P0, C1, C2, P3) with shared endpoints between consecutive segments. Open paths require 3k+1 points; closed paths require 3k points (last segment wraps to first). Each curve is tessellated into 32 line segments.
 - 2D paths (all Z=0) start in top-down orthographic; 3D paths start in perspective orbit.
 
 ## Menu Structure
