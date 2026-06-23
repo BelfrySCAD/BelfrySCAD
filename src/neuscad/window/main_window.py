@@ -1582,12 +1582,7 @@ class MainWindow(QMainWindow):
                     target_tab = self._create_and_add_tab(def_file, text)
 
         editor = target_tab.editor
-        block = editor.document().findBlockByLineNumber(def_line - 1)
-        if block.isValid():
-            cursor = editor.textCursor()
-            cursor.setPosition(block.position())
-            editor.setTextCursor(cursor)
-            editor.ensureCursorVisible()
+        editor.scroll_to_line(def_line)
         self._editor_dock.show()
         self._editor_dock.raise_()
         self._editor_stack.setCurrentWidget(editor)
@@ -1749,12 +1744,6 @@ class MainWindow(QMainWindow):
             if target_tab is not None:
                 target_tab.editor.set_execution_line(line)
                 self._tabs.setCurrentIndex(idx)
-                block = target_tab.editor.document().findBlockByLineNumber(line - 1)
-                if block.isValid():
-                    cursor = target_tab.editor.textCursor()
-                    cursor.setPosition(block.position())
-                    target_tab.editor.setTextCursor(cursor)
-                    target_tab.editor.ensureCursorVisible()
 
     def _on_debug_paused(self, origin: str, line: int, all_frame_locals: list, call_stack: list):
         tab = self._debug_tab
@@ -1880,12 +1869,6 @@ class MainWindow(QMainWindow):
         if target_tab is not None:
             target_tab.editor.set_execution_line(line)
             self._tabs.setCurrentIndex(idx)
-            block = target_tab.editor.document().findBlockByLineNumber(line - 1)
-            if block.isValid():
-                cursor = target_tab.editor.textCursor()
-                cursor.setPosition(block.position())
-                target_tab.editor.setTextCursor(cursor)
-                target_tab.editor.ensureCursorVisible()
 
     def _open_preferences(self):
         dialog = PreferencesDialog(parent=self)

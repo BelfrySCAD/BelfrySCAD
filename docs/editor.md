@@ -57,11 +57,11 @@ Right-click an identifier shows "Go to Definition of 'name'", only for words mat
 
 Lookup order: `scope.lookup_variable(word)` → `scope.lookup_function(word)` → `scope.lookup_module(word)`, first non-None wins. Built-in modules return `None` from `lookup_module` and are skipped.
 
-The definition node's `.position.origin` gives the source file path, `.position.line` the 1-indexed line. Navigation:
+The definition node's `.position.origin` gives the source file path, `.position.line` the 1-indexed line. Navigation uses `scroll_to_line(line)` which ensures at least 5 lines of context above and below:
 - Same file (or origin `None` / untitled tab): scroll current editor to the line
 - Different file: switch to a matching open tab by `file_path`, or open via `_create_and_add_tab()` (view-only, no render)
 
-`_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport/debugger-pane signals, perspective, Go-to-Definition) and adds it to the UI. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
+`_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport signals, perspective, Go-to-Definition) and adds it to the UI. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
 
 ## Code Completion
 

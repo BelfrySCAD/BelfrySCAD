@@ -995,6 +995,23 @@ class CodeEditor(QPlainTextEdit):
         self._line_number_area.update()
         self.breakpoints_changed.emit(self._breakpoints)
 
+    def scroll_to_line(self, line: int, margin: int = 5):
+        """Scroll so that *line* (1-indexed) is visible with *margin* lines of context."""
+        block = self.document().findBlockByLineNumber(line - 1)
+        if not block.isValid():
+            return
+        cursor = self.textCursor()
+        cursor.setPosition(block.position())
+        self.setTextCursor(cursor)
+        first_vis = self.firstVisibleBlock().blockNumber()
+        visible = self.viewport().height() // self.fontMetrics().lineSpacing()
+        last_vis = first_vis + visible - 1
+        target = line - 1  # 0-indexed block number
+        if target < first_vis + margin or target > last_vis - margin:
+            scroll_to = max(0, target - margin)
+            sb = self.verticalScrollBar()
+            sb.setValue(scroll_to)
+
     def set_execution_line(self, line: int):
         """Highlight the currently executing line (1-indexed)."""
         fmt = QTextCharFormat()
@@ -1010,8 +1027,7 @@ class CodeEditor(QPlainTextEdit):
         sel.cursor.clearSelection()
         self._exec_selection = [sel]
         self._refresh_extra_selections()
-        self.setTextCursor(sel.cursor)
-        self.ensureCursorVisible()
+        self.scroll_to_line(line)
 
     def clear_execution_line(self):
         self._exec_selection = []
