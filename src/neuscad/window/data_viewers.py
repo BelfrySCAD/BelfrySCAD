@@ -1496,7 +1496,7 @@ class _PathViewport(_SimpleViewport):
                 for i, pt in enumerate(pairs):
                     line_data[i] = np.concatenate([pt, line_color])
                 self.upload_lines(line_data)
-            handle_color = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+            handle_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
             handle_pairs = []
             n = len(pts)
             if closed:
