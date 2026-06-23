@@ -82,4 +82,4 @@ Detailed implementation notes live in `docs/`:
 - **`docs/wysiwyg.md`** — Viewport camera controls, selection model, transform gizmos, value overlay, and source rewrite rules for drag-to-edit.
 - **`docs/debugger.md`** — `DebugSession` signals, call stack display, per-frame variable inspection, expression-level stepping, and `DebuggerPane` states.
 - **`docs/rendering.md`** — Threaded rendering (`_RenderWorker`/`_RenderCallback`), cancellation, and progress indicator.
-- **`docs/editor.md`** — Code editor features (Find/Replace, Indent Guides, Column Guide, Code Folding, Go to Definition), Undo/Redo, console output, keyboard shortcuts, preferences, GUI layout, and menu structure.
+- **`docs/editor.md`** — Code editor features (Find/Replace, Indent Guides, Column Guide, Code Folding, Go to Definition), Undo/Redo, console output, keyboard shortcuts, preferences, GUI layout, menu structure, and data viewers (ListViewer, VNFViewer, PathViewer).

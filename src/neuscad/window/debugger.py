@@ -496,10 +496,13 @@ class DebuggerPane(QWidget):
         all_vars = {**frame.get("outer_scope", {}), **frame.get("local_scope", {})}
         if name not in all_vars:
             return
+        value = all_vars[name]
         menu = QMenu(self)
-        action = menu.addAction("Print to Console")
-        if menu.exec(self._vars_table.viewport().mapToGlobal(pos)) == action:
-            self.print_to_console.emit(_pretty_assignment(name, all_vars[name]))
+        menu.addAction("Print to Console",
+                       lambda: self.print_to_console.emit(_pretty_assignment(name, value)))
+        from neuscad.window.data_viewers import build_viewer_menu
+        build_viewer_menu(menu, name, value, self)
+        menu.exec(self._vars_table.viewport().mapToGlobal(pos))
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
         self._set_continue_mode()

@@ -737,13 +737,16 @@ class MainWindow(QMainWindow):
     def _setup_shortcuts(self):
         from PySide6.QtGui import QShortcut
 
-        def shortcut(key, slot):
+        def shortcut(key, slot, app_wide=False):
             s = QShortcut(QKeySequence(key), self)
+            if app_wide:
+                s.setContext(Qt.ShortcutContext.ApplicationShortcut)
             s.activated.connect(slot)
 
-        shortcut("Ctrl+1", lambda: self._act_show_edges.toggle())
-        shortcut("Ctrl+2", lambda: self._act_show_axes.toggle())
+        shortcut("Ctrl+1", lambda: self._viewer_or_toggle(self._act_show_edges, "show_edges"), app_wide=True)
+        shortcut("Ctrl+2", lambda: self._viewer_or_toggle(self._act_show_axes, "show_axes"), app_wide=True)
         shortcut("Ctrl+3", lambda: self._act_show_cross.toggle())
+        shortcut("Shift+Ctrl+2", lambda: self._viewer_or_toggle(self._act_perspective, "orthographic"), app_wide=True)
         shortcut("Ctrl++", self._font_size_increase)
         shortcut("Ctrl+-", self._font_size_decrease)
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
@@ -1999,19 +2002,53 @@ class MainWindow(QMainWindow):
             if tab:
                 self._apply_word_wrap_to_tab(tab)
 
+    @staticmethod
+    def _active_viewer_viewport():
+        """If a data-viewer dialog is the active window, return its viewport."""
+        from PySide6.QtWidgets import QApplication
+        active = QApplication.activeWindow()
+        if active is not None and hasattr(active, '_vp'):
+            return active._vp
+        return None
+
+    def _viewer_or_toggle(self, action, vp_attr: str):
+        """Toggle a viewport attr on the active viewer, or fall back to toggling the menu action."""
+        vp = self._active_viewer_viewport()
+        if vp is not None:
+            cur = getattr(vp, vp_attr)
+            setattr(vp, vp_attr, not cur)
+            vp.update()
+        else:
+            action.toggle()
+
     def _toggle_perspective(self, perspective: bool):
+        vp = self._active_viewer_viewport()
+        if vp is not None:
+            vp.orthographic = not perspective
+            vp.update()
+            return
         tab = self._current_tab()
         if tab:
             tab.viewport._renderer.camera.orthographic = not perspective
             tab.viewport.update()
 
     def _toggle_axes(self, visible):
+        vp = self._active_viewer_viewport()
+        if vp is not None:
+            vp.show_axes = visible
+            vp.update()
+            return
         tab = self._current_tab()
         if tab:
             tab.viewport._renderer.show_axes = visible
             tab.viewport.update()
 
     def _toggle_edges(self, visible):
+        vp = self._active_viewer_viewport()
+        if vp is not None:
+            vp.show_edges = not vp.show_edges
+            vp.update()
+            return
         tab = self._current_tab()
         if tab:
             tab.viewport._renderer.show_edges = visible
@@ -2030,6 +2067,10 @@ class MainWindow(QMainWindow):
             tab.viewport.update()
 
     def _set_view(self, preset):
+        vp = self._active_viewer_viewport()
+        if vp is not None:
+            vp.set_view_preset(preset)
+            return
         tab = self._current_tab()
         if tab:
             tab.viewport.set_view_preset(preset)

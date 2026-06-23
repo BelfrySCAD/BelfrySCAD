@@ -220,6 +220,32 @@ self._toggle_perspective(perspective)
 
 **New tabs must inherit viewport settings**: every new `DocumentTab` gets a fresh default `Viewport`/`Camera`. After connecting signals and before adding to the tab widget, call `_apply_perspective_to_tab(tab)` (and any future per-viewport settings) to match the current UI state. The `hasattr(self, '_act_perspective')` guard covers `_new_document()` being called during `__init__` before `_setup_menus()` finishes — in practice `_setup_menus()` runs first, so it's defensive only.
 
+## Data Viewers
+
+Implemented in `src/neuscad/window/data_viewers.py`. Three viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
+
+### _SimpleViewport (QOpenGLWidget)
+
+Base class for viewer 3D viewports. Orbit camera (azimuth/elevation/distance/target), own ModernGL shader programs (line, mesh with backface_color, edge, label). Axis rendering with ticks and labels ported from the main `SceneRenderer` (`_nice_spacings`, `_fmt_tick`). `schedule_load(fn)` defers geometry uploads until after `initializeGL()`. `set_view_preset()` for named views (top/bottom/left/right/front/back/isometric). Supports perspective/orthographic toggle, axes toggle, edge toggle. Mouse-centered zoom (wheel shifts target toward cursor). No custom `QSurfaceFormat` — macOS multisampling causes compositing artifacts.
+
+Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 perspective) are handled by the main window's `ApplicationShortcut`-context QShortcuts, which check `QApplication.activeWindow()` and forward to the active viewer viewport via `_active_viewer_viewport()`.
+
+### ListViewer (QDialog)
+
+`QTableWidget` with key/value columns. Recursive drill-down via context menu for nested lists/dicts.
+
+### VNFViewer (QDialog)
+
+`QSplitter`: `_VNFViewport` on left, `QTabWidget` (Vertices / Faces tabs) on right. Starts in the main window's current perspective mode.
+
+- **Vertices tab**: `QTableWidget`, 0-indexed rows, X/Y/Z columns sized for 6 digits. Multi-select (extended selection). Selected vertices shown as blinking (red↔white, 250ms) axis-aligned octahedron markers in the viewport, ~7px screen size regardless of zoom (rebuilt on wheel). Hovering a highlighted vertex shows a tooltip with index and coordinates.
+- **Faces tab**: `QTableWidget`, 0-indexed rows, single "Vertex Indices" column. Selecting a face highlights it green in the viewport (polygon offset overlay), deselects all vertices, and selects the face's referenced vertices.
+- **Viewport**: `_VNFViewport(_SimpleViewport)`. Backfaces rendered magenta. Face picking via vectorized Moller–Trumbore ray–triangle intersection. Clicking a face in viewport emits `face_clicked` signal, switches to Faces tab, and selects the row.
+
+### PathViewer (QDialog)
+
+`_PathViewport` + "Closed" checkbox + Dismiss button. Lines drawn at 2× width. Point markers: green for first vertex, red for rest. 2D paths start in top-down orthographic; 3D paths start in perspective orbit. Hovering a point shows a tooltip with index and coordinates.
+
 ## Menu Structure
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
