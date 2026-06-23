@@ -1146,7 +1146,13 @@ class VNFViewer(QDialog):
         self._tab_widget.addTab(self._face_table, f"Faces ({len(vnf_value[1])})")
 
         splitter.addWidget(self._tab_widget)
-        splitter.setSizes([600, 300])
+        vt = self._vert_table
+        table_w = (vt.verticalHeader().sizeHint().width()
+                   + sum(vt.columnWidth(j) for j in range(vt.columnCount()))
+                   + vt.frameWidth() * 2 + 2)
+        splitter.setSizes([self.width() - table_w, table_w])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
         btn_row = QHBoxLayout()
