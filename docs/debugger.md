@@ -29,11 +29,11 @@ Signals (emitted from the worker thread; Qt queues them to main):
 
 ## Call stack display
 
-Displayed **innermost-first** (current frame at row 0, `<toplevel>` at bottom). `_call_stack` in the evaluator is outermost-first; the display stack is `list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]`, built in both `_make_hook()` and `_error_break()`. `_populate_stack()` iterates it in order without reversing. `all_frame_locals[0]` always corresponds to row 0. Each non-toplevel entry shows `name()  file:line` when the call originates from a different file.
+Displayed as a top-down call chain: `<toplevel>` at the top, then outermost callee, down to the innermost (currently executing) frame at the bottom. `_call_stack` in the evaluator is outermost-first; the display stack is `[("toplevel", ...)] + list(call_stack)` (no reversal), built in both `_make_hook()` and `_error_break()`. `_all_frame_locals` is reordered to match: `list(reversed(all_frame_locals))` = `[toplevel, outermost, ..., innermost]`. Each non-toplevel entry shows `name()  file:line` using the declaration position (`decl_pos`). The stack list initially selects the innermost frame (`_innermost_row`, the last row).
 
-**Frame navigation** — `_populate_stack` stores `(file_path, line)` per row in `_stack_positions`. Clicking a call-stack entry emits `frame_selected(file_path, line)`, which `MainWindow._on_debug_frame_selected` handles by opening/switching to the target file's tab and highlighting the line. Row 0 (innermost) navigates to the current pause point; other rows navigate to the call site (`call_pos`).
+**Frame navigation** — clicking a call-stack entry navigates to where that frame calls the next one down. `_populate_stack` stores `(file_path, line)` per row in `_stack_positions`: each frame's position is the `call_pos` of its callee (the next entry in the stack), except the innermost frame (last row) which stores the current pause point. Clicking emits `frame_selected(file_path, line)`, handled by `MainWindow._on_debug_frame_selected` which opens/switches to the target file's tab and highlights the line. Display labels use `decl_pos` (definition site) for `name()  file:line`.
 
-When inside a call, a `<toplevel>` frame (`local_scope` = global scope vars) is appended to `all_frame_locals`. Clicking `<toplevel>` → Locals shows the file's global declarations.
+When inside a call, a `<toplevel>` frame (`local_scope` = global scope vars) is at row 0. Clicking `<toplevel>` → Locals shows the file's global declarations. Variable editing is only enabled in the innermost frame's Locals view.
 
 ## Per-frame variable inspection
 

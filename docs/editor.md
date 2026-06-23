@@ -183,16 +183,15 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 │  [New] [Open] [Export] | [Undo] [Redo] | [Render] [Debug] [Animate] │  ← toolbar
 ├──────────────────────────────────────────────────────────────┤
 │  [file1.scad ×]  [file2.scad ×]  [+]                        │  ← tabs
-├──────────────────────────┬──────────────────────────┬────────┤
-│                          │                          │   T    │
-│                          │                  [cube]  │   R    │
-│   QPlainTextEdit             │   3D Viewport            │   S    │
-│   Code Editor            │                          │   ·    │
-│                          │                          │   ·    │
-├──────────────────────────┴──────────────────────────┴────────┤
-│  Console                                                      │
-├──────────────────────────────────────────────────────────────┤
-│  $vpt = [0.00, 0.00, 0.00]  $vpr = [55.00, 0.00, 25.00]  $vpd = 50.00      0 FPS  │  ← status bar
+├────────────┬────────────────────────────────────────┬────────┤
+│            │                                        │   T    │
+│            │                                [cube]  │   R    │
+│   Code     │       3D Viewport                      │   S    │
+│   Editor   │                                        │   ·    │
+│            ├────────────────────────────────┬────────┤   ·    │
+│            │  Console                       │Debugger│        │
+├────────────┴────────────────────────────────┴────────┴────────┤
+│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00  0 FPS  │  ← status bar
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -206,7 +205,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **Console**: bottom pane
 - **Status bar**: bottom strip; shows 3D coordinates of the last clicked point on the mesh
 
-The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
+The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The top-left and bottom-left corners are assigned to the left dock area (`setCorner`), so the editor dock spans the full window height and the bottom docks (console, debugger, animate) fit between the left and right dock areas. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 

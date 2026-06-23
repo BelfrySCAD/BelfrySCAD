@@ -1841,6 +1841,10 @@ class MainWindow(QMainWindow):
 
     def _on_debug_restart(self):
         if self._debug_session:
+            self._debug_session.paused.disconnect()
+            self._debug_session.error_break.disconnect()
+            self._debug_session.finished.disconnect()
+            self._debug_session.errored.disconnect()
             self._debug_session.stop()
             self._debug_session = None
         self._clear_all_execution_lines()
@@ -1851,6 +1855,10 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         self._clear_all_execution_lines()
+        self._debug_session.paused.disconnect()
+        self._debug_session.error_break.disconnect()
+        self._debug_session.finished.disconnect()
+        self._debug_session.errored.disconnect()
         self._debug_session.stop()
         self._debug_session = None
         self._debug_tab = None

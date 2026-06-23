@@ -201,7 +201,7 @@ class DebugSession(QObject):
             self._step_out_expr_depth = None
             self._current_pause_expr_depth = expr_depth
 
-            display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
+            display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
             self.paused.emit(origin or "", line, list(all_frame_locals), display_stack)
             self._pause_event.clear()
             self._pause_event.wait()
@@ -234,7 +234,7 @@ class DebugSession(QObject):
         """
         if self._stopped:
             return
-        display_stack = list(reversed(call_stack)) + [("toplevel", "<toplevel>", None)]
+        display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
         self.error_break.emit(origin or "", line, msg, list(all_frame_locals), display_stack)
         self._pause_event.clear()
         self._pause_event.wait()
@@ -291,6 +291,7 @@ class DebuggerPane(QWidget):
         self._original_locals: dict[str, str] = {}
         self._all_frame_locals: list[dict] = []
         self._stack_positions: list[tuple[str, int]] = []  # (file_path, line) per row
+        self._innermost_row: int = 0  # row index of the innermost (current) frame
         self._is_running: bool = False
         self._setup_ui()
         self.setMinimumWidth(180)
@@ -442,27 +443,43 @@ class DebuggerPane(QWidget):
         self._stack_list.blockSignals(True)
         self._stack_list.clear()
         self._stack_positions.clear()
+        # call_stack is [toplevel, outermost, ..., innermost].
+        # Navigation: each entry shows where it calls the next;
+        # the innermost (last) entry shows the current pause point.
+        non_toplevel = [e for e in call_stack if e[0] != "toplevel"]
         for i, entry in enumerate(call_stack):
             if entry[0] == "toplevel":
                 self._stack_list.addItem("<toplevel>")
-                self._stack_positions.append(("", 0))
+                if non_toplevel:
+                    cp = non_toplevel[0][2]  # call_pos of first callee
+                    self._stack_positions.append((
+                        getattr(cp, 'origin', '') or '',
+                        int(getattr(cp, 'line', 0)) if cp else 0))
+                else:
+                    self._stack_positions.append(("", 0))
             else:
                 name = entry[1]
-                call_pos = entry[2]
-                line_str = str(getattr(call_pos, 'line', '?')) if call_pos is not None else '?'
-                origin = getattr(call_pos, 'origin', '') if call_pos is not None else ''
-                line_num = int(getattr(call_pos, 'line', 0)) if call_pos is not None else 0
-                file_str = os.path.basename(origin) if origin else ''
+                decl_pos = entry[3] if len(entry) > 3 else None
+                decl_line = str(getattr(decl_pos, 'line', '?')) if decl_pos is not None else '?'
+                decl_origin = getattr(decl_pos, 'origin', '') if decl_pos is not None else ''
+                file_str = os.path.basename(decl_origin) if decl_origin else ''
                 if file_str:
-                    self._stack_list.addItem(f"{name}()  {file_str}:{line_str}")
+                    self._stack_list.addItem(f"{name}()  {file_str}:{decl_line}")
                 else:
-                    self._stack_list.addItem(f"{name}()  line {line_str}")
-                if i == 0:
+                    self._stack_list.addItem(f"{name}()  line {decl_line}")
+                # Find the next non-toplevel entry after this one
+                next_idx = i + 1
+                next_entry = call_stack[next_idx] if next_idx < len(call_stack) and call_stack[next_idx][0] != "toplevel" else None
+                if next_entry is not None:
+                    cp = next_entry[2]  # call_pos of callee
+                    self._stack_positions.append((
+                        getattr(cp, 'origin', '') or '',
+                        int(getattr(cp, 'line', 0)) if cp else 0))
+                else:
                     self._stack_positions.append((pause_origin, pause_line))
-                else:
-                    self._stack_positions.append((origin, line_num))
         if self._stack_list.count() > 0:
-            self._stack_list.setCurrentRow(0)
+            row = min(self._innermost_row, self._stack_list.count() - 1)
+            self._stack_list.setCurrentRow(row)
         self._stack_list.blockSignals(False)
 
     def _populate_vars(self, frame_data: dict, is_innermost: bool = False):
@@ -485,7 +502,7 @@ class DebuggerPane(QWidget):
     def _on_frame_selected(self, row: int):
         if row < 0 or row >= len(self._all_frame_locals):
             return
-        self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
+        self._populate_vars(self._all_frame_locals[row], is_innermost=(row == self._innermost_row))
         if row < len(self._stack_positions):
             fp, ln = self._stack_positions[row]
             if fp and ln:
@@ -496,7 +513,7 @@ class DebuggerPane(QWidget):
         if row < 0:
             row = 0
         if row < len(self._all_frame_locals):
-            self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
+            self._populate_vars(self._all_frame_locals[row], is_innermost=(row == self._innermost_row))
 
     def _on_vars_context_menu(self, pos):
         item = self._vars_table.itemAt(pos)
@@ -525,13 +542,19 @@ class DebuggerPane(QWidget):
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = ""):
         self._set_continue_mode()
         self._status.setText(f"Paused at line {line}")
-        self._all_frame_locals = all_frame_locals
+        # Reorder to match display: [toplevel, outermost, ..., innermost]
+        if len(all_frame_locals) > 1:
+            self._all_frame_locals = list(reversed(all_frame_locals))
+            self._innermost_row = len(self._all_frame_locals) - 1
+        else:
+            self._all_frame_locals = list(all_frame_locals)
+            self._innermost_row = 0
         innermost = all_frame_locals[0] if all_frame_locals else {}
         dyn_names = innermost.get("dyn_names", set())
         self._original_locals = {k: _fmt(v) for k, v in innermost.get("local_scope", {}).items()
                                   if k in dyn_names}
         self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
-        self._populate_vars(innermost, is_innermost=True)
+        self._populate_vars(self._all_frame_locals[self._innermost_row], is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
@@ -542,11 +565,15 @@ class DebuggerPane(QWidget):
         if len(display) > 80:
             display = display[:77] + "…"
         self._status.setText(f"Line {line}: {display}")
-        self._all_frame_locals = all_frame_locals
-        innermost = all_frame_locals[0] if all_frame_locals else {}
+        if len(all_frame_locals) > 1:
+            self._all_frame_locals = list(reversed(all_frame_locals))
+            self._innermost_row = len(self._all_frame_locals) - 1
+        else:
+            self._all_frame_locals = list(all_frame_locals)
+            self._innermost_row = 0
         self._original_locals = {}
         self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
-        self._populate_vars(innermost, is_innermost=False)
+        self._populate_vars(self._all_frame_locals[self._innermost_row])
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
         self._btn_step_over.setEnabled(False)
