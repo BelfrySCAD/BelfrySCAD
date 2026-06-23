@@ -57,19 +57,20 @@ class Viewport(QOpenGLWidget):
         self._drag_gizmo_center: np.ndarray = np.zeros(3, dtype=np.float32)
         self._drag_start_1d: float = 0.0
 
-        # Render-busy overlay
+        # Busy overlay (render or debug)
         self._render_busy: bool = False
-        self._render_start: float = 0.0
+        self._debug_busy: bool = False
+        self._busy_start: float = 0.0
         self._spinner_frames = ["   ", ".  ", ".. ", "..."]
-        self._render_label = QLabel("", self)
-        self._render_label.setStyleSheet(
+        self._busy_label = QLabel("", self)
+        self._busy_label.setStyleSheet(
             "QLabel { background: rgba(0,0,0,160); color: white;"
             " padding: 8px 18px; border-radius: 8px;"
             " font-family: Menlo; font-size: 18px; }"
         )
-        self._render_label.hide()
-        self._render_timer = QTimer(self)
-        self._render_timer.timeout.connect(self._update_render_overlay)
+        self._busy_label.hide()
+        self._busy_timer = QTimer(self)
+        self._busy_timer.timeout.connect(self._update_busy_overlay)
 
     # ------------------------------------------------------------------
     # GL lifecycle
@@ -144,22 +145,38 @@ class Viewport(QOpenGLWidget):
     def set_render_busy(self, busy: bool):
         self._render_busy = busy
         if busy:
-            self._render_start = time.monotonic()
-            self._update_render_overlay()
-            self._render_label.show()
-            self._render_timer.start(100)
+            self._debug_busy = False
+            self._busy_start = time.monotonic()
+            self._update_busy_overlay()
+            self._busy_label.show()
+            self._busy_timer.start(100)
         else:
-            self._render_timer.stop()
-            self._render_label.hide()
+            self._busy_timer.stop()
+            self._busy_label.hide()
 
-    def _update_render_overlay(self):
-        elapsed = time.monotonic() - self._render_start
+    def set_debug_busy(self, busy: bool):
+        self._debug_busy = busy
+        if busy:
+            self._render_busy = False
+            self._busy_start = time.monotonic()
+            self._update_busy_overlay()
+            self._busy_label.show()
+            self._busy_timer.start(100)
+        else:
+            self._busy_timer.stop()
+            self._busy_label.hide()
+
+    def _update_busy_overlay(self):
+        elapsed = time.monotonic() - self._busy_start
         frame = int(elapsed * 4) % len(self._spinner_frames)
-        self._render_label.setText(f" {int(elapsed)}s {self._spinner_frames[frame]}")
-        self._render_label.adjustSize()
-        x = (self.width() - self._render_label.width()) // 2
-        y = (self.height() - self._render_label.height()) // 2
-        self._render_label.move(x, y)
+        if self._debug_busy:
+            self._busy_label.setText(f" Debugging {self._spinner_frames[frame]}")
+        else:
+            self._busy_label.setText(f" {int(elapsed)}s {self._spinner_frames[frame]}")
+        self._busy_label.adjustSize()
+        x = (self.width() - self._busy_label.width()) // 2
+        y = (self.height() - self._busy_label.height()) // 2
+        self._busy_label.move(x, y)
 
     # ------------------------------------------------------------------
     # Camera view presets
