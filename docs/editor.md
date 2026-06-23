@@ -252,6 +252,16 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 pe
 - **Bezier**: checkbox switches line rendering from straight segments to cubic Bezier curves. Every 4 points form one cubic segment (P0, C1, C2, P3) with shared endpoints between consecutive segments. Open paths require 3k+1 points; closed paths require 3k points (last segment wraps to first). Each curve is tessellated into 32 line segments.
 - 2D paths (all Z=0) start in top-down orthographic; 3D paths start in perspective orbit.
 
+### GridViewer (QDialog)
+
+`QSplitter`: `_GridViewport` on left, Row dropdown + vertex table on right. Dismiss button (20px right padding) below. Detects lists of lists of points where all rows have equal length.
+
+- **Row dropdown**: `QComboBox` selects which grid row to display in the vertex table. Changing the row highlights that row's vertices in the viewport.
+- **"Row Points (N)" label**: shows the point count for the selected row.
+- **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights individual vertices in the viewport.
+- **Viewport**: `_GridViewport(_SimpleViewport)`. Quad mesh faces (triangulated, yellow both sides) with black edge lines between adjacent grid points. Vertex markers are depth-tested (occluded by mesh). Green octahedrons for unselected, red↔white blink (250ms) for selected. Hovering shows `[row,col]: (x, y, z)` tooltip. Clicking a vertex switches the dropdown to that row and selects the vertex in the table.
+- 2D grids start in top-down orthographic; 3D grids start in perspective orbit.
+
 ## Menu Structure
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
