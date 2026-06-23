@@ -1249,11 +1249,12 @@ class VNFViewer(QDialog):
             v0 = verts[idxs[0]]
             for k in range(1, len(idxs) - 1):
                 v1, v2 = verts[idxs[k]], verts[idxs[k + 1]]
-                n = np.cross(v1 - v0, v2 - v0)
+                # Reverse winding: OpenSCAD uses CW from outside, OpenGL expects CCW
+                n = np.cross(v2 - v0, v1 - v0)
                 ln = np.linalg.norm(n)
                 if ln > 0:
                     n /= ln
-                all_positions.extend([v0, v1, v2])
+                all_positions.extend([v0, v2, v1])
                 all_normals.extend([n, n, n])
                 tri_to_face.append(fi)
             for k in range(len(idxs)):
