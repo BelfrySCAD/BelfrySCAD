@@ -1842,6 +1842,14 @@ class GridViewer(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        self._col_wrap_cb = QCheckBox("Col Wrap")
+        self._col_wrap_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._col_wrap_cb.toggled.connect(self._rebuild)
+        btn_row.addWidget(self._col_wrap_cb)
+        self._row_wrap_cb = QCheckBox("Row Wrap")
+        self._row_wrap_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._row_wrap_cb.toggled.connect(self._rebuild)
+        btn_row.addWidget(self._row_wrap_cb)
         btn_row.addStretch()
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self.close)
@@ -1912,7 +1920,15 @@ class GridViewer(QDialog):
             self._vert_table.selectRow(col_idx)
 
     def _do_initial_load(self):
-        self._vp.load_grid(self._grid)
+        self._vp.load_grid(self._grid,
+                           col_wrap=self._col_wrap_cb.isChecked(),
+                           row_wrap=self._row_wrap_cb.isChecked())
+
+    def _rebuild(self, _=None):
+        if self._vp._gl_ready:
+            self._vp.load_grid(self._grid,
+                               col_wrap=self._col_wrap_cb.isChecked(),
+                               row_wrap=self._row_wrap_cb.isChecked())
 
 
 class _GridViewport(_SimpleViewport):
@@ -1950,7 +1966,8 @@ class _GridViewport(_SimpleViewport):
         self._blink_red = not self._blink_red
         self.update()
 
-    def load_grid(self, grid_value: list):
+    def load_grid(self, grid_value: list, col_wrap: bool = False,
+                  row_wrap: bool = False):
         self._release_all()
         self._release_sel_markers()
 
@@ -1970,25 +1987,26 @@ class _GridViewport(_SimpleViewport):
         bb_max = pts.max(axis=0)
         self.frame_bounds(bb_min, bb_max)
 
+        r_range = rows if row_wrap else rows - 1
+        c_range = cols if col_wrap else cols - 1
+
         # Quad faces as triangulated mesh
-        if rows >= 2 and cols >= 2:
+        if r_range >= 1 and c_range >= 1:
             tris_pos = []
             tris_norm = []
-            for r in range(rows - 1):
-                for c in range(cols - 1):
+            for r in range(r_range):
+                for c in range(c_range):
                     i00 = r * cols + c
-                    i01 = r * cols + c + 1
-                    i10 = (r + 1) * cols + c
-                    i11 = (r + 1) * cols + c + 1
+                    i01 = r * cols + (c + 1) % cols
+                    i10 = ((r + 1) % rows) * cols + c
+                    i11 = ((r + 1) % rows) * cols + (c + 1) % cols
                     p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
-                    # Triangle 1: p00, p01, p11
                     n1 = np.cross(p01 - p00, p11 - p00)
                     ln1 = np.linalg.norm(n1)
                     if ln1 > 0:
                         n1 /= ln1
                     tris_pos.extend([p00, p01, p11])
                     tris_norm.extend([n1, n1, n1])
-                    # Triangle 2: p00, p11, p10
                     n2 = np.cross(p11 - p00, p10 - p00)
                     ln2 = np.linalg.norm(n2)
                     if ln2 > 0:
@@ -2001,12 +2019,12 @@ class _GridViewport(_SimpleViewport):
                 # Edge lines for quads
                 edge_verts = []
                 edge_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-                for r in range(rows - 1):
-                    for c in range(cols - 1):
+                for r in range(r_range):
+                    for c in range(c_range):
                         i00 = r * cols + c
-                        i01 = r * cols + c + 1
-                        i10 = (r + 1) * cols + c
-                        i11 = (r + 1) * cols + c + 1
+                        i01 = r * cols + (c + 1) % cols
+                        i10 = ((r + 1) % rows) * cols + c
+                        i11 = ((r + 1) % rows) * cols + (c + 1) % cols
                         for a, b in [(i00, i01), (i01, i11),
                                      (i11, i10), (i10, i00)]:
                             edge_verts.append(pts[a])
