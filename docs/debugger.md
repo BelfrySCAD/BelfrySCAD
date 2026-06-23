@@ -63,6 +63,8 @@ Categorization (after the hidden check):
 
 `_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
+Right-clicking a variable opens a context menu with **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, PathViewer for point sequences. See `docs/editor.md § Data Viewers` for viewer details.
+
 ## DebuggerPane states
 
 Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · Stop · Restart

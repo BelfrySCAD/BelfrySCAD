@@ -244,7 +244,12 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 pe
 
 ### PathViewer (QDialog)
 
-`_PathViewport` + "Closed" checkbox + Dismiss button. Lines drawn at 2× width. Point markers: green for first vertex, red for rest. 2D paths start in top-down orthographic; 3D paths start in perspective orbit. Hovering a point shows a tooltip with index and coordinates.
+`QSplitter`: `_PathViewport` on left, vertex table on right. "Close Path" checkbox (20px left padding) and Dismiss button (20px right padding) below.
+
+- **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights the corresponding vertices in the viewport.
+- **Viewport**: `_PathViewport(_SimpleViewport)`. Black lines at 2× width. Axis-aligned octahedron vertex markers (~7px screen size, rebuilt on zoom): green for unselected, red↔white blink (250ms) for selected. Hovering a marker shows a tooltip with index and coordinates. Clicking a marker in the viewport emits `vertex_clicked`, deselects all, and selects the clicked vertex.
+- **Close Path**: checkbox toggles whether the last vertex connects back to the first.
+- 2D paths (all Z=0) start in top-down orthographic; 3D paths start in perspective orbit.
 
 ## Menu Structure
 
