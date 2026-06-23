@@ -205,6 +205,8 @@ class DocumentTab(QWidget):
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Menlo", 11))
+        self.console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.console.customContextMenuRequested.connect(self._console_context_menu)
         self.debugger_pane = DebuggerPane()
         self.debug_session: DebugSession | None = None
         self.animate_pane = AnimatePane()
@@ -225,6 +227,12 @@ class DocumentTab(QWidget):
         self.file_path = None
         self.is_modified = False
         self.root_scope = None
+
+    def _console_context_menu(self, pos):
+        menu = self.console.createStandardContextMenu()
+        menu.addSeparator()
+        menu.addAction("Clear Console", self.console.clear)
+        menu.exec(self.console.mapToGlobal(pos))
 
     def _make_tools_strip(self):
         strip = QWidget()
@@ -788,6 +796,9 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
+        tab.debugger_pane.print_to_console.connect(
+            lambda text, t=tab: self.log_to_tab(t, text)
+        )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
@@ -945,6 +956,9 @@ class MainWindow(QMainWindow):
         tab.debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         tab.debugger_pane.restart_requested.connect(self._on_debug_restart)
         tab.debugger_pane.stop_requested.connect(self._on_debug_stop)
+        tab.debugger_pane.print_to_console.connect(
+            lambda text, t=tab: self.log_to_tab(t, text)
+        )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )

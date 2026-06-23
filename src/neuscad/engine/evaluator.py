@@ -1085,8 +1085,9 @@ class Evaluator:
             return "[" + ", ".join(self._fmt_val(x) for x in v) + "]"
         if isinstance(v, OscObject):
             if len(v) == 0:
-                return "{ }"
-            return "{ " + "".join(f"{k} = {self._fmt_val(val)}; " for k, val in v.items()) + "}"
+                return "object()"
+            inner = ", ".join(f"{k} = {self._fmt_val(val)}" for k, val in v.items())
+            return f"object({inner})"
         if isinstance(v, str):
             return f'"{v}"'
         return str(v)

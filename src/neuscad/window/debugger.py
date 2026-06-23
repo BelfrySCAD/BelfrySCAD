@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QTableWidget, QTableWidgetItem, QPushButton,
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
+    QMenu,
 )
 from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtCore import Qt, QObject, Signal
@@ -30,6 +31,10 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
+    from neuscad.engine.evaluator import OscObject
+    if isinstance(v, OscObject):
+        inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
+        return f"object({inner})"
     return str(v)
 
 
@@ -60,6 +65,49 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
         if _var_category(name, local_names) == category:
             result[name] = value
     return result
+
+
+def _pretty_fmt_value(value, indent: int = 0) -> str | None:
+    """Format OscObject values with multi-line layout. Returns None for other types."""
+    from neuscad.engine.evaluator import OscObject
+    if isinstance(value, OscObject):
+        if not value.data:
+            return "object()"
+        pad = " " * (indent + 4)
+        lines = [f"{pad}{k} = {_pretty_fmt_value(v, indent + 4) or _fmt(v)}" for k, v in value.items()]
+        return "object(\n" + ",\n".join(lines) + "\n" + " " * indent + ")"
+    return None
+
+
+def _pretty_assignment(name: str, value) -> str:
+    """Format ``name = value;`` using the parser's pretty-printer for complex values."""
+    obj_fmt = _pretty_fmt_value(value)
+    if obj_fmt is not None:
+        return f"{name} = {obj_fmt};"
+
+    from openscad_lalr_parser.nodes import (
+        Assignment, ListComprehension, NumberLiteral, BooleanLiteral,
+        StringLiteral, UndefinedLiteral, Position, Identifier,
+    )
+    from openscad_lalr_parser import to_openscad
+
+    p = Position(0, 0, 0, 0, '')
+
+    def _to_ast(v):
+        if v is None:
+            return UndefinedLiteral(p)
+        if isinstance(v, bool):
+            return BooleanLiteral(p, v)
+        if isinstance(v, (int, float)):
+            return NumberLiteral(p, float(v))
+        if isinstance(v, str):
+            return StringLiteral(p, v)
+        if isinstance(v, list):
+            return ListComprehension(p, [_to_ast(x) for x in v])
+        return StringLiteral(p, str(v))
+
+    node = Assignment(p, Identifier(p, name), _to_ast(value))
+    return to_openscad([node]).rstrip('\n')
 
 
 def _parse_val(s: str):
@@ -237,6 +285,7 @@ class DebuggerPane(QWidget):
     step_out_requested = Signal()
     restart_requested = Signal()
     stop_requested = Signal()
+    print_to_console = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -337,6 +386,8 @@ class DebuggerPane(QWidget):
         self._vars_table.verticalHeader().setVisible(False)
         self._vars_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._vars_table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
+        self._vars_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._vars_table.customContextMenuRequested.connect(self._on_vars_context_menu)
         vv.addWidget(self._vars_table)
         splitter.addWidget(vars_widget)
 
@@ -428,6 +479,27 @@ class DebuggerPane(QWidget):
             row = 0
         if row < len(self._all_frame_locals):
             self._populate_vars(self._all_frame_locals[row], is_innermost=(row == 0))
+
+    def _on_vars_context_menu(self, pos):
+        item = self._vars_table.itemAt(pos)
+        if item is None:
+            return
+        row = item.row()
+        name_item = self._vars_table.item(row, 0)
+        if name_item is None:
+            return
+        name = name_item.text()
+        frame_row = self._stack_list.currentRow()
+        if frame_row < 0 or frame_row >= len(self._all_frame_locals):
+            return
+        frame = self._all_frame_locals[frame_row]
+        all_vars = {**frame.get("outer_scope", {}), **frame.get("local_scope", {})}
+        if name not in all_vars:
+            return
+        menu = QMenu(self)
+        action = menu.addAction("Print to Console")
+        if menu.exec(self._vars_table.viewport().mapToGlobal(pos)) == action:
+            self.print_to_console.emit(_pretty_assignment(name, all_vars[name]))
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list):
         self._set_continue_mode()
