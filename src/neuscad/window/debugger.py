@@ -146,6 +146,7 @@ class DebugSession(QObject):
         self._pending_mods: dict = {}
         self._breakpoints: dict[str, set[int]] = {}
         # Step-mode flags (all mutually exclusive, cleared on each pause)
+        self._break_on_first: bool = False
         self._step_mode: bool = False          # step_into: pause at very next statement
         self._step_over_depth: int | None = None  # step_over: pause when depth ≤ N
         self._step_out_depth: int | None = None   # step_out:  pause when call depth < N
@@ -158,6 +159,7 @@ class DebugSession(QObject):
     def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], viewport_params: dict | None = None, current_file: str | None = None):
         self._current_file = os.path.realpath(current_file) if current_file else None
         self._breakpoints = dict(breakpoints)
+        self._break_on_first = True
         self._step_mode = False
         self._step_over_depth = None
         self._step_out_depth = None
@@ -196,6 +198,7 @@ class DebugSession(QObject):
             should_pause = (
                 forced
                 or pause_now
+                or (self._break_on_first and not expr_level)
                 or (line in self._breakpoints.get(resolved_origin, set()) and not expr_level)
                 or self._step_mode
                 or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
@@ -207,6 +210,7 @@ class DebugSession(QObject):
                 return ("continue", {})
 
             # Clear all step state before pausing
+            self._break_on_first = False
             self._step_mode = False
             self._step_over_depth = None
             self._step_out_depth = None
