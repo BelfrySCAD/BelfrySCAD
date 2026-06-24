@@ -12,6 +12,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `error_break` | `origin, line, msg, all_frame_locals, call_stack` | Any runtime error |
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
+| `logged` | `str` | Echo/print output from the evaluator (thread-safe via signal) |
 
 `all_frame_locals` is a list of frame dicts, **innermost first**, with an extra `<toplevel>` entry appended when inside a call. `all_frame_locals[0]` matches row 0 (innermost) of the call-stack list. Each entry:
 
@@ -21,7 +22,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars editable via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, locals_dict, call_stack, all_frame_locals, ..., origin=None) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. All pause conditions — breakpoints, step-into, step-over, step-out — work regardless of `origin`, so debugging follows execution across included files. Breakpoints are collected from all open tabs as a `{resolved_path: set(lines)}` dict, and the hook resolves `origin` before lookup. When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line via `set_execution_line()`, which uses `scroll_to_line()` to ensure at least 5 lines of context above and below; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, depth, *, forced, expr_level, expr_depth, origin, get_frames) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. `get_frames` is a lazy callback that builds `(locals_dict, all_frame_locals), call_stack` only when called, avoiding the cost on non-pausing hook invocations. Step-into pauses regardless of origin; step-over and step-out track the file where the step was initiated (`_step_origin`) and only pause in that same file. Break-on-first pauses at the first non-expression statement in the toplevel file. Breakpoints are collected from all open tabs as a `{resolved_path: set(lines)}` dict, and the hook resolves `origin` before lookup. When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line via `set_execution_line()`, which uses `scroll_to_line()` to ensure at least 5 lines of context above and below; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
 
 **Pause during execution** — `DebugSession.pause()` sets `_pause_requested`. The hook checks/consumes this flag at the top of every call, triggering an immediate pause regardless of breakpoints or step state — useful for interrupting a long-running evaluation.
 
@@ -45,9 +46,9 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **`TernaryOp`** — before condition evaluation, then again at the chosen branch after resolution
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition, then at the chosen branch after; in both `_eval_list_comp` and `_eval_list_comp_body`
-- **`LetOp`** — after each assignment, with the new variable already in `child_ctx`
+- **`LetOp`** — before each assignment; `ModularLet` skips the `let(` node and steps through assignments individually
 - **`ListCompFor`** — at the start of each iteration, after loop variables bind into `loop_ctx`
-- **`ListCompLet`** — after each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
+- **`ListCompLet`** — before each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **`ListCompEach`** — before the body expression, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` and the fallthrough in `_eval_list_comp_body`
 
@@ -69,7 +70,18 @@ Right-clicking a variable opens a context menu with **View as…** options via `
 
 ## DebuggerPane states
 
-Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · Stop · Restart
+Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · Restart · Stop
+
+Keyboard shortcuts:
+
+| Key | Action |
+|---|---|
+| F5 | Continue / Pause |
+| F10 | Step Over |
+| F11 | Step Into |
+| Shift+F11 | Step Out |
+| Shift+Cmd+F5 | Restart |
+| Shift+F5 | Stop |
 
 | Method | Status label | Continue/Pause btn | Step buttons | Stop | Restart |
 |---|---|---|---|---|---|

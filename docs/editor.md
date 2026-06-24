@@ -121,9 +121,15 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Shift+Cmd+V | View All |
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
+| F5 | Debug: Continue / Pause |
+| Shift+F5 | Debug: Stop |
+| Shift+Cmd+F5 | Debug: Restart |
 | F6 | Render |
 | Shift+F6 | Debug |
 | F7 | Animate |
+| F10 | Debug: Step Over |
+| F11 | Debug: Step Into |
+| Shift+F11 | Debug: Step Out |
 | Escape | Cancel in-progress render |
 
 ## Application Preferences
