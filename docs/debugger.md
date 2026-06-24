@@ -83,6 +83,24 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 | Shift+Cmd+F5 | Restart |
 | Shift+F5 | Stop |
 
+### Button behaviors
+
+**Continue** — Resume execution until the next breakpoint is reached.
+
+**Pause** — Pause execution at the currently executing line. (Continue and Pause share a single button that toggles based on state.)
+
+**Step Over** — Execute the current line and pause at the next line in the current function, module, or toplevel context in the current file. If the current line contains function or module calls, execute them all without stepping into them.
+
+**Step Into** — If the current line has no module or function calls, behave the same as Step Over. If it has calls, step into the first one and pause at its first line. If a call is split across multiple lines, step to each argument line until all arguments have been evaluated, then step into the call.
+
+**Step Out** — Continue execution until the current function or module returns. Step to the caller, and if it has another function or module call, step into the next one. If no more calls remain in the caller, pause at the next code line after the last call.
+
+**Restart** — Restart the program from the beginning and pause at the first line of code (break-on-first).
+
+**Stop** — Stop execution and terminate the debugger session.
+
+### Pane state table
+
 | Method | Status label | Continue/Pause btn | Step buttons | Stop | Restart |
 |---|---|---|---|---|---|
 | `set_running()` | "Running…" | **Pause** (enabled) | Disabled | Enabled | Enabled |

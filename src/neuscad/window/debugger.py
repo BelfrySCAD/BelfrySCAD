@@ -197,15 +197,25 @@ class DebugSession(QObject):
             pause_now = self._pause_requested
             if pause_now:
                 self._pause_requested = False
+            stepped_out = (
+                (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level and resolved_origin == self._step_origin)
+                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth and resolved_origin == self._step_origin)
+            )
+            if stepped_out:
+                self._step_out_depth = None
+                self._step_out_expr_depth = None
+                self._step_mode = True
+                self._step_over_depth = depth
+                self._step_origin = resolved_origin
+                return ("continue", {})
+
             should_pause = (
                 forced
                 or pause_now
                 or (self._break_on_first and not expr_level and resolved_origin == _current)
                 or (line in self._breakpoints.get(resolved_origin, set()) and not expr_level)
-                or self._step_mode
+                or (self._step_mode and depth > self._step_over_depth and not expr_level)
                 or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level and resolved_origin == self._step_origin)
-                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level and resolved_origin == self._step_origin)
-                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth and resolved_origin == self._step_origin)
             )
 
             if not should_pause:
@@ -235,6 +245,8 @@ class DebugSession(QObject):
 
             if cmd == "step_into":
                 self._step_mode = True
+                self._step_over_depth = depth
+                self._step_origin = resolved_origin
             elif cmd == "step_over":
                 self._step_over_depth = depth
                 self._step_origin = resolved_origin
