@@ -49,6 +49,7 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition, then at the chosen branch after; in both `_eval_list_comp` and `_eval_list_comp_body`
 - **`LetOp`** — before each assignment (statement-level, so step-over pauses on them); `ModularLet` skips the `let(` node and steps through assignments individually
+- **`ModularFor` / `ModularIntersectionFor`** — at the first body statement of each iteration, after loop variables bind into `loop_ctx`
 - **`ListCompFor`** — at the start of each iteration, after loop variables bind into `loop_ctx`
 - **`ListCompLet`** — before each assignment (statement-level), in both `_eval_list_comp` and `_eval_list_comp_body`
 - **`ListCompEach`** — before the body expression, in both `_eval_list_comp` and `_eval_list_comp_body`

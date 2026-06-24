@@ -136,7 +136,7 @@ Unknown functions emit `WARNING: Ignoring unknown function 'name' in file ..., l
 
 Unknown variables emit `WARNING: Ignoring unknown variable 'name' in file ..., line n` (no TRACE lines) and evaluate to `undef`, for *any* unresolved identifier — including a bare reference to a named function declaration (`function f(x) = ...; f` is an "unknown variable", since functions and variables live in separate namespaces). `_eval_identifier()` takes a `warn_if_undef` flag (default `True`); `_eval_function_call()` passes `False` when probing whether a plain-identifier callee is a variable holding a `FunctionLiteral`, so a genuinely unknown function (e.g. `sort(...)`) produces exactly one warning ("Ignoring unknown function"), not two.
 
-`_call_stack` entries: modules are 4-tuples `("module", name, call_pos, decl_pos)` (call site + declaration start); functions are 3-tuples `("function", name, call_pos)`. `error(msg, node=None, innermost_frame=None)` takes the failing node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line. If `error_break_fn` is set (debug mode), `error()` calls it before raising `EvalError`, pausing the debugger at the error site.
+`_call_stack` entries: both modules and functions are 4-tuples `("module"|"function", name, call_pos, decl_pos)` (call site + declaration start). `error(msg, node=None, innermost_frame=None)` takes the failing node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line. If `error_break_fn` is set (debug mode), `error()` calls it before raising `EvalError`, pausing the debugger at the error site.
 
 ## Special variable scoping (`$variables`)
 
