@@ -1899,6 +1899,7 @@ class GridViewer(QDialog):
         row_pts = self._grid[row_idx]
         self._pts_label.setText(f"Row Points ({len(row_pts)})")
         self._populate_table(row_pts)
+        self._vert_table.selectAll()
         self._vp.set_selected_row(row_idx)
 
     def _on_vert_table_selection(self):
