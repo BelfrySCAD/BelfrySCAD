@@ -40,10 +40,12 @@ When inside a call, a `<toplevel>` frame (`local_scope` = global scope vars) is 
 
 The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_stack`), pushed/popped in `_eval_user_module`/`_eval_user_function`. At each `_check_debug`, `local_scope` reads directly from `ctx.dyn` (all `__let_*`/`$*` entries) — no scope walk needed since assignments are eager. When inside a call, `outer_scope` comes from `_root_ctx.dyn` (Globals view). A `<toplevel>` frame (`local_scope = outer_scope`) is appended when `_call_stack` is non-empty.
 
+**Call-site debug stops**: `_eval_function_call` fires `_check_debug(node, ctx)` at the `PrimaryCall` node (the call site in the caller's file) before entering `_eval_user_function` or `_eval_function_literal`. This is a statement-level checkpoint, so Step Over pauses at user-defined function call sites within expressions (e.g., `repeat()` inside a list literal). Built-in function calls do not get call-site checkpoints.
+
 **Step Into for functions**: function bodies are expressions, so `_eval_statement`'s `_check_debug` never fires for them. `_eval_user_function` explicitly calls `self._check_debug(decl.expr, child_ctx)` after pushing the call frame, before `_eval_expr(decl.expr, child_ctx)` — giving Step Into a pause point at the start of every function body.
 
 **Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. The debug hook only honours these for `step_into` (`_step_mode`) — gutter breakpoints, step-over, and step-out filter them out (`and not expr_level`). Nodes calling `_check_debug(…, expr_level=True)`:
-- **`TernaryOp`** — before condition evaluation, then again at the chosen branch after resolution
+- **`TernaryOp`** — statement-level pause before condition evaluation, then `expr_level=True` at the chosen branch after resolution
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition, then at the chosen branch after; in both `_eval_list_comp` and `_eval_list_comp_body`
 - **`LetOp`** — before each assignment (statement-level, so step-over pauses on them); `ModularLet` skips the `let(` node and steps through assignments individually

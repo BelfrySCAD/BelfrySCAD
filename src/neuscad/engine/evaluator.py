@@ -2525,7 +2525,7 @@ class Evaluator:
 
     def _expr_ternary(self, node, ctx):
         if self._debugging:
-            self._check_debug(node, ctx, expr_level=True)
+            self._check_debug(node, ctx)
         cond = self._eval_expr(node.condition, ctx)
         branch = node.true_expr if cond else node.false_expr
         if self._debugging:
@@ -2842,6 +2842,8 @@ class Evaluator:
             if name not in self._BUILTIN_FN_NAMES:
                 decl = ctx.scope.lookup_function(name)
                 if decl is not None:
+                    if self._debugging:
+                        self._check_debug(node, ctx)
                     return self._eval_user_function(name, decl, node.arguments, ctx, node)
             else:
                 args = self._resolve_args(node.arguments, ctx)
@@ -2866,6 +2868,8 @@ class Evaluator:
         else:
             func_node = self._eval_expr(left, ctx)
         if type(func_node) is FunctionLiteral:
+            if self._debugging:
+                self._check_debug(node, ctx)
             return self._eval_function_literal(func_node, node.arguments, ctx, node, name=name)
 
         if name and func_node is None:
