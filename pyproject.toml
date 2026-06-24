@@ -56,7 +56,6 @@ formal_name = "BelfrySCAD"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 icon = "resources/belfryscad"
 sources = ["src/belfryscad"]
-python_version_tag = "3.12"
 requires = [
     "PySide6",
     "manifold3d",

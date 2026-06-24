@@ -24,14 +24,15 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: "3.12"
 
-      - run: uv sync --frozen
+      - run: uv sync --frozen --python 3.12
 
       - name: Build macOS app
         run: |
-          uv run briefcase create macOS app
-          uv run briefcase build macOS app
-          uv run briefcase package macOS app --adhoc-sign
+          uv run --python 3.12 briefcase create macOS app
+          uv run --python 3.12 briefcase build macOS app
+          uv run --python 3.12 briefcase package macOS app --adhoc-sign
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
@@ -47,14 +48,15 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: "3.12"
 
-      - run: uv sync --frozen
+      - run: uv sync --frozen --python 3.12
 
       - name: Build Windows installer
         run: |
-          uv run briefcase create windows app
-          uv run briefcase build windows app
-          uv run briefcase package windows app
+          uv run --python 3.12 briefcase create windows app
+          uv run --python 3.12 briefcase build windows app
+          uv run --python 3.12 briefcase package windows app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
@@ -80,14 +82,15 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: "3.12"
 
-      - run: uv sync --frozen
+      - run: uv sync --frozen --python 3.12
 
       - name: Build Linux AppImage
         run: |
-          uv run briefcase create linux appimage
-          uv run briefcase build linux appimage
-          uv run briefcase package linux appimage
+          uv run --python 3.12 briefcase create linux appimage
+          uv run --python 3.12 briefcase build linux appimage
+          uv run --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
