@@ -198,7 +198,7 @@ class DebugSession(QObject):
             should_pause = (
                 forced
                 or pause_now
-                or (self._break_on_first and not expr_level)
+                or (self._break_on_first and not expr_level and resolved_origin == _current)
                 or (line in self._breakpoints.get(resolved_origin, set()) and not expr_level)
                 or self._step_mode
                 or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
