@@ -933,6 +933,7 @@ class Evaluator:
         self._error_break_fn = error_break_fn
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
+        self._last_ctx: EvalContext | None = None
         self._root_ctx: EvalContext | None = None
         self._expr_depth: int = 0
         self._math_fns = {
@@ -1071,7 +1072,11 @@ class Evaluator:
         if self._error_break_fn is not None:
             line = getattr(pos, 'line', 0) if pos else 0
             origin = getattr(pos, 'origin', None) if pos else None
-            self._error_break_fn(int(line), header, self._last_all_frame_locals, list(self._call_stack), origin=origin)
+            if self._last_ctx is not None:
+                _, all_frame_locals = self._build_frame_locals(self._last_ctx)
+            else:
+                all_frame_locals = self._last_all_frame_locals
+            self._error_break_fn(int(line), header, all_frame_locals, list(self._call_stack), origin=origin)
         raise EvalError(full)
 
     def _fmt_val(self, v) -> str:
@@ -1160,6 +1165,7 @@ class Evaluator:
     # ------------------------------------------------------------------
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
+        self._last_ctx = ctx
         t = type(node)
         if t is not ModuleDeclaration and t is not FunctionDeclaration and t is not ModularLet:
             if self._debugging:
