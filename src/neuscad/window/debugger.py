@@ -348,7 +348,7 @@ class DebuggerPane(QWidget):
         self._btn_stop.setFixedSize(28, 28)
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
-                    self._btn_step_out, self._btn_stop, self._btn_restart):
+                    self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setFlat(True)
             btn.setEnabled(btn is self._btn_restart)
 
@@ -365,7 +365,7 @@ class DebuggerPane(QWidget):
         stack_header.addWidget(QLabel("Call Stack"))
         stack_header.addStretch()
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
-                    self._btn_step_out, self._btn_stop, self._btn_restart):
+                    self._btn_step_out, self._btn_restart, self._btn_stop):
             stack_header.addWidget(btn)
         sv.addLayout(stack_header)
         self._stack_list = QListWidget()
