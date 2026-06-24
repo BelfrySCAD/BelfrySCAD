@@ -41,3 +41,8 @@ resources/*.iconset/
 # Testing
 .coverage
 htmlcov/
+
+# Scratch files
+test*.scad
+ntest*.scad
+profile_eval.py
