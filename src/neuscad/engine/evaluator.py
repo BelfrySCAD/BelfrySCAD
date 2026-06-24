@@ -2560,7 +2560,7 @@ class Evaluator:
         child_ctx = ctx.let_child_ctx()
         for assign in node.assignments:
             if self._debugging:
-                self._check_debug(assign, child_ctx, expr_level=True)
+                self._check_debug(assign, child_ctx)
             v = self._eval_expr(assign.expr, child_ctx)
             child_ctx.let[assign.name.name] = v
         return self._eval_expr(node.body, child_ctx)
@@ -2639,7 +2639,7 @@ class Evaluator:
                 let_ctx = ctx.let_child_ctx()
                 for assign in elem.assignments:
                     if self._debugging:
-                        self._check_debug(assign, let_ctx, expr_level=True)
+                        self._check_debug(assign, let_ctx)
                     let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif te is ListCompEach:
@@ -2682,7 +2682,7 @@ class Evaluator:
             let_ctx = ctx.let_child_ctx()
             for assign in body.assignments:
                 if self._debugging:
-                    self._check_debug(assign, let_ctx, expr_level=True)
+                    self._check_debug(assign, let_ctx)
                 let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
             return self._eval_list_comp_body(body.body, let_ctx)
         if t is ListCompIf:
