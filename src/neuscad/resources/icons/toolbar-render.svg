@@ -1,3 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <polygon points="7,4 7,28 27,16" fill="#444"/>
+  <!-- Isometric wireframe cube -->
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Front face -->
+    <polygon points="16,3 4,10 4,22 16,29 28,22 28,10"/>
+    <!-- Center vertical -->
+    <line x1="16" y1="16" x2="16" y2="29"/>
+    <!-- Left diagonal -->
+    <line x1="4" y1="10" x2="16" y2="16"/>
+    <!-- Right diagonal -->
+    <line x1="28" y1="10" x2="16" y2="16"/>
+  </g>
 </svg>
