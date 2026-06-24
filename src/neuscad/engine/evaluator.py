@@ -1161,7 +1161,7 @@ class Evaluator:
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
         t = type(node)
-        if t is not ModuleDeclaration and t is not FunctionDeclaration:
+        if t is not ModuleDeclaration and t is not FunctionDeclaration and t is not ModularLet:
             if self._debugging:
                 self._check_debug(node, ctx)
         if t is Assignment:
@@ -2296,6 +2296,8 @@ class Evaluator:
         child_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                  children_caller_ctx=ctx.children_caller_ctx)
         for assign in node.assignments:
+            if self._debugging:
+                self._check_debug(assign, ctx)
             v = self._eval_expr(assign.expr, ctx)
             child_ctx.let[assign.name.name] = v
         body = getattr(node, 'children', None) or getattr(node, 'body', None) or []
@@ -2557,10 +2559,10 @@ class Evaluator:
     def _expr_let(self, node, ctx):
         child_ctx = ctx.let_child_ctx()
         for assign in node.assignments:
-            v = self._eval_expr(assign.expr, child_ctx)
-            child_ctx.let[assign.name.name] = v
             if self._debugging:
                 self._check_debug(assign, child_ctx, expr_level=True)
+            v = self._eval_expr(assign.expr, child_ctx)
+            child_ctx.let[assign.name.name] = v
         return self._eval_expr(node.body, child_ctx)
 
     def _expr_echo(self, node, ctx):
@@ -2636,9 +2638,9 @@ class Evaluator:
             elif te is ListCompLet:
                 let_ctx = ctx.let_child_ctx()
                 for assign in elem.assignments:
-                    let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                     if self._debugging:
                         self._check_debug(assign, let_ctx, expr_level=True)
+                    let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif te is ListCompEach:
                 self._expr_depth += 1
@@ -2679,9 +2681,9 @@ class Evaluator:
         if t is ListCompLet:
             let_ctx = ctx.let_child_ctx()
             for assign in body.assignments:
-                let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
                 if self._debugging:
                     self._check_debug(assign, let_ctx, expr_level=True)
+                let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
             return self._eval_list_comp_body(body.body, let_ctx)
         if t is ListCompIf:
             if self._debugging:
