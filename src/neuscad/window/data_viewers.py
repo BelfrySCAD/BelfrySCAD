@@ -125,6 +125,8 @@ class _SimpleViewport(QOpenGLWidget):
         self.orthographic = False
         self.show_edges = False
         self.show_axes = True
+        self._scene_bb_min: np.ndarray | None = None
+        self._scene_bb_max: np.ndarray | None = None
 
     # -- GL lifecycle --
 
@@ -513,6 +515,8 @@ class _SimpleViewport(QOpenGLWidget):
         return self._projection_matrix(aspect) @ self._view_matrix()
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray):
+        self._scene_bb_min = bb_min.copy()
+        self._scene_bb_max = bb_max.copy()
         center = (bb_min + bb_max) / 2
         extent = np.linalg.norm(bb_max - bb_min)
         self.target = center.astype(np.float32)
@@ -542,6 +546,11 @@ class _SimpleViewport(QOpenGLWidget):
             self.azimuth, self.elevation = 0, 0
         elif preset == "iso":
             self.azimuth, self.elevation = 295, 35
+        elif preset == "all":
+            if self._scene_bb_min is not None:
+                self.frame_bounds(self._scene_bb_min, self._scene_bb_max)
+            self.update()
+            return
         self.update()
 
     # -- Mouse interaction --
