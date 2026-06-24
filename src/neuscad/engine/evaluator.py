@@ -2578,10 +2578,14 @@ class Evaluator:
         return self._eval_expr(node.body, child_ctx)
 
     def _expr_echo(self, node, ctx):
+        if self._debugging:
+            self._check_debug(node, ctx)
         self._do_echo(node.arguments, ctx)
         return self._eval_expr(node.body, ctx)
 
     def _expr_assert(self, node, ctx):
+        if self._debugging:
+            self._check_debug(node, ctx)
         raw = node.arguments
         condition = self._eval_expr(raw[0].expr, ctx) if raw else True
         if not condition:

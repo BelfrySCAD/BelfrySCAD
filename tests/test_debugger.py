@@ -253,6 +253,44 @@ if (true)
 
 
 # ---------------------------------------------------------------------------
+# Expression-level echo and assert stops
+# ---------------------------------------------------------------------------
+
+class TestExprEchoAssertStops:
+    def test_expr_echo_has_statement_level_stop(self):
+        """echo() in expression context should produce a statement-level stop."""
+        src = "a = echo(\"hi\") 42;\n"
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        # assignment + echo stop
+        assert len(stmt) >= 2
+
+    def test_expr_assert_has_statement_level_stop(self):
+        """assert() in expression context should produce a statement-level stop."""
+        src = "a = assert(true) 42;\n"
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        # assignment + assert stop
+        assert len(stmt) >= 2
+
+    def test_modular_echo_has_statement_level_stop(self):
+        """Modular echo() should produce a statement-level stop."""
+        src = "echo(\"hello\");\n"
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        assert len(stmt) == 1
+        assert stmt[0]["line"] == 1
+
+    def test_modular_assert_has_statement_level_stop(self):
+        """Modular assert() should produce a statement-level stop."""
+        src = "assert(true);\n"
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        assert len(stmt) == 1
+        assert stmt[0]["line"] == 1
+
+
+# ---------------------------------------------------------------------------
 # List comprehension stops
 # ---------------------------------------------------------------------------
 

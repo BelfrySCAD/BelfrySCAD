@@ -44,18 +44,21 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 
 **Step Into for functions**: function bodies are expressions, so `_eval_statement`'s `_check_debug` never fires for them. `_eval_user_function` explicitly calls `self._check_debug(decl.expr, child_ctx)` after pushing the call frame, before `_eval_expr(decl.expr, child_ctx)` — giving Step Into a pause point at the start of every function body.
 
-**Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. The debug hook only honours these for `step_into` (`_step_mode`) — gutter breakpoints, step-over, and step-out filter them out (`and not expr_level`). Nodes calling `_check_debug(…, expr_level=True)`:
-- **`TernaryOp`** — statement-level pause before condition evaluation, then `expr_level=True` at the chosen branch after resolution
+**Statement-level debug stops in expressions**: these fire without `expr_level`, so step-over/step-out pause on them:
+- **`EchoOp`** — before the expression-form `echo(…) body` executes (modular `echo(…);` is already covered by `_eval_statement`)
+- **`AssertOp`** — before the expression-form `assert(…) body` executes (modular `assert(…);` is already covered by `_eval_statement`)
+- **`TernaryOp`** — before condition evaluation (the chosen-branch pause is `expr_level=True`)
+- **`LetOp`** — before each assignment; `ModularLet` skips the `let(` node and steps through assignments individually
+- **`ListCompLet`** — before each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
+
+**Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. All step commands (`into`, `over`, `out`) skip these checkpoints. Nodes calling `_check_debug(…, expr_level=True)`:
+- **`TernaryOp`** — at the chosen branch after condition resolution
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition, then at the chosen branch after; in both `_eval_list_comp` and `_eval_list_comp_body`
-- **`LetOp`** — before each assignment (statement-level, so step-over pauses on them); `ModularLet` skips the `let(` node and steps through assignments individually
 - **`ModularFor` / `ModularIntersectionFor`** — at the first body statement of each iteration, after loop variables bind into `loop_ctx`
-- **`ListCompFor`** — at the start of each iteration, after loop variables bind into `loop_ctx`
-- **`ListCompLet`** — before each assignment (statement-level), in both `_eval_list_comp` and `_eval_list_comp_body`
+- **`ListCompFor` / `ListCompCFor`** — at the start of each iteration, after loop variables bind into `loop_ctx`
 - **`ListCompEach`** — before the body expression, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` and the fallthrough in `_eval_list_comp_body`
-
-All step commands (`into`, `over`, `out`) skip `expr_level` checkpoints — they only pause at statement-level debug stops. Expression-level checkpoints exist for future use but are currently filtered out by the hook.
 
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
