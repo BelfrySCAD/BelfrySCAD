@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
     QDockWidget, QStackedWidget, QApplication,
 )
-from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QUndoCommand, QTextCursor
+from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
 import threading
 import time
@@ -515,6 +515,18 @@ class MainWindow(QMainWindow):
         self._debugger_pane.print_to_console.connect(self._on_debug_print)
         self._debugger_pane.frame_selected.connect(self._on_debug_frame_selected)
         self._debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
+
+        for key, btn in (
+            (Qt.Key.Key_F5, self._debugger_pane._btn_continue),
+            (Qt.Key.Key_F10, self._debugger_pane._btn_step_over),
+            (Qt.Key.Key_F11, self._debugger_pane._btn_step_into),
+            (Qt.Modifier.SHIFT | Qt.Key.Key_F11, self._debugger_pane._btn_step_out),
+            (Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5, self._debugger_pane._btn_restart),
+            (Qt.Modifier.SHIFT | Qt.Key.Key_F5, self._debugger_pane._btn_stop),
+        ):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(btn.click)
 
         # --- Animate dock (bottom, beside console) ---
         self._animate_stack = QStackedWidget()

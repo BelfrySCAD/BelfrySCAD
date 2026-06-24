@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
     QMenu,
 )
-from PySide6.QtGui import QFont, QIcon, QKeySequence, QPalette, QShortcut
+from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtCore import Qt, QObject, Signal
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -325,32 +325,26 @@ class DebuggerPane(QWidget):
         self._btn_continue = QPushButton()
         self._btn_continue.setIcon(_debug_icon("continue"))
         self._btn_continue.setToolTip("Continue / Pause (F5)")
-        self._btn_continue.setShortcut(QKeySequence(Qt.Key.Key_F5))
         self._btn_continue.setFixedSize(28, 28)
         self._btn_step_over = QPushButton()
         self._btn_step_over.setIcon(_debug_icon("step-over"))
         self._btn_step_over.setToolTip("Step Over (F10)")
-        self._btn_step_over.setShortcut(QKeySequence(Qt.Key.Key_F10))
         self._btn_step_over.setFixedSize(28, 28)
         self._btn_step_into = QPushButton()
         self._btn_step_into.setIcon(_debug_icon("step-into"))
         self._btn_step_into.setToolTip("Step Into (F11)")
-        self._btn_step_into.setShortcut(QKeySequence(Qt.Key.Key_F11))
         self._btn_step_into.setFixedSize(28, 28)
         self._btn_step_out = QPushButton()
         self._btn_step_out.setIcon(_debug_icon("step-out"))
         self._btn_step_out.setToolTip("Step Out (⇧F11)")
-        self._btn_step_out.setShortcut(QKeySequence(Qt.Modifier.SHIFT | Qt.Key.Key_F11))
         self._btn_step_out.setFixedSize(28, 28)
         self._btn_restart = QPushButton()
         self._btn_restart.setIcon(_debug_icon("restart"))
         self._btn_restart.setToolTip("Restart (⇧⌘F5)")
-        self._btn_restart.setShortcut(QKeySequence(Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5))
         self._btn_restart.setFixedSize(28, 28)
         self._btn_stop = QPushButton()
         self._btn_stop.setIcon(_debug_icon("stop"))
         self._btn_stop.setToolTip("Stop (⇧F5)")
-        self._btn_stop.setShortcut(QKeySequence(Qt.Modifier.SHIFT | Qt.Key.Key_F5))
         self._btn_stop.setFixedSize(28, 28)
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
