@@ -2635,7 +2635,7 @@ class Evaluator:
                 result.extend(self._eval_listcomp_cfor(elem, ctx))
             elif te is ListCompIf:
                 if self._debugging:
-                    self._check_debug(elem, ctx, expr_level=True)
+                    self._check_debug(elem, ctx)
                 if self._eval_expr(elem.condition, ctx):
                     self._expr_depth += 1
                     if self._debugging:
@@ -2644,7 +2644,7 @@ class Evaluator:
                     self._expr_depth -= 1
             elif te is ListCompIfElse:
                 if self._debugging:
-                    self._check_debug(elem, ctx, expr_level=True)
+                    self._check_debug(elem, ctx)
                 branch = elem.true_expr if self._eval_expr(elem.condition, ctx) else elem.false_expr
                 self._expr_depth += 1
                 if self._debugging:
@@ -2703,7 +2703,7 @@ class Evaluator:
             return self._eval_list_comp_body(body.body, let_ctx)
         if t is ListCompIf:
             if self._debugging:
-                self._check_debug(body, ctx, expr_level=True)
+                self._check_debug(body, ctx)
             if self._eval_expr(body.condition, ctx):
                 self._expr_depth += 1
                 if self._debugging:
@@ -2714,7 +2714,7 @@ class Evaluator:
             return []
         if t is ListCompIfElse:
             if self._debugging:
-                self._check_debug(body, ctx, expr_level=True)
+                self._check_debug(body, ctx)
             branch = body.true_expr if self._eval_expr(body.condition, ctx) else body.false_expr
             self._expr_depth += 1
             if self._debugging:

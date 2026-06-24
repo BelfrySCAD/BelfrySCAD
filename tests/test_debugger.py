@@ -253,6 +253,43 @@ if (true)
 
 
 # ---------------------------------------------------------------------------
+# List comprehension if stops
+# ---------------------------------------------------------------------------
+
+class TestListCompIfStops:
+    def test_list_comp_if_is_statement_level(self):
+        """List comp if() should produce a statement-level debug stop."""
+        src = """\
+a = [
+    for (i = [0:4])
+        if (i <= 2)
+            i * 10
+];
+"""
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        if_stops = [s for s in stmt if s["line"] == 3]
+        # 5 iterations, each hitting the if on line 3
+        assert len(if_stops) == 5
+
+    def test_list_comp_if_else_is_statement_level(self):
+        """List comp if/else should produce a statement-level debug stop."""
+        src = """\
+a = [
+    for (i = [0:2])
+        if (i == 1)
+            99
+        else
+            i
+];
+"""
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        if_stops = [s for s in stmt if s["line"] == 3]
+        assert len(if_stops) == 3
+
+
+# ---------------------------------------------------------------------------
 # Expression-level echo and assert stops
 # ---------------------------------------------------------------------------
 
