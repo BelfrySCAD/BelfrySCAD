@@ -2778,7 +2778,7 @@ class Evaluator:
                 let_dict[name] = val
                 self._expr_depth += 1
                 if _debugging:
-                    self._check_debug(node, loop_ctx, expr_level=True)
+                    self._check_debug(node, loop_ctx)
                 if is_lc:
                     result.append(self._eval_list_comp(node.body, loop_ctx))
                 else:
@@ -2792,7 +2792,7 @@ class Evaluator:
                 loop_ctx.let[vname] = val
             self._expr_depth += 1
             if _debugging:
-                self._check_debug(node, loop_ctx, expr_level=True)
+                self._check_debug(node, loop_ctx)
             if is_lc:
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:
@@ -2817,7 +2817,7 @@ class Evaluator:
                 self.error("C-style for loop exceeded maximum iteration count", node)
             self._expr_depth += 1
             if _debugging:
-                self._check_debug(node, loop_ctx, expr_level=True)
+                self._check_debug(node, loop_ctx)
             if is_lc:
                 result.append(self._eval_list_comp(node.body, loop_ctx))
             else:

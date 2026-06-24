@@ -212,15 +212,15 @@ for(i = [1:3])
         echo_stops = [s for s in stmt if s["line"] == 2]
         assert len(echo_stops) == 3
 
-    def test_for_loop_has_expr_level_iteration_stops(self):
-        """ModularFor should produce expr_level stops for iteration starts."""
+    def test_modular_for_iteration_stops_are_expr_level(self):
+        """ModularFor iteration stops should be expr_level (body statements
+        already get their own statement-level stops from _eval_statement)."""
         src = """\
 for(i = [1:3])
   echo(i);
 """
         _, _, stops = _run_with_debug(src)
         expr_stops = [s for s in stops if s["expr_level"]]
-        # At least one expr_level stop per iteration
         assert len(expr_stops) >= 3
 
 
@@ -295,12 +295,33 @@ class TestExprEchoAssertStops:
 # ---------------------------------------------------------------------------
 
 class TestListCompStops:
-    def test_list_comp_for_iterations(self):
-        """List comp for should produce expr_level stops per iteration."""
+    def test_list_comp_for_iterations_are_statement_level(self):
+        """List comp for should produce statement-level stops per iteration."""
         src = "a = [for(i=[1:3]) i];\n"
         _, _, stops = _run_with_debug(src)
-        expr_stops = [s for s in stops if s["expr_level"]]
-        assert len(expr_stops) >= 3  # one per iteration
+        stmt = _stmt_stops(stops)
+        # assignment + 3 iteration stops
+        assert len(stmt) >= 4
+
+    def test_list_comp_for_with_function_call_alternates(self):
+        """Step Over through a list comp for with function calls should
+        alternate between the for line and the call line each iteration."""
+        src = """\
+function fx(x) = x*2;
+x = [
+    for (i = [0:1:4])
+        fx(i+1)
+];
+"""
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        # After the assignment (line 2), we should see iterations:
+        # for (line 3) then fx() call-site (line 4), repeated 5 times
+        after_assign = [s for s in stmt if s["line"] >= 3]
+        for_stops = [s for s in after_assign if s["line"] == 3]
+        call_stops = [s for s in after_assign if s["line"] == 4]
+        assert len(for_stops) == 5
+        assert len(call_stops) >= 5  # call-site + function body stops
 
     def test_list_comp_let_is_statement_level(self):
         """List comp let assignments should be statement-level stops."""
