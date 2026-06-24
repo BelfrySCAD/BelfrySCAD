@@ -1104,9 +1104,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
             return
 
+        filters = "STL Files (*.stl);;OBJ Files (*.obj)"
+        try:
+            import lib3mf  # noqa: F401
+            filters += ";;3MF Files (*.3mf)"
+        except ImportError:
+            pass
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export", "",
-            "STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf)"
+            self, "Export", "", filters
         )
         if not path:
             return

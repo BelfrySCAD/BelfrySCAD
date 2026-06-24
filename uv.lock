@@ -39,7 +39,7 @@ source = { editable = "." }
 dependencies = [
     { name = "certifi" },
     { name = "fonttools" },
-    { name = "lib3mf" },
+    { name = "lib3mf", marker = "platform_machine != 'ARM64' and platform_machine != 'aarch64'" },
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
@@ -61,7 +61,7 @@ dev = [
 requires-dist = [
     { name = "certifi" },
     { name = "fonttools", specifier = ">=4.0" },
-    { name = "lib3mf" },
+    { name = "lib3mf", marker = "platform_machine != 'ARM64' and platform_machine != 'aarch64'" },
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
