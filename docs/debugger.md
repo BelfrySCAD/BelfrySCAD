@@ -22,7 +22,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `"outer_scope"` | Global vars from `_root_ctx.dyn` (innermost frame only, when inside a call; parent frames get `{}`) |
 | `"dyn_names"` | `set` of names from `dyn` — the only vars editable via the pane |
 
-**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, depth, *, forced, expr_level, expr_depth, origin, get_frames) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. `get_frames` is a lazy callback that builds `(locals_dict, all_frame_locals), call_stack` only when called, avoiding the cost on non-pausing hook invocations. Step-into pauses regardless of origin; step-over and step-out track the file where the step was initiated (`_step_origin`) and only pause in that same file. Break-on-first pauses at the first non-expression statement in the toplevel file. Breakpoints are collected from all open tabs as a `{resolved_path: set(lines)}` dict, and the hook resolves `origin` before lookup. When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line via `set_execution_line()`, which uses `scroll_to_line()` to ensure at least 5 lines of context above and below; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
+**Debug hook** — `_make_hook()` returns a closure passed to `Evaluator(debug_hook=...)`. Signature: `hook(line, depth, *, forced, expr_level, expr_depth, origin, get_frames) → (cmd, mods)`. `origin` is the source file path from the AST node's `position.origin` — `None` for the main file, a path string for included files. `get_frames` is a lazy callback that builds `(locals_dict, all_frame_locals), call_stack` only when called, avoiding the cost on non-pausing hook invocations. On resume, the hook records the current `line`, `depth`, and `resolved_origin` as `_step_line`, `_step_depth`, `_step_origin`. Step logic: **over** pauses when `depth ≤ _step_depth` and `line ≠ _step_line` and same origin; **into** pauses when `line ≠ _step_line` or origin changed; **out** pauses when `depth < _step_depth`. All three skip `expr_level` checkpoints. Break-on-first pauses at the first non-expression statement in the toplevel file. Breakpoints are collected from all open tabs as a `{resolved_path: set(lines)}` dict, and the hook resolves `origin` before lookup. When pausing in an included file, `MainWindow._show_debug_line()` opens the file in a new tab (or switches to it if already open) and highlights the execution line via `set_execution_line()`, which uses `scroll_to_line()` to ensure at least 5 lines of context above and below; `_clear_all_execution_lines()` clears stale highlights across all tabs first. The hook builds a **display** call stack with a `("toplevel", "<toplevel>", None)` entry appended before emitting `paused`, blocking on a `threading.Event`.
 
 **Pause during execution** — `DebugSession.pause()` sets `_pause_requested`. The hook checks/consumes this flag at the top of every call, triggering an immediate pause regardless of breakpoints or step state — useful for interrupting a long-running evaluation.
 
@@ -52,7 +52,7 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **`ListCompEach`** — before the body expression, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` and the fallthrough in `_eval_list_comp_body`
 
-**Expression-level Step Out**: from an `expr_level` checkpoint, Step Out backs out one level of listcomp nesting (`for`, `if`, `each`, or nested `[...]` body). The evaluator tracks `self._expr_depth: int`, incrementing on entering each listcomp body and decrementing on exit; the hook passes `expr_depth` to `DebugSession`. `_current_pause_expr_depth` stores the depth at pause. If `> 0`, Step Out sets `_step_out_expr_depth = _current_pause_expr_depth - 1`; the hook fires on any checkpoint (including `expr_level=True`) where `expr_depth <= _step_out_expr_depth`. If `== 0`, normal call-stack Step Out applies (`_step_out_depth = depth`).
+All step commands (`into`, `over`, `out`) skip `expr_level` checkpoints — they only pause at statement-level debug stops. Expression-level checkpoints exist for future use but are currently filtered out by the hook.
 
 The Variables panel has:
 - A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
@@ -89,11 +89,11 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 
 **Pause** — Pause execution at the currently executing line. (Continue and Pause share a single button that toggles based on state.)
 
-**Step Over** — Execute the current line and pause at the next line in the current function, module, or toplevel context in the current file. If the current line contains function or module calls, execute them all without stepping into them.
+**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached.
 
-**Step Into** — If the current line has no module or function calls, behave the same as Step Over. If it has calls, step into the first one and pause at its first line. If a call is split across multiple lines, step to each argument line until all arguments have been evaluated, then step into the call.
+**Step Into** — Resume execution until code is on another line or in another file, at any call stack level, or a breakpoint is reached.
 
-**Step Out** — Continue execution until the current function or module returns. Step to the caller, and if it has another function or module call, step into the next one. If no more calls remain in the caller, pause at the next code line after the last call.
+**Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached.
 
 **Restart** — Restart the program from the beginning and pause at the first line of code (break-on-first).
 
