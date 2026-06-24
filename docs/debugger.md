@@ -72,7 +72,7 @@ Right-clicking a variable opens a context menu with **View as…** options via `
 
 Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · Restart · Stop
 
-Keyboard shortcuts:
+Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected to `btn.click`):
 
 | Key | Action |
 |---|---|
