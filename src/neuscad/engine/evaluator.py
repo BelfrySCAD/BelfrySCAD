@@ -2229,11 +2229,14 @@ class Evaluator:
             var_seqs.append((name, values))
 
         result = []
+        _debugging = self._debugging
         for combo in self._cartesian(var_seqs):
             loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                      children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
                 loop_ctx.let[vname] = val
+            if _debugging and node.body:
+                self._check_debug(node.body[0], loop_ctx, expr_level=True)
             result.extend(self._eval_children(node.body, loop_ctx))
         return result
 
@@ -2262,12 +2265,15 @@ class Evaluator:
             var_seqs.append((name, values))
 
         body_node = node.body if isinstance(node.body, list) else [node.body]
+        _debugging = self._debugging
         iterations = []
         for combo in self._cartesian(var_seqs):
             loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                      children_caller_ctx=ctx.children_caller_ctx)
             for vname, val in combo:
                 loop_ctx.let[vname] = val
+            if _debugging and body_node:
+                self._check_debug(body_node[0], loop_ctx, expr_level=True)
             children = self._eval_children(body_node, loop_ctx)
             if children:
                 iterations.append(self._combine(children))
