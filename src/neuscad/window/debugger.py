@@ -151,6 +151,7 @@ class DebugSession(QObject):
         self._step_over_depth: int | None = None  # step_over: pause when depth ≤ N
         self._step_out_depth: int | None = None   # step_out:  pause when call depth < N
         self._step_out_expr_depth: int | None = None  # step_out inside expr: pause when expr_depth ≤ N
+        self._step_origin: str | None = None  # file where step was initiated
         self._current_pause_expr_depth: int = 0
         self._stopped: bool = False
         self._pause_requested: bool = False
@@ -164,6 +165,7 @@ class DebugSession(QObject):
         self._step_over_depth = None
         self._step_out_depth = None
         self._step_out_expr_depth = None
+        self._step_origin = None
         self._current_pause_expr_depth = 0
         self._stopped = False
         self._pause_requested = False
@@ -201,9 +203,9 @@ class DebugSession(QObject):
                 or (self._break_on_first and not expr_level and resolved_origin == _current)
                 or (line in self._breakpoints.get(resolved_origin, set()) and not expr_level)
                 or self._step_mode
-                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level)
-                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level)
-                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth)
+                or (self._step_over_depth is not None and depth <= self._step_over_depth and not expr_level and resolved_origin == self._step_origin)
+                or (self._step_out_depth is not None and depth < self._step_out_depth and not expr_level and resolved_origin == self._step_origin)
+                or (self._step_out_expr_depth is not None and expr_depth <= self._step_out_expr_depth and resolved_origin == self._step_origin)
             )
 
             if not should_pause:
@@ -215,6 +217,7 @@ class DebugSession(QObject):
             self._step_over_depth = None
             self._step_out_depth = None
             self._step_out_expr_depth = None
+            self._step_origin = None
             self._current_pause_expr_depth = expr_depth
 
             (locals_dict, all_frame_locals), call_stack = get_frames()
@@ -234,7 +237,9 @@ class DebugSession(QObject):
                 self._step_mode = True
             elif cmd == "step_over":
                 self._step_over_depth = depth
+                self._step_origin = resolved_origin
             elif cmd == "step_out":
+                self._step_origin = resolved_origin
                 if self._current_pause_expr_depth > 0:
                     self._step_out_expr_depth = self._current_pause_expr_depth - 1
                 else:
