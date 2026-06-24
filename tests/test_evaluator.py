@@ -1,5 +1,5 @@
 """
-Tests for the NeuSCAD evaluator.
+Tests for the BelfrySCAD evaluator.
 
 Each test calls run(src) which parses, scopes, and evaluates OpenSCAD source,
 returning (bodies, echo_lines). Geometry tests inspect bounding boxes;
@@ -8,7 +8,7 @@ expression tests capture echo output.
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from neuscad.engine.evaluator import Evaluator, EvalError
+from belfryscad.engine.evaluator import Evaluator, EvalError
 
 
 def run(src: str):

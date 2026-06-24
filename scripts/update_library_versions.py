@@ -17,9 +17,9 @@ import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse
 
-LIBRARIES_JSON = Path(__file__).resolve().parent.parent / "src" / "neuscad" / "resources" / "libraries.json"
+LIBRARIES_JSON = Path(__file__).resolve().parent.parent / "src" / "belfryscad" / "resources" / "libraries.json"
 
-CODEBERG_HEADERS = {"Accept": "application/json", "User-Agent": "NeuSCAD-Library-Updater"}
+CODEBERG_HEADERS = {"Accept": "application/json", "User-Agent": "BelfrySCAD-Library-Updater"}
 
 
 def _parse_repo(download_url: str) -> tuple[str, str, str]:

@@ -94,7 +94,7 @@ The **Animate** dock (`AnimatePane` in `window/animate.py`, one per `DocumentTab
 
 - **Time / FPS / Steps** fields: Time shows the current `$t` (read-only display, but editable — typing a value jumps to the nearest step, clamped to `[0, 1 - 1/steps)`); FPS (1-1000) sets the playback rate; Steps (1-1,000,000) sets the number of frames in one cycle. `$t = step / steps` for `step` in `0..steps-1`. Tab/Shift+Tab move between these three fields, and Enter confirms an edit (`QLineEdit.editingFinished`, which fires on Return as well as focus-out). `AnimatePane` installs an event filter on each field to accept the `ShortcutOverride` event for Tab/Backtab — otherwise the main window's Indent/Undent actions (bound to Tab/Shift+Tab as window-wide shortcuts for the code editor) would consume the key before normal focus-navigation gets it.
 - **Big play/pause button** and the **transport row** (First / Previous / Play / Pause / Next / Last) drive playback. Any non-playback transport action pauses playback first.
-- **Dump Pictures** checkbox: when checked and Play is pressed, NeuSCAD prompts (once per tab) for a destination folder via a folder picker, then saves each frame of one full animation cycle as `frameNNNN.png` (via `Viewport.grabFramebuffer()`), pausing automatically after frame `steps - 1` rather than looping.
+- **Dump Pictures** checkbox: when checked and Play is pressed, BelfrySCAD prompts (once per tab) for a destination folder via a folder picker, then saves each frame of one full animation cycle as `frameNNNN.png` (via `Viewport.grabFramebuffer()`), pausing automatically after frame `steps - 1` rather than looping.
 
 Each frame change re-renders the active tab with `$t` set accordingly — `MainWindow._viewport_params(tab)` includes `"$t": tab.animate_pane.current_t()`, merged into the evaluator's dynamic context alongside `$vpt`/`$vpr`/`$vpd` (see `docs/evaluator.md`). During playback the viewport camera is **not** auto-fit to the model's bounding box on each frame (unlike a normal Render), so the camera stays put across frames. Switching tabs pauses any other tab's animation, since playback re-renders the active tab on every frame.
 
@@ -134,7 +134,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 ## Application Preferences
 
-Preferences live under the `editor/` key group in `QSettings("NeuSCAD", "NeuSCAD")`, accessed via `load_preference(key, type)` / `save_preferences(dict)` in `preferences.py`.
+Preferences live under the `editor/` key group in `QSettings("BelfrySCAD", "BelfrySCAD")`, accessed via `load_preference(key, type)` / `save_preferences(dict)` in `preferences.py`.
 
 | Setting | Key | Default |
 |---|---|---|
@@ -173,8 +173,8 @@ Files can be opened in several ways:
 - **File > Open** — standard file dialog
 - **File > Recent Files** — reopens previously opened files; stale entries are auto-pruned
 - **Drag and drop** — `.scad` files dropped onto the window open as new tabs
-- **macOS file association** — `.scad` files opened from Finder (double-click or Open With) send a `QFileOpenEvent` to `NeuSCADApp`, which forwards to `MainWindow.open_file_by_path()`; the Info.plist declares `CFBundleDocumentTypes` for `.scad` via briefcase config in `pyproject.toml`
-- **Command-line arguments** — `NeuSCAD foo.scad bar.scad` opens each file at launch
+- **macOS file association** — `.scad` files opened from Finder (double-click or Open With) send a `QFileOpenEvent` to `BelfrySCADApp`, which forwards to `MainWindow.open_file_by_path()`; the Info.plist declares `CFBundleDocumentTypes` for `.scad` via briefcase config in `pyproject.toml`
+- **Command-line arguments** — `BelfrySCAD foo.scad bar.scad` opens each file at launch
 
 All paths converge on `open_file_by_path(path)`, which resolves the path and checks for an already-open tab before creating a new one.
 
@@ -211,7 +211,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **Console**: bottom pane
 - **Status bar**: bottom strip; shows 3D coordinates of the last clicked point on the mesh
 
-The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("NeuSCAD", "NeuSCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The top-left and bottom-left corners are assigned to the left dock area (`setCorner`), so the editor dock spans the full window height and the bottom docks (console, debugger, animate) fit between the left and right dock areas. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
+The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The top-left and bottom-left corners are assigned to the left dock area (`setCorner`), so the editor dock spans the full window height and the bottom docks (console, debugger, animate) fit between the left and right dock areas. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 
@@ -227,7 +227,7 @@ self._toggle_perspective(perspective)
 
 ## Data Viewers
 
-Implemented in `src/neuscad/window/data_viewers.py`. Three viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
+Implemented in `src/belfryscad/window/data_viewers.py`. Three viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
 
 ### _SimpleViewport (QOpenGLWidget)
 

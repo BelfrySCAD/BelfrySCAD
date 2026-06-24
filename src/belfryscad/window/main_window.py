@@ -9,11 +9,11 @@ from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signa
 import threading
 import time
 
-from neuscad.window.editor import CodeEditor
-from neuscad.window.viewport import Viewport
-from neuscad.window.debugger import DebuggerPane, DebugSession
-from neuscad.window.animate import AnimatePane
-from neuscad.window.preferences import PreferencesDialog, load_preference, save_preferences
+from belfryscad.window.editor import CodeEditor
+from belfryscad.window.viewport import Viewport
+from belfryscad.window.debugger import DebuggerPane, DebugSession
+from belfryscad.window.animate import AnimatePane
+from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
 
 import re
 from pathlib import Path
@@ -353,7 +353,7 @@ class _RenderWorker(QObject):
     def _do_render(self):
         import io, sys as _sys, time as _time, os as _os, tempfile, traceback
         from openscad_lalr_parser import getASTfromFile
-        from neuscad.engine.evaluator import Evaluator, EvalError, to_renderable_bodies
+        from belfryscad.engine.evaluator import Evaluator, EvalError, to_renderable_bodies
 
         _t0 = _time.perf_counter()
 
@@ -442,7 +442,7 @@ class _RenderWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NeuSCAD")
+        self.setWindowTitle("BelfrySCAD")
         self.resize(1400, 900)
 
         self.setAcceptDrops(True)
@@ -1006,7 +1006,7 @@ class MainWindow(QMainWindow):
                 text = f.read()
         except OSError as e:
             QMessageBox.critical(self, "Open Error", str(e))
-            settings = QSettings("NeuSCAD", "NeuSCAD")
+            settings = QSettings("BelfrySCAD", "BelfrySCAD")
             recents = settings.value("recentFiles", [], type=list)
             if path in recents:
                 recents.remove(path)
@@ -1057,7 +1057,7 @@ class MainWindow(QMainWindow):
     _MAX_RECENT = 10
 
     def _update_recent_files(self, path: str):
-        settings = QSettings("NeuSCAD", "NeuSCAD")
+        settings = QSettings("BelfrySCAD", "BelfrySCAD")
         recents = settings.value("recentFiles", [], type=list)
         path = str(Path(path).resolve())
         if path in recents:
@@ -1069,7 +1069,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_recent_menu(self):
         self._recent_menu.clear()
-        settings = QSettings("NeuSCAD", "NeuSCAD")
+        settings = QSettings("BelfrySCAD", "BelfrySCAD")
         recents = settings.value("recentFiles", [], type=list)
         if not recents:
             placeholder = QAction("(empty)", self)
@@ -1090,7 +1090,7 @@ class MainWindow(QMainWindow):
         self.open_file_by_path(path)
 
     def _clear_recent_files(self):
-        settings = QSettings("NeuSCAD", "NeuSCAD")
+        settings = QSettings("BelfrySCAD", "BelfrySCAD")
         settings.setValue("recentFiles", [])
         self._rebuild_recent_menu()
 
@@ -1419,7 +1419,7 @@ class MainWindow(QMainWindow):
         self.log("Flushed AST caches — render or debug to rebuild.")
 
     def _open_library_manager(self):
-        from neuscad.window.library_manager import LibraryManagerWindow
+        from belfryscad.window.library_manager import LibraryManagerWindow
         if not hasattr(self, '_library_manager') or self._library_manager is None:
             self._library_manager = LibraryManagerWindow(parent=self)
             self._library_manager.destroyed.connect(lambda: setattr(self, '_library_manager', None))
@@ -1428,7 +1428,7 @@ class MainWindow(QMainWindow):
         self._library_manager.activateWindow()
 
     def _populate_use_library_menu(self):
-        from neuscad.window.library_manager import _library_dir, _load_catalog
+        from belfryscad.window.library_manager import _library_dir, _load_catalog
         menu = self._use_library_menu
         menu.clear()
         lib_dir = _library_dir()
@@ -1788,7 +1788,7 @@ class MainWindow(QMainWindow):
             visible.viewport.set_debug_paused(True)
 
     def _on_debug_finished(self, bodies, id_to_node):
-        from neuscad.engine.evaluator import to_renderable_bodies
+        from belfryscad.engine.evaluator import to_renderable_bodies
 
         tab = self._debug_tab
         if not tab:
@@ -1961,7 +1961,7 @@ class MainWindow(QMainWindow):
         tab.editor._column_guide.setVisible(show_guide)
 
     def _restore_settings(self):
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         geometry = s.value("windowGeometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -2024,7 +2024,7 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
             time.sleep(0.005)
 
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())

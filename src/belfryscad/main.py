@@ -4,10 +4,10 @@ import setproctitle
 from PySide6.QtCore import QEvent, Signal
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
-from neuscad.window.main_window import MainWindow
+from belfryscad.window.main_window import MainWindow
 
 
-class NeuSCADApp(QApplication):
+class BelfrySCADApp(QApplication):
     file_open_requested = Signal(str)
 
     def event(self, event):
@@ -27,11 +27,11 @@ def _configure_gl_format():
 
 
 def main():
-    setproctitle.setproctitle("NeuSCAD")
+    setproctitle.setproctitle("BelfrySCAD")
     sys.setrecursionlimit(10000)
     _configure_gl_format()
-    app = NeuSCADApp(sys.argv)
-    app.setApplicationName("NeuSCAD")
+    app = BelfrySCADApp(sys.argv)
+    app.setApplicationName("BelfrySCAD")
     window = MainWindow()
     app.file_open_requested.connect(window.open_file_by_path)
     window.show()

@@ -10,7 +10,7 @@ import moderngl as mgl
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
-from neuscad.engine.evaluator import ColoredBody
+from belfryscad.engine.evaluator import ColoredBody
 
 _VERT = """
 #version 330 core

@@ -284,7 +284,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 
 ### Application Preferences:
 
-Accessible via **NeuSCAD → Preferences…** (Cmd+,). Settings take effect immediately for all open tabs and are persisted across sessions.
+Accessible via **BelfrySCAD → Preferences…** (Cmd+,). Settings take effect immediately for all open tabs and are persisted across sessions.
 
 | Setting | Description |
 |---|---|

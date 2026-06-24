@@ -11,8 +11,8 @@ Per the OpenSCAD docs, `use <file>`:
 import pytest
 from openscad_lalr_parser import getASTfromFile
 
-from neuscad.engine.evaluator import Evaluator
-from neuscad.window.main_window import _resolve_use_scopes
+from belfryscad.engine.evaluator import Evaluator
+from belfryscad.window.main_window import _resolve_use_scopes
 
 
 def run_file(path, log=None):

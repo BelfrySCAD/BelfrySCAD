@@ -20,11 +20,11 @@ from PySide6.QtGui import (
     QFont, QMouseEvent, QWheelEvent, QFontMetrics, QImage, QPainter, QColor,
 )
 
-from neuscad.engine.renderer import _nice_spacings, _fmt_tick
+from belfryscad.engine.renderer import _nice_spacings, _fmt_tick
 
 
 def _fmt_short(v) -> str:
-    from neuscad.window.debugger import _fmt
+    from belfryscad.window.debugger import _fmt
     return _fmt(v)
 
 
@@ -33,7 +33,7 @@ def _is_list(v) -> bool:
 
 
 def _is_oscobject(v) -> bool:
-    from neuscad.engine.evaluator import OscObject
+    from belfryscad.engine.evaluator import OscObject
     return isinstance(v, OscObject)
 
 

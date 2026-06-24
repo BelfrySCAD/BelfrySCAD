@@ -15,7 +15,7 @@ _DEFAULTS = {
 
 
 def load_preference(key, type_=None):
-    s = QSettings("NeuSCAD", "NeuSCAD")
+    s = QSettings("BelfrySCAD", "BelfrySCAD")
     default = _DEFAULTS[key]
     if type_ is not None:
         return s.value(key, default, type=type_)
@@ -23,7 +23,7 @@ def load_preference(key, type_=None):
 
 
 def save_preferences(values: dict):
-    s = QSettings("NeuSCAD", "NeuSCAD")
+    s = QSettings("BelfrySCAD", "BelfrySCAD")
     for k, v in values.items():
         s.setValue(k, v)
 
@@ -35,7 +35,7 @@ class PreferencesDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(340)
 
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
 
         outer = QVBoxLayout(self)
         outer.setSpacing(16)

@@ -8,7 +8,7 @@ expr_level, origin).
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from neuscad.engine.evaluator import Evaluator, EvalError
+from belfryscad.engine.evaluator import Evaluator, EvalError
 
 
 def _make_recorder():

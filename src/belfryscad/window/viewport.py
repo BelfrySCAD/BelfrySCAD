@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
-from neuscad.engine.renderer import SceneRenderer
+from belfryscad.engine.renderer import SceneRenderer
 
 
 _RING_PERP1 = [

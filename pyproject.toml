@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "neuscad"
+name = "belfryscad"
 version = "0.1.0"
 requires-python = ">=3.11"
 license = "MIT"
@@ -23,10 +23,10 @@ dependencies = [
 ]
 
 [project.scripts]
-neuscad = "neuscad.main:main"
+belfryscad = "belfryscad.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/neuscad"]
+packages = ["src/belfryscad"]
 
 [tool.uv]
 package = true
@@ -43,19 +43,19 @@ dev = [
 # ---------------------------------------------------------------------------
 
 [tool.briefcase]
-project_name = "NeuSCAD"
+project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
 version = "0.1.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
-url = "https://www.github.com/BelfrySCAD/NeuSCAD"
+url = "https://www.github.com/BelfrySCAD/BelfrySCAD"
 
-[tool.briefcase.app.neuscad]
-formal_name = "NeuSCAD"
+[tool.briefcase.app.belfryscad]
+formal_name = "BelfrySCAD"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
-icon = "resources/neuscad"
-sources = ["src/neuscad"]
+icon = "resources/belfryscad"
+sources = ["src/belfryscad"]
 requires = [
     "PySide6",
     "manifold3d",
@@ -71,24 +71,24 @@ requires = [
     "certifi",
 ]
 
-[tool.briefcase.app.neuscad.document_type.scad]
+[tool.briefcase.app.belfryscad.document_type.scad]
 extension = "scad"
 description = "OpenSCAD File"
-icon = "resources/neuscad"
+icon = "resources/belfryscad"
 url = "https://openscad.org"
 mime_type = "text/x-openscad"
 
-[tool.briefcase.app.neuscad.document_type.scad.macOS]
+[tool.briefcase.app.belfryscad.document_type.scad.macOS]
 CFBundleTypeRole = "Editor"
 LSHandlerRank = "Alternate"
 UTTypeConformsTo = ["public.plain-text", "public.source-code"]
 
-[tool.briefcase.app.neuscad.macOS]
+[tool.briefcase.app.belfryscad.macOS]
 min_os_version = "12.0"
 universal_build = false
 
-[tool.briefcase.app.neuscad.windows]
+[tool.briefcase.app.belfryscad.windows]
 installer_type = "msi"
 
-[tool.briefcase.app.neuscad.linux.appimage]
+[tool.briefcase.app.belfryscad.linux.appimage]
 manylinux = "manylinux_2_28"

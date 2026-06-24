@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
 )
 
 _LIBRARIES_JSON = Path(__file__).parent.parent / "resources" / "libraries.json"
-_THUMB_CACHE_DIR = Path.home() / ".cache" / "NeuSCAD" / "thumbnails"
+_THUMB_CACHE_DIR = Path.home() / ".cache" / "BelfrySCAD" / "thumbnails"
 
 
 def _library_dir() -> Path:
@@ -89,20 +89,20 @@ class _InstalledVersions:
     _PREFIX = "libraries/"
 
     def get(self, name: str) -> str | None:
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         v = s.value(f"{self._PREFIX}{name}/version")
         return str(v) if v is not None else None
 
     def set(self, name: str, version: str) -> None:
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.setValue(f"{self._PREFIX}{name}/version", version)
 
     def remove(self, name: str) -> None:
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.remove(f"{self._PREFIX}{name}")
 
     def all_installed(self) -> dict[str, str]:
-        s = QSettings("NeuSCAD", "NeuSCAD")
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.beginGroup("libraries")
         result = {}
         for name in s.childGroups():
@@ -149,7 +149,7 @@ class _DownloadWorker(QObject):
 
         tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
         try:
-            req = Request(zip_url, headers={"User-Agent": "NeuSCAD-Library-Manager"})
+            req = Request(zip_url, headers={"User-Agent": "BelfrySCAD-Library-Manager"})
             with urlopen(req, timeout=60, context=_SSL_CTX) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
@@ -170,7 +170,7 @@ class _DownloadWorker(QObject):
                 return
 
             self.progress.emit(f"Extracting {name}…", 75)
-            extract_dir = Path(tempfile.mkdtemp(prefix="neuscad_lib_"))
+            extract_dir = Path(tempfile.mkdtemp(prefix="belfryscad_lib_"))
             with zipfile.ZipFile(tmp.name) as zf:
                 zf.extractall(extract_dir)
 
@@ -229,8 +229,8 @@ class _UpdateCheckWorker(QObject):
     @Slot()
     def run(self):
         try:
-            headers_gh = {"Accept": "application/vnd.github.v3+json", "User-Agent": "NeuSCAD"}
-            headers_cb = {"Accept": "application/json", "User-Agent": "NeuSCAD"}
+            headers_gh = {"Accept": "application/vnd.github.v3+json", "User-Agent": "BelfrySCAD"}
+            headers_cb = {"Accept": "application/json", "User-Agent": "BelfrySCAD"}
             for lib in self._catalog:
                 if self._cancel.is_set():
                     break
@@ -311,7 +311,7 @@ class _ThumbnailLoader(QObject):
                     self.loaded.emit(name, cached.read_bytes())
                     continue
                 try:
-                    req = Request(url, headers={"User-Agent": "NeuSCAD"})
+                    req = Request(url, headers={"User-Agent": "BelfrySCAD"})
                     with urlopen(req, timeout=10, context=_SSL_CTX) as resp:
                         data = resp.read()
                     _THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)

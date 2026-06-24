@@ -32,7 +32,7 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
-    from neuscad.engine.evaluator import OscObject
+    from belfryscad.engine.evaluator import OscObject
     if isinstance(v, OscObject):
         inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
         return f"object({inner})"
@@ -70,7 +70,7 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
 
 def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     """Format OscObject values with multi-line layout. Returns None for other types."""
-    from neuscad.engine.evaluator import OscObject
+    from belfryscad.engine.evaluator import OscObject
     if isinstance(value, OscObject):
         if not value.data:
             return "object()"
@@ -261,7 +261,7 @@ class DebugSession(QObject):
         self._pause_event.wait()
 
     def _run(self, nodes, root_scope, viewport_params: dict):
-        from neuscad.engine.evaluator import Evaluator, EvalError
+        from belfryscad.engine.evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break)
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
@@ -402,7 +402,7 @@ class DebuggerPane(QWidget):
         self._vars_table = QTableWidget(0, 2)
         self._vars_table.setFont(mono)
         self._vars_table.setHorizontalHeaderLabels(["Name", "Value"])
-        from neuscad.window.data_viewers import _style_table_headers
+        from belfryscad.window.data_viewers import _style_table_headers
         _style_table_headers(self._vars_table)
         self._vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._vars_table.horizontalHeader().setStretchLastSection(True)
@@ -556,7 +556,7 @@ class DebuggerPane(QWidget):
         menu = QMenu(self)
         menu.addAction("Print to Console",
                        lambda: self.print_to_console.emit(_pretty_assignment(name, value)))
-        from neuscad.window.data_viewers import build_viewer_menu
+        from belfryscad.window.data_viewers import build_viewer_menu
         build_viewer_menu(menu, name, value, self)
         menu.exec(self._vars_table.viewport().mapToGlobal(pos))
 

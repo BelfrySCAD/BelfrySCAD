@@ -33,6 +33,53 @@ wheels = [
 ]
 
 [[package]]
+name = "belfryscad"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "certifi" },
+    { name = "fonttools" },
+    { name = "lib3mf" },
+    { name = "manifold3d" },
+    { name = "moderngl" },
+    { name = "numpy" },
+    { name = "openscad-lalr-parser" },
+    { name = "pillow" },
+    { name = "pyside6" },
+    { name = "setproctitle" },
+    { name = "shapely-polyskel" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "briefcase" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "certifi" },
+    { name = "fonttools", specifier = ">=4.0" },
+    { name = "lib3mf" },
+    { name = "manifold3d" },
+    { name = "moderngl" },
+    { name = "numpy" },
+    { name = "openscad-lalr-parser", specifier = ">=1.0.2" },
+    { name = "pillow" },
+    { name = "pyside6" },
+    { name = "setproctitle", specifier = ">=1.3.7" },
+    { name = "shapely-polyskel", specifier = ">=0.1.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "briefcase", specifier = ">=0.4.2" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+]
+
+[[package]]
 name = "binaryornot"
 version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -738,53 +785,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b2/ec/6aff8fa267d9f80e4d32b7a606fdf9f0563103441a7dbaa4f53e272a4ada/moderngl-5.12.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:d56827360c19e831e986243b5daaf6a51006f1ec0d5372084ad446308763d19f", size = 1274906, upload-time = "2024-10-17T12:37:22.372Z" },
     { url = "https://files.pythonhosted.org/packages/9f/4d/dc3ff763c125080e71b1095875f5dcc80949402019abc073bdfdbed1f4c2/moderngl-5.12.0-cp313-cp313-win32.whl", hash = "sha256:caa432c12b138a6c9571719075c4d103bdc2504cd31aeda38a00ad10fcf268cb", size = 101215, upload-time = "2024-10-17T12:37:23.833Z" },
     { url = "https://files.pythonhosted.org/packages/2c/8b/0a264732e0ee49fca109e98ec28f4d0c326ffc31466aa6e9668e8961aabb/moderngl-5.12.0-cp313-cp313-win_amd64.whl", hash = "sha256:e34d1cd38f7998258f76a08bb5e87f351ec653b7ea1928b2711f8719c10cefd1", size = 108514, upload-time = "2024-10-17T12:37:25.304Z" },
-]
-
-[[package]]
-name = "neuscad"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "certifi" },
-    { name = "fonttools" },
-    { name = "lib3mf" },
-    { name = "manifold3d" },
-    { name = "moderngl" },
-    { name = "numpy" },
-    { name = "openscad-lalr-parser" },
-    { name = "pillow" },
-    { name = "pyside6" },
-    { name = "setproctitle" },
-    { name = "shapely-polyskel" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "briefcase" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "certifi" },
-    { name = "fonttools", specifier = ">=4.0" },
-    { name = "lib3mf" },
-    { name = "manifold3d" },
-    { name = "moderngl" },
-    { name = "numpy" },
-    { name = "openscad-lalr-parser", specifier = ">=1.0.2" },
-    { name = "pillow" },
-    { name = "pyside6" },
-    { name = "setproctitle", specifier = ">=1.3.7" },
-    { name = "shapely-polyskel", specifier = ">=0.1.2" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "briefcase", specifier = ">=0.4.2" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
 ]
 
 [[package]]

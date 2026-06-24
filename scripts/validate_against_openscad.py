@@ -1,5 +1,5 @@
 """
-Validates NeuSCAD evaluator echo output against real OpenSCAD.
+Validates BelfrySCAD evaluator echo output against real OpenSCAD.
 
 For each test case, runs the source through both engines and compares
 the ECHO: lines. Geometry tests are skipped (OpenSCAD geometry comparison
@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from openscad_lalr_parser import getASTfromString, build_scopes
-from neuscad.engine.evaluator import Evaluator, EvalError
+from belfryscad.engine.evaluator import Evaluator, EvalError
 
 OPENSCAD = "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD"
 
@@ -257,7 +257,7 @@ CASES = [
     ("cond_list_with_else",     'x = [if(true) 1 else 9, if(false) 2 else 8]; echo(x);'),
     ("cond_list_no_else",       'x = [if(true) 1, if(false) 2, if(true) 3]; echo(x);'),
 
-    # is_function on function literal (named functions are a NeuSCAD extension)
+    # is_function on function literal (named functions are a BelfrySCAD extension)
     ("is_function_literal",     'fl = function(x) x*2; echo(is_function(fl));'),
 
     # for over scalar and undef
@@ -381,8 +381,8 @@ CASES = [
 # Cases that produce no echo (geometry only) — skip comparison
 GEOMETRY_ONLY = {"intersection_for"}
 
-# Cases where NeuSCAD intentionally deviates from OpenSCAD:
-# - is_function(named_fn): NeuSCAD returns true (named functions are first-class),
+# Cases where BelfrySCAD intentionally deviates from OpenSCAD:
+# - is_function(named_fn): BelfrySCAD returns true (named functions are first-class),
 #   OpenSCAD returns false (only function literals are first-class values).
 # - rands with seed: different RNG implementations give different values.
 
@@ -409,7 +409,7 @@ def run_openscad(src: str) -> list[str]:
             os.unlink(echo_path)
 
 
-def run_neuscad(src: str) -> list[str]:
+def run_belfryscad(src: str) -> list[str]:
     echo_lines = []
     try:
         nodes = getASTfromString(src)
@@ -433,18 +433,18 @@ def main():
             continue
 
         openscad_out = run_openscad(src)
-        neuscad_out = run_neuscad(src)
+        belfryscad_out = run_belfryscad(src)
 
-        if openscad_out == neuscad_out:
+        if openscad_out == belfryscad_out:
             passed += 1
             print(f"  PASS  {name}")
         else:
             failed += 1
-            failures.append((name, src, openscad_out, neuscad_out))
+            failures.append((name, src, openscad_out, belfryscad_out))
             print(f"  FAIL  {name}")
             print(f"         src:      {src[:80]}")
             print(f"         openscad: {openscad_out}")
-            print(f"         neuscad:  {neuscad_out}")
+            print(f"         belfryscad:  {belfryscad_out}")
 
     print()
     print(f"Results: {passed} passed, {failed} failed, {skipped} skipped (geometry-only)")
