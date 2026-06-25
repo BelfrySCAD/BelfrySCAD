@@ -363,15 +363,13 @@ class _RenderWorker(QObject):
             buf = io.StringIO()
             old_stdout = _sys.stdout
             _sys.stdout = buf
-            if self._file_path:
-                parse_path = self._file_path
-            else:
-                _tmp = tempfile.NamedTemporaryFile(
-                    suffix=".scad", mode="w", encoding="utf-8", delete=False
-                )
-                _tmp.write(self._source)
-                _tmp.close()
-                parse_path = _tmp.name
+            _tmp = tempfile.NamedTemporaryFile(
+                suffix=".scad", mode="w", encoding="utf-8", delete=False,
+                dir=_os.path.dirname(self._file_path) if self._file_path else None,
+            )
+            _tmp.write(self._source)
+            _tmp.close()
+            parse_path = _tmp.name
             nodes = getASTfromFile(parse_path, include_comments=False)
             _sys.stdout = old_stdout
             captured = buf.getvalue()
