@@ -264,7 +264,7 @@ class DebugSession(QObject):
         step = self._step_cmd
         if step == "out" and depth == self._step_depth:
             self.logged.emit(_pretty_assignment(f"{name}() return value", value))
-        elif step == "over" and depth > self._step_depth:
+        elif step == "over" and depth == self._step_depth + 1:
             self.logged.emit(_pretty_assignment(f"{name}() return value", value))
 
     def _run(self, nodes, root_scope, viewport_params: dict):

@@ -97,7 +97,7 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 
 **Pause** — Pause execution at the currently executing line. (Continue and Pause share a single button that toggles based on state.)
 
-**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. Any user-defined function calls that complete during the step print their return value to the console via `DebugSession.logged`, formatted by `_pretty_assignment(f"{name}() return value", value)`.
+**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. User-defined function calls at exactly `_step_depth + 1` (direct calls on the stepped-over line) print their return value to the console via `DebugSession.logged`, formatted by `_pretty_assignment(f"{name}() return value", value)`. Nested calls within those functions do not print.
 
 **Step Into** — Resume execution until code is on another line or in another file, at any call stack level, or a breakpoint is reached.
 
