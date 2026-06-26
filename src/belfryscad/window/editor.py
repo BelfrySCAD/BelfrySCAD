@@ -557,6 +557,7 @@ class FindBar(QWidget):
 class CodeEditor(QPlainTextEdit):
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
+    print_to_console = Signal(str)             # emits formatted assignment string
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -593,6 +594,7 @@ class CodeEditor(QPlainTextEdit):
         self._user_names: list[str] = []
         self._update_completer_words()
 
+        self._debug_locals: dict | None = None
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
 
         self._fold_regions: dict[int, int] = {}
@@ -1138,6 +1140,9 @@ class CodeEditor(QPlainTextEdit):
         else:
             self._find_bar.open_find()
 
+    def set_debug_locals(self, locals_dict: dict | None):
+        self._debug_locals = locals_dict
+
     def contextMenuEvent(self, event):
         cursor = self.cursorForPosition(event.pos())
         cursor.select(QTextCursor.SelectionType.WordUnderCursor)
@@ -1145,7 +1150,23 @@ class CodeEditor(QPlainTextEdit):
 
         menu = self.createStandardContextMenu()
 
-        if word and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', word):
+        is_identifier = bool(word and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', word))
+
+        if is_identifier and self._debug_locals is not None and word in self._debug_locals:
+            value = self._debug_locals[word]
+            menu.addSeparator()
+            from belfryscad.window.debugger import _pretty_assignment
+            menu.addAction(
+                f"Print '{word}' to Console",
+                lambda v=value, n=word: self.print_to_console.emit(_pretty_assignment(n, v))
+            )
+            from belfryscad.window.data_viewers import build_viewer_menu
+            view_sub = QMenu(f"View '{word}'…", self)
+            build_viewer_menu(view_sub, word, value, self)
+            if not view_sub.isEmpty():
+                menu.addMenu(view_sub)
+
+        if is_identifier:
             menu.addSeparator()
             act = QAction(f"Go to Definition of '{word}'", self)
             act.triggered.connect(

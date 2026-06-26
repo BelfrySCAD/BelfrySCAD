@@ -813,6 +813,7 @@ class MainWindow(QMainWindow):
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
+        tab.editor.print_to_console.connect(self._on_debug_print)
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
             self._apply_preferences_to_tab(
@@ -961,6 +962,7 @@ class MainWindow(QMainWindow):
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
+        tab.editor.print_to_console.connect(self._on_debug_print)
         self._apply_perspective_to_tab(tab)
         self._apply_preferences_to_tab(
             tab,
@@ -1774,6 +1776,10 @@ class MainWindow(QMainWindow):
             return
         self._set_debug_busy(False)
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
+        innermost = all_frame_locals[0] if all_frame_locals else {}
+        tab.editor.set_debug_locals(
+            {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
+        )
         self._show_debug_line(tab, origin, line)
         visible = self._current_tab()
         if visible:
@@ -1785,6 +1791,10 @@ class MainWindow(QMainWindow):
             return
         self._set_debug_busy(False)
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin)
+        innermost = all_frame_locals[0] if all_frame_locals else {}
+        tab.editor.set_debug_locals(
+            {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
+        )
         self._show_debug_line(tab, origin, line)
         visible = self._current_tab()
         if visible:
@@ -1798,6 +1808,7 @@ class MainWindow(QMainWindow):
             return
         self._set_debug_busy(False)
         tab.id_to_node = id_to_node
+        tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
         self._debug_session = None
@@ -1831,6 +1842,8 @@ class MainWindow(QMainWindow):
     def _on_debug_error(self, msg: str):
         error_tab = self._debug_tab
         self._set_debug_busy(False)
+        if error_tab is not None:
+            error_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
         self._debug_session = None
@@ -1851,6 +1864,8 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         mods = self._debugger_pane.get_modifications()
+        if self._debug_tab:
+            self._debug_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
         self._set_debug_busy(True)
@@ -1865,6 +1880,8 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         mods = self._debugger_pane.get_modifications()
+        if self._debug_tab:
+            self._debug_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
         self._set_debug_busy(True)
@@ -1874,6 +1891,8 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         mods = self._debugger_pane.get_modifications()
+        if self._debug_tab:
+            self._debug_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
         self._set_debug_busy(True)
@@ -1883,6 +1902,8 @@ class MainWindow(QMainWindow):
         if not self._debug_session:
             return
         mods = self._debugger_pane.get_modifications()
+        if self._debug_tab:
+            self._debug_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debugger_pane.set_running()
         self._set_debug_busy(True)
@@ -1891,6 +1912,8 @@ class MainWindow(QMainWindow):
     def _on_debug_restart(self):
         restart_tab = self._debug_tab
         self._set_debug_busy(False)
+        if restart_tab:
+            restart_tab.editor.set_debug_locals(None)
         if self._debug_session:
             self._debug_session.paused.disconnect()
             self._debug_session.error_break.disconnect()
@@ -1910,6 +1933,8 @@ class MainWindow(QMainWindow):
             return
         stop_tab = self._debug_tab
         self._set_debug_busy(False)
+        if stop_tab:
+            stop_tab.editor.set_debug_locals(None)
         self._clear_all_execution_lines()
         self._debug_session.paused.disconnect()
         self._debug_session.error_break.disconnect()

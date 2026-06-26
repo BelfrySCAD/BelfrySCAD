@@ -47,7 +47,17 @@ Fold markers (▼ unfolded, ▶ folded) appear in the right section of the line-
 
 Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath.drawPath` was invisible at small sizes on macOS; `drawPolygon` is reliable.
 
-## Go to Definition
+## Editor Context Menu
+
+Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
+
+**Debug variable inspection** (when debugger is paused and the word under the cursor is a known local/global variable):
+- **Print 'x' to Console** — formats the value via `_pretty_assignment(name, value)` and emits `CodeEditor.print_to_console`, which is connected to `MainWindow._on_debug_print` per tab.
+- **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
+
+The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision). `MainWindow._on_debug_paused` and `_on_debug_error_break` call `tab.editor.set_debug_locals(merged)` to install the dict; all resume/step/stop/finish handlers call `set_debug_locals(None)` to clear it.
+
+**Go to Definition** (for any identifier, always shown):
 
 Right-click an identifier shows "Go to Definition of 'name'", only for words matching `[A-Za-z_][A-Za-z0-9_]*`.
 

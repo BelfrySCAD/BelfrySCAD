@@ -72,7 +72,9 @@ Categorization (after the hidden check):
 
 `_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
-Right-clicking a variable opens a context menu with **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. See `docs/editor.md § Data Viewers` for viewer details.
+Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. See `docs/editor.md § Data Viewers` for viewer details.
+
+Right-clicking a variable name **in the code editor** while the debugger is paused provides the same **Print** and **View** actions. See `docs/editor.md § Editor Context Menu`.
 
 ## DebuggerPane states
 
