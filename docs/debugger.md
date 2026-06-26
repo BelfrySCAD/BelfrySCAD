@@ -97,11 +97,11 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 
 **Pause** — Pause execution at the currently executing line. (Continue and Pause share a single button that toggles based on state.)
 
-**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached.
+**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. Any user-defined function calls that complete during the step print `FUNCNAME() return value = VALUE` to the console via `DebugSession.logged`.
 
 **Step Into** — Resume execution until code is on another line or in another file, at any call stack level, or a breakpoint is reached.
 
-**Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached.
+**Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached. The return value of the function being exited is printed to the console as `FUNCNAME() return value = VALUE`.
 
 **Restart** — Restart the program from the beginning and pause at the first line of code (break-on-first).
 

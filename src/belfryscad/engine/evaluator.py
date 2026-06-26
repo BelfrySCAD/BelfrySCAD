@@ -922,7 +922,7 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None):
+    def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None):
         self.id_to_node: dict[int, ASTNode] = {}
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -931,6 +931,7 @@ class Evaluator:
         self._debug_hook = debug_hook
         self._debugging = debug_hook is not None
         self._error_break_fn = error_break_fn
+        self._return_hook = return_hook
         self._last_locals: dict = {}
         self._last_all_frame_locals: list = []
         self._last_ctx: EvalContext | None = None
@@ -3167,7 +3168,10 @@ class Evaluator:
         try:
             if self._debugging:
                 self._check_debug(decl.expr, child_ctx)
-            return self._eval_expr(decl.expr, child_ctx)
+            result = self._eval_expr(decl.expr, child_ctx)
+            if self._return_hook is not None:
+                self._return_hook(name, result, len(self._call_stack))
+            return result
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
@@ -3184,12 +3188,16 @@ class Evaluator:
                 child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx, ctx)
         pos = call_node.position if call_node is not None else None
-        self._call_stack.append(("function", name or "<function>", pos, func_node.position))
+        fn_name = name or "<function>"
+        self._call_stack.append(("function", fn_name, pos, func_node.position))
         self._frame_ctxs.append(child_ctx)
         try:
             if self._debugging:
                 self._check_debug(func_node.body, child_ctx)
-            return self._eval_expr(func_node.body, child_ctx)
+            result = self._eval_expr(func_node.body, child_ctx)
+            if self._return_hook is not None:
+                self._return_hook(fn_name, result, len(self._call_stack))
+            return result
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()

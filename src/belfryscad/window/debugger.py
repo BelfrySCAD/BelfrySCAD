@@ -260,9 +260,16 @@ class DebugSession(QObject):
         self._pause_event.clear()
         self._pause_event.wait()
 
+    def _on_function_return(self, name: str, value, depth: int):
+        step = self._step_cmd
+        if step == "out" and depth == self._step_depth:
+            self.logged.emit(f"{name}() return value = {_fmt(value)}")
+        elif step == "over" and depth > self._step_depth:
+            self.logged.emit(f"{name}() return value = {_fmt(value)}")
+
     def _run(self, nodes, root_scope, viewport_params: dict):
         from belfryscad.engine.evaluator import Evaluator, EvalError
-        ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break)
+        ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break, return_hook=self._on_function_return)
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
             if not self._stopped:

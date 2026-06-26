@@ -138,6 +138,8 @@ Unknown variables emit `WARNING: Ignoring unknown variable 'name' in file ..., l
 
 `_call_stack` entries: both modules and functions are 4-tuples `("module"|"function", name, call_pos, decl_pos)` (call site + declaration start). `error(msg, node=None, innermost_frame=None)` takes the failing node and an optional innermost frame label (e.g. `"assert"`) for the first TRACE line. If `error_break_fn` is set (debug mode), `error()` calls it before raising `EvalError`, pausing the debugger at the error site.
 
+`Evaluator.__init__` accepts an optional `return_hook(name, value, depth)` callable. When set, it is called by `_eval_user_function` and `_eval_function_literal` after the function body evaluates and before the call stack frame is popped. `depth` is `len(self._call_stack)` at the moment of return (i.e., including the returning function's own frame). `DebugSession` uses this to print return values to the console during step-out and step-over.
+
 ## Special variable scoping (`$variables`)
 
 `$`-prefixed variables (`$fn`, `$fa`, `$fs`, `$t`, `$children`, etc.) use **dynamic scoping** — inherited down the **call chain**, not the lexical scope chain, unlike regular variables.
