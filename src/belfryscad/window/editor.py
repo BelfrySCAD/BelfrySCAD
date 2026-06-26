@@ -1155,7 +1155,13 @@ class CodeEditor(QPlainTextEdit):
         if is_identifier and self._debug_locals is not None and word in self._debug_locals:
             value = self._debug_locals[word]
             menu.addSeparator()
-            from belfryscad.window.debugger import _pretty_assignment
+            from belfryscad.window.debugger import _pretty_assignment, _fmt
+            preview = _fmt(value)
+            if len(preview) > 30:
+                preview = preview[:30] + "…"
+            preview_act = QAction(f"{word} = {preview}", self)
+            preview_act.setEnabled(False)
+            menu.addAction(preview_act)
             menu.addAction(
                 f"Print '{word}' to Console",
                 lambda v=value, n=word: self.print_to_console.emit(_pretty_assignment(n, v))
