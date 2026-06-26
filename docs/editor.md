@@ -95,6 +95,14 @@ All Cmd+Z / Cmd+Shift+Z route through `QUndoStack`, which disables `QPlainTextEd
 
 ## Console Output
 
+The console is `ConsoleWidget` (`window/console.py`), a `QPlainTextEdit` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). All output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)`, both of which call `tab.console.append_output(text)`.
+
+`append_output(text)` routes:
+- **Single-line text** → `appendPlainText(text)` (plain paragraph)
+- **Multi-line text** → `_append_foldable(lines[0], '\n'.join(lines[1:]))` — prepends `▼` to the first line and registers the remaining lines as a collapsible body. Clicking the `▼` / `▶` arrow collapses or expands the block; the pointer changes to a hand cursor when hovering over an arrow.
+
+Fold state is tracked in `_fold_headers: dict[int, tuple[int, int]]` (header block number → first/last body block number) and `_folded: set[int]`. `clear()` resets both. Block visibility is toggled with `QTextBlock.setVisible()`; layout is forced via an empty `QTextCursor.beginEditBlock()/endEditBlock()` call (same technique as `CodeEditor`'s code folding).
+
 The console displays:
 - Parse errors (file/line/col from AST metadata)
 - On each render: bounding box of the resulting mesh and current camera position

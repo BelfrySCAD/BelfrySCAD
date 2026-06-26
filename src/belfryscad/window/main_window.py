@@ -10,6 +10,7 @@ import threading
 import time
 
 from belfryscad.window.editor import CodeEditor
+from belfryscad.window.console import ConsoleWidget
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession
 from belfryscad.window.animate import AnimatePane
@@ -202,7 +203,7 @@ class DocumentTab(QWidget):
         # kept as attributes so MainWindow can access them via tab.editor /
         # tab.console.
         self.editor = CodeEditor()
-        self.console = QPlainTextEdit()
+        self.console = ConsoleWidget()
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Menlo", 11))
         self.console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1482,10 +1483,10 @@ class MainWindow(QMainWindow):
     def log(self, text: str):
         tab = self._current_tab()
         if tab:
-            tab.console.appendPlainText(text)
+            tab.console.append_output(text)
 
     def log_to_tab(self, tab, text: str):
-        tab.console.appendPlainText(text)
+        tab.console.append_output(text)
 
     # ------------------------------------------------------------------
     # Edit operations
