@@ -263,9 +263,9 @@ class DebugSession(QObject):
     def _on_function_return(self, name: str, value, depth: int):
         step = self._step_cmd
         if step == "out" and depth == self._step_depth:
-            self.logged.emit(f"{name}() return value = {_fmt(value)}")
+            self.logged.emit(_pretty_assignment(f"{name}() return value", value))
         elif step == "over" and depth > self._step_depth:
-            self.logged.emit(f"{name}() return value = {_fmt(value)}")
+            self.logged.emit(_pretty_assignment(f"{name}() return value", value))
 
     def _run(self, nodes, root_scope, viewport_params: dict):
         from belfryscad.engine.evaluator import Evaluator, EvalError
