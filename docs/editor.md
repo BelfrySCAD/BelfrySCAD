@@ -52,7 +52,7 @@ Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath
 Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
 
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known local/global variable):
-- **`x = <value>`** — disabled (grayed-out) header item showing the variable's current value formatted by `_fmt()`; truncated to 30 characters with `…` if longer.
+- **`x:`** / **`<value>`** — two disabled (grayed-out) header items: the variable name with a colon, then the value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
 - **Print 'x' to Console** — formats the value via `_pretty_assignment(name, value)` and emits `CodeEditor.print_to_console`, which is connected to `MainWindow._on_debug_print` per tab.
 - **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
 
