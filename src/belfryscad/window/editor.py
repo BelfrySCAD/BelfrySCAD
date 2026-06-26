@@ -1158,7 +1158,7 @@ class CodeEditor(QPlainTextEdit):
             preview = _fmt(value)
             if len(preview) > 30:
                 preview = preview[:30] + "…"
-            name_act = QAction(f"{word}:", self)
+            name_act = QAction(f"Variable {word}:", self)
             name_act.setEnabled(False)
             preview_act = QAction(preview, self)
             preview_act.setEnabled(False)
