@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 from PySide6.QtGui import QTextCursor
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 
 
 class ConsoleWidget(QPlainTextEdit):
@@ -21,6 +21,7 @@ class ConsoleWidget(QPlainTextEdit):
         self._folded: set[int] = set()
         self._hand_cursor_active = False
         self.setUndoRedoEnabled(False)
+        self.viewport().installEventFilter(self)
 
     def append_output(self, text: str):
         """Append text. Multi-line output gets a fold toggle on the first line."""
@@ -92,21 +93,24 @@ class ConsoleWidget(QPlainTextEdit):
                 return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
-        on_arrow = self._header_at(event.pos()) is not None
-        if on_arrow and not self._hand_cursor_active:
-            QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
-            self._hand_cursor_active = True
-        elif not on_arrow and self._hand_cursor_active:
-            QApplication.restoreOverrideCursor()
-            self._hand_cursor_active = False
+    def eventFilter(self, obj, event):
+        if obj is self.viewport() and event.type() == QEvent.Type.Leave:
+            self._restore_cursor()
+        return super().eventFilter(obj, event)
 
-    def leaveEvent(self, event):
+    def _restore_cursor(self):
         if self._hand_cursor_active:
             QApplication.restoreOverrideCursor()
             self._hand_cursor_active = False
-        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._header_at(event.pos()) is not None:
+            if not self._hand_cursor_active:
+                QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
+                self._hand_cursor_active = True
+            return
+        self._restore_cursor()
+        super().mouseMoveEvent(event)
 
     def clear(self):
         super().clear()
