@@ -2231,6 +2231,8 @@ class Evaluator:
                 values = list(values)
             elif isinstance(values, OscObject):
                 values = list(values)  # iterate over keys
+            elif isinstance(values, str):
+                values = list(values)  # iterate over characters
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -2267,6 +2269,8 @@ class Evaluator:
                 values = list(values)
             elif isinstance(values, OscObject):
                 values = list(values)  # iterate over keys
+            elif isinstance(values, str):
+                values = list(values)  # iterate over characters
             elif not isinstance(values, list):
                 values = [values]
             var_seqs.append((name, values))
@@ -2761,6 +2765,8 @@ class Evaluator:
                 values = list(values)
             elif type(values) is OscObject:
                 values = list(values)
+            elif type(values) is str:
+                values = list(values)  # iterate over characters
             else:
                 values = [values]
             var_seqs.append((name, values))
