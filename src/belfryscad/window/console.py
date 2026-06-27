@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 from PySide6.QtGui import QTextCursor
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QTimer, Qt
 
 
 class ConsoleWidget(QPlainTextEdit):
@@ -94,19 +94,22 @@ class ConsoleWidget(QPlainTextEdit):
         super().mousePressEvent(event)
 
     def eventFilter(self, obj, event):
-        result = super().eventFilter(obj, event)
         if obj is self.viewport():
             t = event.type()
             if t == QEvent.Type.MouseMove:
-                on_header = self.cursorForPosition(event.pos()).blockNumber() in self._fold_headers
-                if on_header and not self._hand_cursor_active:
-                    QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
-                    self._hand_cursor_active = True
-                elif not on_header and self._hand_cursor_active:
-                    self._restore_cursor()
+                pos = event.pos()
+                QTimer.singleShot(0, lambda: self._update_cursor(pos))
             elif t == QEvent.Type.Leave:
                 self._restore_cursor()
-        return result
+        return super().eventFilter(obj, event)
+
+    def _update_cursor(self, pos):
+        on_header = self.cursorForPosition(pos).blockNumber() in self._fold_headers
+        if on_header and not self._hand_cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
+            self._hand_cursor_active = True
+        elif not on_header and self._hand_cursor_active:
+            self._restore_cursor()
 
     def _restore_cursor(self):
         if self._hand_cursor_active:
