@@ -210,10 +210,16 @@ class _SimpleViewport(QOpenGLWidget):
             self._mesh_prog["light_dir"].value = tuple(L_world)
             self._mesh_prog["eye_pos"].value = tuple(self._eye_position())
             for buf in self._buffers:
+                is_transparent = buf["color"][3] < 1.0
+                if is_transparent:
+                    self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+                    self._ctx.enable(mgl.BLEND)
                 self._mesh_prog["object_color"].value = buf["color"]
                 self._mesh_prog["backface_color"].value = buf.get(
                     "backface_color", (0.8, 0.0, 0.8, 1.0))
                 buf["vao"].render()
+                if is_transparent:
+                    self._ctx.disable(mgl.BLEND)
             if self.show_edges:
                 self._ctx.disable_direct(0x8037)
                 self._edge_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
@@ -2055,7 +2061,8 @@ class _GridViewport(_SimpleViewport):
                     edge_pos = np.array(edge_verts, dtype=np.float32)
                     edge_cols = np.tile(edge_color, (len(edge_verts), 1))
                     self.upload_mesh(positions, normals,
-                                     backface_color=(0.9, 0.85, 0.1, 1.0),
+                                     color=(0.9, 0.85, 0.1, 0.5),
+                                     backface_color=(0.9, 0.85, 0.1, 0.5),
                                      edge_positions=edge_pos,
                                      edge_colors=edge_cols)
         else:
