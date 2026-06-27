@@ -94,23 +94,24 @@ class ConsoleWidget(QPlainTextEdit):
         super().mousePressEvent(event)
 
     def eventFilter(self, obj, event):
-        if obj is self.viewport() and event.type() == QEvent.Type.Leave:
-            self._restore_cursor()
-        return super().eventFilter(obj, event)
+        result = super().eventFilter(obj, event)
+        if obj is self.viewport():
+            t = event.type()
+            if t == QEvent.Type.MouseMove:
+                on_header = self.cursorForPosition(event.pos()).blockNumber() in self._fold_headers
+                if on_header and not self._hand_cursor_active:
+                    QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
+                    self._hand_cursor_active = True
+                elif not on_header and self._hand_cursor_active:
+                    self._restore_cursor()
+            elif t == QEvent.Type.Leave:
+                self._restore_cursor()
+        return result
 
     def _restore_cursor(self):
         if self._hand_cursor_active:
             QApplication.restoreOverrideCursor()
             self._hand_cursor_active = False
-
-    def mouseMoveEvent(self, event):
-        if self._header_at(event.pos()) is not None:
-            if not self._hand_cursor_active:
-                QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
-                self._hand_cursor_active = True
-            return
-        self._restore_cursor()
-        super().mouseMoveEvent(event)
 
     def clear(self):
         super().clear()
