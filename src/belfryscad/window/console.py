@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QApplication, QPlainTextEdit
-from PySide6.QtGui import QCursor, QTextCursor
-from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QEvent, Qt
 
 
 class ConsoleWidget(QPlainTextEdit):
@@ -19,7 +19,6 @@ class ConsoleWidget(QPlainTextEdit):
         # header block number → (first_body_bn, last_body_bn)
         self._fold_headers: dict[int, tuple[int, int]] = {}
         self._folded: set[int] = set()
-        self._hand_cursor_active = False
         self.setUndoRedoEnabled(False)
         self.viewport().installEventFilter(self)
 
@@ -94,34 +93,15 @@ class ConsoleWidget(QPlainTextEdit):
         super().mousePressEvent(event)
 
     def eventFilter(self, obj, event):
-        if obj is self.viewport():
-            t = event.type()
-            if t == QEvent.Type.MouseMove:
-                import os
-                with open(os.path.expanduser('~/Desktop/console_debug.txt'), 'a') as _f:
-                    _f.write(f"eventFilter MouseMove headers={sorted(self._fold_headers.keys())}\n")
-                QTimer.singleShot(0, self._update_cursor)
-            elif t == QEvent.Type.Leave:
-                self._restore_cursor()
+        if obj is self.viewport() and event.type() == QEvent.Type.Leave:
+            self.viewport().unsetCursor()
         return super().eventFilter(obj, event)
 
-    def _update_cursor(self):
-        pos = self.viewport().mapFromGlobal(QCursor.pos())
-        bn = self.cursorForPosition(pos).blockNumber()
-        import os
-        with open(os.path.expanduser('~/Desktop/console_debug.txt'), 'a') as _f:
-            _f.write(f"  _update_cursor pos=({pos.x()},{pos.y()}) bn={bn} on_header={bn in self._fold_headers}\n")
-        on_header = bn in self._fold_headers
-        if on_header and not self._hand_cursor_active:
-            QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
-            self._hand_cursor_active = True
-        elif not on_header and self._hand_cursor_active:
-            self._restore_cursor()
-
-    def _restore_cursor(self):
-        if self._hand_cursor_active:
-            QApplication.restoreOverrideCursor()
-            self._hand_cursor_active = False
+    def mouseMoveEvent(self, event):
+        if self.cursorForPosition(event.pos()).blockNumber() in self._fold_headers:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            super().mouseMoveEvent(event)
 
     def clear(self):
         super().clear()
