@@ -95,13 +95,15 @@ All Cmd+Z / Cmd+Shift+Z route through `QUndoStack`, which disables `QPlainTextEd
 
 ## Console Output
 
-The console is `ConsoleWidget` (`window/console.py`), a `QPlainTextEdit` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). All output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)`, both of which call `tab.console.append_output(text)`.
+The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). All output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)`, both of which call `tab.console.append_output(text)`.
+
+`QTextBrowser` is used (not `QPlainTextEdit`) because it handles cursor shapes natively: `PointingHandCursor` over anchor links, `IBeamCursor` over selectable text. `setOpenLinks(False)` prevents navigation; `anchorClicked` handles fold toggles.
 
 `append_output(text)` routes:
-- **Single-line text** → `appendPlainText(text)` (plain paragraph)
-- **Multi-line text** → `_append_foldable(lines[0], '\n'.join(lines[1:]))` — prepends `▼` to the first line and registers the remaining lines as a collapsible body. Clicking the `▼` / `▶` arrow collapses or expands the block; the pointer changes to a hand cursor when hovering over an arrow.
+- **Single-line text** → `_append_plain(text)` — inserts a plain text paragraph via `QTextCursor`.
+- **Multi-line text** → `_append_foldable(lines[0], '\n'.join(lines[1:]))` — inserts the first line as an HTML anchor `<a href="fold:N">▼ summary</a>` and the remaining lines as plain paragraphs. Clicking the anchor collapses or expands the block; `QTextBrowser` shows a hand cursor over it automatically.
 
-Fold state is tracked in `_fold_headers: dict[int, tuple[int, int]]` (header block number → first/last body block number) and `_folded: set[int]`. `clear()` resets both. Block visibility is toggled with `QTextBlock.setVisible()`; layout is forced via an empty `QTextCursor.beginEditBlock()/endEditBlock()` call (same technique as `CodeEditor`'s code folding).
+Fold state is tracked in `_fold_headers: dict[int, tuple[int, int, int]]` (fold_id → (header_bn, first_body_bn, last_body_bn)) and `_folded: set[int]` (fold_ids currently collapsed). `clear()` resets both. Block visibility is toggled with `QTextBlock.setVisible()`; layout is forced via an empty `QTextCursor.beginEditBlock()/endEditBlock()` call (same technique as `CodeEditor`'s code folding). The fold_id is a sequential integer assigned at append time and embedded in the anchor href.
 
 The console displays:
 - Parse errors (file/line/col from AST metadata)

@@ -1,14 +1,17 @@
-from PySide6.QtWidgets import QPlainTextEdit
+from html import escape
+
+from PySide6.QtWidgets import QTextBrowser
 from PySide6.QtGui import QTextCursor
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QUrl
 
 
-class ConsoleWidget(QPlainTextEdit):
+class ConsoleWidget(QTextBrowser):
     """Read-only console with collapsible multi-line output blocks.
 
-    Multi-line text appended via append_output() gets a ▼/▶ toggle on the
-    first line; clicking the arrow hides or shows the remaining lines.
-    Single-line text is appended as plain paragraphs.
+    Multi-line text appended via append_output() gets a clickable ▼/▶
+    anchor on the first line; clicking collapses or expands the remaining
+    lines. QTextBrowser handles cursor shapes automatically: PointingHandCursor
+    over the toggle anchor, IBeamCursor over selectable text.
     """
 
     _COLLAPSED = "▶"
@@ -16,45 +19,73 @@ class ConsoleWidget(QPlainTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # header block number → (first_body_bn, last_body_bn)
-        self._fold_headers: dict[int, tuple[int, int]] = {}
+        # fold_id → (header_bn, first_body_bn, last_body_bn)
+        self._fold_headers: dict[int, tuple[int, int, int]] = {}
         self._folded: set[int] = set()
-        self.setUndoRedoEnabled(False)
-        self.viewport().installEventFilter(self)
+        self.setOpenLinks(False)
+        self.document().setDefaultStyleSheet(
+            "a { color: inherit; text-decoration: none; }"
+        )
+        self.anchorClicked.connect(self._on_anchor_clicked)
 
     def append_output(self, text: str):
         """Append text. Multi-line output gets a fold toggle on the first line."""
         lines = text.rstrip('\n').split('\n')
         if len(lines) <= 1:
-            self.appendPlainText(text)
+            self._append_plain(text)
         else:
             self._append_foldable(lines[0], '\n'.join(lines[1:]))
 
+    def _append_plain(self, text: str):
+        doc = self.document()
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if cursor.position() > 0:
+            cursor.insertBlock()
+        cursor.insertText(text)
+
     def _append_foldable(self, summary: str, detail: str):
         doc = self.document()
-        self.appendPlainText(f"{self._EXPANDED} {summary}")
+        fold_id = len(self._fold_headers)
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if cursor.position() > 0:
+            cursor.insertBlock()
+        cursor.insertHtml(
+            f'<a href="fold:{fold_id}">{self._EXPANDED} {escape(summary)}</a>'
+        )
         header_bn = doc.blockCount() - 1
         first_body_bn = header_bn + 1
         for line in detail.split('\n'):
-            self.appendPlainText(line)
+            cursor = QTextCursor(doc)
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertBlock()
+            cursor.insertText(line)
         last_body_bn = doc.blockCount() - 1
-        self._fold_headers[header_bn] = (first_body_bn, last_body_bn)
+        self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
 
-    def _toggle_fold(self, header_bn: int):
-        if header_bn not in self._fold_headers:
+    def _on_anchor_clicked(self, url: QUrl):
+        href = url.toString()
+        if href.startswith('fold:'):
+            try:
+                self._toggle_fold(int(href[5:]))
+            except ValueError:
+                pass
+
+    def _toggle_fold(self, fold_id: int):
+        if fold_id not in self._fold_headers:
             return
-        first_body_bn, last_body_bn = self._fold_headers[header_bn]
+        header_bn, first_body_bn, last_body_bn = self._fold_headers[fold_id]
         doc = self.document()
-        collapsing = header_bn not in self._folded
-
+        collapsing = fold_id not in self._folded
         if collapsing:
-            self._folded.add(header_bn)
+            self._folded.add(fold_id)
             new_arrow = self._COLLAPSED
         else:
-            self._folded.discard(header_bn)
+            self._folded.discard(fold_id)
             new_arrow = self._EXPANDED
 
-        # Swap the arrow character on the header line
+        # Swap the arrow character in the header line (inside the anchor)
         hb = doc.findBlockByNumber(header_bn)
         hcursor = QTextCursor(hb)
         hcursor.movePosition(QTextCursor.MoveOperation.NextCharacter,
@@ -67,42 +98,11 @@ class ConsoleWidget(QPlainTextEdit):
             block.setVisible(not collapsing)
             block = block.next()
 
-        # Force the document layout to recalculate (same trick as CodeEditor)
+        # Force layout recalculation
         tmp = QTextCursor(doc)
         tmp.beginEditBlock()
         tmp.endEditBlock()
         self.viewport().update()
-
-    def _header_at(self, pos) -> int | None:
-        """Return the header block number if pos is over a fold arrow, else None."""
-        cursor = self.cursorForPosition(pos)
-        bn = cursor.blockNumber()
-        if bn not in self._fold_headers:
-            return None
-        block = self.document().findBlockByNumber(bn)
-        if cursor.position() - block.position() <= 1:
-            return bn
-        return None
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            header_bn = self._header_at(event.pos())
-            if header_bn is not None:
-                self._toggle_fold(header_bn)
-                return
-        super().mousePressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self.viewport() and event.type() == QEvent.Type.Leave:
-            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
-        return super().eventFilter(obj, event)
-
-    def mouseMoveEvent(self, event):
-        if self.cursorForPosition(event.pos()).blockNumber() in self._fold_headers:
-            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
-            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
-            super().mouseMoveEvent(event)
 
     def clear(self):
         super().clear()
