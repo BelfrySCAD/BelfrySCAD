@@ -1163,10 +1163,8 @@ class VNFViewer(QDialog):
         self._vp = _VNFViewport(splitter)
         from PySide6.QtWidgets import QApplication
         for w in QApplication.topLevelWidgets():
-            if hasattr(w, '_current_tab'):
-                tab = w._current_tab()
-                if tab:
-                    self._vp.orthographic = tab.viewport._renderer.camera.orthographic
+            if hasattr(w, '_viewport'):
+                self._vp.orthographic = w._viewport._renderer.camera.orthographic
                 break
         self._vp.face_clicked.connect(self._on_viewport_face_clicked)
         splitter.addWidget(self._vp)

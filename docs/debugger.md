@@ -1,6 +1,6 @@
 # Debugger Reference
 
-The debugger runs the evaluator in a daemon worker thread (`DebugSession`) and surfaces a single shared `DebuggerPane` (owned by `MainWindow`, not per-tab) with call-stack and variables panels. `_debug_session` and `_debug_tab` on `MainWindow` track the active session and the tab that started it. See `docs/evaluator.md` for the evaluator internals referenced below.
+The debugger runs the evaluator in a daemon worker thread (`DebugSession`) and surfaces a single shared `DebuggerPane` (owned by `MainWindow`, not per-tab) with call-stack and variables panels. `_debug_session` and `_debug_tab` on `MainWindow` track the active session and the `FileTab` that started it. The viewport, console, and animate pane are all window-level singletons — there is no per-tab routing. See `docs/evaluator.md` for the evaluator internals referenced below.
 
 ## DebugSession (`debugger.py`)
 
@@ -73,7 +73,7 @@ Categorization (after the hidden check):
 
 `_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
-Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. **Print to Console** emits `DebuggerPane.print_value_to_console(name, value)` (not `print_to_console`) — connected to `MainWindow._on_debug_print_value` → `log_value_to_tab` → `append_value`, so the value is stored for the console right-click viewer menu. Output always routes to `_current_tab().console` (the visible console), not `_debug_tab.console` — the active tab may differ from the debug tab when paused in an included file. See `docs/editor.md § Data Viewers` for viewer details.
+Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. **Print to Console** emits `DebuggerPane.print_value_to_console(name, value)` (not `print_to_console`) — connected to `MainWindow._on_debug_print_value` → `self._console.append_value(name, value, ...)`, so the value is stored for the console right-click viewer menu. Output routes to the window-level `self._console` (a singleton). See `docs/editor.md § Data Viewers` for viewer details.
 
 Right-clicking a variable name **in the code editor** while the debugger is paused provides the same **Print** and **View** actions. See `docs/editor.md § Editor Context Menu`.
 

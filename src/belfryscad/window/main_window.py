@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QSplitter,
+    QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QStackedWidget, QApplication, QMenu,
+    QDockWidget, QApplication, QMenu,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -15,6 +15,7 @@ from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
+from belfryscad.window.document_manager import get_document_manager
 
 import re
 from pathlib import Path
@@ -150,9 +151,11 @@ class _TextEditCmd(QUndoCommand):
 
 
 class _GizmoCmd(QUndoCommand):
-    def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn, merge_id, label):
+    def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn,
+                 merge_id, label, viewport):
         super().__init__(label)
         self._tab = tab
+        self._viewport = viewport
         self._editor = editor
         self._before = before
         self._after = after
@@ -180,9 +183,9 @@ class _GizmoCmd(QUndoCommand):
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._before
         self._render()
-        self._tab.viewport._renderer.selected_id = None
-        self._tab.editor.clear_selection()
-        self._tab.viewport.update()
+        self._viewport._renderer.selected_id = None
+        self._editor.clear_selection()
+        self._viewport.update()
 
     def redo(self):
         self._tab._suppress_text_undo = True
@@ -190,103 +193,23 @@ class _GizmoCmd(QUndoCommand):
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._after
         self._render()
-        self._restore(self._tab, self._new_node_start)
+        self._restore(self._new_node_start)
 
 
-class DocumentTab(QWidget):
+class FileTab(QWidget):
+    """Per-editor-tab widget: holds only the CodeEditor and per-file metadata."""
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        # Editor, console, and animate pane live in dock stacks, not here —
-        # kept as attributes so MainWindow can access them via tab.editor /
-        # tab.console.
         self.editor = CodeEditor()
-        self.console = ConsoleWidget()
-        self.console.setReadOnly(True)
-        self.console.setFont(QFont("Menlo", 11))
-        self.console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.console.customContextMenuRequested.connect(self._console_context_menu)
-        self.animate_pane = AnimatePane()
-        self._dump_dir: Optional[str] = None
-
-        self.viewport = Viewport()
-        self.tools_strip = self._make_tools_strip()
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.viewport)
-        splitter.addWidget(self.tools_strip)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([800, 48])
-
-        layout.addWidget(splitter)
-
+        layout.addWidget(self.editor)
         self.file_path = None
         self.is_modified = False
         self.root_scope = None
-
-    def _console_context_menu(self, pos):
-        menu = self.console.createStandardContextMenu()
-        name_value = self.console.value_at(pos)
-        if name_value is not None:
-            name, value = name_value
-            from belfryscad.window.data_viewers import build_viewer_menu
-            view_sub = QMenu(f"View '{name}'…", self.console)
-            build_viewer_menu(view_sub, name, value, self.console)
-            if not view_sub.isEmpty():
-                menu.addSeparator()
-                menu.addMenu(view_sub)
-        menu.addSeparator()
-        menu.addAction("Clear Console", self.console.clear)
-        menu.exec(self.console.mapToGlobal(pos))
-
-    def _make_tools_strip(self):
-        strip = QWidget()
-        strip.setFixedWidth(48)
-        strip.setObjectName("ToolsStrip")
-
-        layout = QVBoxLayout(strip)
-        layout.setContentsMargins(4, 8, 4, 8)
-        layout.setSpacing(4)
-
-        self._tool_group = QButtonGroup(strip)
-        self._tool_group.setExclusive(True)
-
-        for tool_id, label, tooltip in (
-            (0, "T", "Translate"),
-            (1, "R", "Rotate"),
-            (2, "S", "Scale"),
-        ):
-            btn = QToolButton()
-            btn.setToolTip(tooltip)
-            btn.setCheckable(True)
-            btn.setAutoRaise(True)
-            btn.setFixedSize(36, 36)
-            btn.setStyleSheet(
-                "QToolButton { border: none; }"
-                "QToolButton:checked { background: palette(highlight); border-radius: 4px; }"
-            )
-            icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
-            if icon_path.exists():
-                btn.setIcon(QIcon(str(icon_path)))
-                btn.setIconSize(QSize(26, 26))
-            else:
-                btn.setText(label)
-                btn.setFont(QFont("Helvetica", 13, QFont.Weight.Bold))
-            self._tool_group.addButton(btn, tool_id)
-            layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        layout.addStretch()
-        self.active_tool: int | None = None
-        self._tool_group.idToggled.connect(self._on_tool_toggled)
-
-        return strip
-
-    def _on_tool_toggled(self, tool_id: int, checked: bool):
-        self.active_tool = tool_id if checked else None
-        self.viewport.set_active_tool(tool_id if checked else -1)
+        self._last_text = ""
+        self._last_cursor = 0
+        self._suppress_text_undo = False
 
     def display_name(self):
         if self.file_path:
@@ -304,38 +227,38 @@ class _RenderCallback(QObject):
     thread boundary and uses QueuedConnection, routing all slots to the main thread.
     """
 
-    def __init__(self, main_window, tab, render_id: int, parent=None):
+    def __init__(self, main_window, file_tab, render_id: int, parent=None):
         super().__init__(parent)
         self._mw = main_window
-        self._tab = tab
+        self._file_tab = file_tab
         self._render_id = render_id
 
     @Slot(str)
     def on_logged(self, msg: str):
         if self._render_id == self._mw._render_id:
-            self._mw.log_to_tab(self._tab, msg)
+            self._mw._console.append_output(msg)
 
     @Slot(str)
     def on_parse_errored(self, captured: str):
         if self._render_id == self._mw._render_id:
-            self._mw.log_to_tab(self._tab, captured.rstrip())
-            self._mw._parse_error_to_editor(self._tab, captured)
+            self._mw._console.append_output(captured.rstrip())
+            self._mw._parse_error_to_editor(self._file_tab, captured)
 
     @Slot(object, object)
     def on_ast_ready(self, nodes, root_scope):
         if self._render_id == self._mw._render_id:
-            self._tab.root_scope = root_scope
-            self._tab.editor.update_user_names(root_scope)
+            self._file_tab.root_scope = root_scope
+            self._file_tab.editor.update_user_names(root_scope)
 
     @Slot(object, object, float)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float):
-        self._mw._on_render_done(self._tab, bodies, id_to_node, elapsed_ms, self._render_id)
+        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id)
 
     @Slot()
     def on_done(self):
         self._mw._set_render_busy(False)
         if self._render_id == self._mw._render_id:
-            self._mw._on_render_thread_done(self._tab)
+            self._mw._on_render_thread_done(self._file_tab)
 
 
 class _RenderWorker(QObject):
@@ -458,6 +381,12 @@ class MainWindow(QMainWindow):
         self._render_cancel: threading.Event | None = None
         self._render_id: int = 0
         self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
+        # Window-level render results (shared by viewport, export, gizmo, selection)
+        self.id_to_node: dict = {}
+        self._bodies = None
+        self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
+        self._dump_dir: Optional[str] = None
+        self._dump_frame: int = 0
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -476,35 +405,47 @@ class MainWindow(QMainWindow):
         self._toolbar = self._make_toolbar()
         self.addToolBar(self._toolbar)
 
-        # Viewport tabs are the central widget; all panels live in dock widgets.
+        # Single viewport is the central widget
+        self._viewport = Viewport()
+        self._viewport.selection_changed.connect(self._on_selection_changed)
+        self._viewport.translate_committed.connect(self._on_translate_committed)
+        self._viewport.rotate_committed.connect(self._on_rotate_committed)
+        self._viewport.scale_committed.connect(self._on_scale_committed)
+        self._viewport.camera_changed.connect(self._update_camera_label)
+        self.setCentralWidget(self._viewport)
+
+        # --- Editor dock (left) — QTabWidget containing FileTab instances ---
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(True)
+        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(self._tab_changed)
-        self.setCentralWidget(self._tabs)
 
-        # --- Editor dock (left by default) ---
-        self._editor_stack = QStackedWidget()
         self._editor_dock = QDockWidget("Editor", self)
         self._editor_dock.setObjectName("EditorDock")
-        self._editor_dock.setWidget(self._editor_stack)
+        self._editor_dock.setWidget(self._tabs)
         self._editor_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._editor_dock)
 
-        # --- Console dock (bottom) ---
-        self._console_stack = QStackedWidget()
+        # --- Console dock (bottom) — single console for the window ---
+        self._console = ConsoleWidget()
+        self._console.setReadOnly(True)
+        self._console.setFont(QFont("Menlo", 11))
+        self._console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._console.customContextMenuRequested.connect(self._console_context_menu)
+
         self._console_dock = QDockWidget("Console", self)
         self._console_dock.setObjectName("ConsoleDock")
-        self._console_dock.setWidget(self._console_stack)
+        self._console_dock.setWidget(self._console)
         self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
         # --- Debugger dock (bottom, beside console) ---
         self._debugger_pane = DebuggerPane()
         self._debug_session: DebugSession | None = None
-        self._debug_tab = None  # the tab that started the debug session
+        self._debug_tab: FileTab | None = None
         self._debugger_dock = QDockWidget("Debugger", self)
         self._debugger_dock.setObjectName("DebuggerDock")
         self._debugger_dock.setWidget(self._debugger_pane)
@@ -537,11 +478,15 @@ class MainWindow(QMainWindow):
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(btn.click)
 
-        # --- Animate dock (bottom, beside console) ---
-        self._animate_stack = QStackedWidget()
+        # --- Animate dock (bottom) — single animate pane for the window ---
+        self._animate_pane = AnimatePane()
+        self._animate_pane.frame_changed.connect(self._on_animate_frame)
+        self._animate_pane.dump_started.connect(self._on_dump_started, Qt.ConnectionType.QueuedConnection)
+        self._animate_pane.dump_finished.connect(self._on_dump_finished)
+
         self._animate_dock = QDockWidget("Animate", self)
         self._animate_dock.setObjectName("AnimateDock")
-        self._animate_dock.setWidget(self._animate_stack)
+        self._animate_dock.setWidget(self._animate_pane)
         self._animate_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._animate_dock)
         self._animate_dock.hide()
@@ -559,6 +504,21 @@ class MainWindow(QMainWindow):
         self._fps_timer = QTimer(self)
         self._fps_timer.timeout.connect(self._update_fps)
         self._fps_timer.start(1000)
+
+    def _console_context_menu(self, pos):
+        menu = self._console.createStandardContextMenu()
+        name_value = self._console.value_at(pos)
+        if name_value is not None:
+            name, value = name_value
+            from belfryscad.window.data_viewers import build_viewer_menu
+            view_sub = QMenu(f"View '{name}'…", self._console)
+            build_viewer_menu(view_sub, name, value, self._console)
+            if not view_sub.isEmpty():
+                menu.addSeparator()
+                menu.addMenu(view_sub)
+        menu.addSeparator()
+        menu.addAction("Clear Console", self._console.clear)
+        menu.exec(self._console.mapToGlobal(pos))
 
     @staticmethod
     def _toolbar_icon(name: str) -> QIcon:
@@ -620,7 +580,43 @@ class MainWindow(QMainWindow):
         self._act_animate_tb.triggered.connect(self._show_animate)
         tb.addAction(self._act_animate_tb)
 
+        tb.addSeparator()
+
+        self._tool_group = QButtonGroup(tb)
+        self._tool_group.setExclusive(True)
+        self._active_tool: int | None = None
+
+        for tool_id, label, tooltip in (
+            (0, "T", "Translate"),
+            (1, "R", "Rotate"),
+            (2, "S", "Scale"),
+        ):
+            btn = QToolButton()
+            btn.setToolTip(tooltip)
+            btn.setCheckable(True)
+            btn.setAutoRaise(True)
+            btn.setFixedSize(28, 28)
+            btn.setStyleSheet(
+                "QToolButton { border: none; }"
+                "QToolButton:checked { background: palette(highlight); border-radius: 4px; }"
+            )
+            icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
+            if icon_path.exists():
+                btn.setIcon(QIcon(str(icon_path)))
+                btn.setIconSize(QSize(22, 22))
+            else:
+                btn.setText(label)
+                btn.setFont(QFont("Helvetica", 11, QFont.Weight.Bold))
+            self._tool_group.addButton(btn, tool_id)
+            tb.addWidget(btn)
+
+        self._tool_group.idToggled.connect(self._on_tool_toggled)
+
         return tb
+
+    def _on_tool_toggled(self, tool_id: int, checked: bool):
+        self._active_tool = tool_id if checked else None
+        self._viewport.set_active_tool(tool_id if checked else -1)
 
     # ------------------------------------------------------------------
     # Menus
@@ -698,8 +694,6 @@ class MainWindow(QMainWindow):
         self._act_show_editor.setText("Show Code Editor")
         view_menu.addAction(self._act_show_editor)
 
-        self._act_show_tools = self._add_checkable(view_menu, "Show Tools Strip", True, self._toggle_tools_strip)
-
         self._act_show_console = self._console_dock.toggleViewAction()
         self._act_show_console.setText("Show Console")
         view_menu.addAction(self._act_show_console)
@@ -740,6 +734,8 @@ class MainWindow(QMainWindow):
         self._add_action(window_menu, "Minimize", self.showMinimized, QKeySequence("Ctrl+M"))
         self._add_action(window_menu, "Zoom", self.showMaximized)
         window_menu.addSeparator()
+        self._add_action(window_menu, "New Window", self._new_window, QKeySequence("Ctrl+Shift+N"))
+        self._add_action(window_menu, "Open in New Window…", self._open_in_new_window)
         self._add_action(window_menu, "Move Tab to New Window", self._tear_off_tab)
         window_menu.addSeparator()
         self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
@@ -793,43 +789,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _new_document(self):
-        tab = DocumentTab()
-        tab.id_to_node = {}
-        tab._last_text = ""
-        tab._last_cursor = 0
-        tab._suppress_text_undo = False
+        tab = FileTab()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
         )
-        tab.viewport.selection_changed.connect(
-            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
-        )
-        tab.viewport.translate_committed.connect(
-            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
-        )
-        tab.viewport.rotate_committed.connect(
-            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
-        )
-        tab.viewport.scale_committed.connect(
-            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
-        )
-        tab.viewport.camera_changed.connect(self._update_camera_label)
-        self._editor_stack.addWidget(tab.editor)
-        self._console_stack.addWidget(tab.console)
-        self._animate_stack.addWidget(tab.animate_pane)
-        tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
-        tab.animate_pane.dump_started.connect(
-            lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
-        )
-        tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
-        if hasattr(self, '_act_perspective'):
-            self._apply_perspective_to_tab(tab)
-            self._apply_stereo_to_tab(tab)
+        if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
                 tab,
                 QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -841,16 +810,12 @@ class MainWindow(QMainWindow):
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
 
-    def _current_tab(self):
+    def _current_tab(self) -> FileTab | None:
         return self._tabs.currentWidget()
 
     def _update_camera_label(self):
-        tab = self._tabs.currentWidget()
-        if tab is None:
-            self._camera_label.setText("")
-            return
         import numpy as np
-        cam = tab.viewport._renderer.camera
+        cam = self._viewport._renderer.camera
         vpt = np.asarray(cam.target)
         vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
@@ -862,27 +827,13 @@ class MainWindow(QMainWindow):
         )
 
     def _update_fps(self):
-        tab = self._tabs.currentWidget()
-        if tab is None:
-            self._fps_label.setText("")
-            return
-        count = tab.viewport._frame_count
-        tab.viewport._frame_count = 0
+        count = self._viewport._frame_count
+        self._viewport._frame_count = 0
         self._fps_label.setText(f"{count} FPS")
 
     def _tab_changed(self, index):
-        tab = self._tabs.widget(index)
-        if tab:
-            self._editor_stack.setCurrentWidget(tab.editor)
-            self._console_stack.setCurrentWidget(tab.console)
-            self._animate_stack.setCurrentWidget(tab.animate_pane)
-            self._update_camera_label()
-        # Animation playback re-renders the active tab on every frame, so
-        # pause any other tab's animation while it's not visible.
-        for i in range(self._tabs.count()):
-            other = self._tabs.widget(i)
-            if other is not None and other is not tab:
-                other.animate_pane.pause()
+        # Switching tabs only changes which editor is shown; viewport/console stay fixed.
+        pass
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -903,10 +854,10 @@ class MainWindow(QMainWindow):
         if tab:
             if self._debug_tab is tab:
                 self._on_debug_stop()
-            tab.animate_pane.pause()
-            self._editor_stack.removeWidget(tab.editor)
-            self._console_stack.removeWidget(tab.console)
-            self._animate_stack.removeWidget(tab.animate_pane)
+            if self._rendered_tab is tab:
+                self._rendered_tab = None
+            if tab.file_path:
+                get_document_manager().unregister(tab.file_path, tab.editor)
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
             self._new_document()
@@ -915,7 +866,30 @@ class MainWindow(QMainWindow):
         self._close_tab(self._tabs.currentIndex())
 
     def _tear_off_tab(self):
-        pass  # TODO: detach tab into separate window
+        tab = self._current_tab()
+        if tab is None or self._tabs.count() <= 1:
+            return
+        file_path = tab.file_path
+        text = tab.editor.toPlainText()
+        is_modified = tab.is_modified
+        self._close_tab(self._tabs.currentIndex())
+        win = MainWindow()
+        win.show()
+        if file_path:
+            win.open_file_by_path(file_path)
+            if is_modified:
+                win_tab = win._current_tab()
+                if win_tab:
+                    win_tab.editor.setPlainText(text)
+                    win_tab.is_modified = True
+                    win_tab._last_text = text
+        else:
+            win_tab = win._current_tab()
+            if win_tab:
+                win_tab.editor.setPlainText(text)
+                win_tab._last_text = text
+                if is_modified:
+                    win_tab.is_modified = True
 
     def _on_editor_changed(self, tab):
         tab.is_modified = True
@@ -934,15 +908,16 @@ class MainWindow(QMainWindow):
             self._undo_stack.push(
                 _TextEditCmd(tab, tab.editor, before, cursor_before, current, cursor_after)
             )
+            if tab.file_path:
+                get_document_manager().broadcast_change(tab.file_path, current, tab.editor)
 
     # ------------------------------------------------------------------
     # File operations
     # ------------------------------------------------------------------
 
-    def _create_and_add_tab(self, path: str, text: str) -> 'DocumentTab':
-        """Create a fully-connected DocumentTab for an existing file and add it to the UI."""
-        tab = DocumentTab()
-        tab.id_to_node = {}
+    def _create_and_add_tab(self, path: str, text: str) -> FileTab:
+        """Create a fully-connected FileTab for an existing file and add it to the UI."""
+        tab = FileTab()
         tab.file_path = path
         tab._last_text = text
         tab._last_cursor = 0
@@ -952,34 +927,11 @@ class MainWindow(QMainWindow):
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
         )
-        tab.viewport.selection_changed.connect(
-            lambda orig_id, t=tab: self._on_selection_changed(t, orig_id)
-        )
-        tab.viewport.translate_committed.connect(
-            lambda dx, dy, dz, t=tab: self._on_translate_committed(t, dx, dy, dz)
-        )
-        tab.viewport.rotate_committed.connect(
-            lambda axis, deg, t=tab: self._on_rotate_committed(t, axis, deg)
-        )
-        tab.viewport.scale_committed.connect(
-            lambda axis, factor, uniform, t=tab: self._on_scale_committed(t, axis, factor, uniform)
-        )
-        tab.viewport.camera_changed.connect(self._update_camera_label)
-        self._editor_stack.addWidget(tab.editor)
-        self._console_stack.addWidget(tab.console)
-        self._animate_stack.addWidget(tab.animate_pane)
-        tab.animate_pane.frame_changed.connect(lambda t, tb=tab: self._on_animate_frame(tb, t))
-        tab.animate_pane.dump_started.connect(
-            lambda tb=tab: self._on_dump_started(tb), Qt.ConnectionType.QueuedConnection
-        )
-        tab.animate_pane.dump_finished.connect(lambda tb=tab: self._on_dump_finished(tb))
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
-        self._apply_perspective_to_tab(tab)
-        self._apply_stereo_to_tab(tab)
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -988,14 +940,11 @@ class MainWindow(QMainWindow):
             load_preference("editor/columnGuide", int),
         )
         self._apply_word_wrap_to_tab(tab)
+        get_document_manager().register(path, tab.editor)
         # Replace a lone empty Untitled tab instead of adding alongside it
         if self._tabs.count() == 1:
             old = self._tabs.widget(0)
             if old and not old.file_path and not old.is_modified and not old.editor.toPlainText():
-                old.animate_pane.pause()
-                self._editor_stack.removeWidget(old.editor)
-                self._console_stack.removeWidget(old.console)
-                self._animate_stack.removeWidget(old.animate_pane)
                 self._tabs.removeTab(0)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
@@ -1017,18 +966,23 @@ class MainWindow(QMainWindow):
             if tab and tab.file_path and str(Path(tab.file_path).resolve()) == resolved:
                 self._tabs.setCurrentIndex(i)
                 return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except OSError as e:
-            QMessageBox.critical(self, "Open Error", str(e))
-            settings = QSettings("BelfrySCAD", "BelfrySCAD")
-            recents = settings.value("recentFiles", [], type=list)
-            if path in recents:
-                recents.remove(path)
-                settings.setValue("recentFiles", recents)
-                self._rebuild_recent_menu()
-            return
+        # Use in-memory text if another window has unsaved changes to this file
+        in_memory = get_document_manager().get_current_text(resolved)
+        if in_memory is not None:
+            text = in_memory
+        else:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except OSError as e:
+                QMessageBox.critical(self, "Open Error", str(e))
+                settings = QSettings("BelfrySCAD", "BelfrySCAD")
+                recents = settings.value("recentFiles", [], type=list)
+                if path in recents:
+                    recents.remove(path)
+                    settings.setValue("recentFiles", recents)
+                    self._rebuild_recent_menu()
+                return
         self._create_and_add_tab(path, text)
         self._update_recent_files(path)
 
@@ -1058,11 +1012,15 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, "Save Error", str(e))
             return False
+        old_path = tab.file_path
         tab.file_path = path
         tab.is_modified = False
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._tabs.setTabText(idx, tab.display_name())
+        if old_path and old_path != path:
+            get_document_manager().unregister(old_path, tab.editor)
+        get_document_manager().register(path, tab.editor)
         self._update_recent_files(path)
         return True
 
@@ -1111,11 +1069,9 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
 
     def _export(self):
-        tab = self._current_tab()
-        if not tab:
-            return
-        self._render()
-        bodies = getattr(tab, '_bodies', None)
+        if not self._bodies:
+            self._render()
+        bodies = self._bodies
         if not bodies:
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
             return
@@ -1274,11 +1230,11 @@ class MainWindow(QMainWindow):
     # Render
     # ------------------------------------------------------------------
 
-    def _viewport_params(self, tab) -> dict:
+    def _viewport_params(self) -> dict:
         """Snapshot camera state and animation time as OpenSCAD $vp*/$t special variables."""
-        params = {"$t": tab.animate_pane.current_t()}
+        params = {"$t": self._animate_pane.current_t()}
         try:
-            cam = tab.viewport._renderer.camera
+            cam = self._viewport._renderer.camera
             params.update({
                 "$vpt": cam.target.tolist(),
                 "$vpr": [
@@ -1308,15 +1264,15 @@ class MainWindow(QMainWindow):
         self._render_id += 1
         render_id = self._render_id
         tab.editor.clear_errors()
-        tab.console.clear()
-        tab.viewport.load_geometry([])
-        self.log_to_tab(tab, "Rendering…")
+        self._console.clear()
+        self._viewport.load_geometry([])
+        self.log("Rendering…")
 
         cancel = threading.Event()
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(tab))
+        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params())
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -1346,45 +1302,44 @@ class MainWindow(QMainWindow):
 
         thread.start()
 
-    def _on_animate_frame(self, tab, t: float):
-        if tab.animate_pane.is_dumping():
-            tab._dump_frame = tab.animate_pane.current_step()
-        self._render(tab)
+    def _on_animate_frame(self, t: float):
+        if self._animate_pane.is_dumping():
+            self._dump_frame = self._animate_pane.current_step()
+        self._render()
 
-    def _on_dump_started(self, tab):
-        if tab._dump_dir is None:
+    def _on_dump_started(self):
+        if self._dump_dir is None:
             path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To")
             if not path:
-                tab.animate_pane.pause()
+                self._animate_pane.pause()
                 return
-            tab._dump_dir = path
-        self.log_to_tab(tab, f"Dumping animation frames to {tab._dump_dir}")
+            self._dump_dir = path
+        self.log(f"Dumping animation frames to {self._dump_dir}")
 
-    def _on_dump_finished(self, tab):
-        self.log_to_tab(tab, "Animation frame dump complete.")
+    def _on_dump_finished(self):
+        self.log("Animation frame dump complete.")
 
     def _set_render_busy(self, busy: bool):
-        tab = self._current_tab()
-        if tab:
-            tab.viewport.set_render_busy(busy)
+        self._viewport.set_render_busy(busy)
         if busy:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         else:
             QApplication.restoreOverrideCursor()
 
-    def _on_render_done(self, tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
+    def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
 
-        tab.id_to_node = id_to_node
+        self._rendered_tab = file_tab
+        self.id_to_node = id_to_node
         try:
-            tab.viewport.load_geometry(bodies)
+            self._viewport.load_geometry(bodies)
         except Exception as e:
             import traceback
-            self.log_to_tab(tab, f"GPU upload error: {e}\n{traceback.format_exc()}")
+            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
 
-        tab._bodies = bodies
+        self._bodies = bodies
 
         try:
             import manifold3d as m3d
@@ -1397,19 +1352,18 @@ class MainWindow(QMainWindow):
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
                 # Animation playback keeps the camera fixed across frames; only
                 # auto-fit on explicit (non-animation) renders.
-                if not tab.animate_pane.is_playing():
-                    tab.viewport.frame_scene(bb_min, bb_max)
-                self.log_to_tab(
-                    tab,
+                if not self._animate_pane.is_playing():
+                    self._viewport.frame_scene(bb_min, bb_max)
+                self.log(
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
                     f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  "
                     f"{_fmt_elapsed(elapsed_ms)}"
                 )
         except Exception as e:
             import traceback
-            self.log_to_tab(tab, f"Post-render error: {e}\n{traceback.format_exc()}")
+            self.log(f"Post-render error: {e}\n{traceback.format_exc()}")
 
-    def _on_render_thread_done(self, tab):
+    def _on_render_thread_done(self, file_tab):
         """Called once the render worker thread has fully finished.
 
         Dumping is paced from here (rather than from _on_render_done, which
@@ -1417,16 +1371,16 @@ class MainWindow(QMainWindow):
         frame's worker thread never starts while the previous one is still
         touching the parser — see AnimatePane.play()/advance_frame().
         """
-        if tab.animate_pane.is_dumping() and tab._dump_dir:
+        if self._animate_pane.is_dumping() and self._dump_dir:
             try:
-                frame = getattr(tab, "_dump_frame", tab.animate_pane.current_step())
-                image = tab.viewport.grabFramebuffer()
+                frame = self._dump_frame
+                image = self._viewport.grabFramebuffer()
                 filename = f"frame{frame:04d}.png"
-                image.save(str(Path(tab._dump_dir) / filename))
-                self.log_to_tab(tab, f"Dumped {filename}")
+                image.save(str(Path(self._dump_dir) / filename))
+                self.log(f"Dumped {filename}")
             except Exception as e:
-                self.log_to_tab(tab, f"Frame dump error: {e}")
-            tab.animate_pane.advance_frame()
+                self.log(f"Frame dump error: {e}")
+            self._animate_pane.advance_frame()
 
     def _flush_caches(self):
         """Discard each tab's pre-calculated AST scope/node table and the parser's AST cache."""
@@ -1435,7 +1389,7 @@ class MainWindow(QMainWindow):
             tab = self._tabs.widget(i)
             if tab:
                 tab.root_scope = None
-                tab.id_to_node = {}
+        self.id_to_node = {}
         clear_ast_cache()
         self.log("Flushed AST caches — render or debug to rebuild.")
 
@@ -1496,12 +1450,13 @@ class MainWindow(QMainWindow):
             tab.editor.set_error_location(line, col)
 
     def log(self, text: str):
-        tab = self._current_tab()
-        if tab:
-            tab.console.append_output(text)
+        self._console.append_output(text)
 
     def log_to_tab(self, tab, text: str):
-        tab.console.append_output(text)
+        self._console.append_output(text)
+
+    def log_value_to_tab(self, tab, name: str, value: object):
+        self._console.append_value(name, value, _pretty_assignment(name, value))
 
     # ------------------------------------------------------------------
     # Edit operations
@@ -1554,12 +1509,12 @@ class MainWindow(QMainWindow):
         cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
         cursor.movePosition(cursor.MoveOperation.EndOfLine, cursor.MoveMode.KeepAnchor)
         text = cursor.selectedText()
-        lines = text.split(" ")  # Qt paragraph separator
+        lines = text.split(" ")  # Qt paragraph separator
         if add:
             lines = ["// " + l for l in lines]
         else:
             lines = [l[3:] if l.startswith("// ") else l for l in lines]
-        cursor.insertText(" ".join(lines))
+        cursor.insertText(" ".join(lines))
 
     def _find(self):
         tab = self._current_tab()
@@ -1574,7 +1529,7 @@ class MainWindow(QMainWindow):
     def _go_to_definition(self, tab, word: str):
         scope = getattr(tab, 'root_scope', None)
         if scope is None:
-            self.log_to_tab(tab, f"Go to Definition: no AST available (render or debug first)")
+            self.log(f"Go to Definition: no AST available (render or debug first)")
             return
 
         node = (scope.lookup_variable(word)
@@ -1582,7 +1537,7 @@ class MainWindow(QMainWindow):
                 or scope.lookup_module(word))
 
         if node is None:
-            self.log_to_tab(tab, f"Go to Definition: no definition found for '{word}'")
+            self.log(f"Go to Definition: no definition found for '{word}'")
             return
 
         pos = node.position
@@ -1610,15 +1565,16 @@ class MainWindow(QMainWindow):
                         with open(def_file, "r", encoding="utf-8") as f:
                             text = f.read()
                     except OSError as e:
-                        self.log_to_tab(tab, f"Go to Definition: cannot open '{def_file}': {e}")
+                        self.log(f"Go to Definition: cannot open '{def_file}': {e}")
                         return
                     target_tab = self._create_and_add_tab(def_file, text)
 
-        editor = target_tab.editor
-        editor.scroll_to_line(def_line)
+        target_tab.editor.scroll_to_line(def_line)
         self._editor_dock.show()
         self._editor_dock.raise_()
-        self._editor_stack.setCurrentWidget(editor)
+        idx = self._tabs.indexOf(target_tab)
+        if idx >= 0:
+            self._tabs.setCurrentIndex(idx)
 
     def _current_editor(self):
         tab = self._current_tab()
@@ -1628,11 +1584,6 @@ class MainWindow(QMainWindow):
     # View operations
     # ------------------------------------------------------------------
 
-    def _toggle_tools_strip(self, visible):
-        tab = self._current_tab()
-        if tab:
-            tab.tools_strip.setVisible(visible)
-
     # ------------------------------------------------------------------
     # Debug session
     # ------------------------------------------------------------------
@@ -1640,10 +1591,8 @@ class MainWindow(QMainWindow):
     def _show_animate(self):
         self._animate_dock.show()
         self._animate_dock.raise_()
-        tab = self._current_tab()
-        if tab:
-            tab.animate_pane._fps_edit.setFocus()
-            tab.animate_pane._fps_edit.selectAll()
+        self._animate_pane._fps_edit.setFocus()
+        self._animate_pane._fps_edit.selectAll()
 
     def _start_debug(self):
         tab = self._current_tab()
@@ -1669,7 +1618,7 @@ class MainWindow(QMainWindow):
         if not source.strip():
             return
 
-        tab.console.clear()
+        self._console.clear()
 
         from openscad_lalr_parser import getASTfromFile
         import tempfile, io, sys as _sys
@@ -1747,10 +1696,10 @@ class MainWindow(QMainWindow):
         self._debug_session.logged_value.connect(self._on_debug_print_value)
 
         self._debugger_pane.set_running()
-        tab.viewport.load_geometry([])
+        self._viewport.load_geometry([])
         self._set_debug_busy(True)
         self._debug_session.start(nodes, root_scope, breakpoints,
-                                self._viewport_params(tab),
+                                self._viewport_params(),
                                 current_file=current_file)
 
     def _find_or_open_tab(self, file_path: str):
@@ -1775,9 +1724,12 @@ class MainWindow(QMainWindow):
             if t:
                 t.editor.clear_execution_line()
 
-    def _show_debug_line(self, tab, origin: str, line: int):
-        """Switch to the correct tab for *origin* and highlight *line*."""
+    def _show_debug_line(self, origin: str, line: int):
+        """Switch to the correct editor tab for *origin* and highlight *line*."""
         self._clear_all_execution_lines()
+        tab = self._debug_tab
+        if tab is None:
+            return
         current_file = tab.file_path
         if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
             tab.editor.set_execution_line(line)
@@ -1789,25 +1741,23 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
     def _on_debug_paused(self, origin: str, line: int, all_frame_locals: list, call_stack: list):
-        tab = self._debug_tab
-        if not tab:
+        if not self._debug_tab:
             return
         self._set_debug_busy(False)
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
-        self._show_debug_line(tab, origin, line)
+        self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
 
     def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
-        tab = self._debug_tab
-        if not tab:
+        if not self._debug_tab:
             return
         self._set_debug_busy(False)
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin)
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
-        self._show_debug_line(tab, origin, line)
+        self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
 
     def _clear_all_debug_locals(self):
@@ -1822,7 +1772,7 @@ class MainWindow(QMainWindow):
         visible = self._current_tab()
         if visible:
             visible.editor.set_debug_locals(locals_dict)
-            visible.viewport.set_debug_paused(True)
+        self._viewport.set_debug_paused(True)
 
     def _on_debug_finished(self, bodies, id_to_node):
         from belfryscad.engine.evaluator import to_renderable_bodies
@@ -1831,7 +1781,8 @@ class MainWindow(QMainWindow):
         if not tab:
             return
         self._set_debug_busy(False)
-        tab.id_to_node = id_to_node
+        self.id_to_node = id_to_node
+        self._rendered_tab = tab
         self._clear_all_debug_locals()
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
@@ -1839,16 +1790,17 @@ class MainWindow(QMainWindow):
         self._debug_tab = None
         self._tabs.setCurrentWidget(tab)
         if not bodies:
-            self.log_to_tab(tab, "Debug: no geometry produced.")
+            self.log("Debug: no geometry produced.")
             return
 
         bodies = to_renderable_bodies(bodies)
         try:
-            tab.viewport.load_geometry(bodies)
+            self._viewport.load_geometry(bodies)
         except Exception as e:
             import traceback
-            self.log_to_tab(tab, f"GPU upload error: {e}\n{traceback.format_exc()}")
+            self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
+        self._bodies = bodies
         try:
             import manifold3d as m3d
             import numpy as np
@@ -1858,8 +1810,8 @@ class MainWindow(QMainWindow):
                 bb = composed.bounding_box()
                 bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
-                tab.viewport.frame_scene(bb_min, bb_max)
-                self.log_to_tab(tab, "Debug: completed.")
+                self._viewport.frame_scene(bb_min, bb_max)
+                self.log("Debug: completed.")
         except Exception:
             pass
 
@@ -1873,15 +1825,10 @@ class MainWindow(QMainWindow):
         self._debug_tab = None
         if error_tab is not None:
             self._tabs.setCurrentWidget(error_tab)
-            self.log_to_tab(error_tab, f"Debug error:\n{msg}")
-        else:
-            self.log(f"Debug error:\n{msg}")
+        self.log(f"Debug error:\n{msg}")
 
     def _set_debug_busy(self, busy: bool):
-        for i in range(self._tabs.count()):
-            t = self._tabs.widget(i)
-            if t:
-                t.viewport.set_debug_busy(busy)
+        self._viewport.set_debug_busy(busy)
 
     def _on_debug_continue(self):
         if not self._debug_session:
@@ -1968,17 +1915,10 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentWidget(stop_tab)
 
     def _on_debug_print(self, text: str):
-        tab = self._current_tab() or self._debug_tab
-        if tab:
-            self.log_to_tab(tab, text)
+        self._console.append_output(text)
 
     def _on_debug_print_value(self, name: str, value: object):
-        tab = self._current_tab() or self._debug_tab
-        if tab:
-            self.log_value_to_tab(tab, name, value)
-
-    def log_value_to_tab(self, tab, name: str, value: object):
-        tab.console.append_value(name, value, _pretty_assignment(name, value))
+        self._console.append_value(name, value, _pretty_assignment(name, value))
 
     def _on_debug_frame_selected(self, file_path: str, line: int):
         if not file_path or not line:
@@ -2008,9 +1948,9 @@ class MainWindow(QMainWindow):
             tab = self._tabs.widget(i)
             if tab:
                 self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
-                tab.viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
-                if tab.viewport._renderer.camera.stereo:
-                    tab.viewport.update()
+        self._viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
+        if self._viewport._renderer.camera.stereo:
+            self._viewport.update()
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
@@ -2048,9 +1988,7 @@ class MainWindow(QMainWindow):
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
             self._render_cancel.set()
             self._set_render_busy(False)
-            tab = self._current_tab()
-            if tab:
-                self.log_to_tab(tab, "Render cancelled.")
+            self.log("Render cancelled.")
             return
         super().keyPressEvent(event)
 
@@ -2077,10 +2015,7 @@ class MainWindow(QMainWindow):
         # Stop animation playback (no more renders get queued) and let any
         # in-flight render thread finish — Qt aborts if a QThread is
         # destroyed while still running.
-        for i in range(self._tabs.count()):
-            tab = self._tabs.widget(i)
-            if tab is not None:
-                tab.animate_pane.pause()
+        self._animate_pane.pause()
         if self._render_cancel is not None:
             self._render_cancel.set()
         deadline = time.monotonic() + 5.0
@@ -2104,11 +2039,8 @@ class MainWindow(QMainWindow):
         # (nanobind's object collection isn't safe across threads). Plain
         # refcounting from clearing these references is sufficient for
         # nanobind to free the objects during interpreter shutdown.
-        for i in range(self._tabs.count()):
-            tab = self._tabs.widget(i)
-            if tab is not None:
-                tab._bodies = []
-                tab.viewport.load_geometry([])
+        self._bodies = []
+        self._viewport.load_geometry([])
         super().closeEvent(event)
 
     def dragEnterEvent(self, event):
@@ -2125,21 +2057,6 @@ class MainWindow(QMainWindow):
             if path.endswith('.scad'):
                 self.open_file_by_path(path)
         event.acceptProposedAction()
-
-    def _apply_perspective_to_tab(self, tab):
-        tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()
-
-    def _apply_stereo_to_tab(self, tab):
-        tab.viewport._renderer.camera.stereo = self._act_stereo.isChecked()
-        eye_sep_pct = load_preference("viewport/stereoEyeSep", float)
-        tab.viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
-
-    def _toggle_stereo(self, enabled: bool):
-        self._act_perspective.setEnabled(not enabled)
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.camera.stereo = enabled
-            tab.viewport.update()
 
     def _apply_word_wrap_to_tab(self, tab):
         from PySide6.QtWidgets import QPlainTextEdit
@@ -2198,10 +2115,13 @@ class MainWindow(QMainWindow):
             vp.orthographic = not perspective
             vp.update()
             return
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.camera.orthographic = not perspective
-            tab.viewport.update()
+        self._viewport._renderer.camera.orthographic = not perspective
+        self._viewport.update()
+
+    def _toggle_stereo(self, enabled: bool):
+        self._act_perspective.setEnabled(not enabled)
+        self._viewport._renderer.camera.stereo = enabled
+        self._viewport.update()
 
     def _toggle_axes(self, visible):
         vp = self._active_viewer_viewport()
@@ -2209,10 +2129,8 @@ class MainWindow(QMainWindow):
             vp.show_axes = visible
             vp.update()
             return
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.show_axes = visible
-            tab.viewport.update()
+        self._viewport._renderer.show_axes = visible
+        self._viewport.update()
 
     def _toggle_edges(self, visible):
         vp = self._active_viewer_viewport()
@@ -2220,31 +2138,23 @@ class MainWindow(QMainWindow):
             vp.show_edges = not vp.show_edges
             vp.update()
             return
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.show_edges = visible
-            tab.viewport.update()
+        self._viewport._renderer.show_edges = visible
+        self._viewport.update()
 
     def _toggle_scale_markers(self, visible):
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.show_scale_markers = visible
-            tab.viewport.update()
+        self._viewport._renderer.show_scale_markers = visible
+        self._viewport.update()
 
     def _toggle_crosshairs(self, visible):
-        tab = self._current_tab()
-        if tab:
-            tab.viewport._renderer.show_crosshairs = visible
-            tab.viewport.update()
+        self._viewport._renderer.show_crosshairs = visible
+        self._viewport.update()
 
     def _set_view(self, preset):
         vp = self._active_viewer_viewport()
         if vp is not None:
             vp.set_view_preset(preset)
             return
-        tab = self._current_tab()
-        if tab:
-            tab.viewport.set_view_preset(preset)
+        self._viewport.set_view_preset(preset)
 
     def _font_size_increase(self):
         if e := self._current_editor():
@@ -2260,9 +2170,7 @@ class MainWindow(QMainWindow):
                 e.setFont(f)
 
     def _zoom_viewport(self, direction):
-        tab = self._current_tab()
-        if tab:
-            tab.viewport.zoom(direction)
+        self._viewport.zoom(direction)
 
     # ------------------------------------------------------------------
     # Window
@@ -2271,33 +2179,57 @@ class MainWindow(QMainWindow):
     def _bring_all_to_front(self):
         self.raise_()
 
+    def _new_window(self):
+        win = MainWindow()
+        win.show()
+
+    def _open_in_new_window(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open in New Window", "", "OpenSCAD Files (*.scad);;All Files (*)"
+        )
+        if path:
+            win = MainWindow()
+            win.show()
+            win.open_file_by_path(path)
+
     # ------------------------------------------------------------------
     # Selection
     # ------------------------------------------------------------------
 
-    def _on_selection_changed(self, tab, orig_id: int):
+    def _on_selection_changed(self, orig_id: int):
+        rendered = self._rendered_tab
+        if rendered is None:
+            return
         if orig_id < 0:
-            tab.editor.clear_selection()
+            rendered.editor.clear_selection()
             return
-        node = tab.id_to_node.get(orig_id)
+        node = self.id_to_node.get(orig_id)
         if node is None:
-            tab.editor.clear_selection()
+            rendered.editor.clear_selection()
             return
-        tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+        rendered.editor.set_selection(node.position.start_offset, node.position.end_offset)
 
     # ------------------------------------------------------------------
     # Translate gizmo commit
     # ------------------------------------------------------------------
 
-    def _on_translate_committed(self, tab, dx: float, dy: float, dz: float):
-        orig_id = tab.viewport._renderer.selected_id
+    def _on_translate_committed(self, dx: float, dy: float, dz: float):
+        if not self._rendered_tab:
+            return
+        orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = tab.id_to_node.get(orig_id)
+        node = self.id_to_node.get(orig_id)
         if node is None:
             return
 
-        source = tab.editor.toPlainText()
+        # Switch to rendered tab if it's not the current editor
+        if self._current_tab() is not self._rendered_tab:
+            idx = self._tabs.indexOf(self._rendered_tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+
+        source = self._rendered_tab.editor.toPlainText()
         start = node.position.start_offset
 
         def _fmt(v: float) -> str:
@@ -2330,36 +2262,45 @@ class MainWindow(QMainWindow):
             new_node_start = start + len(insert)
 
         cmd = _GizmoCmd(
-            tab, tab.editor, source, new_source, self._render,
+            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
             new_node_start, self._restore_selection_after_translate,
-            merge_id=1001, label="Translate",
+            merge_id=1001, label="Translate", viewport=self._viewport,
         )
         self._undo_stack.push(cmd)
 
-    def _restore_selection_after_translate(self, tab, new_node_start: int):
-        for orig_id, node in tab.id_to_node.items():
+    def _restore_selection_after_translate(self, new_node_start: int):
+        for orig_id, node in self.id_to_node.items():
             if node.position.start_offset == new_node_start:
-                tab.viewport._renderer.selected_id = orig_id
-                tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
-                tab.viewport.update()
+                self._viewport._renderer.selected_id = orig_id
+                if self._rendered_tab:
+                    self._rendered_tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+                self._viewport.update()
                 return
-        tab.viewport._renderer.selected_id = None
-        tab.editor.clear_selection()
-        tab.viewport.update()
+        self._viewport._renderer.selected_id = None
+        if self._rendered_tab:
+            self._rendered_tab.editor.clear_selection()
+        self._viewport.update()
 
     # ------------------------------------------------------------------
     # Rotate gizmo commit
     # ------------------------------------------------------------------
 
-    def _on_rotate_committed(self, tab, axis: int, angle_deg: float):
-        orig_id = tab.viewport._renderer.selected_id
+    def _on_rotate_committed(self, axis: int, angle_deg: float):
+        if not self._rendered_tab:
+            return
+        orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = tab.id_to_node.get(orig_id)
+        node = self.id_to_node.get(orig_id)
         if node is None:
             return
 
-        source = tab.editor.toPlainText()
+        if self._current_tab() is not self._rendered_tab:
+            idx = self._tabs.indexOf(self._rendered_tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+
+        source = self._rendered_tab.editor.toPlainText()
         start = node.position.start_offset
 
         def _fmt(v: float) -> str:
@@ -2394,9 +2335,9 @@ class MainWindow(QMainWindow):
             new_node_start = start + len(insert)
 
         cmd = _GizmoCmd(
-            tab, tab.editor, source, new_source, self._render,
+            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
             new_node_start, self._restore_selection_after_translate,
-            merge_id=1002, label="Rotate",
+            merge_id=1002, label="Rotate", viewport=self._viewport,
         )
         self._undo_stack.push(cmd)
 
@@ -2404,15 +2345,22 @@ class MainWindow(QMainWindow):
     # Scale gizmo commit
     # ------------------------------------------------------------------
 
-    def _on_scale_committed(self, tab, axis: int, factor: float, uniform: bool):
-        orig_id = tab.viewport._renderer.selected_id
+    def _on_scale_committed(self, axis: int, factor: float, uniform: bool):
+        if not self._rendered_tab:
+            return
+        orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = tab.id_to_node.get(orig_id)
+        node = self.id_to_node.get(orig_id)
         if node is None:
             return
 
-        source = tab.editor.toPlainText()
+        if self._current_tab() is not self._rendered_tab:
+            idx = self._tabs.indexOf(self._rendered_tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+
+        source = self._rendered_tab.editor.toPlainText()
         start = node.position.start_offset
 
         def _fmt(v: float) -> str:
@@ -2453,9 +2401,9 @@ class MainWindow(QMainWindow):
             new_node_start = start + len(insert)
 
         cmd = _GizmoCmd(
-            tab, tab.editor, source, new_source, self._render,
+            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
             new_node_start, self._restore_selection_after_translate,
-            merge_id=1003, label="Scale",
+            merge_id=1003, label="Scale", viewport=self._viewport,
         )
         self._undo_stack.push(cmd)
 

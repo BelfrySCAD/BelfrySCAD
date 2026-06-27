@@ -53,7 +53,7 @@ Right-clicking in the editor builds a standard Qt context menu, then appends ide
 
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known variable — locals, globals, constants, or `$`-specials):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
-- **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value` per tab, which calls `log_value_to_tab(tab, name, value)` → `tab.console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
+- **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value`, which calls `self._console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
 - **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
 
 The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision), which covers locals, globals, constants, and `$`-specials. `Qt.WordUnderCursor` excludes `$`, so `contextMenuEvent` manually checks whether the character immediately before the selection is `$` and prepends it — allowing `$fn`, `$t`, etc. to match.
@@ -74,7 +74,7 @@ The definition node's `.position.origin` gives the source file path, `.position.
 - Same file (or origin `None` / untitled tab): scroll current editor to the line
 - Different file: switch to a matching open tab by `file_path`, or open via `_create_and_add_tab()` (view-only, no render)
 
-`_create_and_add_tab(path, text) -> DocumentTab` creates a fully-connected tab (viewport signals, perspective, Go-to-Definition) and adds it to the UI. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`; not by `_new_document` (different setup path for blank tabs).
+`_create_and_add_tab(path, text) -> FileTab` creates a `FileTab` (editor + file metadata) and adds it to `_tabs` in the editor dock. Also registers the editor with `DocumentManager` for cross-window sync. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`, `_find_or_open_tab`; not by `_new_document` (different setup path for blank tabs).
 
 ## Code Completion
 
@@ -97,7 +97,7 @@ All Cmd+Z / Cmd+Shift+Z route through `QUndoStack`, which disables `QPlainTextEd
 
 ## Console Output
 
-The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). Plain log output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)` → `tab.console.append_output(text)`. Value-bearing output (from "Print to Console" or debugger return values) goes through `MainWindow.log_value_to_tab(tab, name, value)` → `tab.console.append_value(name, value, _pretty_assignment(name, value))`.
+The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass. One instance exists per `MainWindow` (window-level singleton `self._console`) — there is no per-tab console. Plain log output goes through `MainWindow.log(text)` or `MainWindow.log_to_tab(tab, text)` (tab argument is ignored) → `self._console.append_output(text)`. Value-bearing output (from "Print to Console" or debugger return values) goes through `MainWindow.log_value_to_tab(tab, name, value)` or directly in `_on_debug_print_value` → `self._console.append_value(name, value, _pretty_assignment(name, value))`.
 
 `QTextBrowser` is used (not `QPlainTextEdit`) because it handles cursor shapes natively: `PointingHandCursor` over anchor links, `IBeamCursor` over selectable text. `setOpenLinks(False)` prevents navigation; `anchorClicked` handles fold toggles.
 
@@ -109,7 +109,7 @@ The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass.
 
 Fold state is tracked in `_fold_headers: dict[int, tuple[int, int, int]]` (fold_id → (header_bn, first_body_bn, last_body_bn)) and `_folded: set[int]` (fold_ids currently collapsed). `clear()` resets all three dicts. Block visibility is toggled with `QTextBlock.setVisible()`; layout recalculation is triggered by updating the arrow character via `QTextCursor.insertText` (done after setting visibility so the `documentChanged` signal sees the correct state). The fold_id is a sequential integer assigned at append time and embedded in the anchor href.
 
-**Console right-click context menu** (`DocumentTab._console_context_menu`): `ConsoleWidget.value_at(pos)` checks whether the right-clicked position falls inside a fold header or body block that has a stored value (by scanning `_fold_headers` for block number, then looking up `_fold_values`). If found, a **View 'name'…** submenu is added via `build_viewer_menu()` before the **Clear Console** action.
+**Console right-click context menu** (`MainWindow._console_context_menu`): `ConsoleWidget.value_at(pos)` checks whether the right-clicked position falls inside a fold header or body block that has a stored value (by scanning `_fold_headers` for block number, then looking up `_fold_values`). If found, a **View 'name'…** submenu is added via `build_viewer_menu()` before the **Clear Console** action.
 
 The console displays:
 - Parse errors (file/line/col from AST metadata)
@@ -117,13 +117,13 @@ The console displays:
 
 ## Animation
 
-The **Animate** dock (`AnimatePane` in `window/animate.py`, one per `DocumentTab`) implements OpenSCAD's [`$t` animation](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Animation):
+The **Animate** dock (`AnimatePane` in `window/animate.py`, one per `MainWindow`) implements OpenSCAD's [`$t` animation](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Animation):
 
 - **Time / FPS / Steps** fields: Time shows the current `$t` (read-only display, but editable — typing a value jumps to the nearest step, clamped to `[0, 1 - 1/steps)`); FPS (1-1000) sets the playback rate; Steps (1-1,000,000) sets the number of frames in one cycle. `$t = step / steps` for `step` in `0..steps-1`. Tab/Shift+Tab move between these three fields, and Enter confirms an edit (`QLineEdit.editingFinished`, which fires on Return as well as focus-out). `AnimatePane` installs an event filter on each field to accept the `ShortcutOverride` event for Tab/Backtab — otherwise the main window's Indent/Undent actions (bound to Tab/Shift+Tab as window-wide shortcuts for the code editor) would consume the key before normal focus-navigation gets it.
 - **Big play/pause button** and the **transport row** (First / Previous / Play / Pause / Next / Last) drive playback. Any non-playback transport action pauses playback first.
 - **Dump Pictures** checkbox: when checked and Play is pressed, BelfrySCAD prompts (once per tab) for a destination folder via a folder picker, then saves each frame of one full animation cycle as `frameNNNN.png` (via `Viewport.grabFramebuffer()`), pausing automatically after frame `steps - 1` rather than looping.
 
-Each frame change re-renders the active tab with `$t` set accordingly — `MainWindow._viewport_params(tab)` includes `"$t": tab.animate_pane.current_t()`, merged into the evaluator's dynamic context alongside `$vpt`/`$vpr`/`$vpd` (see `docs/evaluator.md`). During playback the viewport camera is **not** auto-fit to the model's bounding box on each frame (unlike a normal Render), so the camera stays put across frames. Switching tabs pauses any other tab's animation, since playback re-renders the active tab on every frame.
+Each frame change re-renders the current file with `$t` set accordingly — `MainWindow._viewport_params()` includes `"$t": self._animate_pane.current_t()`, merged into the evaluator's dynamic context alongside `$vpt`/`$vpr`/`$vpd` (see `docs/evaluator.md`). During playback the viewport camera is **not** auto-fit to the model's bounding box on each frame (unlike a normal Render), so the camera stays put across frames. Animation re-renders whichever file tab is currently visible in the editor.
 
 ## Keyboard Shortcuts
 
@@ -212,31 +212,26 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 ## GUI Layout
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  [New] [Open] [Export] | [Undo] [Redo] | [Render] [Debug] [Animate] │  ← toolbar
-├──────────────────────────────────────────────────────────────┤
-│  [file1.scad ×]  [file2.scad ×]  [+]                        │  ← tabs
-├────────────┬────────────────────────────────────────┬────────┤
-│            │                                        │   T    │
-│            │                                [cube]  │   R    │
-│   Code     │       3D Viewport                      │   S    │
-│   Editor   │                                        │   ·    │
-│            ├────────────────────────────────┬────────┤   ·    │
-│            │  Console                       │Debugger│        │
-├────────────┴────────────────────────────────┴────────┴────────┤
-│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00  0 FPS  │  ← status bar
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  [New][Open][Export] | [Undo][Redo] | [Render][Debug][Animate] | [T][R][S] │  ← toolbar
+├────────────┬───────────────────────────────────────────────────┤
+│[file1 ×]   │                                                   │
+│[file2 ×]   │                                          [cube]   │
+│            │            3D Viewport                            │
+│   Code     │                                                   │
+│   Editor   ├─────────────────────────────────┬─────────────────┤
+│            │  Console                        │Debugger/Animate │
+├────────────┴─────────────────────────────────┴─────────────────┤
+│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00    0 FPS  │  ← status bar
+└────────────────────────────────────────────────────────────────┘
 ```
 
-- **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate
-- **Tabs**: one per open file; can be torn off into separate windows
-- **Code editor**: left pane (QPlainTextEdit)
-- **3D viewport**: center pane; always visible; contains:
-  - Cube gizmo in a corner for view angle control
-  - Camera icon next to the cube gizmo; clicking opens a popup with current viewport translation, rotation, distance, and FOV
-- **Tools strip**: right of the viewport — Translate, Rotate, Scale, and future tools
-- **Console**: bottom pane
-- **Status bar**: bottom strip; shows 3D coordinates of the last clicked point on the mesh
+- **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate | T, R, S (gizmo tool buttons)
+- **Editor dock** (left): `QTabWidget` with one tab per open file; tabs at the top of the dock; can be moved to any dock area
+- **3D viewport** (central widget): single instance shared across all editor tabs; always shows the last render result regardless of which editor tab is active; contains a cube gizmo for view angle control
+- **Console** (bottom dock): single running log per window; not per-tab
+- **Debugger/Animate** (bottom dock, tabbed): also window-level singletons
+- **Status bar**: bottom strip; camera position + FPS counter
 
 The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The top-left and bottom-left corners are assigned to the left dock area (`setCorner`), so the editor dock spans the full window height and the bottom docks (console, debugger, animate) fit between the left and right dock areas. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
 
@@ -250,7 +245,11 @@ self._act_perspective.blockSignals(False)
 self._toggle_perspective(perspective)
 ```
 
-**New tabs must inherit viewport settings**: every new `DocumentTab` gets a fresh default `Viewport`/`Camera`. After connecting signals and before adding to the tab widget, call `_apply_perspective_to_tab(tab)` (and any future per-viewport settings) to match the current UI state. The `hasattr(self, '_act_perspective')` guard covers `_new_document()` being called during `__init__` before `_setup_menus()` finishes — in practice `_setup_menus()` runs first, so it's defensive only.
+**New tabs only need editor settings**: `FileTab` contains only the `CodeEditor`. There is no per-tab viewport or camera. `_new_document()` and `_create_and_add_tab()` call `_apply_preferences_to_tab(tab, font, indent, ...)` to inherit editor font/indent/guide settings and `_apply_word_wrap_to_tab(tab)` for word wrap. The `hasattr(self, '_act_word_wrap')` guard in `_new_document()` covers the case where it's called during `__init__` before `_setup_menus()` finishes.
+
+**`FileTab` vs `DocumentTab`**: the old `DocumentTab` owned a `Viewport`, `ConsoleWidget`, `AnimatePane`, and tools strip. These are now window-level singletons on `MainWindow`. `FileTab` keeps only: `editor`, `file_path`, `is_modified`, `root_scope`, `_last_text`, `_last_cursor`, `_suppress_text_undo`.
+
+**Cross-window sync**: `DocumentManager` (singleton in `window/document_manager.py`) tracks all open editors keyed by resolved file path. `_create_and_add_tab` calls `register(path, editor)`; `_close_tab` / `_write_file` call `unregister`. `_on_editor_changed` calls `broadcast_change(path, text, source_editor)` after each text change — other editors for the same file have `setPlainText(text)` called with signals blocked to avoid re-entrancy. `open_file_by_path` queries `get_current_text(path)` to seed a newly opened editor with in-memory (potentially unsaved) text from another window.
 
 ## Data Viewers
 

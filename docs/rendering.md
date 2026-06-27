@@ -19,7 +19,9 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 **Job lifetime**: each `_render()` call appends `(worker, callback, thread)` to `self._render_jobs`, kept alive until `thread.finished` fires `_cleanup_job` (which removes the entry). Without this, Python could GC the worker/callback before `thread.started` fires, raising `AttributeError: Slot '_RenderWorker::run()' not found.`
 
-**Shutdown and interpreter exit**: `MainWindow.closeEvent()` pauses every tab's `AnimatePane` (no new renders get queued), sets the cancel event, and waits (with a 5s deadline, pumping `QApplication.processEvents()`) for any `_render_jobs` threads to finish — Qt aborts if a `QThread` is destroyed while still running. It then saves settings (with an explicit `QSettings.sync()`) and clears `tab._bodies` / `viewport.load_geometry([])` to drop references to Manifold geometry via normal refcounting.
+**`_RenderCallback`**: constructor takes `(main_window, file_tab, render_id)`. `on_logged` routes to `main_window._console.append_output()`; `on_ast_ready` sets `file_tab.root_scope` and calls `file_tab.editor.update_user_names()`; `on_finished` calls `main_window._on_render_done(file_tab, ...)` which stores results in window-level `self._rendered_tab`, `self.id_to_node`, `self._bodies` and loads geometry into `self._viewport`. The `tab` arg in `_on_render_done` et al. identifies which `FileTab` produced the render, used for source write-back by gizmos.
+
+**Shutdown and interpreter exit**: `MainWindow.closeEvent()` pauses the window-level `AnimatePane` (no new renders get queued), sets the cancel event, and waits (with a 5s deadline, pumping `QApplication.processEvents()`) for any `_render_jobs` threads to finish — Qt aborts if a `QThread` is destroyed while still running. It then saves settings (with an explicit `QSettings.sync()`) and clears `self._bodies` / `self._viewport.load_geometry([])` to drop references to Manifold geometry via normal refcounting.
 
 ## Stereo (Cross-eye) mode
 
