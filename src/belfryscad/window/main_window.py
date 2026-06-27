@@ -728,6 +728,7 @@ class MainWindow(QMainWindow):
                              QKeySequence(key))
         view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
+        self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
@@ -828,6 +829,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
+            self._apply_stereo_to_tab(tab)
             self._apply_preferences_to_tab(
                 tab,
                 QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -977,6 +979,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         self._apply_perspective_to_tab(tab)
+        self._apply_stereo_to_tab(tab)
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -2026,6 +2029,11 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
         self._toggle_perspective(perspective)
+        stereo = s.value("stereo", False, type=bool)
+        self._act_stereo.blockSignals(True)
+        self._act_stereo.setChecked(stereo)
+        self._act_stereo.blockSignals(False)
+        self._toggle_stereo(stereo)
         word_wrap = s.value("wordWrap", False, type=bool)
         self._act_word_wrap.blockSignals(True)
         self._act_word_wrap.setChecked(word_wrap)
@@ -2081,6 +2089,7 @@ class MainWindow(QMainWindow):
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
+        s.setValue("stereo", self._act_stereo.isChecked())
         s.setValue("wordWrap", self._act_word_wrap.isChecked())
         # Flush settings to disk now: the app exits via os._exit() (see
         # main.py), which skips QSettings' normal sync-on-destruction.
@@ -2116,6 +2125,16 @@ class MainWindow(QMainWindow):
 
     def _apply_perspective_to_tab(self, tab):
         tab.viewport._renderer.camera.orthographic = not self._act_perspective.isChecked()
+
+    def _apply_stereo_to_tab(self, tab):
+        tab.viewport._renderer.camera.stereo = self._act_stereo.isChecked()
+
+    def _toggle_stereo(self, enabled: bool):
+        self._act_perspective.setEnabled(not enabled)
+        tab = self._current_tab()
+        if tab:
+            tab.viewport._renderer.camera.stereo = enabled
+            tab.viewport.update()
 
     def _apply_word_wrap_to_tab(self, tab):
         from PySide6.QtWidgets import QPlainTextEdit

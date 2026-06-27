@@ -21,6 +21,16 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 **Shutdown and interpreter exit**: `MainWindow.closeEvent()` pauses every tab's `AnimatePane` (no new renders get queued), sets the cancel event, and waits (with a 5s deadline, pumping `QApplication.processEvents()`) for any `_render_jobs` threads to finish — Qt aborts if a `QThread` is destroyed while still running. It then saves settings (with an explicit `QSettings.sync()`) and clears `tab._bodies` / `viewport.load_geometry([])` to drop references to Manifold geometry via normal refcounting.
 
+## Stereo (Cross-eye) mode
+
+**View menu → "Stereo (Cross-eye)"** renders two side-by-side perspective views in a single `QOpenGLWidget`. When enabled, `Camera.stereo = True` and `SceneRenderer.paint()` renders two passes:
+
+1. Calls `Camera.stereo_view_matrices()`, which shifts the camera ±(`distance × stereo_eye_sep / 2`) along the camera's right vector (row 0 of the view matrix), pointing both eye cameras at the same target (toe-in). `stereo_eye_sep` defaults to `0.065` (6.5% of camera distance). Cross-eye arrangement: left panel = right eye, right panel = left eye.
+2. Each pass sets `ctx.viewport` to its half of the framebuffer, temporarily overrides `self._viewport` to `(half_w, h)` so axes, labels, and other screen-size-dependent calculations use the half-width, and calls `_paint_scene(view, proj, L_world)` where `proj` uses the half-width aspect ratio.
+3. `_paint_scene()` computes eye position from the view matrix (`eye = -R^T · t`) for correct per-eye specular highlights. Axes, labels, and gizmo all render in both eyes.
+
+When Stereo is checked, the Perspective menu item is disabled (stereo always uses perspective). Stereo state is saved to `QSettings` and restored on launch.
+
 ## Viewport visuals
 
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.

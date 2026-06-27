@@ -136,6 +136,8 @@ class Camera:
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         self.fov = 45.0
         self.orthographic = False
+        self.stereo = False
+        self.stereo_eye_sep = 0.065  # fraction of camera distance
 
     def view_matrix(self) -> np.ndarray:
         az = math.radians(self.azimuth)
@@ -161,6 +163,21 @@ class Camera:
             math.cos(el) * math.sin(az),
             math.sin(el),
         ], dtype=np.float32)
+
+    def stereo_view_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+        """(left_panel_view, right_panel_view) for cross-eye stereo.
+
+        Cross-eye: left panel = right eye, right panel = left eye.
+        Both cameras toe-in toward the same target point.
+        """
+        view = self.view_matrix()
+        right_vec = view[0, :3].astype(np.float32)
+        half = self.distance * self.stereo_eye_sep * 0.5
+        eye = self.eye_position()
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        right_eye = _look_at(eye + right_vec * half, self.target, up)
+        left_eye  = _look_at(eye - right_vec * half, self.target, up)
+        return right_eye, left_eye  # left panel = right eye (cross-eye)
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray):
         center = (bb_min + bb_max) / 2
@@ -351,18 +368,11 @@ class SceneRenderer:
         fbo = self._ctx.detect_framebuffer(qt_fbo_id)
         fbo.use()
 
-        w, h = self._viewport
-        aspect = w / h if h > 0 else 1.0
-
-        view = self.camera.view_matrix()
-        proj = self.camera.projection_matrix(aspect)
-        mvp = proj @ view
-        model = np.eye(4, dtype=np.float32)
-
         self._ctx.clear(*bg_color[:3])
         self._ctx.enable(mgl.DEPTH_TEST)
         self._ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
+        center_view = self.camera.view_matrix()
         L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
         if self.light_az_offset != 0.0 or self.light_el_offset != 0.0:
             a = math.radians(self.light_az_offset)
@@ -372,10 +382,38 @@ class SceneRenderer:
             Ry = np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]], dtype=np.float64)
             Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float64)
             L_view = Rx @ Ry @ L_view
-        L_world = (view[:3, :3].T @ L_view).astype(np.float32)
+        L_world = (center_view[:3, :3].T @ L_view).astype(np.float32)
         L_world /= np.linalg.norm(L_world)
+
+        w, h = self._viewport
+        if self.camera.stereo:
+            half_w = w // 2
+            aspect = half_w / h if h > 0 else 1.0
+            proj = self.camera.projection_matrix(aspect)
+            left_view, right_view = self.camera.stereo_view_matrices()
+
+            self._ctx.viewport = (0, 0, half_w, h)
+            self._viewport = (half_w, h)
+            self._paint_scene(left_view, proj, L_world)
+
+            self._ctx.viewport = (half_w, 0, half_w, h)
+            self._paint_scene(right_view, proj, L_world)
+
+            self._viewport = (w, h)
+            self._ctx.viewport = (0, 0, w, h)
+        else:
+            aspect = w / h if h > 0 else 1.0
+            proj = self.camera.projection_matrix(aspect)
+            self._paint_scene(center_view, proj, L_world)
+
+    def _paint_scene(self, view: np.ndarray, proj: np.ndarray, L_world: np.ndarray):
+        """Render one eye's worth of scene: geometry, edges, axes, labels, gizmo."""
+        mvp = proj @ view
+        model = np.eye(4, dtype=np.float32)
+        eye_pos = -(view[:3, :3].T @ view[:3, 3]).astype(np.float32)
+
         self._prog["light_dir"].value = tuple(L_world)
-        self._prog["eye_pos"].value = tuple(self.camera.eye_position())
+        self._prog["eye_pos"].value = tuple(eye_pos)
 
         has_drag = np.any(self.drag_offset != 0)
         has_rotation = self.drag_rotation_axis >= 0 and self.drag_rotation_angle != 0.0
