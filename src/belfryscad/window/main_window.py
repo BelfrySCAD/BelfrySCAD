@@ -735,6 +735,7 @@ class MainWindow(QMainWindow):
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
         self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
+        view_menu.addSeparator()  # isolates macOS-injected "Enter Full Screen" (which has an icon) in its own section
 
         # Window
         window_menu = mb.addMenu("Window")

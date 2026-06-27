@@ -108,9 +108,9 @@ class PreferencesDialog(QDialog):
 
         sep_row = QHBoxLayout()
         sep_row.setSpacing(8)
-        # Slider range 5–400, each tick = 0.05%, so value 20 = 1.0%, value 5 = 0.25%
+        # Slider range 2–40, each tick = 0.05%, so value 20 = 1.0%, value 2 = 0.1%
         self._eye_sep = QSlider(Qt.Orientation.Horizontal)
-        self._eye_sep.setRange(5, 400)
+        self._eye_sep.setRange(2, 40)
         self._eye_sep.setTickInterval(20)
         current_sep = s.value("viewport/stereoEyeSep", _DEFAULTS["viewport/stereoEyeSep"], type=float)
         self._eye_sep.setValue(int(round(current_sep * 20)))
