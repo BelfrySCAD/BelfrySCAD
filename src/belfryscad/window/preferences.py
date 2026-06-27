@@ -11,7 +11,7 @@ _DEFAULTS = {
     "editor/indentSize": 4,
     "editor/showColumnGuide": True,
     "editor/columnGuide": 80,
-    "viewport/stereoEyeSep": 6.5,  # percentage of camera distance
+    "viewport/stereoEyeSep": 1.0,  # percentage of camera distance
 }
 
 
@@ -108,16 +108,16 @@ class PreferencesDialog(QDialog):
 
         sep_row = QHBoxLayout()
         sep_row.setSpacing(8)
-        # Slider range 10–200, each tick = 0.1%, so value 65 = 6.5%
+        # Slider range 5–400, each tick = 0.05%, so value 20 = 1.0%, value 5 = 0.25%
         self._eye_sep = QSlider(Qt.Orientation.Horizontal)
-        self._eye_sep.setRange(10, 200)
-        self._eye_sep.setTickInterval(10)
+        self._eye_sep.setRange(5, 400)
+        self._eye_sep.setTickInterval(20)
         current_sep = s.value("viewport/stereoEyeSep", _DEFAULTS["viewport/stereoEyeSep"], type=float)
-        self._eye_sep.setValue(int(round(current_sep * 10)))
-        self._eye_sep_label = QLabel(f"{current_sep:.1f}%")
-        self._eye_sep_label.setMinimumWidth(40)
+        self._eye_sep.setValue(int(round(current_sep * 20)))
+        self._eye_sep_label = QLabel(f"{current_sep:.2f}%")
+        self._eye_sep_label.setMinimumWidth(48)
         self._eye_sep.valueChanged.connect(
-            lambda v: self._eye_sep_label.setText(f"{v / 10.0:.1f}%")
+            lambda v: self._eye_sep_label.setText(f"{v / 20.0:.2f}%")
         )
         sep_row.addWidget(self._eye_sep)
         sep_row.addWidget(self._eye_sep_label)
@@ -140,5 +140,5 @@ class PreferencesDialog(QDialog):
             "editor/indentSize": self._indent_size.value(),
             "editor/showColumnGuide": self._show_guide.isChecked(),
             "editor/columnGuide": self._guide_column.value(),
-            "viewport/stereoEyeSep": self._eye_sep.value() / 10.0,
+            "viewport/stereoEyeSep": self._eye_sep.value() / 20.0,
         }
