@@ -24,7 +24,6 @@ class ConsoleWidget(QTextBrowser):
         # fold_id → (header_bn, first_body_bn, last_body_bn)
         self._fold_headers: dict[int, tuple[int, int, int]] = {}
         self._folded: set[int] = set()
-        self.setCursor(Qt.CursorShape.IBeamCursor)
         self.setOpenLinks(False)
         self.document().setDefaultStyleSheet(
             "a { color: inherit; text-decoration: none; }"
@@ -66,6 +65,11 @@ class ConsoleWidget(QTextBrowser):
             cursor.insertText(line, _PLAIN_FMT)
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if not self.anchorAt(event.pos()):
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
 
     def _on_anchor_clicked(self, url: QUrl):
         href = url.toString()
