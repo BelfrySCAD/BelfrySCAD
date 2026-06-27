@@ -726,6 +726,8 @@ class MainWindow(QMainWindow):
                              lambda p=preset: self._set_view(p),
                              QKeySequence(key))
         view_menu.addSeparator()
+        self._act_spin = self._add_checkable(view_menu, "Spin", False, self._viewport.set_spinning)
+        view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)

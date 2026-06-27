@@ -72,6 +72,11 @@ class Viewport(QOpenGLWidget):
         self._busy_timer = QTimer(self)
         self._busy_timer.timeout.connect(self._update_busy_overlay)
 
+        # Spin: 6 RPM = 36°/s; timer at 16 ms ≈ 0.576°/tick
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(16)
+        self._spin_timer.timeout.connect(self._spin_tick)
+
     # ------------------------------------------------------------------
     # GL lifecycle
     # ------------------------------------------------------------------
@@ -191,6 +196,22 @@ class Viewport(QOpenGLWidget):
         x = (self.width() - self._busy_label.width()) // 2
         y = (self.height() - self._busy_label.height()) // 2
         self._busy_label.move(x, y)
+
+    # ------------------------------------------------------------------
+    # Spin
+    # ------------------------------------------------------------------
+
+    def set_spinning(self, enabled: bool):
+        if enabled:
+            self._spin_timer.start()
+        else:
+            self._spin_timer.stop()
+
+    def _spin_tick(self):
+        cam = self._renderer.camera
+        cam.azimuth = (cam.azimuth + 36.0 * 16 / 1000.0) % 360.0
+        self.camera_changed.emit()
+        self.update()
 
     # ------------------------------------------------------------------
     # Camera view presets
