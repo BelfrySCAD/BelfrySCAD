@@ -441,10 +441,6 @@ class DebuggerPane(QWidget):
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
 
-        # Seed the initial <toplevel> entry so the list is never empty.
-        self._stack_list.addItem("<toplevel>")
-        self._stack_list.setCurrentRow(0)
-
     def set_splitter_orientation(self, orientation: Qt.Orientation):
         self._splitter.setOrientation(orientation)
 
@@ -636,9 +632,5 @@ class DebuggerPane(QWidget):
                     self._btn_step_out, self._btn_stop):
             btn.setEnabled(False)
         self._btn_restart.setEnabled(True)
-        self._stack_list.blockSignals(True)
         self._stack_list.clear()
-        self._stack_list.addItem("<toplevel>")
-        self._stack_list.setCurrentRow(0)
-        self._stack_list.blockSignals(False)
         self._vars_table.setRowCount(0)
