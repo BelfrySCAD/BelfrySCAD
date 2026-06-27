@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QVBoxLayout,
-    QComboBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel,
+    QComboBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
 )
 from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
@@ -11,6 +11,7 @@ _DEFAULTS = {
     "editor/indentSize": 4,
     "editor/showColumnGuide": True,
     "editor/columnGuide": 80,
+    "viewport/stereoEyeSep": 6.5,  # percentage of camera distance
 }
 
 
@@ -98,6 +99,32 @@ class PreferencesDialog(QDialog):
 
         outer.addLayout(form)
 
+        # --- Viewport section ---
+        outer.addWidget(QLabel("<b>Viewport</b>"))
+
+        vp_form = QFormLayout()
+        vp_form.setSpacing(8)
+        vp_form.setContentsMargins(12, 0, 0, 0)
+
+        sep_row = QHBoxLayout()
+        sep_row.setSpacing(8)
+        # Slider range 10–200, each tick = 0.1%, so value 65 = 6.5%
+        self._eye_sep = QSlider(Qt.Orientation.Horizontal)
+        self._eye_sep.setRange(10, 200)
+        self._eye_sep.setTickInterval(10)
+        current_sep = s.value("viewport/stereoEyeSep", _DEFAULTS["viewport/stereoEyeSep"], type=float)
+        self._eye_sep.setValue(int(round(current_sep * 10)))
+        self._eye_sep_label = QLabel(f"{current_sep:.1f}%")
+        self._eye_sep_label.setMinimumWidth(40)
+        self._eye_sep.valueChanged.connect(
+            lambda v: self._eye_sep_label.setText(f"{v / 10.0:.1f}%")
+        )
+        sep_row.addWidget(self._eye_sep)
+        sep_row.addWidget(self._eye_sep_label)
+        vp_form.addRow("Stereo eye separation:", sep_row)
+
+        outer.addLayout(vp_form)
+
         # --- Buttons ---
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -113,4 +140,5 @@ class PreferencesDialog(QDialog):
             "editor/indentSize": self._indent_size.value(),
             "editor/showColumnGuide": self._show_guide.isChecked(),
             "editor/columnGuide": self._guide_column.value(),
+            "viewport/stereoEyeSep": self._eye_sep.value() / 10.0,
         }

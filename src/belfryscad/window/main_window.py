@@ -2002,12 +2002,16 @@ class MainWindow(QMainWindow):
         indent = load_preference("editor/indentSize", int)
         show_guide = load_preference("editor/showColumnGuide", bool)
         guide_col = load_preference("editor/columnGuide", int)
+        eye_sep_pct = load_preference("viewport/stereoEyeSep", float)
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
+                tab.viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
+                if tab.viewport._renderer.camera.stereo:
+                    tab.viewport.update()
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
@@ -2128,6 +2132,8 @@ class MainWindow(QMainWindow):
 
     def _apply_stereo_to_tab(self, tab):
         tab.viewport._renderer.camera.stereo = self._act_stereo.isChecked()
+        eye_sep_pct = load_preference("viewport/stereoEyeSep", float)
+        tab.viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
 
     def _toggle_stereo(self, enabled: bool):
         self._act_perspective.setEnabled(not enabled)
