@@ -1601,6 +1601,15 @@ class Evaluator:
         elif name == "mirror":
             v = self._get_arg(args, 0, "v", [1, 0])
             cs = cs.mirror([float(v[0]), float(v[1])])
+        elif name == "multmatrix":
+            m = self._get_arg(args, 0, "m", None)
+            if m is not None:
+                # Extract 2×3 affine matrix from 4×4: rows 0,1, cols 0,1,3
+                mat2x3 = [
+                    [float(m[0][0]), float(m[0][1]), float(m[0][3])],
+                    [float(m[1][0]), float(m[1][1]), float(m[1][3])],
+                ]
+                cs = cs.transform(mat2x3)
         return cs
 
     def _apply_transform_3d(self, name: str, args: dict, body: "m3d.Manifold") -> "m3d.Manifold":
