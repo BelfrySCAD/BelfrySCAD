@@ -430,7 +430,11 @@ class MainWindow(QMainWindow):
         self._viewport_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._viewport_dock)
 
-        # --- Console dock (bottom) — single console for the window ---
+        # Bottom dock area spans full width (below both editor and viewport)
+        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
+
+        # --- Console dock (bottom-left) ---
         self._console = ConsoleWidget()
         self._console.setReadOnly(True)
         self._console.setFont(QFont("Menlo", 11))
@@ -443,7 +447,7 @@ class MainWindow(QMainWindow):
         self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
-        # --- Debugger dock (bottom, beside console) ---
+        # --- Debugger dock (bottom-right, beside console) ---
         self._debugger_pane = DebuggerPane()
         self._debug_session: DebugSession | None = None
         self._debug_tab: FileTab | None = None
@@ -452,7 +456,7 @@ class MainWindow(QMainWindow):
         self._debugger_dock.setWidget(self._debugger_pane)
         self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
-        self._debugger_dock.hide()
+        self.splitDockWidget(self._console_dock, self._debugger_dock, Qt.Orientation.Horizontal)
         self._debugger_dock.dockLocationChanged.connect(self._on_debugger_dock_location_changed)
         self._debugger_dock.topLevelChanged.connect(self._on_debugger_top_level_changed)
         self._debugger_pane.continue_requested.connect(self._on_debug_continue)
@@ -1988,12 +1992,20 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if self._first_show:
             self._first_show = False
-            QTimer.singleShot(0, self._set_square_viewport)
+            QTimer.singleShot(0, self._set_default_layout)
 
-    def _set_square_viewport(self):
-        h = self._viewport_dock.height()
-        if h > 0:
-            self.resizeDocks([self._viewport_dock], [h], Qt.Orientation.Horizontal)
+    def _set_default_layout(self):
+        w = self.width()
+        h = self.height()
+        bottom_h = max(180, h // 4)
+        # viewport dock: right half
+        self.resizeDocks([self._viewport_dock], [w // 2], Qt.Orientation.Horizontal)
+        # bottom dock area: ~25% of window height
+        self.resizeDocks([self._console_dock], [bottom_h], Qt.Orientation.Vertical)
+        # console and debugger: equal width
+        half_w = w // 2
+        self.resizeDocks([self._console_dock, self._debugger_dock],
+                         [half_w, half_w], Qt.Orientation.Horizontal)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
