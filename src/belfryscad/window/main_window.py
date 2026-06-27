@@ -2144,7 +2144,6 @@ class MainWindow(QMainWindow):
         self._viewport.update()
 
     def _toggle_stereo(self, enabled: bool):
-        self._act_perspective.setEnabled(not enabled)
         self._viewport._renderer.camera.stereo = enabled
         self._viewport.update()
 
