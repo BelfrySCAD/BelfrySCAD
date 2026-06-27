@@ -1,8 +1,10 @@
 from html import escape
 
 from PySide6.QtWidgets import QTextBrowser
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCharFormat, QTextCursor
 from PySide6.QtCore import QUrl
+
+_PLAIN_FMT = QTextCharFormat()  # default format with no anchor href
 
 
 class ConsoleWidget(QTextBrowser):
@@ -42,7 +44,7 @@ class ConsoleWidget(QTextBrowser):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if cursor.position() > 0:
             cursor.insertBlock()
-        cursor.insertText(text)
+        cursor.insertText(text, _PLAIN_FMT)
 
     def _append_foldable(self, summary: str, detail: str):
         doc = self.document()
@@ -60,7 +62,7 @@ class ConsoleWidget(QTextBrowser):
             cursor = QTextCursor(doc)
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertBlock()
-            cursor.insertText(line)
+            cursor.insertText(line, _PLAIN_FMT)
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
 
