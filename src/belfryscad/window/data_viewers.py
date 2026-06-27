@@ -1885,6 +1885,12 @@ class GridViewer(QDialog):
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setStyleSheet(
+            "QTableWidget::item:selected:!active {"
+            "  background: palette(highlight);"
+            "  color: palette(highlighted-text);"
+            "}"
+        )
         for i, p in enumerate(row_pts):
             for j in range(cols):
                 item = QTableWidgetItem(f"{p[j]:g}")
