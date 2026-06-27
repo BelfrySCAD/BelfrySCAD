@@ -2073,6 +2073,8 @@ class _GridViewport(_SimpleViewport):
                 self.upload_lines(np.array(line_verts, dtype=np.float32))
 
         self._build_point_markers()
+        if self._selected_indices:
+            self._build_sel_markers()
         self.update()
 
     def _octa_faces(self, r):
