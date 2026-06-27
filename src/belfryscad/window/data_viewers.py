@@ -1851,6 +1851,11 @@ class GridViewer(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        self._faces_cb = QCheckBox("Faces")
+        self._faces_cb.setChecked(True)
+        self._faces_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._faces_cb.toggled.connect(self._rebuild)
+        btn_row.addWidget(self._faces_cb)
         self._col_wrap_cb = QCheckBox("Col Wrap")
         self._col_wrap_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._col_wrap_cb.toggled.connect(self._rebuild)
@@ -1932,13 +1937,15 @@ class GridViewer(QDialog):
     def _do_initial_load(self):
         self._vp.load_grid(self._grid,
                            col_wrap=self._col_wrap_cb.isChecked(),
-                           row_wrap=self._row_wrap_cb.isChecked())
+                           row_wrap=self._row_wrap_cb.isChecked(),
+                           draw_faces=self._faces_cb.isChecked())
 
     def _rebuild(self, _=None):
         if self._vp._gl_ready:
             self._vp.load_grid(self._grid,
                                col_wrap=self._col_wrap_cb.isChecked(),
-                               row_wrap=self._row_wrap_cb.isChecked())
+                               row_wrap=self._row_wrap_cb.isChecked(),
+                               draw_faces=self._faces_cb.isChecked())
 
 
 class _GridViewport(_SimpleViewport):
@@ -1977,7 +1984,7 @@ class _GridViewport(_SimpleViewport):
         self.update()
 
     def load_grid(self, grid_value: list, col_wrap: bool = False,
-                  row_wrap: bool = False):
+                  row_wrap: bool = False, draw_faces: bool = True):
         self._release_all()
         self._release_sel_markers()
 
@@ -2000,51 +2007,70 @@ class _GridViewport(_SimpleViewport):
         r_range = rows if row_wrap else rows - 1
         c_range = cols if col_wrap else cols - 1
 
-        # Quad faces as triangulated mesh
-        if r_range >= 1 and c_range >= 1:
-            tris_pos = []
-            tris_norm = []
-            for r in range(r_range):
-                for c in range(c_range):
-                    i00 = r * cols + c
-                    i01 = r * cols + (c + 1) % cols
-                    i10 = ((r + 1) % rows) * cols + c
-                    i11 = ((r + 1) % rows) * cols + (c + 1) % cols
-                    p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
-                    n1 = np.cross(p01 - p00, p11 - p00)
-                    ln1 = np.linalg.norm(n1)
-                    if ln1 > 0:
-                        n1 /= ln1
-                    tris_pos.extend([p00, p01, p11])
-                    tris_norm.extend([n1, n1, n1])
-                    n2 = np.cross(p11 - p00, p10 - p00)
-                    ln2 = np.linalg.norm(n2)
-                    if ln2 > 0:
-                        n2 /= ln2
-                    tris_pos.extend([p00, p11, p10])
-                    tris_norm.extend([n2, n2, n2])
-            if tris_pos:
-                positions = np.array(tris_pos, dtype=np.float32)
-                normals = np.array(tris_norm, dtype=np.float32)
-                # Edge lines for quads
-                edge_verts = []
-                edge_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        if draw_faces:
+            # Quad faces as triangulated mesh
+            if r_range >= 1 and c_range >= 1:
+                tris_pos = []
+                tris_norm = []
                 for r in range(r_range):
                     for c in range(c_range):
                         i00 = r * cols + c
                         i01 = r * cols + (c + 1) % cols
                         i10 = ((r + 1) % rows) * cols + c
                         i11 = ((r + 1) % rows) * cols + (c + 1) % cols
-                        for a, b in [(i00, i01), (i01, i11),
-                                     (i11, i10), (i10, i00)]:
-                            edge_verts.append(pts[a])
-                            edge_verts.append(pts[b])
-                edge_pos = np.array(edge_verts, dtype=np.float32)
-                edge_cols = np.tile(edge_color, (len(edge_verts), 1))
-                self.upload_mesh(positions, normals,
-                                 backface_color=(0.9, 0.85, 0.1, 1.0),
-                                 edge_positions=edge_pos,
-                                 edge_colors=edge_cols)
+                        p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
+                        n1 = np.cross(p01 - p00, p11 - p00)
+                        ln1 = np.linalg.norm(n1)
+                        if ln1 > 0:
+                            n1 /= ln1
+                        tris_pos.extend([p00, p01, p11])
+                        tris_norm.extend([n1, n1, n1])
+                        n2 = np.cross(p11 - p00, p10 - p00)
+                        ln2 = np.linalg.norm(n2)
+                        if ln2 > 0:
+                            n2 /= ln2
+                        tris_pos.extend([p00, p11, p10])
+                        tris_norm.extend([n2, n2, n2])
+                if tris_pos:
+                    positions = np.array(tris_pos, dtype=np.float32)
+                    normals = np.array(tris_norm, dtype=np.float32)
+                    edge_verts = []
+                    edge_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+                    for r in range(r_range):
+                        for c in range(c_range):
+                            i00 = r * cols + c
+                            i01 = r * cols + (c + 1) % cols
+                            i10 = ((r + 1) % rows) * cols + c
+                            i11 = ((r + 1) % rows) * cols + (c + 1) % cols
+                            for a, b in [(i00, i01), (i01, i11),
+                                         (i11, i10), (i10, i00)]:
+                                edge_verts.append(pts[a])
+                                edge_verts.append(pts[b])
+                    edge_pos = np.array(edge_verts, dtype=np.float32)
+                    edge_cols = np.tile(edge_color, (len(edge_verts), 1))
+                    self.upload_mesh(positions, normals,
+                                     backface_color=(0.9, 0.85, 0.1, 1.0),
+                                     edge_positions=edge_pos,
+                                     edge_colors=edge_cols)
+        else:
+            # Skeleton mode: row lines (blue) and column lines (orange), no fill
+            row_color = np.array([0.15, 0.45, 0.85], dtype=np.float32)
+            col_color = np.array([0.85, 0.45, 0.1], dtype=np.float32)
+            line_verts = []
+            for r in range(rows):
+                for c in range(c_range):
+                    a = r * cols + c
+                    b = r * cols + (c + 1) % cols
+                    line_verts.append(np.concatenate([pts[a], row_color]))
+                    line_verts.append(np.concatenate([pts[b], row_color]))
+            for r in range(r_range):
+                for c in range(cols):
+                    a = r * cols + c
+                    b = ((r + 1) % rows) * cols + c
+                    line_verts.append(np.concatenate([pts[a], col_color]))
+                    line_verts.append(np.concatenate([pts[b], col_color]))
+            if line_verts:
+                self.upload_lines(np.array(line_verts, dtype=np.float32))
 
         self._build_point_markers()
         self.update()
