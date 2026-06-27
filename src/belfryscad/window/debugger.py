@@ -407,6 +407,7 @@ class DebuggerPane(QWidget):
         vars_header.addWidget(self._filter_combo)
         vars_header.addStretch()
         self._hidden_check = QCheckBox("Hiddens")
+        self._hidden_check.setToolTip("Show variables starting with _ or $_")
         vars_header.addWidget(self._hidden_check)
         vv.addLayout(vars_header)
         self._vars_table = QTableWidget(0, 2)
