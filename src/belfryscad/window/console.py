@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QCursor, QTextCursor
 from PySide6.QtCore import QEvent, QTimer, Qt
 
 
@@ -97,16 +97,20 @@ class ConsoleWidget(QPlainTextEdit):
         if obj is self.viewport():
             t = event.type()
             if t == QEvent.Type.MouseMove:
-                pos = event.pos()
-                QTimer.singleShot(0, lambda: self._update_cursor(pos))
+                import os
+                with open(os.path.expanduser('~/Desktop/console_debug.txt'), 'a') as _f:
+                    _f.write(f"eventFilter MouseMove headers={sorted(self._fold_headers.keys())}\n")
+                QTimer.singleShot(0, self._update_cursor)
             elif t == QEvent.Type.Leave:
                 self._restore_cursor()
         return super().eventFilter(obj, event)
 
-    def _update_cursor(self, pos):
+    def _update_cursor(self):
+        pos = self.viewport().mapFromGlobal(QCursor.pos())
         bn = self.cursorForPosition(pos).blockNumber()
-        with open('/tmp/console_cursor_debug.txt', 'a') as _f:
-            _f.write(f"pos=({pos.x()},{pos.y()}) bn={bn} headers={sorted(self._fold_headers.keys())} hand={self._hand_cursor_active}\n")
+        import os
+        with open(os.path.expanduser('~/Desktop/console_debug.txt'), 'a') as _f:
+            _f.write(f"  _update_cursor pos=({pos.x()},{pos.y()}) bn={bn} on_header={bn in self._fold_headers}\n")
         on_header = bn in self._fold_headers
         if on_header and not self._hand_cursor_active:
             QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
