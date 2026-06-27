@@ -2014,9 +2014,9 @@ class _GridViewport(_SimpleViewport):
         r_range = rows if row_wrap else rows - 1
         c_range = cols if col_wrap else cols - 1
 
-        # Row lines (blue) and column lines (orange) — always drawn in both modes
-        row_color = np.array([0.15, 0.45, 0.85], dtype=np.float32)
-        col_color = np.array([0.85, 0.45, 0.1], dtype=np.float32)
+        # Row lines (orange) and column lines (blue) — always drawn in both modes
+        row_color = np.array([0.85, 0.45, 0.1], dtype=np.float32)
+        col_color = np.array([0.15, 0.45, 0.85], dtype=np.float32)
         line_verts = []
         for r in range(rows):
             for c in range(c_range):
