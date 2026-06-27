@@ -214,26 +214,26 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │  [New][Open][Export] | [Undo][Redo] | [Render][Debug][Animate] | [T][R][S] │  ← toolbar
-├────────────┬───────────────────────────────────────────────────┤
-│[file1 ×]   │                                                   │
-│[file2 ×]   │                                          [cube]   │
-│            │            3D Viewport                            │
-│   Code     │                                                   │
-│   Editor   ├─────────────────────────────────┬─────────────────┤
-│            │  Console                        │Debugger/Animate │
-├────────────┴─────────────────────────────────┴─────────────────┤
+├───────────────────────────────────────┬────────────────────────┤
+│ [file1 ×][file2 ×]                    │                        │
+│                                       │                [cube]  │
+│            Code Editor                │    3D Viewport         │
+│            (central widget)           │    (right dock)        │
+├───────────────────────────────────────┴────────────────────────┤
+│  Console                              │ Debugger / Animate     │
+├───────────────────────────────────────┴────────────────────────┤
 │  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00    0 FPS  │  ← status bar
 └────────────────────────────────────────────────────────────────┘
 ```
 
 - **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate | T, R, S (gizmo tool buttons)
-- **Editor dock** (left): `QTabWidget` with one tab per open file; tabs at the top of the dock; can be moved to any dock area
-- **3D viewport** (central widget): single instance shared across all editor tabs; always shows the last render result regardless of which editor tab is active; contains a cube gizmo for view angle control
+- **Code editor** (central widget): `QTabWidget` with one tab per open file; tabs at top; always visible
+- **Viewport dock** (right): single 3D viewport shared across all editor tabs; always shows the last render result; defaults to 1:1 (square) aspect ratio on first launch; contains a cube gizmo for view angle control
 - **Console** (bottom dock): single running log per window; not per-tab
 - **Debugger/Animate** (bottom dock, tabbed): also window-level singletons
 - **Status bar**: bottom strip; camera position + FPS counter
 
-The code editor, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock". The top-left and bottom-left corners are assigned to the left dock area (`setCorner`), so the editor dock spans the full window height and the bottom docks (console, debugger, animate) fit between the left and right dock areas. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
+The viewport, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "ViewportDock", "ConsoleDock", "DebuggerDock", "AnimateDock". On first launch (no saved `windowState`), a `showEvent` + deferred `resizeDocks` call sets the viewport dock width equal to its height for a square default. The Debugger pane is a single shared widget on `MainWindow` (not per-tab). The Animate dock starts hidden; open via the Animate toolbar button (F7) or View ▸ Show Animate.
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 

@@ -387,6 +387,7 @@ class MainWindow(QMainWindow):
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
         self._dump_frame: int = 0
+        self._first_show = True
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -405,16 +406,7 @@ class MainWindow(QMainWindow):
         self._toolbar = self._make_toolbar()
         self.addToolBar(self._toolbar)
 
-        # Single viewport is the central widget
-        self._viewport = Viewport()
-        self._viewport.selection_changed.connect(self._on_selection_changed)
-        self._viewport.translate_committed.connect(self._on_translate_committed)
-        self._viewport.rotate_committed.connect(self._on_rotate_committed)
-        self._viewport.scale_committed.connect(self._on_scale_committed)
-        self._viewport.camera_changed.connect(self._update_camera_label)
-        self.setCentralWidget(self._viewport)
-
-        # --- Editor dock (left) — QTabWidget containing FileTab instances ---
+        # Editor tabs are the central widget
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tabs.setTabsClosable(True)
@@ -422,12 +414,21 @@ class MainWindow(QMainWindow):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(self._tab_changed)
+        self.setCentralWidget(self._tabs)
 
-        self._editor_dock = QDockWidget("Editor", self)
-        self._editor_dock.setObjectName("EditorDock")
-        self._editor_dock.setWidget(self._tabs)
-        self._editor_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._editor_dock)
+        # --- Viewport dock (right) ---
+        self._viewport = Viewport()
+        self._viewport.selection_changed.connect(self._on_selection_changed)
+        self._viewport.translate_committed.connect(self._on_translate_committed)
+        self._viewport.rotate_committed.connect(self._on_rotate_committed)
+        self._viewport.scale_committed.connect(self._on_scale_committed)
+        self._viewport.camera_changed.connect(self._update_camera_label)
+
+        self._viewport_dock = QDockWidget("Viewport", self)
+        self._viewport_dock.setObjectName("ViewportDock")
+        self._viewport_dock.setWidget(self._viewport)
+        self._viewport_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._viewport_dock)
 
         # --- Console dock (bottom) — single console for the window ---
         self._console = ConsoleWidget()
@@ -690,9 +691,9 @@ class MainWindow(QMainWindow):
         self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
         self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
 
-        self._act_show_editor = self._editor_dock.toggleViewAction()
-        self._act_show_editor.setText("Show Code Editor")
-        view_menu.addAction(self._act_show_editor)
+        self._act_show_viewport = self._viewport_dock.toggleViewAction()
+        self._act_show_viewport.setText("Show Viewport")
+        view_menu.addAction(self._act_show_viewport)
 
         self._act_show_console = self._console_dock.toggleViewAction()
         self._act_show_console.setText("Show Console")
@@ -1570,8 +1571,6 @@ class MainWindow(QMainWindow):
                     target_tab = self._create_and_add_tab(def_file, text)
 
         target_tab.editor.scroll_to_line(def_line)
-        self._editor_dock.show()
-        self._editor_dock.raise_()
         idx = self._tabs.indexOf(target_tab)
         if idx >= 0:
             self._tabs.setCurrentIndex(idx)
@@ -1966,6 +1965,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         state = s.value("windowState")
         if state is not None:
+            self._first_show = False
             self.restoreState(state)
         perspective = s.value("perspective", True, type=bool)
         self._act_perspective.blockSignals(True)
@@ -1983,6 +1983,17 @@ class MainWindow(QMainWindow):
         self._act_word_wrap.blockSignals(False)
         self._toggle_word_wrap(word_wrap)
         self._apply_preferences()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._first_show:
+            self._first_show = False
+            QTimer.singleShot(0, self._set_square_viewport)
+
+    def _set_square_viewport(self):
+        h = self._viewport_dock.height()
+        if h > 0:
+            self.resizeDocks([self._viewport_dock], [h], Qt.Orientation.Horizontal)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
