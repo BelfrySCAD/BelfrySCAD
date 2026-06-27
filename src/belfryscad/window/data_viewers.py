@@ -582,17 +582,12 @@ class _SimpleViewport(QOpenGLWidget):
             self.azimuth -= dx * 0.5
             self.elevation = max(-89, min(89, self.elevation + dy * 0.5))
         elif self._mouse_button == Qt.MouseButton.RightButton:
-            az = math.radians(self.azimuth)
-            el = math.radians(self.elevation)
-            right = np.array([-math.sin(az), math.cos(az), 0], dtype=np.float32)
-            up_approx = np.array([
-                -math.sin(el) * math.cos(az),
-                -math.sin(el) * math.sin(az),
-                math.cos(el),
-            ], dtype=np.float32)
+            view = self._view_matrix()
+            right = view[0, :3].astype(np.float32)
+            up = view[1, :3].astype(np.float32)
             scale = self.distance * 0.001
             self.target -= right * dx * scale
-            self.target += up_approx * dy * scale
+            self.target += up * dy * scale
         self.update()
 
     def wheelEvent(self, event: QWheelEvent):
