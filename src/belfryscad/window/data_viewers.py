@@ -561,6 +561,39 @@ class _SimpleViewport(QOpenGLWidget):
             return
         self.update()
 
+    def _scroll_to_visible(self, pt: np.ndarray):
+        """Pan the camera target the minimum amount to keep pt within the visible area."""
+        w, h = self._viewport
+        if w <= 0 or h <= 0:
+            return
+        aspect = w / h
+        mvp = self._mvp(aspect)
+        clip = mvp @ np.array([pt[0], pt[1], pt[2], 1.0], dtype=np.float32)
+        if abs(clip[3]) < 1e-9:
+            return
+        ndc_x = clip[0] / clip[3]
+        ndc_y = clip[1] / clip[3]
+        threshold = 0.85
+        dx_ndc = 0.0
+        dy_ndc = 0.0
+        if ndc_x > threshold:
+            dx_ndc = ndc_x - threshold
+        elif ndc_x < -threshold:
+            dx_ndc = ndc_x + threshold
+        if ndc_y > threshold:
+            dy_ndc = ndc_y - threshold
+        elif ndc_y < -threshold:
+            dy_ndc = ndc_y + threshold
+        if dx_ndc == 0.0 and dy_ndc == 0.0:
+            return
+        view = self._view_matrix()
+        right = view[0, :3].astype(np.float32)
+        up = view[1, :3].astype(np.float32)
+        half_h = self.distance * math.tan(math.radians(self.fov / 2))
+        self.target = (self.target
+                       + right * dx_ndc * half_h * aspect
+                       + up * dy_ndc * half_h).astype(np.float32)
+
     # -- Mouse interaction --
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -882,6 +915,15 @@ class _VNFViewport(_SimpleViewport):
             return
         self._selected_face = face_idx
         self._rebuild_highlight()
+        if face_idx >= 0 and len(self._cpu_positions) > 0:
+            mask = self._tri_to_face == face_idx
+            tri_indices = np.where(mask)[0]
+            if len(tri_indices) > 0:
+                verts = np.array([
+                    self._cpu_positions[ti * 3 + k]
+                    for ti in tri_indices for k in range(3)
+                ], dtype=np.float32)
+                self._scroll_to_visible(verts.mean(axis=0))
         self.update()
 
     def _rebuild_highlight(self):
@@ -935,6 +977,8 @@ class _VNFViewport(_SimpleViewport):
 
         valid_indices = [vi for vi in indices if 0 <= vi < len(self._verts_3d)]
         self._vert_indices = valid_indices
+        if valid_indices:
+            self._scroll_to_visible(self._verts_3d[valid_indices[0]])
         self._vert_blink_red = True
         self._vert_blink_timer.start()
         self._build_vert_markers()
@@ -994,6 +1038,11 @@ class _VNFViewport(_SimpleViewport):
                 )
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
+
+    def frame_bounds(self, bb_min, bb_max):
+        super().frame_bounds(bb_min, bb_max)
+        if self._vert_indices:
+            self._build_vert_markers()
 
     def wheelEvent(self, event):
         super().wheelEvent(event)
@@ -1670,38 +1719,6 @@ class _PathViewport(_SimpleViewport):
         self._build_sel_markers()
         self.update()
 
-    def _scroll_to_visible(self, pt: np.ndarray):
-        w, h = self._viewport
-        if w <= 0 or h <= 0:
-            return
-        aspect = w / h
-        mvp = self._mvp(aspect)
-        clip = mvp @ np.array([pt[0], pt[1], pt[2], 1.0], dtype=np.float32)
-        if abs(clip[3]) < 1e-9:
-            return
-        ndc_x = clip[0] / clip[3]
-        ndc_y = clip[1] / clip[3]
-        threshold = 0.85
-        dx_ndc = 0.0
-        dy_ndc = 0.0
-        if ndc_x > threshold:
-            dx_ndc = ndc_x - threshold
-        elif ndc_x < -threshold:
-            dx_ndc = ndc_x + threshold
-        if ndc_y > threshold:
-            dy_ndc = ndc_y - threshold
-        elif ndc_y < -threshold:
-            dy_ndc = ndc_y + threshold
-        if dx_ndc == 0.0 and dy_ndc == 0.0:
-            return
-        view = self._view_matrix()
-        right = view[0, :3].astype(np.float32)
-        up = view[1, :3].astype(np.float32)
-        half_h = self.distance * math.tan(math.radians(self.fov / 2))
-        self.target = (self.target
-                       + right * dx_ndc * half_h * aspect
-                       + up * dy_ndc * half_h).astype(np.float32)
-
     def _release_sel_markers(self):
         for attr in ("_sel_vao_r", "_sel_vao_w"):
             vao = getattr(self, attr)
@@ -2176,6 +2193,9 @@ class _GridViewport(_SimpleViewport):
             self._blink_timer.stop()
             self.update()
             return
+
+        if 0 <= indices[0] < len(self._all_pts):
+            self._scroll_to_visible(self._all_pts[indices[0]])
 
         self._blink_red = True
         self._blink_timer.start()
