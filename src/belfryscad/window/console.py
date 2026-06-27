@@ -104,7 +104,10 @@ class ConsoleWidget(QPlainTextEdit):
         return super().eventFilter(obj, event)
 
     def _update_cursor(self, pos):
-        on_header = self.cursorForPosition(pos).blockNumber() in self._fold_headers
+        bn = self.cursorForPosition(pos).blockNumber()
+        with open('/tmp/console_cursor_debug.txt', 'a') as _f:
+            _f.write(f"pos=({pos.x()},{pos.y()}) bn={bn} headers={sorted(self._fold_headers.keys())} hand={self._hand_cursor_active}\n")
+        on_header = bn in self._fold_headers
         if on_header and not self._hand_cursor_active:
             QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
             self._hand_cursor_active = True
