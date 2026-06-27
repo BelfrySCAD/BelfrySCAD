@@ -558,6 +558,7 @@ class CodeEditor(QPlainTextEdit):
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
     print_to_console = Signal(str)             # emits formatted assignment string
+    print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1169,7 +1170,7 @@ class CodeEditor(QPlainTextEdit):
             menu.addSeparator()
             menu.addAction(
                 f"Print '{word}' to Console",
-                lambda v=value, n=word: self.print_to_console.emit(_pretty_assignment(n, v))
+                lambda v=value, n=word: self.print_value_to_console.emit(n, v)
             )
             from belfryscad.window.data_viewers import build_viewer_menu
             view_sub = QMenu(f"View '{word}'…", self)

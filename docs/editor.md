@@ -53,7 +53,7 @@ Right-clicking in the editor builds a standard Qt context menu, then appends ide
 
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known local/global variable):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
-- **Print 'x' to Console** — formats the value via `_pretty_assignment(name, value)` and emits `CodeEditor.print_to_console`, which is connected to `MainWindow._on_debug_print` per tab.
+- **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value` per tab, which calls `log_value_to_tab(tab, name, value)` → `tab.console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
 - **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
 
 The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision). `MainWindow._on_debug_paused` and `_on_debug_error_break` call `tab.editor.set_debug_locals(merged)` to install the dict; all resume/step/stop/finish handlers call `set_debug_locals(None)` to clear it.
@@ -95,15 +95,19 @@ All Cmd+Z / Cmd+Shift+Z route through `QUndoStack`, which disables `QPlainTextEd
 
 ## Console Output
 
-The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). All output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)`, both of which call `tab.console.append_output(text)`.
+The console is `ConsoleWidget` (`window/console.py`), a `QTextBrowser` subclass. One instance is created per `DocumentTab` and managed in a `QStackedWidget` (`_console_stack`). Plain log output goes through `MainWindow.log_to_tab(tab, text)` or `MainWindow.log(text)` → `tab.console.append_output(text)`. Value-bearing output (from "Print to Console" or debugger return values) goes through `MainWindow.log_value_to_tab(tab, name, value)` → `tab.console.append_value(name, value, _pretty_assignment(name, value))`.
 
 `QTextBrowser` is used (not `QPlainTextEdit`) because it handles cursor shapes natively: `PointingHandCursor` over anchor links, `IBeamCursor` over selectable text. `setOpenLinks(False)` prevents navigation; `anchorClicked` handles fold toggles.
 
-`append_output(text)` routes:
+`append_output(text)` and `append_value(name, value, text)` both route:
 - **Single-line text** → `_append_plain(text)` — inserts a plain text paragraph via `QTextCursor`.
 - **Multi-line text** → `_append_foldable(lines[0], '\n'.join(lines[1:]))` — inserts the first line as an HTML anchor `<a href="fold:N">▼ summary</a>` and the remaining lines as plain paragraphs. Clicking the anchor collapses or expands the block; `QTextBrowser` shows a hand cursor over it automatically.
 
-Fold state is tracked in `_fold_headers: dict[int, tuple[int, int, int]]` (fold_id → (header_bn, first_body_bn, last_body_bn)) and `_folded: set[int]` (fold_ids currently collapsed). `clear()` resets both. Block visibility is toggled with `QTextBlock.setVisible()`; layout is forced via an empty `QTextCursor.beginEditBlock()/endEditBlock()` call (same technique as `CodeEditor`'s code folding). The fold_id is a sequential integer assigned at append time and embedded in the anchor href.
+`append_value` additionally stores `(name, value)` in `_fold_values: dict[int, tuple[str, object]]` keyed by fold_id, so right-clicking on any line of that block can launch a viewer.
+
+Fold state is tracked in `_fold_headers: dict[int, tuple[int, int, int]]` (fold_id → (header_bn, first_body_bn, last_body_bn)) and `_folded: set[int]` (fold_ids currently collapsed). `clear()` resets all three dicts. Block visibility is toggled with `QTextBlock.setVisible()`; layout recalculation is triggered by updating the arrow character via `QTextCursor.insertText` (done after setting visibility so the `documentChanged` signal sees the correct state). The fold_id is a sequential integer assigned at append time and embedded in the anchor href.
+
+**Console right-click context menu** (`DocumentTab._console_context_menu`): `ConsoleWidget.value_at(pos)` checks whether the right-clicked position falls inside a fold header or body block that has a stored value (by scanning `_fold_headers` for block number, then looking up `_fold_values`). If found, a **View 'name'…** submenu is added via `build_viewer_menu()` before the **Clear Console** action.
 
 The console displays:
 - Parse errors (file/line/col from AST metadata)

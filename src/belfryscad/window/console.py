@@ -24,6 +24,8 @@ class ConsoleWidget(QTextBrowser):
         # fold_id → (header_bn, first_body_bn, last_body_bn)
         self._fold_headers: dict[int, tuple[int, int, int]] = {}
         self._folded: set[int] = set()
+        # fold_id → (name, value) for blocks appended via append_value()
+        self._fold_values: dict[int, tuple[str, object]] = {}
         self.setOpenLinks(False)
         self.document().setDefaultStyleSheet(
             "a { color: inherit; text-decoration: none; }"
@@ -37,6 +39,25 @@ class ConsoleWidget(QTextBrowser):
             self._append_plain(text)
         else:
             self._append_foldable(lines[0], '\n'.join(lines[1:]))
+
+    def append_value(self, name: str, value: object, text: str):
+        """Like append_output but stores *value* so right-click can launch viewers."""
+        lines = text.rstrip('\n').split('\n')
+        if len(lines) <= 1:
+            self._append_plain(text)
+        else:
+            fold_id = len(self._fold_headers)
+            self._fold_values[fold_id] = (name, value)
+            self._append_foldable(lines[0], '\n'.join(lines[1:]))
+
+    def value_at(self, pos) -> tuple[str, object] | None:
+        """Return (name, value) if *pos* is inside a foldable block with a stored value."""
+        cursor = self.cursorForPosition(pos)
+        bn = cursor.blockNumber()
+        for fold_id, (header_bn, first_bn, last_bn) in self._fold_headers.items():
+            if bn == header_bn or first_bn <= bn <= last_bn:
+                return self._fold_values.get(fold_id)
+        return None
 
     def _append_plain(self, text: str):
         doc = self.document()
@@ -112,3 +133,4 @@ class ConsoleWidget(QTextBrowser):
         super().clear()
         self._fold_headers.clear()
         self._folded.clear()
+        self._fold_values.clear()

@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QStackedWidget, QApplication,
+    QDockWidget, QStackedWidget, QApplication, QMenu,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -12,7 +12,7 @@ import time
 from belfryscad.window.editor import CodeEditor
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.debugger import DebuggerPane, DebugSession
+from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
 
@@ -229,6 +229,15 @@ class DocumentTab(QWidget):
 
     def _console_context_menu(self, pos):
         menu = self.console.createStandardContextMenu()
+        name_value = self.console.value_at(pos)
+        if name_value is not None:
+            name, value = name_value
+            from belfryscad.window.data_viewers import build_viewer_menu
+            view_sub = QMenu(f"View '{name}'…", self.console)
+            build_viewer_menu(view_sub, name, value, self.console)
+            if not view_sub.isEmpty():
+                menu.addSeparator()
+                menu.addMenu(view_sub)
         menu.addSeparator()
         menu.addAction("Clear Console", self.console.clear)
         menu.exec(self.console.mapToGlobal(pos))
@@ -512,6 +521,7 @@ class MainWindow(QMainWindow):
         self._debugger_pane.restart_requested.connect(self._on_debug_restart)
         self._debugger_pane.stop_requested.connect(self._on_debug_stop)
         self._debugger_pane.print_to_console.connect(self._on_debug_print)
+        self._debugger_pane.print_value_to_console.connect(self._on_debug_print_value)
         self._debugger_pane.frame_selected.connect(self._on_debug_frame_selected)
         self._debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
 
@@ -815,6 +825,7 @@ class MainWindow(QMainWindow):
             lambda word, t=tab: self._go_to_definition(t, word)
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
+        tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         if hasattr(self, '_act_perspective'):
             self._apply_perspective_to_tab(tab)
             self._apply_preferences_to_tab(
@@ -964,6 +975,7 @@ class MainWindow(QMainWindow):
             lambda word, t=tab: self._go_to_definition(t, word)
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
+        tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         self._apply_perspective_to_tab(tab)
         self._apply_preferences_to_tab(
             tab,
@@ -1646,6 +1658,7 @@ class MainWindow(QMainWindow):
             self._debug_session.finished.disconnect()
             self._debug_session.errored.disconnect()
             self._debug_session.logged.disconnect()
+            self._debug_session.logged_value.disconnect()
             self._debug_session.stop()
             self._debug_session = None
 
@@ -1728,6 +1741,7 @@ class MainWindow(QMainWindow):
         )
         self._debug_session.errored.connect(self._on_debug_error)
         self._debug_session.logged.connect(self._on_debug_print)
+        self._debug_session.logged_value.connect(self._on_debug_print_value)
 
         self._debugger_pane.set_running()
         tab.viewport.load_geometry([])
@@ -1921,6 +1935,7 @@ class MainWindow(QMainWindow):
             self._debug_session.finished.disconnect()
             self._debug_session.errored.disconnect()
             self._debug_session.logged.disconnect()
+            self._debug_session.logged_value.disconnect()
             self._debug_session.stop()
             self._debug_session = None
         self._clear_all_execution_lines()
@@ -1942,6 +1957,7 @@ class MainWindow(QMainWindow):
         self._debug_session.finished.disconnect()
         self._debug_session.errored.disconnect()
         self._debug_session.logged.disconnect()
+        self._debug_session.logged_value.disconnect()
         self._debug_session.stop()
         self._debug_session = None
         self._debug_tab = None
@@ -1953,6 +1969,14 @@ class MainWindow(QMainWindow):
         tab = self._debug_tab or self._current_tab()
         if tab:
             self.log_to_tab(tab, text)
+
+    def _on_debug_print_value(self, name: str, value: object):
+        tab = self._debug_tab or self._current_tab()
+        if tab:
+            self.log_value_to_tab(tab, name, value)
+
+    def log_value_to_tab(self, tab, name: str, value: object):
+        tab.console.append_value(name, value, _pretty_assignment(name, value))
 
     def _on_debug_frame_selected(self, file_path: str, line: int):
         if not file_path or not line:

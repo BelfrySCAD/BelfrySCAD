@@ -13,6 +13,7 @@ Signals (emitted from the worker thread; Qt queues them to main):
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
 | `logged` | `str` | Echo/print output from the evaluator (thread-safe via signal) |
+| `logged_value` | `str, object` | Function return value (name, value) — viewer-aware alternative to `logged` for step-over/step-out return values |
 
 `all_frame_locals` is a list of frame dicts, **innermost first**, with an extra `<toplevel>` entry appended when inside a call. `all_frame_locals[0]` matches row 0 (innermost) of the call-stack list. Each entry:
 
@@ -72,7 +73,7 @@ Categorization (after the hidden check):
 
 `_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
-Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. See `docs/editor.md § Data Viewers` for viewer details.
+Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. **Print to Console** emits `DebuggerPane.print_value_to_console(name, value)` (not `print_to_console`) — connected to `MainWindow._on_debug_print_value` → `log_value_to_tab` → `append_value`, so the value is stored for the console right-click viewer menu. See `docs/editor.md § Data Viewers` for viewer details.
 
 Right-clicking a variable name **in the code editor** while the debugger is paused provides the same **Print** and **View** actions. See `docs/editor.md § Editor Context Menu`.
 
@@ -97,11 +98,11 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 
 **Pause** — Pause execution at the currently executing line. (Continue and Pause share a single button that toggles based on state.)
 
-**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. User-defined function calls at exactly `_step_depth + 1` (direct calls on the stepped-over line) print their return value to the console via `DebugSession.logged`, formatted by `_pretty_assignment(f"{name}() return value", value)`. Nested calls within those functions do not print.
+**Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. User-defined function calls at exactly `_step_depth + 1` (direct calls on the stepped-over line) emit `DebugSession.logged_value(display_name, value)`, routed through `MainWindow._on_debug_print_value` → `log_value_to_tab` → `tab.console.append_value`. This stores the original Python value for the console right-click viewer menu. Nested calls within those functions do not print.
 
 **Step Into** — Resume execution until code is on another line or in another file, at any call stack level, or a breakpoint is reached.
 
-**Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached. The return value of the function being exited is printed to the console formatted by `_pretty_assignment(f"{name}() return value", value)`.
+**Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached. The return value of the function being exited is emitted via `DebugSession.logged_value` (same viewer-aware path as Step Over).
 
 **Restart** — Restart the program from the beginning and pause at the first line of code (break-on-first).
 

@@ -138,6 +138,7 @@ class DebugSession(QObject):
     finished = Signal(object, object)          # bodies, id_to_node
     errored = Signal(str)
     logged = Signal(str)
+    logged_value = Signal(str, object)  # (name, value) for viewer-aware console logging
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -262,10 +263,11 @@ class DebugSession(QObject):
 
     def _on_function_return(self, name: str, value, depth: int):
         step = self._step_cmd
+        display_name = f"{name}() return value"
         if step == "out" and depth == self._step_depth:
-            self.logged.emit(_pretty_assignment(f"{name}() return value", value))
+            self.logged_value.emit(display_name, value)
         elif step == "over" and depth == self._step_depth + 1:
-            self.logged.emit(_pretty_assignment(f"{name}() return value", value))
+            self.logged_value.emit(display_name, value)
 
     def _run(self, nodes, root_scope, viewport_params: dict):
         from belfryscad.engine.evaluator import Evaluator, EvalError
@@ -312,6 +314,7 @@ class DebuggerPane(QWidget):
     restart_requested = Signal()
     stop_requested = Signal()
     print_to_console = Signal(str)
+    print_value_to_console = Signal(str, object)  # (name, value) for viewer-aware console logging
     frame_selected = Signal(str, int)  # file_path, line
 
     def __init__(self, parent=None):
@@ -562,7 +565,7 @@ class DebuggerPane(QWidget):
         value = all_vars[name]
         menu = QMenu(self)
         menu.addAction("Print to Console",
-                       lambda: self.print_to_console.emit(_pretty_assignment(name, value)))
+                       lambda: self.print_value_to_console.emit(name, value))
         from belfryscad.window.data_viewers import build_viewer_menu
         build_viewer_menu(menu, name, value, self)
         menu.exec(self._vars_table.viewport().mapToGlobal(pos))
