@@ -442,6 +442,14 @@ class _SimpleViewport(QOpenGLWidget):
 
     # -- Cleanup --
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        from PySide6.QtWidgets import QApplication
+        for w in QApplication.topLevelWidgets():
+            for child in w.findChildren(QOpenGLWidget):
+                if child is not self:
+                    child.update()
+
     def closeEvent(self, event):
         self._gl_ready = False
         super().closeEvent(event)
