@@ -387,20 +387,29 @@ class SceneRenderer:
 
         w, h = self._viewport
         if self.camera.stereo:
-            half_w = w // 2
-            aspect = half_w / h if h > 0 else 1.0
+            # Qt sets the GL viewport to device pixels before paintGL, which may
+            # differ from self._viewport (logical pixels) on HiDPI displays.
+            # Read the actual device-pixel viewport from the GL context so our
+            # sub-viewport splits land in the right place.
+            gl_vp = self._ctx.viewport  # (x, y, gl_w, gl_h) in device pixels
+            gl_w, gl_h = gl_vp[2], gl_vp[3]
+            half_gl_w = gl_w // 2
+
+            aspect = half_gl_w / gl_h if gl_h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
             left_view, right_view = self.camera.stereo_view_matrices()
 
-            self._ctx.viewport = (0, 0, half_w, h)
-            self._viewport = (half_w, h)
+            # Use logical half-width for scale-dependent calculations (labels, ticks)
+            self._viewport = (w // 2, h)
+
+            self._ctx.viewport = (0, 0, half_gl_w, gl_h)
             self._paint_scene(left_view, proj, L_world)
 
-            self._ctx.viewport = (half_w, 0, half_w, h)
+            self._ctx.viewport = (half_gl_w, 0, half_gl_w, gl_h)
             self._paint_scene(right_view, proj, L_world)
 
             self._viewport = (w, h)
-            self._ctx.viewport = (0, 0, w, h)
+            self._ctx.viewport = (0, 0, gl_w, gl_h)
         else:
             aspect = w / h if h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
