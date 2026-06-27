@@ -474,6 +474,14 @@ class TestControlFlow:
         _, lines = run(src)
         assert lines == ["ECHO: 10", "ECHO: 20", "ECHO: 30"]
 
+    def test_for_string_iterates_chars(self):
+        _, lines = run('for (c = "abc") { echo(c); }')
+        assert lines == ['ECHO: "a"', 'ECHO: "b"', 'ECHO: "c"']
+
+    def test_for_string_variable_iterates_chars(self):
+        _, lines = run('s = "hi"; for (c = s) { echo(c); }')
+        assert lines == ['ECHO: "h"', 'ECHO: "i"']
+
 
 # ---------------------------------------------------------------------------
 # List comprehensions
@@ -513,6 +521,10 @@ class TestListComprehensions:
         """
         _, lines = run(src)
         assert lines == ["ECHO: [1, 2, 3, 4, 5, 6]"]
+
+    def test_for_comp_string_iterates_chars(self):
+        _, lines = run('echo([for (c = "xyz") c]);')
+        assert lines == ['ECHO: ["x", "y", "z"]']
 
     def test_c_style_for(self):
         # `for (init...; cond; incr...)` — the C-style for in a list
