@@ -66,6 +66,7 @@ class ConsoleWidget(QTextBrowser):
         if cursor.position() > 0:
             cursor.insertBlock()
         cursor.insertText(text, _PLAIN_FMT)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _append_foldable(self, summary: str, detail: str):
         doc = self.document()
@@ -86,6 +87,7 @@ class ConsoleWidget(QTextBrowser):
             cursor.insertText(line, _PLAIN_FMT)
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
