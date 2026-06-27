@@ -88,23 +88,20 @@ class ConsoleWidget(QTextBrowser):
             self._folded.discard(fold_id)
             new_arrow = self._EXPANDED
 
-        # Swap the arrow character in the header line (inside the anchor)
-        hb = doc.findBlockByNumber(header_bn)
-        hcursor = QTextCursor(hb)
-        hcursor.movePosition(QTextCursor.MoveOperation.NextCharacter,
-                             QTextCursor.MoveMode.KeepAnchor)
-        hcursor.insertText(new_arrow)
-
-        # Show or hide body blocks
+        # Set visibility BEFORE the arrow update so that the document-change
+        # triggered by insertText causes QTextDocumentLayout to recalculate
+        # with the correct block visibility already in place.
         block = doc.findBlockByNumber(first_body_bn)
         while block.isValid() and block.blockNumber() <= last_body_bn:
             block.setVisible(not collapsing)
             block = block.next()
 
-        # Force layout recalculation
-        tmp = QTextCursor(doc)
-        tmp.beginEditBlock()
-        tmp.endEditBlock()
+        # Swap the arrow character (triggers documentChanged → layout recalc)
+        hb = doc.findBlockByNumber(header_bn)
+        hcursor = QTextCursor(hb)
+        hcursor.movePosition(QTextCursor.MoveOperation.NextCharacter,
+                             QTextCursor.MoveMode.KeepAnchor)
+        hcursor.insertText(new_arrow)
         self.viewport().update()
 
     def clear(self):
