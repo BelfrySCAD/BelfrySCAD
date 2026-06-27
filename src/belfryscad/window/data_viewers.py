@@ -1719,6 +1719,13 @@ class _PathViewport(_SimpleViewport):
             vao.render(mgl.TRIANGLES)
             self._ctx.enable(mgl.DEPTH_TEST)
 
+    def frame_bounds(self, bb_min, bb_max):
+        super().frame_bounds(bb_min, bb_max)
+        if len(self._path_pts) > 0:
+            self._build_point_markers()
+            if self._selected_indices:
+                self._build_sel_markers()
+
     def wheelEvent(self, event):
         super().wheelEvent(event)
         if len(self._path_pts) > 0:
@@ -2189,6 +2196,13 @@ class _GridViewport(_SimpleViewport):
         if vao is not None:
             self._line_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
             vao.render(mgl.TRIANGLES)
+
+    def frame_bounds(self, bb_min, bb_max):
+        super().frame_bounds(bb_min, bb_max)
+        if len(self._all_pts) > 0:
+            self._build_point_markers()
+            if self._selected_indices:
+                self._build_sel_markers()
 
     def wheelEvent(self, event):
         super().wheelEvent(event)
