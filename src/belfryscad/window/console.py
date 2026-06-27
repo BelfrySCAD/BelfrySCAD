@@ -92,12 +92,9 @@ class ConsoleWidget(QPlainTextEdit):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        on_arrow = self._header_at(event.pos()) is not None
-        self.viewport().setCursor(
-            Qt.CursorShape.PointingHandCursor if on_arrow
-            else Qt.CursorShape.IBeamCursor
-        )
         super().mouseMoveEvent(event)
+        if self._header_at(event.pos()) is not None:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
 
     def clear(self):
         super().clear()
