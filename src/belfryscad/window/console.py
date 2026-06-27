@@ -2,7 +2,7 @@ from html import escape
 
 from PySide6.QtWidgets import QTextBrowser
 from PySide6.QtGui import QTextCharFormat, QTextCursor
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Qt
 
 _PLAIN_FMT = QTextCharFormat()  # default format with no anchor href
 
@@ -24,6 +24,7 @@ class ConsoleWidget(QTextBrowser):
         # fold_id → (header_bn, first_body_bn, last_body_bn)
         self._fold_headers: dict[int, tuple[int, int, int]] = {}
         self._folded: set[int] = set()
+        self.setCursor(Qt.CursorShape.IBeamCursor)
         self.setOpenLinks(False)
         self.document().setDefaultStyleSheet(
             "a { color: inherit; text-decoration: none; }"
