@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 from PySide6.QtGui import QTextCursor
 from PySide6.QtCore import Qt
 
@@ -19,6 +19,7 @@ class ConsoleWidget(QPlainTextEdit):
         # header block number → (first_body_bn, last_body_bn)
         self._fold_headers: dict[int, tuple[int, int]] = {}
         self._folded: set[int] = set()
+        self._hand_cursor_active = False
         self.setUndoRedoEnabled(False)
 
     def append_output(self, text: str):
@@ -93,8 +94,19 @@ class ConsoleWidget(QPlainTextEdit):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        if self._header_at(event.pos()) is not None:
-            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        on_arrow = self._header_at(event.pos()) is not None
+        if on_arrow and not self._hand_cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
+            self._hand_cursor_active = True
+        elif not on_arrow and self._hand_cursor_active:
+            QApplication.restoreOverrideCursor()
+            self._hand_cursor_active = False
+
+    def leaveEvent(self, event):
+        if self._hand_cursor_active:
+            QApplication.restoreOverrideCursor()
+            self._hand_cursor_active = False
+        super().leaveEvent(event)
 
     def clear(self):
         super().clear()
