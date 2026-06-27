@@ -94,13 +94,14 @@ class ConsoleWidget(QPlainTextEdit):
 
     def eventFilter(self, obj, event):
         if obj is self.viewport() and event.type() == QEvent.Type.Leave:
-            self.viewport().unsetCursor()
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
         return super().eventFilter(obj, event)
 
     def mouseMoveEvent(self, event):
         if self.cursorForPosition(event.pos()).blockNumber() in self._fold_headers:
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         else:
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
             super().mouseMoveEvent(event)
 
     def clear(self):
