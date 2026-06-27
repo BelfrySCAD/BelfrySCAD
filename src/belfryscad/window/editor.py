@@ -1149,9 +1149,15 @@ class CodeEditor(QPlainTextEdit):
         cursor.select(QTextCursor.SelectionType.WordUnderCursor)
         word = cursor.selectedText()
 
+        # Qt's WordUnderCursor excludes '$', so right-clicking '$fn' yields 'fn'.
+        # Extend to include a leading '$' when one immediately precedes the word.
+        if word and cursor.selectionStart() > 0:
+            if self.document().characterAt(cursor.selectionStart() - 1) == '$':
+                word = '$' + word
+
         menu = self.createStandardContextMenu()
 
-        is_identifier = bool(word and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', word))
+        is_identifier = bool(word and re.match(r'^\$?[A-Za-z_][A-Za-z0-9_]*$', word))
 
         if is_identifier and self._debug_locals is not None and word in self._debug_locals:
             value = self._debug_locals[word]

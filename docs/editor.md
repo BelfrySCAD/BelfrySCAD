@@ -51,16 +51,16 @@ Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath
 
 Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
 
-**Debug variable inspection** (when debugger is paused and the word under the cursor is a known local/global variable):
+**Debug variable inspection** (when debugger is paused and the word under the cursor is a known variable — locals, globals, constants, or `$`-specials):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
 - **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value` per tab, which calls `log_value_to_tab(tab, name, value)` → `tab.console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
 - **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
 
-The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision). `MainWindow._on_debug_paused` and `_on_debug_error_break` call `tab.editor.set_debug_locals(merged)` to install the dict; all resume/step/stop/finish handlers call `set_debug_locals(None)` to clear it.
+The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision), which covers locals, globals, constants, and `$`-specials. `Qt.WordUnderCursor` excludes `$`, so `contextMenuEvent` manually checks whether the character immediately before the selection is `$` and prepends it — allowing `$fn`, `$t`, etc. to match. `MainWindow._on_debug_paused` and `_on_debug_error_break` call `tab.editor.set_debug_locals(merged)` to install the dict; all resume/step/stop/finish handlers call `set_debug_locals(None)` to clear it.
 
 **Go to Definition** (for any identifier, always shown):
 
-Right-click an identifier shows "Go to Definition of 'name'", only for words matching `[A-Za-z_][A-Za-z0-9_]*`.
+Right-click an identifier shows "Go to Definition of 'name'", only for words matching `\$?[A-Za-z_][A-Za-z0-9_]*` (plain identifiers and `$`-prefixed specials).
 
 `CodeEditor.go_to_definition_requested` (emits the word) connects to `MainWindow._go_to_definition(tab, word)` per tab.
 
