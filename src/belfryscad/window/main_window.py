@@ -1969,12 +1969,12 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentWidget(stop_tab)
 
     def _on_debug_print(self, text: str):
-        tab = self._debug_tab or self._current_tab()
+        tab = self._current_tab() or self._debug_tab
         if tab:
             self.log_to_tab(tab, text)
 
     def _on_debug_print_value(self, name: str, value: object):
-        tab = self._debug_tab or self._current_tab()
+        tab = self._current_tab() or self._debug_tab
         if tab:
             self.log_value_to_tab(tab, name, value)
 
