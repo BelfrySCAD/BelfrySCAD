@@ -14,6 +14,7 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
+from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
 from belfryscad.window.document_manager import get_document_manager
 
@@ -483,6 +484,18 @@ class MainWindow(QMainWindow):
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(btn.click)
 
+        # --- Customizer dock (right, below viewport) ---
+        self._customizer_pane = CustomizerPane()
+        self._customizer_pane.source_changed.connect(self._on_customizer_source_changed)
+
+        self._customizer_dock = QDockWidget("Customizer", self)
+        self._customizer_dock.setObjectName("CustomizerDock")
+        self._customizer_dock.setWidget(self._customizer_pane)
+        self._customizer_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._customizer_dock)
+        self.splitDockWidget(self._viewport_dock, self._customizer_dock, Qt.Orientation.Vertical)
+        self._customizer_dock.hide()
+
         # --- Animate dock (bottom) — single animate pane for the window ---
         self._animate_pane = AnimatePane()
         self._animate_pane.frame_changed.connect(self._on_animate_frame)
@@ -711,6 +724,10 @@ class MainWindow(QMainWindow):
         self._act_show_animate.setText("Show Animate")
         view_menu.addAction(self._act_show_animate)
 
+        self._act_show_customizer = self._customizer_dock.toggleViewAction()
+        self._act_show_customizer.setText("Show Customizer")
+        view_menu.addAction(self._act_show_customizer)
+
         view_menu.addSeparator()
         for label, preset, key in (
             ("Top",       "top",    "Ctrl+4"),
@@ -842,8 +859,9 @@ class MainWindow(QMainWindow):
         self._fps_label.setText(f"{count} FPS")
 
     def _tab_changed(self, index):
-        # Switching tabs only changes which editor is shown; viewport/console stay fixed.
-        pass
+        tab = self._tabs.widget(index)
+        if tab:
+            self._customizer_pane.set_source(tab.editor.toPlainText())
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -920,6 +938,19 @@ class MainWindow(QMainWindow):
             )
             if tab.file_path:
                 get_document_manager().broadcast_change(tab.file_path, current, tab.editor)
+        if tab is self._current_tab():
+            self._customizer_pane.set_source(current)
+
+    def _on_customizer_source_changed(self, new_source: str):
+        tab = self._current_tab()
+        if not tab or tab.editor.toPlainText() == new_source:
+            return
+        editor = tab.editor
+        cursor_pos = editor.textCursor().position()
+        editor.setPlainText(new_source)
+        cursor = editor.textCursor()
+        cursor.setPosition(min(cursor_pos, len(new_source)))
+        editor.setTextCursor(cursor)
 
     # ------------------------------------------------------------------
     # File operations
@@ -2017,6 +2048,11 @@ class MainWindow(QMainWindow):
         half_w = w // 2
         self.resizeDocks([self._console_dock, self._debugger_dock],
                          [half_w, half_w], Qt.Orientation.Horizontal)
+        # customizer: below viewport, ~40% of right pane height when shown
+        self.resizeDocks([self._viewport_dock, self._customizer_dock],
+                         [max(200, (h - bottom_h) * 3 // 5),
+                          max(150, (h - bottom_h) * 2 // 5)],
+                         Qt.Orientation.Vertical)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
