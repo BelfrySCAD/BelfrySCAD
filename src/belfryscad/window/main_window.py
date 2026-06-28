@@ -732,7 +732,7 @@ class MainWindow(QMainWindow):
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Shift+Ctrl+2"))
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
-        self._act_stereo.setShortcut(QKeySequence("Shift+Ctrl+3"))
+        self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)

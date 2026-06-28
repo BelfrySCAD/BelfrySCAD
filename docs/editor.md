@@ -143,7 +143,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+0 | Isometric view |
 | Shift+Cmd+1 | Toggle Spin |
 | Shift+Cmd+2 | Toggle Perspective |
-| Shift+Cmd+3 | Toggle Stereo (Cross-eye) |
+| Ctrl+Cmd+3 | Toggle Stereo (Cross-eye) |
 | Shift+Cmd+V | View All |
 | Cmd++ | Increase editor font size |
 | Cmd+- | Decrease editor font size |
