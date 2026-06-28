@@ -2933,7 +2933,7 @@ class Evaluator:
         if self._debugging:
             self._check_debug(body, ctx, expr_level=True)
         v = self._eval_expr(body, ctx)
-        return [v] if v is not None else []
+        return [v]
 
     def _eval_listcomp_for(self, node: ListCompFor, ctx: EvalContext) -> list:
         var_seqs: list[tuple[str, list]] = []

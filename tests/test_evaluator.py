@@ -1268,6 +1268,24 @@ class TestListCompEdgeCases:
         _, lines = run("echo([for (x = 5) x]);")
         assert lines == ["ECHO: [5]"]
 
+    def test_listcomp_for_undef_body(self):
+        # for body that evaluates to undef → undef is a valid element, not dropped
+        _, lines = run("echo([for (i=[1:2]) undef]);")
+        assert lines == ["ECHO: [undef, undef]"]
+
+    def test_listcomp_for_undef_body_via_var(self):
+        # same via a variable: mirrors test16.scad force_list(undef, 2)
+        src = """
+        function force_list(value, n=1, fill) =
+            is_list(value) ? value :
+            is_undef(fill)
+              ? [for (i=[1:1:n]) value]
+              : [value, for (i=[2:1:n]) fill];
+        echo(force_list(undef, 2));
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: [undef, undef]"]
+
 
 # ---------------------------------------------------------------------------
 # Range edge cases
