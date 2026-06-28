@@ -1892,6 +1892,8 @@ class Evaluator:
 
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
+        # highlight bodies participate in CSG AND are returned separately as overlays
+        hi = [c for c in fg if c.role == "highlight"]
 
         csg_result: Optional[ColoredBody] = None
         if fg:
@@ -1918,7 +1920,8 @@ class Evaluator:
                         r = r ^ c.section
                 csg_result = ColoredBody(section=r, color=sections_2d[0].color)
 
-        return ([csg_result] if csg_result is not None else []) + bg
+        # Return: CSG result + background ghosts + highlight overlays (separate from CSG result)
+        return ([csg_result] if csg_result is not None else []) + bg + hi
 
     def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
@@ -1926,6 +1929,7 @@ class Evaluator:
             return []
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
+        hi = [c for c in fg if c.role == "highlight"]
         hull_result: Optional[ColoredBody] = None
         if fg:
             bodies_3d = [c.body for c in fg if c.body is not None]
@@ -1935,7 +1939,7 @@ class Evaluator:
                 sections = [c.section for c in fg if c.section is not None]
                 if sections:
                     hull_result = ColoredBody(section=m3d.CrossSection.batch_hull(sections), color=fg[0].color)
-        return ([hull_result] if hull_result is not None else []) + bg
+        return ([hull_result] if hull_result is not None else []) + bg + hi
 
     def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         points = self._get_arg(args, 0, "points", None)
@@ -2828,19 +2832,20 @@ class Evaluator:
         children = self._eval_children(node.children, ctx)
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
+        hi = [c for c in fg if c.role == "highlight"]
         bodies_3d = [c for c in fg if c.body is not None]
         if not bodies_3d:
-            return bg
+            return bg + hi
         if len(bodies_3d) == 1:
-            return bodies_3d + bg
+            return bodies_3d + bg + hi
         try:
             result = bodies_3d[0].body
             for c in bodies_3d[1:]:
                 result = result.minkowski_sum(c.body)
-            return [ColoredBody(body=result, color=bodies_3d[0].color)] + bg
+            return [ColoredBody(body=result, color=bodies_3d[0].color)] + bg + hi
         except Exception as e:
             self.error(f"minkowski: {e}", node)
-            return bg
+            return bg + hi
 
     @staticmethod
     def _copy_body(b: ColoredBody) -> ColoredBody:
