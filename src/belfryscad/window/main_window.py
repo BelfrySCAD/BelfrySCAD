@@ -727,6 +727,7 @@ class MainWindow(QMainWindow):
                              QKeySequence(key))
         view_menu.addSeparator()
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._viewport.set_spinning)
+        self._act_spin.setShortcut(QKeySequence("Shift+Ctrl+1"))
         view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Shift+Ctrl+2"))
