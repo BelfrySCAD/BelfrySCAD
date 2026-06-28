@@ -68,6 +68,12 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 **Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`, `breakpoint()`
 
+**Modular modifiers** — OpenSCAD's prefix operators applied to module calls:
+- `*` (disable) — `ModularModifierDisable`: child produces no geometry; equivalent to commenting it out
+- `!` (show-only) — `ModularModifierShowOnly`: only this subtree is rendered; all siblings suppressed (not yet enforced at the window level — currently passes through like a normal call)
+- `%` (background) — `ModularModifierBackground`: child is suppressed from output (same as `*` in BelfrySCAD; the translucent-ghost display of real OpenSCAD is not implemented)
+- `#` (highlight) — `ModularModifierHighlight`: passes through normally (debug colouring not implemented)
+
 **Data**: `object`, `is_object`, `textmetrics`, `fontmetrics`
 
 `breakpoint()` — pauses the debugger at the call site. Optional first positional/keyword `condition`: skipped if falsy. No-op outside the debugger. Implemented via `_check_debug(node, ctx, forced=True)`, which passes `forced=True` to the debug hook to bypass the normal step/breakpoint-line check.
@@ -91,7 +97,7 @@ Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins d
 **`surface(file, center=false, invert=false)`**: loads a heightmap from a `.dat` text file or PNG and builds a closed solid mesh. `.dat`: whitespace-separated number matrix; `#`-prefixed and blank lines ignored; first row = highest Y (OpenSCAD convention). PNG: linear luminance `Y = 0.2126R + 0.7152G + 0.0722B` scaled to 0–100; `invert=true` flips the mapping. `center=true` centers on X/Y; bottom face always at z=0. Requires Pillow for images.
 
 **`import(file, convexity=10, layer=undef)`**: loads external files. Behaviour depends on context and file extension:
-- **Module context** (geometry statement): `.stl`/`.obj`/`.off`/`.3mf` → 3D `ColoredBody`; `.svg`/`.pdf` → 2D `CrossSection` (Y-axis flipped from SVG convention); `.dxf` → 2D `CrossSection` from closed LWPOLYLINE/POLYLINE entities (`layer` filters by DXF layer name; requires `ezdxf` — `pip install ezdxf`).
+- **Module context** (geometry statement): `.stl`/`.obj`/`.off`/`.3mf` → 3D `ColoredBody`; `.svg` → 2D `CrossSection` (Y-axis flipped from SVG convention); `.dxf` → 2D `CrossSection` from closed LWPOLYLINE/POLYLINE entities (`layer` filters by DXF layer name; requires `ezdxf` — `pip install ezdxf`).
 - **Expression context** (right-hand side of assignment): `.json` → parsed data (list/number/string/bool/null); `.stl`/`.obj`/`.off`/`.3mf` → VNF `[[verts], [faces]]` where each vert is `[x,y,z]` and each face is a list of vertex indices; `.dxf`/`.svg` → Region `[[[x,y],...],...]` (list of closed paths).
 - Path resolved relative to the source `.scad` file (same as `surface()`). `convexity` is accepted and ignored (preview hint). Binary and ASCII STL are both supported. SVG: `<path>`, `<polygon>`, `<polyline>`, `<rect>`, `<circle>`, `<ellipse>` elements with `transform` stack (translate/scale/rotate/matrix); Bezier curves flattened to 32-segment polylines; `<defs>`/`<symbol>` skipped. 3MF parsed via stdlib `zipfile`+`ElementTree` (no lib3mf needed).
 

@@ -125,6 +125,32 @@ The **Animate** dock (`AnimatePane` in `window/animate.py`, one per `MainWindow`
 
 Each frame change re-renders the current file with `$t` set accordingly — `MainWindow._viewport_params()` includes `"$t": self._animate_pane.current_t()`, merged into the evaluator's dynamic context alongside `$vpt`/`$vpr`/`$vpd` (see `docs/evaluator.md`). During playback the viewport camera is **not** auto-fit to the model's bounding box on each frame (unlike a normal Render), so the camera stays put across frames. Animation re-renders whichever file tab is currently visible in the editor.
 
+## Customizer
+
+`CustomizerPane` (`window/customizer.py`) mirrors OpenSCAD's Customizer: it scans the active source for top-level variable assignments with simple literal values and generates form widgets. Widget changes write back to the source immediately (no auto-render — user presses F6 to render).
+
+**Parameter scanning** (`scan_parameters(source)`): reads lines top-to-bottom, tracking brace depth to skip nested scopes. A line comment (`// text`) immediately above an assignment becomes that parameter's description. Tab-group block comments (`/* [TabName] */`) group subsequent parameters; `/* [Hidden] */` suppresses all following parameters until the next group. Qualifying assignments have a name that is not a keyword or `$`-prefixed, and a value that parses as one of: `int`, `float`, `bool` (`true`/`false`), `"string"`, or a vector literal `[a, b, c, d]` of 1–4 numeric elements.
+
+**Constraint syntax** (trailing `// comment` on the assignment line):
+
+| Constraint | Widget | Notes |
+|---|---|---|
+| `[max]` | Slider | range 0…max |
+| `[min:max]` | Slider | range min…max |
+| `[min:step:max]` | Slider | explicit step |
+| `[a, b, c]` | Dropdown | numeric or string values |
+| `[a:Label, b:Label]` | Dropdown | values with display labels |
+| `N` (integer) | Text field | max length N (strings only) |
+| (none, bool) | Checkbox | |
+| (none, number) | Spin box | step auto-derived from decimal places |
+| (none, vector) | Row of spin boxes | one per element |
+
+**Write-back** (`write_back_value(source, name, new_value)`): re-scans to find the parameter's line number, then does a regex substitution on that line to replace the value literal, preserving any trailing `// constraint` comment.
+
+**Structural equality optimisation**: when the source changes but the set of parameters (names, tabs, descriptions, constraints) is unchanged, only widget values are updated — the full UI rebuild is skipped.
+
+**Integration** (`main_window.py`): `_customizer_pane.set_source(text)` is called on tab switch and on every editor keystroke for the active tab. `source_changed` signal updates the editor text and sets the modified flag (preserving cursor position) without triggering a render.
+
 ## Keyboard Shortcuts
 
 Standard platform conventions apply throughout. Custom shortcuts:
@@ -235,9 +261,10 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **Console** (bottom-left dock): single running log per window; not per-tab; side-by-side with Debugger
 - **Debugger** (bottom-right dock): visible by default; side-by-side with Console
 - **Animate** (bottom dock): hidden by default; open via Animate toolbar button (F7) or View ▸ Show Animate
+- **Customizer** (right dock, below viewport): hidden by default; open via View ▸ Show Customizer; stacked vertically under the viewport dock
 - **Status bar**: bottom strip; camera position + FPS counter
 
-The viewport, console, debugger, and animate pane are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "ViewportDock", "ConsoleDock", "DebuggerDock", "AnimateDock". `setCorner(BottomLeft/RightCorner, BottomDockWidgetArea)` makes the bottom row span the full window width. On first launch (no saved `windowState`), `showEvent` fires a deferred `_set_default_layout` call: viewport dock = 50% window width, bottom docks = 25% window height, console and debugger split evenly. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
+The viewport, console, debugger, animate, and customizer panes are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "ViewportDock", "ConsoleDock", "DebuggerDock", "AnimateDock", "CustomizerDock". `setCorner(BottomLeft/RightCorner, BottomDockWidgetArea)` makes the bottom row span the full window width. On first launch (no saved `windowState`), `showEvent` fires a deferred `_set_default_layout` call: viewport dock = 50% window width, bottom docks = 25% window height, console and debugger split evenly, customizer = 40% of viewport+customizer combined height. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 
