@@ -137,7 +137,10 @@ class Camera:
         self.fov = 45.0
         self.orthographic = False
         self.stereo = False
-        self.stereo_eye_sep = 0.065  # fraction of camera distance
+        self.viewer_ipd = 65.0           # mm — interpupillary distance
+        self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
+        self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
+        self.screen_dpi = 96.0           # physical DPI, updated from QScreen at pref-apply
 
     def view_matrix(self) -> np.ndarray:
         az = math.radians(self.azimuth)
@@ -164,15 +167,37 @@ class Camera:
             math.sin(el),
         ], dtype=np.float32)
 
-    def stereo_view_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+    def stereo_view_matrices(
+        self, half_vp_w: int, vp_h: int
+    ) -> tuple[np.ndarray, np.ndarray]:
         """(left_panel_view, right_panel_view) for cross-eye stereo.
 
         Cross-eye: left panel = right eye, right panel = left eye.
         Both cameras toe-in toward the same target point.
+
+        Eye separation is computed from physical viewer measurements:
+          stereo_fraction = (IPD / screen_dist)
+                          × (physical_half_fov_h / rendered_half_fov_h)
+                          × depth_scale
+        This gives ~3–5 % of camera distance for typical desktop setups.
         """
+        if half_vp_w <= 0 or vp_h <= 0:
+            v = self.view_matrix()
+            return v, v
+        rendered_half_fov_h = math.atan(
+            math.tan(math.radians(self.fov / 2)) * half_vp_w / vp_h
+        )
+        physical_half_fov_h = math.atan(
+            (half_vp_w * 25.4 / self.screen_dpi) / (2.0 * self.viewer_screen_dist)
+        )
+        stereo_eye_sep = (
+            (self.viewer_ipd / self.viewer_screen_dist)
+            * (physical_half_fov_h / rendered_half_fov_h)
+            * self.stereo_depth_scale
+        )
         view = self.view_matrix()
         right_vec = view[0, :3].astype(np.float32)
-        half = self.distance * self.stereo_eye_sep * 0.5
+        half = self.distance * stereo_eye_sep * 0.5
         eye = self.eye_position()
         up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
         right_eye = _look_at(eye + right_vec * half, self.target, up)
@@ -397,7 +422,7 @@ class SceneRenderer:
 
             aspect = half_gl_w / gl_h if gl_h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
-            left_view, right_view = self.camera.stereo_view_matrices()
+            left_view, right_view = self.camera.stereo_view_matrices(half_gl_w, gl_h)
 
             # Use logical half-width for scale-dependent calculations (labels, ticks)
             self._viewport = (w // 2, h)

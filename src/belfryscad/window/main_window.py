@@ -1947,14 +1947,20 @@ class MainWindow(QMainWindow):
         indent = load_preference("editor/indentSize", int)
         show_guide = load_preference("editor/showColumnGuide", bool)
         guide_col = load_preference("editor/columnGuide", int)
-        eye_sep_pct = load_preference("viewport/stereoEyeSep", float)
+        viewer_ipd = load_preference("viewport/viewerIPD", float)
+        viewer_screen_dist = load_preference("viewport/viewerScreenDist", float)
+        stereo_depth_scale = load_preference("viewport/stereoDepthScale", float)
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
-        self._viewport._renderer.camera.stereo_eye_sep = eye_sep_pct / 100.0
+        cam = self._viewport._renderer.camera
+        cam.viewer_ipd = viewer_ipd
+        cam.viewer_screen_dist = viewer_screen_dist
+        cam.stereo_depth_scale = stereo_depth_scale
+        cam.screen_dpi = self._viewport.screen().physicalDotsPerInch()
         if self._viewport._renderer.camera.stereo:
             self._viewport.update()
 

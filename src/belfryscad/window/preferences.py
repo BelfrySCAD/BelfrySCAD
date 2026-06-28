@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QVBoxLayout,
-    QComboBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
+    QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
 )
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtCore import QSettings, Qt
@@ -11,7 +11,9 @@ _DEFAULTS = {
     "editor/indentSize": 4,
     "editor/showColumnGuide": True,
     "editor/columnGuide": 80,
-    "viewport/stereoEyeSep": 1.0,  # percentage of camera distance
+    "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
+    "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
+    "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
 }
 
 
@@ -106,22 +108,39 @@ class PreferencesDialog(QDialog):
         vp_form.setSpacing(8)
         vp_form.setContentsMargins(12, 0, 0, 0)
 
-        sep_row = QHBoxLayout()
-        sep_row.setSpacing(8)
-        # Slider range 2–40, each tick = 0.05%, so value 20 = 1.0%, value 2 = 0.1%
-        self._eye_sep = QSlider(Qt.Orientation.Horizontal)
-        self._eye_sep.setRange(2, 40)
-        self._eye_sep.setTickInterval(20)
-        current_sep = s.value("viewport/stereoEyeSep", _DEFAULTS["viewport/stereoEyeSep"], type=float)
-        self._eye_sep.setValue(int(round(current_sep * 20)))
-        self._eye_sep_label = QLabel(f"{current_sep:.2f}%")
-        self._eye_sep_label.setMinimumWidth(48)
-        self._eye_sep.valueChanged.connect(
-            lambda v: self._eye_sep_label.setText(f"{v / 20.0:.2f}%")
+        current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
+        self._viewer_ipd = QDoubleSpinBox()
+        self._viewer_ipd.setRange(40.0, 80.0)
+        self._viewer_ipd.setSuffix(" mm")
+        self._viewer_ipd.setDecimals(1)
+        self._viewer_ipd.setValue(current_ipd)
+        self._viewer_ipd.setToolTip("Distance between the centres of your pupils.")
+        vp_form.addRow("Eye separation (IPD):", self._viewer_ipd)
+
+        current_sdist = s.value("viewport/viewerScreenDist", _DEFAULTS["viewport/viewerScreenDist"], type=float)
+        self._viewer_screen_dist = QDoubleSpinBox()
+        self._viewer_screen_dist.setRange(300.0, 1500.0)
+        self._viewer_screen_dist.setSuffix(" mm")
+        self._viewer_screen_dist.setDecimals(0)
+        self._viewer_screen_dist.setValue(current_sdist)
+        self._viewer_screen_dist.setToolTip("Distance from your eyes to the screen.")
+        vp_form.addRow("Screen distance:", self._viewer_screen_dist)
+
+        scale_row = QHBoxLayout()
+        scale_row.setSpacing(8)
+        current_scale = s.value("viewport/stereoDepthScale", _DEFAULTS["viewport/stereoDepthScale"], type=float)
+        self._stereo_scale = QSlider(Qt.Orientation.Horizontal)
+        self._stereo_scale.setRange(25, 150)
+        self._stereo_scale.setTickInterval(25)
+        self._stereo_scale.setValue(int(round(current_scale * 100)))
+        self._stereo_scale_label = QLabel(f"{int(round(current_scale * 100))}%")
+        self._stereo_scale_label.setMinimumWidth(40)
+        self._stereo_scale.valueChanged.connect(
+            lambda v: self._stereo_scale_label.setText(f"{v}%")
         )
-        sep_row.addWidget(self._eye_sep)
-        sep_row.addWidget(self._eye_sep_label)
-        vp_form.addRow("Stereo eye separation:", sep_row)
+        scale_row.addWidget(self._stereo_scale)
+        scale_row.addWidget(self._stereo_scale_label)
+        vp_form.addRow("Stereo depth scale:", scale_row)
 
         outer.addLayout(vp_form)
 
@@ -140,5 +159,7 @@ class PreferencesDialog(QDialog):
             "editor/indentSize": self._indent_size.value(),
             "editor/showColumnGuide": self._show_guide.isChecked(),
             "editor/columnGuide": self._guide_column.value(),
-            "viewport/stereoEyeSep": self._eye_sep.value() / 20.0,
+            "viewport/viewerIPD": self._viewer_ipd.value(),
+            "viewport/viewerScreenDist": self._viewer_screen_dist.value(),
+            "viewport/stereoDepthScale": self._stereo_scale.value() / 100.0,
         }
