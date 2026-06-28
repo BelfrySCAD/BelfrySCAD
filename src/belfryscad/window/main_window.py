@@ -729,11 +729,15 @@ class MainWindow(QMainWindow):
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._viewport.set_spinning)
         view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
+        self._act_perspective.setShortcut(QKeySequence("Shift+Ctrl+2"))
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
+        self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
+        self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
         self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
+        self._act_show_cross.setShortcut(QKeySequence("Ctrl+3"))
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
         view_menu.addSeparator()  # isolates macOS-injected "Enter Full Screen" (which has an icon) in its own section
 
@@ -779,10 +783,6 @@ class MainWindow(QMainWindow):
                 s.setContext(Qt.ShortcutContext.ApplicationShortcut)
             s.activated.connect(slot)
 
-        shortcut("Ctrl+1", lambda: self._viewer_or_toggle(self._act_show_edges, "show_edges"), app_wide=True)
-        shortcut("Ctrl+2", lambda: self._viewer_or_toggle(self._act_show_axes, "show_axes"), app_wide=True)
-        shortcut("Ctrl+3", lambda: self._act_show_cross.toggle())
-        shortcut("Shift+Ctrl+2", lambda: self._viewer_or_toggle(self._act_perspective, "orthographic"), app_wide=True)
         shortcut("Ctrl++", self._font_size_increase)
         shortcut("Ctrl+-", self._font_size_decrease)
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
