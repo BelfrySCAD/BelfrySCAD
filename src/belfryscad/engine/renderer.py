@@ -272,6 +272,9 @@ class SceneRenderer:
         self._axes_vao: Optional[mgl.VertexArray] = None
 
     def initialize(self, ctx: mgl.Context):
+        # Old GL context (if any) is already destroyed by Qt — just drop stale refs.
+        self._label_tex_cache.clear()
+        self._buffers.clear()
         self._ctx = ctx
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
