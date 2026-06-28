@@ -27,7 +27,22 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 **View menu → "Stereo (Cross-eye)"** renders two side-by-side perspective views in a single `QOpenGLWidget`. When enabled, `Camera.stereo = True` and `SceneRenderer.paint()` renders two passes:
 
-1. Calls `Camera.stereo_view_matrices()`, which shifts the camera ±(`distance × stereo_eye_sep / 2`) along the camera's right vector (row 0 of the view matrix), pointing both eye cameras at the same target (toe-in). `stereo_eye_sep` defaults to `0.065` (6.5% of camera distance). Cross-eye arrangement: left panel = right eye, right panel = left eye.
+1. Calls `Camera.stereo_view_matrices(half_vp_w, vp_h)` (device pixels), which shifts each camera ±(`distance × stereo_fraction / 2`) along the camera's right vector (row 0 of the view matrix), pointing both eye cameras at the same target (toe-in). Cross-eye arrangement: left panel = right eye, right panel = left eye.
+
+   `stereo_fraction` is computed from physical viewer measurements stored in `QSettings` and applied to `Camera` fields at preference-apply time:
+
+   ```
+   rendered_half_fov_h = atan( tan(fov/2) × half_vp_w / vp_h )
+   physical_half_fov_h = atan( (half_vp_w × 25.4 / screen_dpi) / (2 × viewer_screen_dist) )
+
+   stereo_fraction = (viewer_ipd / viewer_screen_dist)
+                   × (physical_half_fov_h / rendered_half_fov_h)
+                   × stereo_depth_scale
+   ```
+
+   The first factor (`IPD / screen_dist`) matches the angular separation of the cameras to the angular separation of the viewer's eyes. The second factor corrects for the viewer not sitting at the "natural" viewing distance for the rendered FOV (i.e., the physical visual angle of the viewport differs from the rendered FOV). `stereo_depth_scale` (default 0.75) is a comfort trim because the geometrically exact value can exceed comfortable disparity limits for objects near the camera.
+
+   `screen_dpi` is read from `QScreen.physicalDotsPerInch()` when preferences are applied. For a 100 DPI monitor, 90 mm IPD, 770 mm screen distance, and a ~900 px tall window, this yields roughly 3–4 % of camera distance.
 2. Each pass sets `ctx.viewport` to its half of the framebuffer, temporarily overrides `self._viewport` to `(half_w, h)` so axes, labels, and other screen-size-dependent calculations use the half-width, and calls `_paint_scene(view, proj, L_world)` where `proj` uses the half-width aspect ratio.
 3. `_paint_scene()` computes eye position from the view matrix (`eye = -R^T · t`) for correct per-eye specular highlights. Axes, labels, and gizmo all render in both eyes.
 
