@@ -501,22 +501,36 @@ def _skeleton_roof_component(
 
         tris = []
 
-        # --- Floor: shapely Delaunay + centroid filter (handles holes) ---
-        outer_2d = [(float(p[0]), float(p[1])) for p in p0]
-        holes_2d = [[(float(p[0]), float(p[1])) for p in h] for h in hole_arrs]
-        shape = _SPoly(outer_2d, holes_2d) if holes_2d else _SPoly(outer_2d)
-        for tri in _stri(shape):
-            if not shape.contains(tri.centroid):
-                continue
-            # Floor faces point downward (-z normal) so wind them reversed (CW from above)
-            coords = list(tri.exterior.coords)[:3]
-            fi = []
-            for (fx, fy) in reversed(coords):
-                k = key(fx, fy)
-                heights.setdefault(k, 0.0)
-                adjacency.setdefault(k, [])
-                fi.append(vert_index(k))
-            tris.append(tuple(fi))
+        # --- Floor tessellation (at z=0, normal pointing downward) ---
+        if not hole_arrs:
+            # No holes: ear-clip gives consistent CCW triangles → reverse for -z normal.
+            for (i, j, k2) in _ear_clip(p0):
+                tris.append((vert_index(p0_keys[k2]), vert_index(p0_keys[j]), vert_index(p0_keys[i])))
+        else:
+            # Holes: shapely Delaunay + centroid filter to exclude hole regions.
+            # Shapely's triangle winding is inconsistent, so we check each triangle's
+            # signed area and reverse if necessary to ensure a downward (-z) normal.
+            outer_2d = [(float(p[0]), float(p[1])) for p in p0]
+            holes_2d = [[(float(p[0]), float(p[1])) for p in h] for h in hole_arrs]
+            shape = _SPoly(outer_2d, holes_2d)
+            for tri in _stri(shape):
+                if not shape.contains(tri.centroid):
+                    continue
+                coords = list(tri.exterior.coords)[:3]
+                ax, ay = coords[0]
+                bx, by = coords[1]
+                cx, cy = coords[2]
+                # Signed area: positive = CCW from above (upward normal), so reverse for -z.
+                signed_area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+                if signed_area2 > 0:
+                    coords = list(reversed(coords))
+                fi = []
+                for (fx, fy) in coords:
+                    k = key(fx, fy)
+                    heights.setdefault(k, 0.0)
+                    adjacency.setdefault(k, [])
+                    fi.append(vert_index(k))
+                tris.append(tuple(fi))
 
         # --- Roof faces for outer boundary edges (CCW: interior on left) ---
         for i in range(n0):
