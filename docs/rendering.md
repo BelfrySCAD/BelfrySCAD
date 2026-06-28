@@ -46,7 +46,7 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 2. Each pass sets `ctx.viewport` to its half of the framebuffer, temporarily overrides `self._viewport` to `(half_w, h)` so axes, labels, and other screen-size-dependent calculations use the half-width, and calls `_paint_scene(view, proj, L_world)` where `proj` uses the half-width aspect ratio.
 3. `_paint_scene()` computes eye position from the view matrix (`eye = -R^T · t`) for correct per-eye specular highlights. Axes, labels, and gizmo all render in both eyes.
 
-When Stereo is checked, the Perspective menu item is disabled (stereo always uses perspective). Stereo state is saved to `QSettings` and restored on launch. Keyboard shortcut: **Shift+Cmd+3**.
+Stereo and Perspective are independently togglable. Both states are saved to `QSettings` and restored on launch. Keyboard shortcut: **Shift+Cmd+3**.
 
 ## Viewport visuals
 
