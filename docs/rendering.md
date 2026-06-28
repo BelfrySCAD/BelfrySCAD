@@ -48,6 +48,8 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 Stereo and Perspective are independently togglable. Both states are saved to `QSettings` and restored on launch. Keyboard shortcut: **Shift+Cmd+3**.
 
+In orthographic mode, stereo still works: the same toe-in view matrices are used (both cameras shifted laterally and pointed at the target), but `projection_matrix()` produces a parallel projection for each eye instead of a frustum. The eye separation formula is unchanged. Toe-in with orthographic projection introduces a small amount of keystone distortion, but at the typical 3–5 % separation values it is negligible.
+
 ## Viewport visuals
 
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.
