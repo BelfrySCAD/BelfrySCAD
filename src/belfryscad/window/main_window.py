@@ -1992,11 +1992,6 @@ class MainWindow(QMainWindow):
         self._act_stereo.setChecked(stereo)
         self._act_stereo.blockSignals(False)
         self._toggle_stereo(stereo)
-        spin = s.value("spin", False, type=bool)
-        self._act_spin.blockSignals(True)
-        self._act_spin.setChecked(spin)
-        self._act_spin.blockSignals(False)
-        self._viewport.set_spinning(spin)
         word_wrap = s.value("wordWrap", False, type=bool)
         self._act_word_wrap.blockSignals(True)
         self._act_word_wrap.setChecked(word_wrap)
@@ -2067,7 +2062,6 @@ class MainWindow(QMainWindow):
         s.setValue("windowState", self.saveState())
         s.setValue("perspective", self._act_perspective.isChecked())
         s.setValue("stereo", self._act_stereo.isChecked())
-        s.setValue("spin", self._act_spin.isChecked())
         s.setValue("wordWrap", self._act_word_wrap.isChecked())
         # Flush settings to disk now: the app exits via os._exit() (see
         # main.py), which skips QSettings' normal sync-on-destruction.
