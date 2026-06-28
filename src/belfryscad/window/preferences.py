@@ -110,7 +110,7 @@ class PreferencesDialog(QDialog):
 
         current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
         self._viewer_ipd = QDoubleSpinBox()
-        self._viewer_ipd.setRange(40.0, 80.0)
+        self._viewer_ipd.setRange(40.0, 100.0)
         self._viewer_ipd.setSuffix(" mm")
         self._viewer_ipd.setDecimals(1)
         self._viewer_ipd.setValue(current_ipd)
