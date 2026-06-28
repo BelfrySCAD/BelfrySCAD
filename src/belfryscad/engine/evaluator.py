@@ -2114,13 +2114,41 @@ class Evaluator:
             self._echo_fn(f"WARNING: Unknown roof method '{method}'. Using 'voronoi'.")
             method = "voronoi"
         try:
-            if not cs.to_polygons():
+            polys = cs.to_polygons()
+            if not polys:
                 return None
-            body = _skeleton_roof(cs)
-            if body is None and len(cs.to_polygons()) == 1:
-                body = _skeleton_roof_general(cs)
-            if body is None:
-                body = self._roof_sdf_fallback(cs)
+            if len(polys) == 1:
+                body = _skeleton_roof(cs)
+                if body is None:
+                    body = _skeleton_roof_general(cs)
+                if body is None:
+                    body = self._roof_sdf_fallback(cs)
+            else:
+                # Multi-contour (e.g. text): roof each outer (CCW) polygon
+                # independently and union the results. CW polygons are holes
+                # (letter counters) — they are skipped; their corresponding
+                # outer contour is roofed solid.
+                pieces: list[m3d.Manifold] = []
+                for poly in polys:
+                    arr = np.asarray(poly, dtype=np.float64)
+                    n = len(arr)
+                    area2 = float(np.sum(arr[:, 0] * np.roll(arr[:, 1], -1) - np.roll(arr[:, 0], -1) * arr[:, 1]))
+                    if area2 <= 0:
+                        continue  # skip holes
+                    pts = [(float(p[0]), float(p[1])) for p in arr]
+                    poly_cs = m3d.CrossSection([pts])
+                    b = _skeleton_roof(poly_cs)
+                    if b is None:
+                        b = _skeleton_roof_general(poly_cs)
+                    if b is None:
+                        b = self._roof_sdf_fallback(poly_cs)
+                    if b is not None:
+                        pieces.append(b)
+                if not pieces:
+                    return None
+                body = pieces[0]
+                for b in pieces[1:]:
+                    body = body + b
             if body is None:
                 return None
             return self._tag(body, node, ctx)
@@ -2135,24 +2163,50 @@ class Evaluator:
         polys = cs.to_polygons()
         if not polys:
             return None
-        edges = []
+        edge_a_list, edge_b_list = [], []
         for poly in polys:
             n = len(poly)
             for i in range(n):
-                edges.append((np.asarray(poly[i], dtype=np.float64), np.asarray(poly[(i + 1) % n], dtype=np.float64)))
+                edge_a_list.append(poly[i])
+                edge_b_list.append(poly[(i + 1) % n])
+        edge_a = np.array(edge_a_list, dtype=np.float64)  # (E, 2)
+        edge_b = np.array(edge_b_list, dtype=np.float64)  # (E, 2)
+        # Precompute per-edge AB and squared-length for fast per-voxel SDF.
+        ab = edge_b - edge_a  # (E, 2)
+        ab_sq = np.einsum('ij,ij->i', ab, ab)  # (E,)
+        raw_edges = list(zip(edge_a, edge_b))  # for even-odd test
 
         minx, miny, maxx, maxy = cs.bounds()
         width, height = maxx - minx, maxy - miny
-        z_max = min(width, height) / 2 * 1.02
 
-        edge_length = max(width, height, z_max) / 10
+        # Scan a coarse grid to find the true maximum interior distance (= roof
+        # height). Bounding-box heuristics badly overestimate for thin glyphs.
+        _n = 40
+        max_sdf = 0.0
+        for xi in range(_n):
+            for yi in range(_n):
+                x = minx + width * xi / (_n - 1)
+                y = miny + height * yi / (_n - 1)
+                p = np.array([x, y])
+                pa = p - edge_a
+                t = np.einsum('ij,ij->i', pa, ab) / np.where(ab_sq > 0, ab_sq, 1.0)
+                t = np.clip(t, 0.0, 1.0)
+                d = float(np.min(np.linalg.norm(pa - t[:, None] * ab, axis=1)))
+                if _point_in_poly_evenodd(p, raw_edges):
+                    max_sdf = max(max_sdf, d)
+        if max_sdf <= 0:
+            return None
+        z_max = max_sdf * 1.02
+        edge_length = z_max / 5
         eps = edge_length / 2
 
         def sdf(x, y, z):
             p = np.array([x, y])
-            d = min(_point_seg_dist(p, a, b) for a, b in edges)
-            inside = _point_in_poly_evenodd(p, edges)
-            d2 = d if inside else -d
+            pa = p - edge_a
+            t = np.einsum('ij,ij->i', pa, ab) / np.where(ab_sq > 0, ab_sq, 1.0)
+            t = np.clip(t, 0.0, 1.0)
+            d = float(np.min(np.linalg.norm(pa - t[:, None] * ab, axis=1)))
+            d2 = d if _point_in_poly_evenodd(p, raw_edges) else -d
             return d2 - z
 
         bounds = [minx - eps, miny - eps, 0.0, maxx + eps, maxy + eps, z_max + eps]
