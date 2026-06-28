@@ -1809,11 +1809,11 @@ class Test2DAndExtrusion:
         assert abs(bb[5] - 2.0) < 1e-3
         assert abs(bodies[0].body.volume() - 92.0 / 3.0) / (92.0 / 3.0) < 1e-3
 
-    def test_roof_polygon_with_hole_falls_back(self):
-        # A square with a square hole is multi-contour, so neither the
-        # tier-1 closed-form path nor the tier-2 skeleton-graph path (which
-        # only handles single-contour polygons) applies — falls back to the
-        # SDF approximation. Should still produce a valid, non-empty roof.
+    def test_roof_polygon_with_hole(self):
+        # A 10x10 square with a 6x6 square hole (frame width = 2). Tier 2
+        # handles this exactly via skeletonize() with holes. The max ridge
+        # height equals the half-width of the frame = 1.0, and the volume
+        # of the roof over the frame is exactly 32.
         src = """
         roof() polygon(
             points=[[0,0],[10,0],[10,10],[0,10],[2,2],[2,8],[8,8],[8,2]],
@@ -1822,10 +1822,25 @@ class Test2DAndExtrusion:
         """
         bodies, _ = run(src)
         assert len(bodies) == 1
-        bb = bodies[0].body.bounding_box()
+        b = bodies[0].body
+        import manifold3d as m3d
+        assert b.status() == m3d.Error.NoError
+        bb = b.bounding_box()
         assert bb[2] == 0.0
-        assert 0 < bb[5]
-        assert bodies[0].body.volume() > 0
+        assert abs(bb[5] - 1.0) < 1e-3
+        assert abs(b.volume() - 32.0) < 0.1
+
+    def test_roof_text_with_holes(self):
+        # Glyphs that have counter-holes (like "a" and "g") must be roofed
+        # using the hole-aware skeleton path. Verify they produce valid,
+        # non-empty geometry.
+        bodies, _ = run('roof() text("ag", size=72);')
+        assert len(bodies) == 1
+        b = bodies[0].body
+        import manifold3d as m3d
+        assert b.status() == m3d.Error.NoError
+        assert not b.is_empty()
+        assert b.volume() > 0
 
     def test_roof_unknown_method_warns(self):
         bodies, echoes = run('roof(method="bogus") square([10,10]);')
