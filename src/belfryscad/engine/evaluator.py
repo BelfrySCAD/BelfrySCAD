@@ -304,21 +304,28 @@ def _skeleton_roof(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
         return None
 
 
-def _build_skeleton_graph(p0: np.ndarray) -> Optional[tuple[dict, dict, list]]:
-    """Build the full planar graph for CCW polygon `p0`: its boundary edges
-    (all at height 0) plus the internal edges of its straight skeleton from
-    `shapely_polyskel.skeletonize()` (which, conversely to `p0`, expects
-    CCW-with-y-down input, i.e. `p0` reversed).
+def _build_skeleton_graph_with_holes(
+    p0: np.ndarray,
+    hole_arrays: list[np.ndarray],
+) -> Optional[tuple]:
+    """Build the planar straight-skeleton graph for CCW outer polygon `p0`
+    with zero or more CW hole polygons.
 
-    Returns `(heights, adjacency, p0_keys)` where `heights` maps each node's
-    (deduped) position to its offset-distance ("height"), `adjacency` maps
-    each position to its neighbor positions, and `p0_keys` are the dict keys
-    corresponding to `p0`'s vertices in order. Returns `None` on exception or
-    an empty skeleton.
+    polyskel winding convention (y-axis down): outer must be CW-in-math
+    (so pass `p0[::-1]`); holes must be CCW-in-math (so pass each
+    `hole[::-1]` since holes from manifold are CW-in-math).
+
+    Returns `(heights, adjacency, p0_keys, hole_keys_list, key_fn)` or None.
+      heights         : position-key → offset-distance (0 on boundary)
+      adjacency       : position-key → [neighbour keys]  (undirected)
+      p0_keys         : keys for p0 vertices in traversal order
+      hole_keys_list  : list of key lists, one list per hole in order
+      key_fn          : snap function `(x, y) → position-key`
     """
     try:
-        n = len(p0)
-        d_hi = max(p0[:, 0].max() - p0[:, 0].min(), p0[:, 1].max() - p0[:, 1].min())
+        all_pts = np.vstack([p0] + hole_arrays) if hole_arrays else p0
+        d_hi = max(all_pts[:, 0].max() - all_pts[:, 0].min(),
+                   all_pts[:, 1].max() - all_pts[:, 1].min())
         if d_hi <= 0:
             return None
         tol = d_hi * 1e-6
@@ -331,27 +338,49 @@ def _build_skeleton_graph(p0: np.ndarray) -> Optional[tuple[dict, dict, list]]:
                     return k
             return (float(x), float(y))
 
-        p0_keys = []
-        for x, y in p0:
-            k = key(x, y)
-            heights[k] = 0.0
-            p0_keys.append(k)
-
-        adjacency: dict[tuple, list] = {k: [] for k in heights}
+        adjacency: dict[tuple, list] = {}
 
         def add_edge(a, b):
             if a != b:
+                adjacency.setdefault(a, [])
+                adjacency.setdefault(b, [])
                 if b not in adjacency[a]:
                     adjacency[a].append(b)
                 if a not in adjacency[b]:
                     adjacency[b].append(a)
 
-        for i in range(n):
-            add_edge(p0_keys[i], p0_keys[(i + 1) % n])
+        # Outer polygon boundary (CCW in math)
+        n0 = len(p0)
+        p0_keys = []
+        for x, y in p0:
+            k = key(x, y)
+            heights[k] = 0.0
+            adjacency.setdefault(k, [])
+            p0_keys.append(k)
+        for i in range(n0):
+            add_edge(p0_keys[i], p0_keys[(i + 1) % n0])
 
-        subtrees = skeletonize([(float(x), float(y)) for x, y in p0[::-1]])
+        # Hole boundaries (CW in math)
+        hole_keys_list: list[list] = []
+        for hole in hole_arrays:
+            nh = len(hole)
+            hkeys = []
+            for x, y in hole:
+                k = key(x, y)
+                heights[k] = 0.0
+                adjacency.setdefault(k, [])
+                hkeys.append(k)
+            for i in range(nh):
+                add_edge(hkeys[i], hkeys[(i + 1) % nh])
+            hole_keys_list.append(hkeys)
+
+        # polyskel: outer as CW-in-math, holes as CCW-in-math
+        outer_pts = [(float(x), float(y)) for x, y in p0[::-1]]
+        holes_pts = [[(float(x), float(y)) for x, y in h[::-1]] for h in hole_arrays]
+        subtrees = skeletonize(outer_pts, holes_pts if holes_pts else None)
         if not subtrees:
             return None
+
         for st in subtrees:
             s = key(st.source.x, st.source.y)
             heights[s] = st.height
@@ -362,7 +391,7 @@ def _build_skeleton_graph(p0: np.ndarray) -> Optional[tuple[dict, dict, list]]:
                 adjacency.setdefault(t, [])
                 add_edge(s, t)
 
-        return heights, adjacency, p0_keys
+        return heights, adjacency, p0_keys, hole_keys_list, key
     except Exception:
         return None
 
@@ -434,28 +463,31 @@ def _triangulate_planar_face(face_pts3d: np.ndarray) -> Optional[list[tuple[int,
         return None
 
 
-def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
-    """Build an exact straight-skeleton roof for a single-contour polygon via
-    the full skeleton graph from `shapely_polyskel.skeletonize()` — handles
-    "unstable" polygons (intermediate edge-collapse/split events during
-    mitered offsetting) that `_skeleton_roof` bails out of. Returns `None` if
-    `cs` isn't single-contour, the skeleton/face-tracing fails, or mesh
-    construction fails.
+def _skeleton_roof_component(
+    outer_arr: np.ndarray,
+    hole_arrs: list[np.ndarray],
+) -> Optional[m3d.Manifold]:
+    """Build a straight-skeleton roof for one connected component: a CCW outer
+    polygon and zero or more CW hole polygons. Returns a closed Manifold or None.
+
+    Floor faces: tessellated via shapely Delaunay (centroid-filtered for holes).
+    Roof faces: traced from each outer edge (forward) and each hole edge (reversed,
+    because the roofable region is to the *right* of a directed CW edge).
     """
     try:
-        polys = cs.to_polygons()
-        if len(polys) != 1:
-            return None
-        p0 = _ccw_polygon(np.asarray(polys[0], dtype=np.float64))
-        n = len(p0)
-        if n < 3:
+        from shapely.geometry import Polygon as _SPoly
+        from shapely.ops import triangulate as _stri
+
+        p0 = _ccw_polygon(outer_arr)
+        n0 = len(p0)
+        if n0 < 3:
             return None
 
-        graph = _build_skeleton_graph(p0)
+        graph = _build_skeleton_graph_with_holes(p0, hole_arrs)
         if graph is None:
             return None
-        heights, adjacency, p0_keys = graph
-        if len(set(p0_keys)) != n:
+        heights, adjacency, p0_keys, hole_keys_list, key = graph
+        if len(set(p0_keys)) != n0:
             return None
 
         final_verts: list[tuple[float, float, float]] = []
@@ -464,15 +496,31 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
         def vert_index(pos):
             if pos not in idx_map:
                 idx_map[pos] = len(final_verts)
-                final_verts.append((pos[0], pos[1], heights[pos]))
+                final_verts.append((pos[0], pos[1], heights.get(pos, 0.0)))
             return idx_map[pos]
 
         tris = []
-        for (i, j, k) in _ear_clip(p0):
-            tris.append((vert_index(p0_keys[k]), vert_index(p0_keys[j]), vert_index(p0_keys[i])))
 
-        for i in range(n):
-            face = _trace_face(adjacency, p0_keys[i], p0_keys[(i + 1) % n])
+        # --- Floor: shapely Delaunay + centroid filter (handles holes) ---
+        outer_2d = [(float(p[0]), float(p[1])) for p in p0]
+        holes_2d = [[(float(p[0]), float(p[1])) for p in h] for h in hole_arrs]
+        shape = _SPoly(outer_2d, holes_2d) if holes_2d else _SPoly(outer_2d)
+        for tri in _stri(shape):
+            if not shape.contains(tri.centroid):
+                continue
+            # Floor faces point downward (-z normal) so wind them reversed (CW from above)
+            coords = list(tri.exterior.coords)[:3]
+            fi = []
+            for (fx, fy) in reversed(coords):
+                k = key(fx, fy)
+                heights.setdefault(k, 0.0)
+                adjacency.setdefault(k, [])
+                fi.append(vert_index(k))
+            tris.append(tuple(fi))
+
+        # --- Roof faces for outer boundary edges (CCW: interior on left) ---
+        for i in range(n0):
+            face = _trace_face(adjacency, p0_keys[i], p0_keys[(i + 1) % n0])
             if face is None or len(face) < 3:
                 return None
             face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
@@ -483,6 +531,28 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
             for (a, b, c) in face_tris:
                 tris.append((face_idx[a], face_idx[b], face_idx[c]))
 
+        # --- Roof faces for hole boundary edges ---
+        # Holes are CW-in-math; the roofable region is to the RIGHT of each
+        # directed CW edge, which equals the LEFT of the reversed edge.
+        for hkeys in hole_keys_list:
+            nh = len(hkeys)
+            if len(set(hkeys)) != nh:
+                return None
+            for i in range(nh):
+                # Reverse: trace (hkeys[i+1] → hkeys[i]) to get the exterior face
+                face = _trace_face(adjacency, hkeys[(i + 1) % nh], hkeys[i])
+                if face is None or len(face) < 3:
+                    return None
+                face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
+                face_tris = _triangulate_planar_face(face_pts3d)
+                if face_tris is None:
+                    return None
+                face_idx = [vert_index(p) for p in face]
+                for (a, b, c) in face_tris:
+                    tris.append((face_idx[a], face_idx[b], face_idx[c]))
+
+        if not tris or not final_verts:
+            return None
         mesh = m3d.Mesh(
             vert_properties=np.array(final_verts, dtype=np.float32),
             tri_verts=np.array(tris, dtype=np.uint32),
@@ -490,6 +560,69 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
         body = m3d.Manifold(mesh)
         if body.status() != m3d.Error.NoError or body.is_empty():
             return None
+        return body
+    except Exception:
+        return None
+
+
+def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
+    """Build an exact straight-skeleton roof for `cs`, handling any combination
+    of outer contours and holes. Separates polygons into connected components
+    (each outer + its direct holes), builds a skeleton roof per component via
+    `_skeleton_roof_component`, and returns their union. Returns None on failure.
+    """
+    try:
+        from shapely.geometry import Polygon as _SPoly, Point as _SPoint
+
+        polys = cs.to_polygons()
+        if not polys:
+            return None
+
+        # Separate outer (CCW, area2 > 0) from hole (CW, area2 < 0) polygons
+        outer_arrs: list[np.ndarray] = []
+        hole_arrs: list[np.ndarray] = []
+        for poly in polys:
+            arr = np.asarray(poly, dtype=np.float64)
+            n = len(arr)
+            area2 = float(np.sum(
+                arr[:, 0] * np.roll(arr[:, 1], -1)
+                - np.roll(arr[:, 0], -1) * arr[:, 1]
+            ))
+            if area2 > 0:
+                outer_arrs.append(arr)
+            elif area2 < 0:
+                hole_arrs.append(arr)
+
+        if not outer_arrs:
+            return None
+
+        # Group each hole with the smallest containing outer polygon
+        outer_shapes = [_SPoly([(p[0], p[1]) for p in arr]) for arr in outer_arrs]
+        components: list[tuple[np.ndarray, list[np.ndarray]]] = [
+            (arr, []) for arr in outer_arrs
+        ]
+        for hole_arr in hole_arrs:
+            cx = float(np.mean(hole_arr[:, 0]))
+            cy = float(np.mean(hole_arr[:, 1]))
+            pt = _SPoint(cx, cy)
+            best_i, best_area = None, float('inf')
+            for i, shape in enumerate(outer_shapes):
+                if shape.contains(pt) and shape.area < best_area:
+                    best_i, best_area = i, shape.area
+            if best_i is not None:
+                components[best_i][1].append(hole_arr)
+
+        pieces: list[m3d.Manifold] = []
+        for (outer_arr, comp_holes) in components:
+            b = _skeleton_roof_component(outer_arr, comp_holes)
+            if b is not None:
+                pieces.append(b)
+
+        if not pieces:
+            return None
+        body = pieces[0]
+        for b in pieces[1:]:
+            body = body + b
         return body
     except Exception:
         return None
@@ -2114,41 +2247,13 @@ class Evaluator:
             self._echo_fn(f"WARNING: Unknown roof method '{method}'. Using 'voronoi'.")
             method = "voronoi"
         try:
-            polys = cs.to_polygons()
-            if not polys:
+            if not cs.to_polygons():
                 return None
-            if len(polys) == 1:
-                body = _skeleton_roof(cs)
-                if body is None:
-                    body = _skeleton_roof_general(cs)
-                if body is None:
-                    body = self._roof_sdf_fallback(cs)
-            else:
-                # Multi-contour (e.g. text): roof each outer (CCW) polygon
-                # independently and union the results. CW polygons are holes
-                # (letter counters) — they are skipped; their corresponding
-                # outer contour is roofed solid.
-                pieces: list[m3d.Manifold] = []
-                for poly in polys:
-                    arr = np.asarray(poly, dtype=np.float64)
-                    n = len(arr)
-                    area2 = float(np.sum(arr[:, 0] * np.roll(arr[:, 1], -1) - np.roll(arr[:, 0], -1) * arr[:, 1]))
-                    if area2 <= 0:
-                        continue  # skip holes
-                    pts = [(float(p[0]), float(p[1])) for p in arr]
-                    poly_cs = m3d.CrossSection([pts])
-                    b = _skeleton_roof(poly_cs)
-                    if b is None:
-                        b = _skeleton_roof_general(poly_cs)
-                    if b is None:
-                        b = self._roof_sdf_fallback(poly_cs)
-                    if b is not None:
-                        pieces.append(b)
-                if not pieces:
-                    return None
-                body = pieces[0]
-                for b in pieces[1:]:
-                    body = body + b
+            body = _skeleton_roof(cs)
+            if body is None:
+                body = _skeleton_roof_general(cs)
+            if body is None:
+                body = self._roof_sdf_fallback(cs)
             if body is None:
                 return None
             return self._tag(body, node, ctx)
