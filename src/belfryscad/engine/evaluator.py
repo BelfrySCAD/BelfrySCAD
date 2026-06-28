@@ -471,8 +471,10 @@ def _skeleton_roof_component(
     polygon and zero or more CW hole polygons. Returns a closed Manifold or None.
 
     Floor faces: tessellated via shapely Delaunay (centroid-filtered for holes).
-    Roof faces: traced from each outer edge (forward) and each hole edge (reversed,
-    because the roofable region is to the *right* of a directed CW edge).
+    Roof faces: traced from each boundary edge in its natural direction using
+    `_trace_face`. For CCW outer edges the left side is the interior (roofable).
+    For CW hole edges the left side is also the exterior of the hole (roofable),
+    so natural direction works for both — no reversal needed.
     """
     try:
         from shapely.geometry import Polygon as _SPoly
@@ -546,15 +548,14 @@ def _skeleton_roof_component(
                 tris.append((face_idx[a], face_idx[b], face_idx[c]))
 
         # --- Roof faces for hole boundary edges ---
-        # Holes are CW-in-math; the roofable region is to the RIGHT of each
-        # directed CW edge, which equals the LEFT of the reversed edge.
+        # Holes are CW-in-math; the LEFT of each natural CW directed edge is
+        # the exterior (roofable) region, so trace in the natural direction.
         for hkeys in hole_keys_list:
             nh = len(hkeys)
             if len(set(hkeys)) != nh:
                 return None
             for i in range(nh):
-                # Reverse: trace (hkeys[i+1] → hkeys[i]) to get the exterior face
-                face = _trace_face(adjacency, hkeys[(i + 1) % nh], hkeys[i])
+                face = _trace_face(adjacency, hkeys[i], hkeys[(i + 1) % nh])
                 if face is None or len(face) < 3:
                     return None
                 face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
