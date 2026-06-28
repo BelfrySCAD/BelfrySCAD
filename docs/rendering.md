@@ -50,6 +50,10 @@ Stereo and Perspective are independently togglable. Both states are saved to `QS
 
 In orthographic mode, stereo still works: the same toe-in view matrices are used (both cameras shifted laterally and pointed at the target), but `projection_matrix()` produces a parallel projection for each eye instead of a frustum. The eye separation formula is unchanged. Toe-in with orthographic projection introduces a small amount of keystone distortion, but at the typical 3–5 % separation values it is negligible.
 
+## Spin
+
+**View menu → "Spin"** (Ctrl+Cmd+1) continuously rotates the camera azimuth at 6 RPM (1.2°/tick at 30 FPS, driven by a `QTimer` with a 33 ms interval). Spin state is **not** saved between sessions — the app always starts with Spin off.
+
 ## Viewport visuals
 
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.
