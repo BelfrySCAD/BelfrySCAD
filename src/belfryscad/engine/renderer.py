@@ -528,19 +528,23 @@ class SceneRenderer:
             self._ctx.disable(mgl.BLEND)
 
         # --- Pass 3: highlight overlay (#) — pink transparent overlay ---
+        # Negative polygon offset shifts the overlay toward the camera so it passes
+        # the LESS depth test against the opaque pass's depth values without z-fighting.
         hi_pairs = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models) if buf.role == "highlight"]
         if hi_pairs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
-            self._ctx.depth_func = "<="
             self._ctx.depth_mask = False
+            self._ctx.polygon_offset = (-1.0, -1.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             for buf, buf_model in hi_pairs:
                 self._prog["model"].write(buf_model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
-            self._ctx.depth_func = "<"
+            self._ctx.disable_direct(0x8037)
+            self._ctx.polygon_offset = (0.0, 0.0)
             self._ctx.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
