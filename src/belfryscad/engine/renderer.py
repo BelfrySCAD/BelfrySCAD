@@ -218,7 +218,8 @@ class MeshBuffer:
                  tri_ids: np.ndarray,
                  edge_vbo: Optional[mgl.Buffer] = None,
                  edge_vao: Optional[mgl.VertexArray] = None,
-                 flat_preview: bool = False):
+                 flat_preview: bool = False,
+                 role: str = "normal"):
         self.ctx = ctx
         self.vbo = vbo
         self.ibo = ibo
@@ -233,6 +234,7 @@ class MeshBuffer:
         self.edge_vbo = edge_vbo
         self.edge_vao = edge_vao
         self.flat_preview = flat_preview
+        self.role = role
 
 
 class SceneRenderer:
@@ -387,7 +389,7 @@ class SceneRenderer:
         return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
                           tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao,
-                          flat_preview=cb.flat_preview)
+                          flat_preview=cb.flat_preview, role=cb.role)
 
     def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0):
         if self._ctx is None or self._prog is None:
@@ -474,8 +476,10 @@ class SceneRenderer:
             self._ctx.polygon_offset = (2.0, 2.0)
             self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
 
+        # --- Pass 1: opaque bodies (normal, highlight, show_only) ---
+        opaque_bufs = [buf for buf in self._buffers if buf.role != "background"]
         buf_models: list[np.ndarray] = []
-        for buf in self._buffers:
+        for buf in opaque_bufs:
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
             color = _highlight_color(buf.color) if is_selected else buf.color
 
@@ -500,12 +504,45 @@ class SceneRenderer:
         if self.show_edges:
             self._ctx.disable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             if self._edge_prog is not None:
-                for buf, buf_model in zip(self._buffers, buf_models):
+                for buf, buf_model in zip(opaque_bufs, buf_models):
                     if buf.edge_vao is not None:
                         self._edge_prog["mvp"].write(
                             (proj @ view @ buf_model).T.astype(np.float32).tobytes()
                         )
                         buf.edge_vao.render(mgl.LINES)
+
+        # --- Pass 2: background ghosts (%) — translucent, no depth write ---
+        bg_bufs = [buf for buf in self._buffers if buf.role == "background"]
+        if bg_bufs:
+            self._ctx.enable(mgl.BLEND)
+            self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+            self._ctx.depth_mask = False
+            for buf in bg_bufs:
+                ghost_color = (*buf.color[:3], 0.2)
+                self._prog["model"].write(model.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
+                self._prog["object_color"].value = ghost_color
+                self._prog["flat_preview"].value = buf.flat_preview
+                buf.vao.render()
+            self._ctx.depth_mask = True
+            self._ctx.disable(mgl.BLEND)
+
+        # --- Pass 3: highlight overlay (#) — pink transparent overlay ---
+        hi_pairs = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models) if buf.role == "highlight"]
+        if hi_pairs:
+            self._ctx.enable(mgl.BLEND)
+            self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+            self._ctx.depth_func = "<="
+            self._ctx.depth_mask = False
+            for buf, buf_model in hi_pairs:
+                self._prog["model"].write(buf_model.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
+                self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
+                self._prog["flat_preview"].value = buf.flat_preview
+                buf.vao.render()
+            self._ctx.depth_func = "<"
+            self._ctx.depth_mask = True
+            self._ctx.disable(mgl.BLEND)
 
         if self.show_axes and self._gizmo_prog is not None:
             self._render_axes(mvp)
@@ -920,7 +957,7 @@ class SceneRenderer:
         best_t = np.inf
         best_id = None
         for buf in self._buffers:
-            if len(buf.tri_ids) == 0:
+            if buf.role == "background" or len(buf.tri_ids) == 0:
                 continue
             idx, t = _moller_trumbore_batch(ray_origin, ray_dir,
                                             buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)

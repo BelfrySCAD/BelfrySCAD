@@ -68,11 +68,13 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 **Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`, `breakpoint()`
 
-**Modular modifiers** — OpenSCAD's prefix operators applied to module calls:
+**Modular modifiers** — OpenSCAD's prefix operators applied to module calls. Each modifier tags the resulting `ColoredBody` list via the `role` field and/or filters the output:
 - `*` (disable) — `ModularModifierDisable`: child produces no geometry; equivalent to commenting it out
-- `!` (show-only) — `ModularModifierShowOnly`: only this subtree is rendered; all siblings suppressed (not yet enforced at the window level — currently passes through like a normal call)
-- `%` (background) — `ModularModifierBackground`: child is suppressed from output (same as `*` in BelfrySCAD; the translucent-ghost display of real OpenSCAD is not implemented)
-- `#` (highlight) — `ModularModifierHighlight`: passes through normally (debug colouring not implemented)
+- `!` (show-only) — `ModularModifierShowOnly`: tags children with `role="show_only"`; at top-level `evaluate()`, if any `show_only` bodies exist the result is filtered to only `show_only` + `highlight` bodies, suppressing all `normal` and `background` siblings
+- `%` (background) — `ModularModifierBackground`: child geometry is evaluated and tagged `role="background"`; background bodies are excluded from CSG operations (`union`/`difference`/`intersection`/`hull`/`minkowski`) and passed through transforms separately; the renderer displays them as translucent ghosts and they are not selectable via ray-cast
+- `#` (highlight) — `ModularModifierHighlight`: child geometry is evaluated normally and tagged `role="highlight"`; the renderer renders highlight bodies opaquely (like normal) plus a pink translucent overlay pass
+
+`ColoredBody.role` field: `"normal"` (default) | `"highlight"` | `"background"` | `"show_only"`. Role is preserved through all transform, color, and module calls — `_builtin_transform`, `_builtin_color`, and `_eval_user_module` now return `list[ColoredBody]` without merging, so each body's role flows through the chain.
 
 **Data**: `object`, `is_object`, `has_key`, `textmetrics`, `fontmetrics`
 
@@ -119,7 +121,7 @@ Each geometry-producing node (primitives and their transform/boolean ancestors) 
 
 `manifold3d.CrossSection` supports full 2D CSG: `+` (union), `-` (difference), `^` (intersection), `offset`, `hull`, `batch_hull`, `revolve`, `extrude`, and all 2D transforms. `CrossSection.to_polygons()` returns contours for polygon construction.
 
-`_builtin_transform` dispatches on child type: `_apply_transform_2d` handles `CrossSection` (via `cs.translate/rotate/scale/mirror`); `_apply_transform_3d` handles `Manifold`. `resize` and `multmatrix` are 3D-only — 2D children pass through unchanged. So `translate([4,0]) circle(r=1)` and similar 2D transform chains work, including as `hull()` inputs.
+`_builtin_transform` dispatches on child type per body: `_apply_transform_2d` handles `CrossSection` (via `cs.translate/rotate/scale/mirror`); `_apply_transform_3d` handles `Manifold`. `resize` and `multmatrix` are 3D-only — 2D children pass through unchanged. Each child `ColoredBody` (including background bodies) is transformed individually, preserving its `role`. Returns `list[ColoredBody]` rather than a single merged body. So `translate([4,0]) circle(r=1)` and similar 2D transform chains work, including as `hull()` inputs.
 
 **Top-level 2D results** (e.g. `circle();` with no enclosing `linear_extrude`/`rotate_extrude`) are returned from `evaluate()` as `section`-only `ColoredBody`s, per the above — `evaluate()` itself stays pure. The renderer/exporter only handle Manifold meshes, so `to_renderable_bodies()` (called by `main_window.py` right after `evaluate()`, for both normal renders and debug-finish) converts any `section`-only entry into a thin `Manifold.extrude(section, _TOP_LEVEL_2D_HEIGHT)` (`1e-3`) — giving a flat-looking preview/export, similar to real OpenSCAD's flat 2D view.
 

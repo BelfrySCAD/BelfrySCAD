@@ -22,9 +22,14 @@ def run(src: str):
 
 
 def bbox(bodies):
-    """Return (xmin,ymin,zmin,xmax,ymax,zmax) of first body's manifold."""
+    """Return (xmin,ymin,zmin,xmax,ymax,zmax) union over all non-empty manifold bodies."""
     assert bodies, "no geometry produced"
-    return bodies[0].body.bounding_box()
+    bbs = [b.body.bounding_box() for b in bodies if b.body is not None]
+    assert bbs, "no 3D geometry produced"
+    return (
+        min(bb[0] for bb in bbs), min(bb[1] for bb in bbs), min(bb[2] for bb in bbs),
+        max(bb[3] for bb in bbs), max(bb[4] for bb in bbs), max(bb[5] for bb in bbs),
+    )
 
 
 def approx(v, rel=1e-4):
@@ -715,33 +720,48 @@ class TestHull:
 
 class TestModifiers:
     def test_highlight_produces_geometry(self):
-        # # (highlight) passes through the child geometry
+        # # (highlight) produces geometry with role="highlight"
         bodies, _ = run("#cube(2);")
+        assert len(bodies) == 1
+        assert bodies[0].role == "highlight"
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(2)
 
     def test_showonly_produces_geometry(self):
-        # ! (show-only) passes through the child geometry
+        # ! (show-only) filters other geometry; produces role="show_only" body
         bodies, _ = run("!cube(3);")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(3)
 
-    def test_background_suppressed(self):
-        # % (background) produces no geometry
+    def test_showonly_filters_others(self):
+        # ! filters out normal geometry, keeping only show_only bodies
+        bodies, _ = run("cube(1); !cube(3);")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+
+    def test_background_role(self):
+        # % (background) produces a ghost body tagged role="background"
         bodies, _ = run("%cube(1);")
-        assert bodies == []
+        assert len(bodies) == 1
+        assert bodies[0].role == "background"
 
     def test_disable_suppressed(self):
         # * (disable) produces no geometry
         bodies, _ = run("*cube(1);")
         assert bodies == []
 
-    def test_highlight_with_other_geometry(self):
-        # only the non-highlighted cube should survive if % suppresses the other
+    def test_background_with_other_geometry(self):
+        # % cube is kept (role="background") alongside normal geometry
         src = "cube(1); %cube([10,10,10]);"
         bodies, _ = run(src)
-        assert len(bodies) == 1
-        bb = bodies[0].body.bounding_box()
+        assert len(bodies) == 2
+        normal = [b for b in bodies if b.role == "normal"]
+        bg = [b for b in bodies if b.role == "background"]
+        assert len(normal) == 1
+        assert len(bg) == 1
+        bb = normal[0].body.bounding_box()
         assert bb[3] - bb[0] == approx(1)
 
 
@@ -2616,11 +2636,9 @@ class TestDollarVarChildren:
         xcopies(10, n=3) sphere(d=$idx+1);
         """
         bodies, lines = run(src)
-        assert bodies
-        parts = bodies[0].body.decompose()
-        assert len(parts) == 3
+        assert len(bodies) == 3
         widths = sorted(
-            p.bounding_box()[3] - p.bounding_box()[0] for p in parts
+            b.body.bounding_box()[3] - b.body.bounding_box()[0] for b in bodies
         )
         assert widths[0] < widths[1] < widths[2]
 
@@ -2665,9 +2683,7 @@ class TestDollarVarChildren:
         triple() cube(1);
         """
         bodies, _ = run(src)
-        assert bodies
-        parts = bodies[0].body.decompose()
-        assert len(parts) == 3
+        assert len(bodies) == 3
 
     def test_children_in_let_block_preserves_dollar_vars(self):
         src = """

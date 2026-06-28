@@ -8,7 +8,7 @@ import random
 from itertools import product as _product
 from pathlib import Path
 from typing import Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import manifold3d as m3d
 import numpy as np
@@ -995,6 +995,7 @@ class ColoredBody:
     color: Optional[tuple[float, float, float, float]] = None  # RGBA 0-1
     section: Optional[m3d.CrossSection] = None  # set for 2D primitives
     flat_preview: bool = False  # thin extrusion standing in for a 2D shape (see to_renderable_bodies)
+    role: str = "normal"  # "normal" | "highlight" (#) | "background" (%) | "show_only" (!)
 
 
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
@@ -1009,7 +1010,8 @@ def to_renderable_bodies(bodies: list[ColoredBody]) -> list[ColoredBody]:
     (which only handle Manifold meshes) can display them. 3D bodies pass
     through unchanged."""
     return [
-        ColoredBody(body=m3d.Manifold.extrude(cb.section, _TOP_LEVEL_2D_HEIGHT), color=cb.color, flat_preview=True)
+        ColoredBody(body=m3d.Manifold.extrude(cb.section, _TOP_LEVEL_2D_HEIGHT),
+                    color=cb.color, flat_preview=True, role=cb.role)
         if cb.body is None and cb.section is not None else cb
         for cb in bodies
     ]
@@ -1308,6 +1310,10 @@ class Evaluator:
         for node in assignments + others:
             bodies = self._eval_statement(node, ctx)
             result.extend(bodies)
+        # ! (show_only) modifier: if any body is show_only, display only those + highlights
+        show_only = [b for b in result if b.role == "show_only"]
+        if show_only:
+            result = [b for b in result if b.role in ("show_only", "highlight")]
         return result, self.id_to_node
 
     # ------------------------------------------------------------------
@@ -1337,8 +1343,7 @@ class Evaluator:
                 ctx.dyn_positions[name] = pos
             return []
         if t is ModularCall:
-            body = self._eval_modular_call(node, ctx)
-            return [body] if body is not None else []
+            return self._eval_modular_call(node, ctx)
         if t is ModularIf:
             cond = self._eval_expr(node.condition, ctx)
             if cond:
@@ -1376,9 +1381,13 @@ class Evaluator:
             if node.children:
                 return self._eval_children(node.children, ctx)
             return []
-        if isinstance(node, (ModularModifierShowOnly, ModularModifierHighlight)):
-            return self._eval_statement(node.child, ctx)
-        if isinstance(node, (ModularModifierBackground, ModularModifierDisable)):
+        if isinstance(node, ModularModifierHighlight):  # # — real geometry + highlight overlay
+            return [replace(b, role="highlight") for b in self._eval_statement(node.child, ctx)]
+        if isinstance(node, ModularModifierBackground):  # % — ghost display only, excluded from CSG
+            return [replace(b, role="background") for b in self._eval_statement(node.child, ctx)]
+        if isinstance(node, ModularModifierShowOnly):  # ! — show only this subtree
+            return [replace(b, role="show_only") for b in self._eval_statement(node.child, ctx)]
+        if isinstance(node, ModularModifierDisable):  # * — fully excluded
             return []
         if isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
             return []
@@ -1414,12 +1423,16 @@ class Evaluator:
     # Module call dispatch
     # ------------------------------------------------------------------
 
-    def _eval_modular_call(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _eval_modular_call(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         name = node.name.name
         user_mod = ctx.scope.lookup_module(name)
         if user_mod is not None:
             return self._eval_user_module(user_mod, node, ctx)
         return self._eval_builtin(name, node, ctx)
+
+    @staticmethod
+    def _body_list(body: Optional[ColoredBody]) -> list[ColoredBody]:
+        return [body] if body is not None else []
 
     @staticmethod
     def _pos_contains(outer, inner) -> bool:
@@ -1456,7 +1469,7 @@ class Evaluator:
         return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
                             children_caller_ctx=children_caller_ctx)
 
-    def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         # Bind parameters
         child_scope = getattr(decl, 'scope', None) or ctx.scope
         params = getattr(decl, 'parameters', None) or []
@@ -1491,10 +1504,7 @@ class Evaluator:
         self._frame_ctxs.append(child_ctx)
         try:
             module_body = getattr(decl, 'children', None) or getattr(decl, 'body', None) or []
-            bodies = self._eval_children(module_body, child_ctx)
-            if not bodies:
-                return None
-            return self._combine(bodies)
+            return self._eval_children(module_body, child_ctx)
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
@@ -1517,7 +1527,7 @@ class Evaluator:
     # Built-in modules
     # ------------------------------------------------------------------
 
-    def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         args = self._resolve_args(node.arguments, ctx)
         # $-prefixed named args (e.g. $fn=32) override the dynamic context for this call
         dyn_overrides = {k: v for k, v in args.items() if isinstance(k, str) and k.startswith("$")}
@@ -1525,11 +1535,11 @@ class Evaluator:
             ctx = ctx.child_ctx(dyn={**ctx.dyn, **dyn_overrides})
 
         if name == "cube":
-            return self._builtin_cube(args, node, ctx)
+            return self._body_list(self._builtin_cube(args, node, ctx))
         if name == "sphere":
-            return self._builtin_sphere(args, node, ctx)
+            return self._body_list(self._builtin_sphere(args, node, ctx))
         if name == "cylinder":
-            return self._builtin_cylinder(args, node, ctx)
+            return self._body_list(self._builtin_cylinder(args, node, ctx))
         if name in ("translate", "rotate", "scale", "mirror", "resize", "multmatrix"):
             return self._builtin_transform(name, args, node, ctx)
         if name == "color":
@@ -1545,44 +1555,43 @@ class Evaluator:
         if name == "minkowski":
             return self._builtin_minkowski(node, ctx)
         if name == "polyhedron":
-            return self._builtin_polyhedron(args, node, ctx)
+            return self._body_list(self._builtin_polyhedron(args, node, ctx))
         if name in ("circle", "square", "polygon"):
-            return self._builtin_2d(name, args, node, ctx)
+            return self._body_list(self._builtin_2d(name, args, node, ctx))
         if name == "text":
-            return self._builtin_text(args, node, ctx)
+            return self._body_list(self._builtin_text(args, node, ctx))
         if name == "offset":
-            return self._builtin_offset(args, node, ctx)
+            return self._body_list(self._builtin_offset(args, node, ctx))
         if name == "projection":
-            return self._builtin_projection(args, node, ctx)
+            return self._body_list(self._builtin_projection(args, node, ctx))
         if name == "linear_extrude":
-            return self._builtin_linear_extrude(args, node, ctx)
+            return self._body_list(self._builtin_linear_extrude(args, node, ctx))
         if name == "rotate_extrude":
-            return self._builtin_rotate_extrude(args, node, ctx)
+            return self._body_list(self._builtin_rotate_extrude(args, node, ctx))
         if name == "roof":
-            return self._builtin_roof(args, node, ctx)
+            return self._body_list(self._builtin_roof(args, node, ctx))
         if name == "render":
             # render() is a display hint; just pass through children
-            children = self._eval_children(node.children, ctx)
-            return self._combine(children) if children else None
+            return self._eval_children(node.children, ctx)
         if name == "surface":
-            return self._builtin_surface(args, node, ctx)
+            return self._body_list(self._builtin_surface(args, node, ctx))
         if name == "import":
-            return self._builtin_import(args, node, ctx)
+            return self._body_list(self._builtin_import(args, node, ctx))
         if name == "echo":
             self._do_echo(node.arguments, ctx)
-            return None
+            return []
         if name == "assert":
-            return None
+            return []
         if name == "children":
             return self._builtin_children(args, ctx)
         if name == "breakpoint":
-            return self._builtin_breakpoint(args, node, ctx)
+            return self._body_list(self._builtin_breakpoint(args, node, ctx))
         # Unknown module — warn with call stack, matching OpenSCAD's WARNING format
         pos = getattr(node, 'position', None)
         warn = f"WARNING: Ignoring unknown module '{name}'{self._loc(pos)}"
         trace = self._trace_lines(node)
         self._echo_fn("\n".join([warn] + trace))
-        return None
+        return []
 
     def _resolve_args(self, arguments, ctx: EvalContext) -> dict:
         result = {}
@@ -1716,18 +1725,17 @@ class Evaluator:
 
     # --- transforms ---
 
-    def _builtin_transform(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_transform(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
-        if not children:
-            return None
-        body = self._combine(children)
-
-        if body.section is not None:
-            body.section = self._apply_transform_2d(name, args, body.section)
-        else:
-            body.body = self._apply_transform_3d(name, args, body.body)
-
-        return body
+        result = []
+        for b in children:
+            if b.section is not None:
+                result.append(replace(b, section=self._apply_transform_2d(name, args, b.section)))
+            elif b.body is not None:
+                result.append(replace(b, body=self._apply_transform_3d(name, args, b.body)))
+            else:
+                result.append(b)
+        return result
 
     def _apply_transform_2d(self, name: str, args: dict, cs: "m3d.CrossSection") -> "m3d.CrossSection":
         if name == "translate":
@@ -1846,7 +1854,7 @@ class Evaluator:
 
     # --- color ---
 
-    def _builtin_color(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_color(self, args: dict, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         c = self._get_arg(args, 0, "c", [1, 1, 1, 1])
         alpha = float(self._get_arg(args, 1, "alpha", 1.0))
         if isinstance(c, str):
@@ -1858,11 +1866,7 @@ class Evaluator:
 
         child_ctx = ctx.child_ctx(color=rgba)
         children = self._eval_children(node.children, child_ctx)
-        if not children:
-            return None
-        result = self._combine(children)
-        result.color = rgba
-        return result
+        return [replace(b, color=rgba) for b in children]
 
     def _css_color(self, name: str, alpha: float = 1.0) -> tuple:
         if name.startswith("#"):
@@ -1881,53 +1885,57 @@ class Evaluator:
 
     # --- CSG ---
 
-    def _builtin_csg(self, op: str, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_csg(self, op: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
         if not children:
-            return None
-        if len(children) == 1:
-            return children[0]
+            return []
 
-        bodies_3d = [c for c in children if c.body is not None]
-        sections_2d = [c for c in children if c.section is not None]
+        bg = [c for c in children if c.role == "background"]
+        fg = [c for c in children if c.role != "background"]
 
-        if bodies_3d:
-            result = bodies_3d[0].body
-            for c in bodies_3d[1:]:
-                if op == "union":
-                    result = result + c.body
-                elif op == "difference":
-                    result = result - c.body
-                elif op == "intersection":
-                    result = result ^ c.body
-            return ColoredBody(body=result, color=bodies_3d[0].color)
+        csg_result: Optional[ColoredBody] = None
+        if fg:
+            bodies_3d = [c for c in fg if c.body is not None]
+            sections_2d = [c for c in fg if c.section is not None]
+            if bodies_3d:
+                r = bodies_3d[0].body
+                for c in bodies_3d[1:]:
+                    if op == "union":
+                        r = r + c.body
+                    elif op == "difference":
+                        r = r - c.body
+                    elif op == "intersection":
+                        r = r ^ c.body
+                csg_result = ColoredBody(body=r, color=bodies_3d[0].color)
+            elif sections_2d:
+                r = sections_2d[0].section
+                for c in sections_2d[1:]:
+                    if op == "union":
+                        r = r + c.section
+                    elif op == "difference":
+                        r = r - c.section
+                    elif op == "intersection":
+                        r = r ^ c.section
+                csg_result = ColoredBody(section=r, color=sections_2d[0].color)
 
-        if sections_2d:
-            result = sections_2d[0].section
-            for c in sections_2d[1:]:
-                if op == "union":
-                    result = result + c.section
-                elif op == "difference":
-                    result = result - c.section
-                elif op == "intersection":
-                    result = result ^ c.section
-            return ColoredBody(section=result, color=sections_2d[0].color)
+        return ([csg_result] if csg_result is not None else []) + bg
 
-        return None
-
-    def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
         if not children:
-            return None
-        bodies_3d = [c.body for c in children if c.body is not None]
-        if bodies_3d:
-            result = m3d.Manifold.batch_hull(bodies_3d)
-            return ColoredBody(body=result, color=children[0].color)
-        sections = [c.section for c in children if c.section is not None]
-        if sections:
-            result = m3d.CrossSection.batch_hull(sections)
-            return ColoredBody(section=result, color=children[0].color)
-        return None
+            return []
+        bg = [c for c in children if c.role == "background"]
+        fg = [c for c in children if c.role != "background"]
+        hull_result: Optional[ColoredBody] = None
+        if fg:
+            bodies_3d = [c.body for c in fg if c.body is not None]
+            if bodies_3d:
+                hull_result = ColoredBody(body=m3d.Manifold.batch_hull(bodies_3d), color=fg[0].color)
+            else:
+                sections = [c.section for c in fg if c.section is not None]
+                if sections:
+                    hull_result = ColoredBody(section=m3d.CrossSection.batch_hull(sections), color=fg[0].color)
+        return ([hull_result] if hull_result is not None else []) + bg
 
     def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         points = self._get_arg(args, 0, "points", None)
@@ -2816,26 +2824,28 @@ class Evaluator:
             return None
         return body.simplify(edge_length * 0.05)
 
-    def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
-        bodies_3d = [c for c in children if c.body is not None]
+        bg = [c for c in children if c.role == "background"]
+        fg = [c for c in children if c.role != "background"]
+        bodies_3d = [c for c in fg if c.body is not None]
         if not bodies_3d:
-            return None
+            return bg
         if len(bodies_3d) == 1:
-            return bodies_3d[0]
+            return bodies_3d + bg
         try:
             result = bodies_3d[0].body
             for c in bodies_3d[1:]:
                 result = result.minkowski_sum(c.body)
-            return ColoredBody(body=result, color=bodies_3d[0].color)
+            return [ColoredBody(body=result, color=bodies_3d[0].color)] + bg
         except Exception as e:
             self.error(f"minkowski: {e}", node)
-            return None
+            return bg
 
     @staticmethod
     def _copy_body(b: ColoredBody) -> ColoredBody:
         return ColoredBody(body=b.body, color=b.color, section=b.section,
-                           flat_preview=b.flat_preview)
+                           flat_preview=b.flat_preview, role=b.role)
 
     def _eval_children_lazy(self, ctx: EvalContext) -> list[ColoredBody]:
         """Evaluate deferred children nodes with current $-variables injected."""
@@ -2856,17 +2866,17 @@ class Evaluator:
                 eval_ctx.let[k] = v
         return self._eval_children(ctx.children_nodes, eval_ctx)
 
-    def _builtin_children(self, args: dict, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _builtin_children(self, args: dict, ctx: EvalContext) -> list[ColoredBody]:
         bodies = self._eval_children_lazy(ctx)
         if not bodies:
-            return None
+            return []
         idx = self._get_arg(args, 0, "index", None)
         if idx is not None:
             idx = int(idx)
             if 0 <= idx < len(bodies):
-                return bodies[idx]
-            return None
-        return self._combine(bodies)
+                return [bodies[idx]]
+            return []
+        return bodies
 
     def _builtin_breakpoint(self, args: dict, node, ctx: EvalContext):
         cond = self._get_arg(args, 0, "condition", default=None)
