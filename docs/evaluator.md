@@ -90,7 +90,10 @@ Note: `is_range`, `is_nan`, and `is_finite` are **not** real OpenSCAD builtins d
 
 **`surface(file, center=false, invert=false)`**: loads a heightmap from a `.dat` text file or PNG and builds a closed solid mesh. `.dat`: whitespace-separated number matrix; `#`-prefixed and blank lines ignored; first row = highest Y (OpenSCAD convention). PNG: linear luminance `Y = 0.2126R + 0.7152G + 0.0722B` scaled to 0–100; `invert=true` flips the mapping. `center=true` centers on X/Y; bottom face always at z=0. Requires Pillow for images.
 
-**Not yet implemented**: `import` (warn and return None)
+**`import(file, convexity=10, layer=undef)`**: loads external files. Behaviour depends on context and file extension:
+- **Module context** (geometry statement): `.stl`/`.obj`/`.off`/`.3mf` → 3D `ColoredBody`; `.svg`/`.pdf` → 2D `CrossSection` (Y-axis flipped from SVG convention); `.dxf` → 2D `CrossSection` from closed LWPOLYLINE/POLYLINE entities (`layer` filters by DXF layer name; requires `ezdxf` — `pip install ezdxf`).
+- **Expression context** (right-hand side of assignment): `.json` → parsed data (list/number/string/bool/null); `.stl`/`.obj`/`.off`/`.3mf` → VNF `[[verts], [faces]]` where each vert is `[x,y,z]` and each face is a list of vertex indices; `.dxf`/`.svg` → Region `[[[x,y],...],...]` (list of closed paths).
+- Path resolved relative to the source `.scad` file (same as `surface()`). `convexity` is accepted and ignored (preview hint). Binary and ASCII STL are both supported. SVG: `<path>`, `<polygon>`, `<polyline>`, `<rect>`, `<circle>`, `<ellipse>` elements with `transform` stack (translate/scale/rotate/matrix); Bezier curves flattened to 32-segment polylines; `<defs>`/`<symbol>` skipped. 3MF parsed via stdlib `zipfile`+`ElementTree` (no lib3mf needed).
 
 **Special variables**: `$fn`, `$fa`, `$fs` control mesh resolution. `$children` = the number of module-instantiation child *statements* in the `{}` block passed to this module call (`len(call.children)`, excluding `Assignment`/`ModuleDeclaration`/`FunctionDeclaration`), not the number of geometries they produce — e.g. `children()` counts as one child even when it forwards zero bodies, and `if (false) sphere();` still counts as one child. `$`-prefixed named args in any call (e.g. `sphere(r=2, $fn=64)`) merge into the dynamic context for that call and its children.
 

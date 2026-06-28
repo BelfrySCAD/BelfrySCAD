@@ -1566,8 +1566,7 @@ class Evaluator:
         if name == "surface":
             return self._builtin_surface(args, node, ctx)
         if name == "import":
-            self._echo_fn(f"WARNING: {name}() is not yet implemented")
-            return None
+            return self._builtin_import(args, node, ctx)
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return None
@@ -2101,6 +2100,487 @@ class Evaluator:
                 r_vals.append(val)
             heights.append(r_vals)
         return heights
+
+    # ------------------------------------------------------------------
+    # import() — 3D mesh, 2D geometry, JSON
+    # ------------------------------------------------------------------
+
+    def _resolve_import_path(self, file_arg: Any, node) -> str:
+        import os as _os
+        pos = getattr(node, "position", None)
+        base_dir = _os.path.dirname(pos.origin) if pos and getattr(pos, "origin", None) else None
+        path = str(file_arg) if file_arg is not None else ""
+        if base_dir and not _os.path.isabs(path):
+            path = _os.path.join(base_dir, path)
+        return path
+
+    def _builtin_import(self, args: dict, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        import os as _os
+        file_arg = self._get_arg(args, 0, "file", None)
+        layer    = self._get_arg(args, None, "layer", None)
+        if file_arg is None:
+            self.error("import: 'file' parameter is required", node)
+            return None
+        path = self._resolve_import_path(file_arg, node)
+        ext  = _os.path.splitext(path)[1].lower()
+        try:
+            if ext == ".stl":
+                return self._import_stl_geometry(path, node, ctx)
+            elif ext == ".obj":
+                return self._import_obj_geometry(path, node, ctx)
+            elif ext == ".off":
+                return self._import_off_geometry(path, node, ctx)
+            elif ext == ".3mf":
+                return self._import_3mf_geometry(path, node, ctx)
+            elif ext == ".dxf":
+                return self._import_dxf_geometry(path, layer, node, ctx)
+            elif ext in (".svg", ".pdf"):
+                return self._import_svg_geometry(path, node, ctx)
+            elif ext == ".json":
+                self.error("import: .json returns data, not geometry — use as an expression", node)
+                return None
+            else:
+                self.error(f"import: unsupported file type '{ext}'", node)
+                return None
+        except OSError as e:
+            self.error(f"import: {e}", node)
+            return None
+
+    def _import_as_value(self, args: dict, node) -> Any:
+        import os as _os
+        file_arg = self._get_arg(args, 0, "file", None)
+        layer    = self._get_arg(args, None, "layer", None)
+        if file_arg is None:
+            self.error("import: 'file' parameter is required", node)
+            return None
+        path = self._resolve_import_path(file_arg, node)
+        ext  = _os.path.splitext(path)[1].lower()
+        try:
+            if ext == ".json":
+                import json as _json
+                with open(path, "r", encoding="utf-8") as f:
+                    return self._json_to_osc(_json.load(f))
+            elif ext in (".stl", ".obj", ".off", ".3mf"):
+                return self._import_as_vnf(path, ext, node)
+            elif ext in (".dxf", ".svg"):
+                return self._import_as_region(path, ext, layer, node)
+            else:
+                self.error(f"import: unsupported file type '{ext}'", node)
+                return None
+        except OSError as e:
+            self.error(f"import: {e}", node)
+            return None
+
+    def _import_as_vnf(self, path: str, ext: str, node) -> Any:
+        """Load a mesh file and return a VNF: [[verts], [faces]]."""
+        try:
+            if ext == ".stl":
+                raw_verts, raw_tris = self._load_stl(path)
+            elif ext == ".obj":
+                raw_verts, raw_tris = self._load_obj(path)
+            elif ext == ".off":
+                raw_verts, raw_tris = self._load_off(path)
+            else:
+                raw_verts, raw_tris = self._load_3mf(path)
+        except Exception as e:
+            self.error(f"import: {e}", node)
+            return None
+        vert_map: dict[tuple, int] = {}
+        verts_out: list[list[float]] = []
+        faces_out: list[list[int]] = []
+        raw_verts_list = list(raw_verts)  # handle numpy arrays
+        for face in raw_tris:
+            fi = []
+            for vi in face:
+                v = raw_verts_list[int(vi)]
+                key = (float(v[0]), float(v[1]), float(v[2]))
+                if key not in vert_map:
+                    vert_map[key] = len(verts_out)
+                    verts_out.append(list(key))
+                fi.append(vert_map[key])
+            faces_out.append(fi)
+        return [verts_out, faces_out]
+
+    def _import_as_region(self, path: str, ext: str, layer: Any, node) -> Any:
+        """Load a 2D file and return a Region: [[[x,y],...], ...]."""
+        try:
+            if ext == ".dxf":
+                contours = self._load_dxf_contours(path, layer, node)
+            else:
+                contours = self._load_svg_contours(path)
+        except Exception as e:
+            self.error(f"import: {e}", node)
+            return None
+        if contours is None:
+            return None
+        return [[[pt[0], pt[1]] for pt in c] for c in contours]
+
+    def _json_to_osc(self, v: Any) -> Any:
+        """Recursively convert JSON-parsed Python value to evaluator-native types.
+        JSON objects → OscObject; arrays/scalars pass through as-is."""
+        if isinstance(v, dict):
+            return OscObject({k: self._json_to_osc(val) for k, val in v.items()})
+        if isinstance(v, list):
+            return [self._json_to_osc(x) for x in v]
+        return v  # str, int, float, bool, None — all native
+
+    def _mesh_to_colored_body(self, verts: Any, tris: Any, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        if len(tris) == 0:
+            self.error("import: mesh has no triangles", node)
+            return None
+        try:
+            verts_arr = np.asarray(verts, dtype=np.float64)
+            tri_arr   = np.asarray(tris,  dtype=np.uint32)
+            mesh = m3d.Mesh(vert_properties=verts_arr, tri_verts=tri_arr)
+            body = m3d.Manifold(mesh)
+        except Exception as e:
+            self.error(f"import: mesh construction failed: {e}", node)
+            return None
+        if body.status() != m3d.Error.NoError:
+            pos = getattr(node, "position", None)
+            self._echo_fn(f"WARNING: import: mesh is not manifold ({body.status()}){self._loc(pos)}")
+        return self._tag(body, node, ctx)
+
+    def _load_stl(self, path: str):
+        """Return (verts, tris) from binary or ASCII STL."""
+        import struct as _struct
+        with open(path, "rb") as f:
+            header = f.read(80)
+            rest   = f.read()
+        try:
+            sample = (header + rest[:256]).decode("ascii", errors="ignore")
+            is_ascii = "facet normal" in sample
+        except Exception:
+            is_ascii = False
+        if is_ascii:
+            text = (header + rest).decode("ascii", errors="replace")
+            verts: list = []; tris: list = []; tri_verts: list = []
+            for line in text.splitlines():
+                line = line.strip()
+                if line.startswith("vertex "):
+                    parts = line.split()
+                    tri_verts.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                    if len(tri_verts) == 3:
+                        base = len(verts)
+                        verts.extend(tri_verts)
+                        tris.append([base, base + 1, base + 2])
+                        tri_verts = []
+            return verts, tris
+        else:
+            count = _struct.unpack_from("<I", rest, 0)[0]
+            dtype = np.dtype([("normal", np.float32, (3,)),
+                              ("v0", np.float32, (3,)), ("v1", np.float32, (3,)),
+                              ("v2", np.float32, (3,)), ("attr", np.uint16)])
+            data  = np.frombuffer(rest[4:4 + count * 50], dtype=dtype)
+            verts = np.empty((count * 3, 3), dtype=np.float64)
+            verts[0::3] = data["v0"]; verts[1::3] = data["v1"]; verts[2::3] = data["v2"]
+            tris = np.arange(count * 3, dtype=np.uint32).reshape(-1, 3)
+            return verts, tris
+
+    def _import_stl_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        try:
+            verts, tris = self._load_stl(path)
+        except Exception as e:
+            self.error(f"import: {e}", node); return None
+        return self._mesh_to_colored_body(verts, tris, node, ctx)
+
+    def _load_obj(self, path: str):
+        verts: list[list[float]] = []; tris: list[list[int]] = []
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("v "):
+                    p = line.split()
+                    verts.append([float(p[1]), float(p[2]), float(p[3])])
+                elif line.startswith("f "):
+                    idx = [int(p.split("/")[0]) - 1 for p in line.split()[1:]]
+                    for i in range(1, len(idx) - 1):
+                        tris.append([idx[0], idx[i], idx[i + 1]])
+        return verts, tris
+
+    def _import_obj_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        try:
+            verts, tris = self._load_obj(path)
+        except Exception as e:
+            self.error(f"import: {e}", node); return None
+        return self._mesh_to_colored_body(verts, tris, node, ctx)
+
+    def _load_off(self, path: str):
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+        idx = 0
+        if lines[idx].upper().startswith("OFF"):
+            idx += 1
+        n_v, n_f, _ = (int(x) for x in lines[idx].split()); idx += 1
+        verts = []
+        for _ in range(n_v):
+            p = lines[idx].split(); verts.append([float(p[0]), float(p[1]), float(p[2])]); idx += 1
+        tris: list[list[int]] = []
+        for _ in range(n_f):
+            p = [int(x) for x in lines[idx].split()]; idx += 1
+            cnt, face_idx = p[0], p[1:p[0] + 1]
+            for i in range(1, cnt - 1):
+                tris.append([face_idx[0], face_idx[i], face_idx[i + 1]])
+        return verts, tris
+
+    def _import_off_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        try:
+            verts, tris = self._load_off(path)
+        except Exception as e:
+            self.error(f"import: {e}", node); return None
+        return self._mesh_to_colored_body(verts, tris, node, ctx)
+
+    def _load_3mf(self, path: str):
+        import zipfile as _zf
+        import xml.etree.ElementTree as _ET
+        NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        verts_all: list[list[float]] = []; tris_all: list[list[int]] = []
+        with _zf.ZipFile(path) as z:
+            model_name = next((n for n in z.namelist() if n.lower().endswith("3dmodel.model")), None)
+            if model_name is None:
+                raise ValueError("No 3dmodel.model found in 3MF archive")
+            with z.open(model_name) as f:
+                tree = _ET.parse(f)
+        for mesh_el in tree.iter(f"{{{NS}}}mesh"):
+            verts_el = mesh_el.find(f"{{{NS}}}vertices")
+            tris_el  = mesh_el.find(f"{{{NS}}}triangles")
+            if verts_el is None or tris_el is None:
+                continue
+            base = len(verts_all)
+            for v in verts_el:
+                verts_all.append([float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0))])
+            for t in tris_el:
+                tris_all.append([base + int(t.get("v1")), base + int(t.get("v2")), base + int(t.get("v3"))])
+        return verts_all, tris_all
+
+    def _import_3mf_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        try:
+            verts, tris = self._load_3mf(path)
+        except Exception as e:
+            self.error(f"import: {e}", node); return None
+        return self._mesh_to_colored_body(verts, tris, node, ctx)
+
+    def _load_dxf_contours(self, path: str, layer: Any, node) -> Optional[list]:
+        try:
+            import ezdxf as _ezdxf
+        except ImportError:
+            self.error("import: DXF requires the 'ezdxf' library (pip install ezdxf)", node)
+            return None
+        doc = _ezdxf.readfile(path)
+        msp = doc.modelspace()
+        contours: list[list[tuple[float, float]]] = []
+        for entity in msp:
+            if layer is not None and entity.dxf.layer != str(layer):
+                continue
+            dtype = entity.dxftype()
+            if dtype == "LWPOLYLINE":
+                pts = [(p[0], p[1]) for p in entity.get_points()]
+                if pts and entity.is_closed:
+                    contours.append(pts)
+            elif dtype == "POLYLINE" and entity.is_2d_polyline:
+                pts = [(v.dxf.location.x, v.dxf.location.y) for v in entity.vertices]
+                if pts and entity.is_closed:
+                    contours.append(pts)
+        return contours
+
+    def _import_dxf_geometry(self, path: str, layer: Any, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        contours = self._load_dxf_contours(path, layer, node)
+        if contours is None:
+            return None
+        if not contours:
+            self.error("import: no closed contours found in DXF file", node)
+            return None
+        polys = [np.array(c, dtype=np.float64) for c in contours]
+        cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
+        return ColoredBody(section=cs, color=ctx.color)
+
+    def _load_svg_contours(self, path: str) -> list[list[tuple[float, float]]]:
+        import xml.etree.ElementTree as _ET
+        import re as _re
+        import math as _math
+
+        SEGS = 32
+
+        def _parse_transform(t_str: str) -> np.ndarray:
+            m = np.eye(3, dtype=np.float64)
+            if not t_str:
+                return m
+            for cmd, args_s in _re.findall(r'(\w+)\(([^)]*)\)', t_str):
+                ns = [float(x) for x in _re.split(r'[,\s]+', args_s.strip()) if x]
+                if cmd == "matrix" and len(ns) >= 6:
+                    a, b, c, d, e, f = ns[:6]
+                    m = np.array([[a, c, e], [b, d, f], [0, 0, 1]], dtype=np.float64) @ m
+                elif cmd == "translate":
+                    tx, ty = ns[0], ns[1] if len(ns) > 1 else 0.0
+                    m = np.array([[1, 0, tx], [0, 1, ty], [0, 0, 1]], dtype=np.float64) @ m
+                elif cmd == "scale":
+                    sx, sy = ns[0], ns[1] if len(ns) > 1 else ns[0]
+                    m = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64) @ m
+                elif cmd == "rotate":
+                    a  = _math.radians(ns[0])
+                    cx = ns[1] if len(ns) > 1 else 0.0
+                    cy = ns[2] if len(ns) > 2 else 0.0
+                    ca, sa = _math.cos(a), _math.sin(a)
+                    t1 = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=np.float64)
+                    r  = np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=np.float64)
+                    t2 = np.array([[1, 0, cx], [0, 1, cy], [0, 0, 1]], dtype=np.float64)
+                    m  = t2 @ r @ t1 @ m
+            return m
+
+        def _apply(pt: tuple, mat: np.ndarray) -> tuple:
+            v = mat @ np.array([pt[0], pt[1], 1.0])
+            return (float(v[0]), float(-v[1]))  # flip Y: SVG down→OpenSCAD up
+
+        def _cubic(p0, p1, p2, p3):
+            pts = []
+            for i in range(1, SEGS + 1):
+                t = i / SEGS; mt = 1 - t
+                pts.append((mt**3*p0[0]+3*mt**2*t*p1[0]+3*mt*t**2*p2[0]+t**3*p3[0],
+                             mt**3*p0[1]+3*mt**2*t*p1[1]+3*mt*t**2*p2[1]+t**3*p3[1]))
+            return pts
+
+        def _quad(p0, p1, p2):
+            pts = []
+            for i in range(1, SEGS + 1):
+                t = i / SEGS; mt = 1 - t
+                pts.append((mt**2*p0[0]+2*mt*t*p1[0]+t**2*p2[0],
+                             mt**2*p0[1]+2*mt*t*p1[1]+t**2*p2[1]))
+            return pts
+
+        def _arc(x1, y1, rx, ry, x_rot, large, sweep, x2, y2):
+            if rx == 0 or ry == 0:
+                return [(x2, y2)]
+            cos_r = _math.cos(_math.radians(x_rot)); sin_r = _math.sin(_math.radians(x_rot))
+            dx, dy = (x1 - x2) / 2, (y1 - y2) / 2
+            x1p =  cos_r*dx + sin_r*dy; y1p = -sin_r*dx + cos_r*dy
+            lam = (x1p/rx)**2 + (y1p/ry)**2
+            if lam > 1:
+                rx *= _math.sqrt(lam); ry *= _math.sqrt(lam)
+            sq = max(0.0, (rx*ry)**2 - (rx*y1p)**2 - (ry*x1p)**2)
+            sq = _math.sqrt(sq / max(1e-12, (rx*y1p)**2 + (ry*x1p)**2))
+            if large == sweep:
+                sq = -sq
+            cxp = sq*rx*y1p/ry; cyp = -sq*ry*x1p/rx
+            cx = cos_r*cxp - sin_r*cyp + (x1+x2)/2
+            cy = sin_r*cxp + cos_r*cyp + (y1+y2)/2
+            def _angle(ux, uy, vx, vy): return _math.atan2(ux*vy - uy*vx, ux*vx + uy*vy)
+            th1 = _angle(1, 0, (x1p-cxp)/rx, (y1p-cyp)/ry)
+            dth = _angle((x1p-cxp)/rx, (y1p-cyp)/ry, (-x1p-cxp)/rx, (-y1p-cyp)/ry)
+            if sweep == 0 and dth > 0: dth -= 2*_math.pi
+            if sweep == 1 and dth < 0: dth += 2*_math.pi
+            n = max(4, int(abs(dth)/(2*_math.pi)*SEGS*4))
+            pts = []
+            for i in range(1, n + 1):
+                th = th1 + dth*i/n
+                pts.append((cos_r*rx*_math.cos(th) - sin_r*ry*_math.sin(th) + cx,
+                             sin_r*rx*_math.cos(th) + cos_r*ry*_math.sin(th) + cy))
+            return pts
+
+        def _parse_d(d: str, mat: np.ndarray) -> list:
+            toks = _re.findall(
+                r'[MmZzLlHhVvCcSsQqTtAa]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?', d)
+            contours: list = []; contour: list = []
+            cur = (0.0, 0.0); start = (0.0, 0.0); last_ctrl = None; cmd = "M"; ti = 0
+
+            def nx():
+                nonlocal ti; v = float(toks[ti]); ti += 1; return v
+
+            while ti < len(toks):
+                t = toks[ti]
+                if t in "MmZzLlHhVvCcSsQqTtAa":
+                    cmd = t; ti += 1; last_ctrl = None; continue
+                rel = cmd.islower(); ox, oy = cur if rel else (0.0, 0.0); lc = cmd.upper()
+                if lc == "M":
+                    if contour: contours.append(contour)
+                    cur = (nx()+ox, nx()+oy); start = cur
+                    contour = [_apply(cur, mat)]; cmd = "l" if rel else "L"
+                elif lc == "Z":
+                    if contour: contours.append(contour)
+                    cur = start; contour = []
+                elif lc == "L":
+                    cur = (nx()+ox, nx()+oy); contour.append(_apply(cur, mat))
+                elif lc == "H":
+                    cur = (nx()+ox, cur[1]); contour.append(_apply(cur, mat))
+                elif lc == "V":
+                    cur = (cur[0], nx()+oy); contour.append(_apply(cur, mat))
+                elif lc == "C":
+                    p1 = (nx()+ox, nx()+oy); p2 = (nx()+ox, nx()+oy); p3 = (nx()+ox, nx()+oy)
+                    last_ctrl = p2
+                    for pt in _cubic(cur, p1, p2, p3): contour.append(_apply(pt, mat))
+                    cur = p3
+                elif lc == "S":
+                    refl = (2*cur[0]-last_ctrl[0], 2*cur[1]-last_ctrl[1]) if last_ctrl else cur
+                    p2 = (nx()+ox, nx()+oy); p3 = (nx()+ox, nx()+oy); last_ctrl = p2
+                    for pt in _cubic(cur, refl, p2, p3): contour.append(_apply(pt, mat))
+                    cur = p3
+                elif lc == "Q":
+                    p1 = (nx()+ox, nx()+oy); p2 = (nx()+ox, nx()+oy); last_ctrl = p1
+                    for pt in _quad(cur, p1, p2): contour.append(_apply(pt, mat))
+                    cur = p2
+                elif lc == "T":
+                    refl = (2*cur[0]-last_ctrl[0], 2*cur[1]-last_ctrl[1]) if last_ctrl else cur
+                    p2 = (nx()+ox, nx()+oy); last_ctrl = refl
+                    for pt in _quad(cur, refl, p2): contour.append(_apply(pt, mat))
+                    cur = p2
+                elif lc == "A":
+                    rx2, ry2, xr, lg, sw = nx(), nx(), nx(), int(nx()), int(nx())
+                    ex, ey = nx()+ox, nx()+oy
+                    for pt in _arc(cur[0], cur[1], rx2, ry2, xr, lg, sw, ex, ey):
+                        contour.append(_apply(pt, mat))
+                    cur = (ex, ey)
+            if contour:
+                contours.append(contour)
+            return contours
+
+        def _shape_contours(el, mat: np.ndarray) -> list:
+            tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag == "path":
+                return _parse_d(el.get("d", ""), mat)
+            if tag in ("polygon", "polyline"):
+                nums = [float(x) for x in _re.split(r'[,\s]+', el.get("points", "").strip()) if x]
+                pts = list(zip(nums[::2], nums[1::2]))
+                return [[_apply(p, mat) for p in pts]] if tag == "polygon" and pts else []
+            if tag == "rect":
+                x = float(el.get("x", 0)); y = float(el.get("y", 0))
+                w = float(el.get("width", 0)); h = float(el.get("height", 0))
+                pts = [(x, y), (x+w, y), (x+w, y+h), (x, y+h)]
+                return [[_apply(p, mat) for p in pts]]
+            if tag == "circle":
+                cx = float(el.get("cx", 0)); cy = float(el.get("cy", 0)); r = float(el.get("r", 0))
+                pts = [(cx+r*_math.cos(2*_math.pi*i/SEGS), cy+r*_math.sin(2*_math.pi*i/SEGS))
+                       for i in range(SEGS)]
+                return [[_apply(p, mat) for p in pts]]
+            if tag == "ellipse":
+                cx = float(el.get("cx", 0)); cy = float(el.get("cy", 0))
+                rx = float(el.get("rx", 0)); ry = float(el.get("ry", 0))
+                pts = [(cx+rx*_math.cos(2*_math.pi*i/SEGS), cy+ry*_math.sin(2*_math.pi*i/SEGS))
+                       for i in range(SEGS)]
+                return [[_apply(p, mat) for p in pts]]
+            return []
+
+        def _walk(el, mat: np.ndarray) -> list:
+            tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag in ("defs", "symbol"):
+                return []
+            m = _parse_transform(el.get("transform", "")) @ mat
+            out = _shape_contours(el, m)
+            for child in el:
+                out.extend(_walk(child, m))
+            return out
+
+        tree = _ET.parse(path)
+        return _walk(tree.getroot(), np.eye(3, dtype=np.float64))
+
+    def _import_svg_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
+        try:
+            contours = self._load_svg_contours(path)
+        except Exception as e:
+            self.error(f"import: {e}", node); return None
+        if not contours:
+            self.error("import: no shapes found in SVG file", node); return None
+        polys = [np.array(c, dtype=np.float64) for c in contours]
+        cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
+        return ColoredBody(section=cs, color=ctx.color)
 
     def _builtin_offset(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         children = self._eval_children(node.children, ctx)
@@ -3033,6 +3513,9 @@ class Evaluator:
         name = left.name if type(left) is Identifier else None
 
         if name:
+            if name == "import":
+                args = self._resolve_args(node.arguments, ctx)
+                return self._import_as_value(args, node)
             if name not in self._BUILTIN_FN_NAMES:
                 decl = ctx.scope.lookup_function(name)
                 if decl is not None:
