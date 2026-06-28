@@ -80,7 +80,9 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 **Math functions**: `abs`, `sign`, `ceil`, `floor`, `round`, `sqrt`, `ln`, `log`, `exp`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `min`, `max`, `pow`, `norm`, `cross`, `rands`, `lookup`
 
-**String / list functions**: `str`, `chr`, `ord`, `concat`, `len`, `search`
+**String / list functions**: `str`, `chr`, `ord`, `concat`, `len`, `search`, `sort`, `sum`
+
+`sort(list, idx=undef)` — returns a sorted copy; elements must be uniformly numbers or strings (mixed types → `undef`). `idx` (integer) sorts a list-of-lists by their `idx`-th element. `sum(v)` — sum of all elements; numbers → scalar sum; equal-length vectors → element-wise sum; empty list → `0`.
 
 **Type checks**: `is_undef`, `is_bool`, `is_num`, `is_string`, `is_list`, `is_function`
 

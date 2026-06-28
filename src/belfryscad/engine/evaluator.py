@@ -1121,6 +1121,8 @@ class Evaluator:
             "is_object": lambda x: isinstance(x, OscObject),
             "search": self._builtin_search,
             "lookup": self._builtin_lookup,
+            "sort": self._builtin_sort,
+            "sum": self._builtin_sum,
             "version": lambda: [2025, 1, 1],
             "version_num": lambda: 20250101,
             "parent_module": self._builtin_parent_module,
@@ -3714,6 +3716,45 @@ class Evaluator:
                 t = (key - k0) / (k1 - k0)
                 return v0 + t * (v1 - v0)
         return 0
+
+    def _builtin_sort(self, lst, idx=None):
+        """sort(list, idx=undef) — return a sorted copy of list.
+
+        If idx is provided (integer), sort a list-of-lists by their idx-th
+        element.  Mixed types that Python cannot compare return undef.
+        """
+        if not isinstance(lst, list):
+            return None
+        if not lst:
+            return []
+        try:
+            if idx is not None and isinstance(idx, (int, float)):
+                ii = int(idx)
+                return sorted(lst, key=lambda x: x[ii] if isinstance(x, list) and ii < len(x) else None)
+            return sorted(lst)
+        except TypeError:
+            return None
+
+    def _builtin_sum(self, v):
+        """sum(v) — return the sum of all elements in v.
+
+        For a list of numbers, returns their numeric sum.  For a list of
+        equal-length vectors, returns element-wise sum.  Empty list → 0.
+        """
+        if not isinstance(v, list):
+            return None
+        if not v:
+            return 0
+        result = v[0]
+        for x in v[1:]:
+            try:
+                if isinstance(result, list) and isinstance(x, list):
+                    result = [a + b for a, b in zip(result, x)]
+                else:
+                    result = result + x
+            except (TypeError, AttributeError):
+                return None
+        return result
 
     def _builtin_object(self, args: dict, node) -> Optional[OscObject]:
         """`object(a=1, b=2, ...)` — an ordered string-keyed map.
