@@ -995,7 +995,7 @@ class ColoredBody:
     color: Optional[tuple[float, float, float, float]] = None  # RGBA 0-1
     section: Optional[m3d.CrossSection] = None  # set for 2D primitives
     flat_preview: bool = False  # thin extrusion standing in for a 2D shape (see to_renderable_bodies)
-    role: str = "normal"  # "normal" | "highlight" (#) | "background" (%) | "show_only" (!)
+    role: str = "normal"  # "normal" | "highlight" (#, real geom) | "highlight_ghost" (#, inside CSG) | "background" (%) | "show_only" (!)
 
 
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
@@ -1892,8 +1892,8 @@ class Evaluator:
 
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
-        # highlight bodies participate in CSG AND are returned separately as overlays
-        hi = [c for c in fg if c.role == "highlight"]
+        # highlight bodies participate in CSG AND come back as ghost-only overlays
+        hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
 
         csg_result: Optional[ColoredBody] = None
         if fg:
@@ -1929,7 +1929,7 @@ class Evaluator:
             return []
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
-        hi = [c for c in fg if c.role == "highlight"]
+        hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
         hull_result: Optional[ColoredBody] = None
         if fg:
             bodies_3d = [c.body for c in fg if c.body is not None]
@@ -2832,7 +2832,7 @@ class Evaluator:
         children = self._eval_children(node.children, ctx)
         bg = [c for c in children if c.role == "background"]
         fg = [c for c in children if c.role != "background"]
-        hi = [c for c in fg if c.role == "highlight"]
+        hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
         bodies_3d = [c for c in fg if c.body is not None]
         if not bodies_3d:
             return bg + hi

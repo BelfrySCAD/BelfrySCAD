@@ -476,8 +476,9 @@ class SceneRenderer:
             self._ctx.polygon_offset = (2.0, 2.0)
             self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
 
-        # --- Pass 1: opaque bodies (normal, highlight, show_only) ---
-        opaque_bufs = [buf for buf in self._buffers if buf.role != "background"]
+        # --- Pass 1: opaque bodies (normal, show_only, highlight = real geometry) ---
+        # highlight_ghost bodies are only shown in the overlay pass, not opaquely.
+        opaque_bufs = [buf for buf in self._buffers if buf.role not in ("background", "highlight_ghost")]
         buf_models: list[np.ndarray] = []
         for buf in opaque_bufs:
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
@@ -528,23 +529,33 @@ class SceneRenderer:
             self._ctx.disable(mgl.BLEND)
 
         # --- Pass 3: highlight overlay (#) — pink transparent overlay ---
-        # Negative polygon offset shifts the overlay toward the camera so it passes
-        # the LESS depth test against the opaque pass's depth values without z-fighting.
-        hi_pairs = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models) if buf.role == "highlight"]
-        if hi_pairs:
+        # "highlight" bodies are real geometry already in the opaque pass; polygon offset
+        # shifts them toward the camera so the overlay passes the LESS depth test.
+        # "highlight_ghost" bodies (# inside CSG) are NOT in the opaque pass; they render
+        # as pink ghosts occluded by whatever solid geometry is in the depth buffer.
+        hi_solid_pairs = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models) if buf.role == "highlight"]
+        hi_ghost_bufs = [buf for buf in self._buffers if buf.role == "highlight_ghost"]
+        if hi_solid_pairs or hi_ghost_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._ctx.depth_mask = False
-            self._ctx.polygon_offset = (-1.0, -1.0)
-            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
-            for buf, buf_model in hi_pairs:
-                self._prog["model"].write(buf_model.T.tobytes())
-                self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
+            if hi_solid_pairs:
+                self._ctx.polygon_offset = (-1.0, -1.0)
+                self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
+                for buf, buf_model in hi_solid_pairs:
+                    self._prog["model"].write(buf_model.T.tobytes())
+                    self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
+                    self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
+                    self._prog["flat_preview"].value = buf.flat_preview
+                    buf.vao.render()
+                self._ctx.disable_direct(0x8037)
+                self._ctx.polygon_offset = (0.0, 0.0)
+            for buf in hi_ghost_bufs:
+                self._prog["model"].write(model.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
-            self._ctx.disable_direct(0x8037)
-            self._ctx.polygon_offset = (0.0, 0.0)
             self._ctx.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
