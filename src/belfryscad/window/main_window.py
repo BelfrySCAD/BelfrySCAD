@@ -372,6 +372,10 @@ class _RenderWorker(QObject):
 
 
 class MainWindow(QMainWindow):
+    # Increment whenever the dock layout structure changes so stale saved
+    # states are discarded rather than applied on top of the new layout.
+    _LAYOUT_VERSION = 3
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("BelfrySCAD")
@@ -407,7 +411,25 @@ class MainWindow(QMainWindow):
         self._toolbar = self._make_toolbar()
         self.addToolBar(self._toolbar)
 
-        # Editor tabs are the central widget
+        # Viewport is the central widget
+        self._viewport = Viewport()
+        self._viewport.selection_changed.connect(self._on_selection_changed)
+        self._viewport.translate_committed.connect(self._on_translate_committed)
+        self._viewport.rotate_committed.connect(self._on_rotate_committed)
+        self._viewport.scale_committed.connect(self._on_scale_committed)
+        self._viewport.camera_changed.connect(self._update_camera_label)
+        self.setCentralWidget(self._viewport)
+
+        # Corner ownership and nesting must be set before any addDockWidget calls
+        # so Qt builds the splitter tree with the correct structure from the start.
+        self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setDockNestingEnabled(True)
+        self.setAnimated(False)  # Qt bug: dock drag-to-tab animation crashes via null QVariantAnimation
+
+        # --- Editor dock (left) — added first so left area owns the splitter root ---
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tabs.setTabsClosable(True)
@@ -415,40 +437,14 @@ class MainWindow(QMainWindow):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(self._tab_changed)
-        self.setCentralWidget(self._tabs)
 
-        # --- Viewport dock (right) ---
-        self._viewport = Viewport()
-        self._viewport.selection_changed.connect(self._on_selection_changed)
-        self._viewport.translate_committed.connect(self._on_translate_committed)
-        self._viewport.rotate_committed.connect(self._on_rotate_committed)
-        self._viewport.scale_committed.connect(self._on_scale_committed)
-        self._viewport.camera_changed.connect(self._update_camera_label)
+        self._editor_dock = QDockWidget("Editor", self)
+        self._editor_dock.setObjectName("EditorDock")
+        self._editor_dock.setWidget(self._tabs)
+        self._editor_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._editor_dock)
 
-        self._viewport_dock = QDockWidget("Viewport", self)
-        self._viewport_dock.setObjectName("ViewportDock")
-        self._viewport_dock.setWidget(self._viewport)
-        self._viewport_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._viewport_dock)
-
-        # Bottom dock area spans full width (below both editor and viewport)
-        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
-        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
-
-        # --- Console dock (bottom-left) ---
-        self._console = ConsoleWidget()
-        self._console.setReadOnly(True)
-        self._console.setFont(QFont("Menlo", 11))
-        self._console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._console.customContextMenuRequested.connect(self._console_context_menu)
-
-        self._console_dock = QDockWidget("Console", self)
-        self._console_dock.setObjectName("ConsoleDock")
-        self._console_dock.setWidget(self._console)
-        self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
-
-        # --- Debugger dock (bottom-right, beside console) ---
+        # --- Debugger dock (right, top) — added before bottom docks ---
         self._debugger_pane = DebuggerPane()
         self._debug_session: DebugSession | None = None
         self._debug_tab: FileTab | None = None
@@ -456,8 +452,7 @@ class MainWindow(QMainWindow):
         self._debugger_dock.setObjectName("DebuggerDock")
         self._debugger_dock.setWidget(self._debugger_pane)
         self._debugger_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._debugger_dock)
-        self.splitDockWidget(self._console_dock, self._debugger_dock, Qt.Orientation.Horizontal)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._debugger_dock)
         self._debugger_dock.dockLocationChanged.connect(self._on_debugger_dock_location_changed)
         self._debugger_dock.topLevelChanged.connect(self._on_debugger_top_level_changed)
         self._debugger_pane.continue_requested.connect(self._on_debug_continue)
@@ -484,7 +479,7 @@ class MainWindow(QMainWindow):
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(btn.click)
 
-        # --- Customizer dock (right, below viewport) ---
+        # --- Customizer dock (right, bottom — tabbed with Animate) ---
         self._customizer_pane = CustomizerPane()
         self._customizer_pane.source_changed.connect(self._on_customizer_source_changed)
 
@@ -493,10 +488,10 @@ class MainWindow(QMainWindow):
         self._customizer_dock.setWidget(self._customizer_pane)
         self._customizer_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._customizer_dock)
-        self.splitDockWidget(self._viewport_dock, self._customizer_dock, Qt.Orientation.Vertical)
+        self.splitDockWidget(self._debugger_dock, self._customizer_dock, Qt.Orientation.Vertical)
         self._customizer_dock.hide()
 
-        # --- Animate dock (bottom) — single animate pane for the window ---
+        # --- Animate dock (right, bottom — tabbed with Customizer) ---
         self._animate_pane = AnimatePane()
         self._animate_pane.frame_changed.connect(self._on_animate_frame)
         self._animate_pane.dump_started.connect(self._on_dump_started, Qt.ConnectionType.QueuedConnection)
@@ -506,8 +501,21 @@ class MainWindow(QMainWindow):
         self._animate_dock.setObjectName("AnimateDock")
         self._animate_dock.setWidget(self._animate_pane)
         self._animate_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._animate_dock)
+        self.tabifyDockWidget(self._customizer_dock, self._animate_dock)
         self._animate_dock.hide()
+
+        # --- Console dock (bottom) ---
+        self._console = ConsoleWidget()
+        self._console.setReadOnly(True)
+        self._console.setFont(QFont("Menlo", 11))
+        self._console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._console.customContextMenuRequested.connect(self._console_context_menu)
+
+        self._console_dock = QDockWidget("Console", self)
+        self._console_dock.setObjectName("ConsoleDock")
+        self._console_dock.setWidget(self._console)
+        self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -708,9 +716,9 @@ class MainWindow(QMainWindow):
         self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
         self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
 
-        self._act_show_viewport = self._viewport_dock.toggleViewAction()
-        self._act_show_viewport.setText("Show Viewport")
-        view_menu.addAction(self._act_show_viewport)
+        self._act_show_editor = self._editor_dock.toggleViewAction()
+        self._act_show_editor.setText("Show Editor")
+        view_menu.addAction(self._act_show_editor)
 
         self._act_show_console = self._console_dock.toggleViewAction()
         self._act_show_console.setText("Show Console")
@@ -2010,7 +2018,8 @@ class MainWindow(QMainWindow):
         if geometry is not None:
             self.restoreGeometry(geometry)
         state = s.value("windowState")
-        if state is not None:
+        layout_version = s.value("layoutVersion", 0, type=int)
+        if state is not None and layout_version == self._LAYOUT_VERSION:
             self._first_show = False
             self.restoreState(state)
         perspective = s.value("perspective", True, type=bool)
@@ -2040,16 +2049,15 @@ class MainWindow(QMainWindow):
         w = self.width()
         h = self.height()
         bottom_h = max(180, h // 4)
-        # viewport dock: right half
-        self.resizeDocks([self._viewport_dock], [w // 2], Qt.Orientation.Horizontal)
+        right_w = max(250, w // 4)
+        # editor dock: left ~40% of window width
+        self.resizeDocks([self._editor_dock], [max(300, w * 2 // 5)], Qt.Orientation.Horizontal)
+        # right dock: ~25% of window width
+        self.resizeDocks([self._debugger_dock], [right_w], Qt.Orientation.Horizontal)
         # bottom dock area: ~25% of window height
         self.resizeDocks([self._console_dock], [bottom_h], Qt.Orientation.Vertical)
-        # console and debugger: equal width
-        half_w = w // 2
-        self.resizeDocks([self._console_dock, self._debugger_dock],
-                         [half_w, half_w], Qt.Orientation.Horizontal)
-        # customizer: below viewport, ~40% of right pane height when shown
-        self.resizeDocks([self._viewport_dock, self._customizer_dock],
+        # right dock: debugger top ~60%, customizer/animate bottom ~40%
+        self.resizeDocks([self._debugger_dock, self._customizer_dock],
                          [max(200, (h - bottom_h) * 3 // 5),
                           max(150, (h - bottom_h) * 2 // 5)],
                          Qt.Orientation.Vertical)
@@ -2096,6 +2104,7 @@ class MainWindow(QMainWindow):
         s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.setValue("windowGeometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
+        s.setValue("layoutVersion", self._LAYOUT_VERSION)
         s.setValue("perspective", self._act_perspective.isChecked())
         s.setValue("stereo", self._act_stereo.isChecked())
         s.setValue("wordWrap", self._act_word_wrap.isChecked())

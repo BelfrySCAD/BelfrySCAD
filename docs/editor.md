@@ -241,30 +241,29 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 ## GUI Layout
 
 ```
-┌────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │  [New][Open][Export] | [Undo][Redo] | [Render][Debug][Animate] | [T][R][S] │  ← toolbar
-├───────────────────────────────────────┬────────────────────────┤
-│ [file1 ×][file2 ×]                    │                        │
-│                                       │                [cube]  │
-│            Code Editor                │    3D Viewport         │
-│            (central widget)           │    (right dock)        │
-├───────────────────────────────────────┴────────────────────────┤
-│  Console                              │ Debugger / Animate     │
-├───────────────────────────────────────┴────────────────────────┤
-│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00    0 FPS  │  ← status bar
-└────────────────────────────────────────────────────────────────┘
+├──────────────────────┬────────────────────────────────┬───────────────┤
+│ [file1 ×][file2 ×]  │                                │   Debugger    │
+│                      │         3D Viewport    [cube]  ├───────────────┤
+│     Code Editor      │         (central widget)       │ Animate│Cust  │
+│     (left dock)      │                                │  (tabbed)     │
+│                      ├────────────────────────────────┘               │
+│                      │  Console                                        │
+├──────────────────────┴─────────────────────────────────────────────────┤
+│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00              0 FPS │  ← status bar
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Toolbar**: across the top — New, Open, Export | Undo, Redo | Render, Debug, Animate | T, R, S (gizmo tool buttons)
-- **Code editor** (central widget): `QTabWidget` with one tab per open file; tabs at top; always visible
-- **Viewport dock** (right): single 3D viewport shared across all editor tabs; always shows the last render result; contains a cube gizmo for view angle control
-- **Console** (bottom-left dock): single running log per window; not per-tab; side-by-side with Debugger
-- **Debugger** (bottom-right dock): visible by default; side-by-side with Console
-- **Animate** (bottom dock): hidden by default; open via Animate toolbar button (F7) or View ▸ Show Animate
-- **Customizer** (right dock, below viewport): hidden by default; open via View ▸ Show Customizer; stacked vertically under the viewport dock
+- **3D Viewport** (central widget): single 3D viewport shared across all editor tabs; always shows the last render result; contains a cube gizmo for view angle control
+- **Editor dock** (left, full height): `QTabWidget` with one tab per open file; tabs at top; toggle via View ▸ Show Editor
+- **Debugger** (right dock, top): visible by default; right dock owns all four corner pixels so it spans the full window height
+- **Animate / Customizer** (right dock, bottom — tabbed together): both hidden by default; Animate opens via toolbar (F7) or View ▸ Show Animate; Customizer opens via View ▸ Show Customizer
+- **Console** (bottom dock): single running log per window; not per-tab
 - **Status bar**: bottom strip; camera position + FPS counter
 
-The viewport, console, debugger, animate, and customizer panes are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "ViewportDock", "ConsoleDock", "DebuggerDock", "AnimateDock", "CustomizerDock". `setCorner(BottomLeft/RightCorner, BottomDockWidgetArea)` makes the bottom row span the full window width. On first launch (no saved `windowState`), `showEvent` fires a deferred `_set_default_layout` call: viewport dock = 50% window width, bottom docks = 25% window height, console and debugger split evenly, customizer = 40% of viewport+customizer combined height. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
+The editor, console, debugger, animate, and customizer panes are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock", "CustomizerDock". All four corners are owned by the side docks (left owns top-left/bottom-left, right owns top-right/bottom-right), so the bottom dock is constrained between them. `setDockNestingEnabled(True)` allows docks to be split within an area; `setAnimated(False)` works around a Qt crash in `QVariantAnimation` during drag-to-tab operations. On first launch (no saved `windowState` matching `_LAYOUT_VERSION`), `showEvent` fires a deferred `_set_default_layout` call: editor dock ≈ 40% width, right dock ≈ 25% width, bottom dock ≈ 25% height, right dock split 60/40 between debugger and customizer/animate. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
 
 Scale markers are tick marks along the viewport axes showing distance units (Show Scale Markers), each labeled with its distance value. Labels are rendered in 3D as camera-facing textured billboards: each tick's number is rasterized to an RGBA texture (cached by string) and drawn on a small transparent quad positioned just past the tick, so labels respect depth (occluded by geometry in front of them) and scale with zoom like the tick marks themselves. An axis whose line is nearly end-on to the camera has its tick labels suppressed (its ticks would otherwise overlap near the origin). Show Edges renders the full triangulation wireframe via `GL_POLYGON_OFFSET_FILL` on the solid pass (pushes fill surfaces away from camera), then draws edges at true depth in a second pass — avoids z-fighting on coplanar faces while keeping hidden edges correctly occluded. Show Crosshairs draws four white diagonal lines (the four space diagonals of a unit cube) crossing at the camera target, each extending `camera.distance * 2.5 / 12`. Perspective/orthographic toggle uses `camera.orthographic`, persisted in QSettings.
 
