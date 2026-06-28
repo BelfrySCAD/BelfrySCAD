@@ -2709,7 +2709,7 @@ class Evaluator:
         else:
             scale_top = (float(scale[0]), float(scale[1]))
         try:
-            body = m3d.Manifold.extrude(cs, height, slices, twist, scale_top)
+            body = m3d.Manifold.extrude(cs, height, slices, -twist, scale_top)
             if center:
                 body = body.translate([0, 0, -height / 2])
             return self._tag(body, node, ctx)
