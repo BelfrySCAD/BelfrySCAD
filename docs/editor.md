@@ -141,11 +141,14 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+8 | Front view |
 | Cmd+9 | Back view |
 | Cmd+0 | Isometric view |
+| Shift+Cmd+1 | Toggle Spin |
+| Shift+Cmd+2 | Toggle Perspective |
+| Shift+Cmd+3 | Toggle Stereo (Cross-eye) |
+| Shift+Cmd+V | View All |
 | Cmd++ | Increase editor font size |
 | Cmd+- | Decrease editor font size |
 | Cmd+[ | Zoom Out |
 | Cmd+] | Zoom In |
-| Shift+Cmd+V | View All |
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
 | F5 | Debug: Continue / Pause |
@@ -260,7 +263,7 @@ Implemented in `src/belfryscad/window/data_viewers.py`. Three viewer dialogs for
 
 Base class for viewer 3D viewports. Orbit camera (azimuth/elevation/distance/target), own ModernGL shader programs (line, mesh with backface_color, edge, label). Axis rendering with ticks and labels ported from the main `SceneRenderer` (`_nice_spacings`, `_fmt_tick`). `schedule_load(fn)` defers geometry uploads until after `initializeGL()`. `set_view_preset()` for named views (top/bottom/left/right/front/back/isometric). Supports perspective/orthographic toggle, axes toggle, edge toggle. Mouse-centered zoom (wheel shifts target toward cursor). No custom `QSurfaceFormat` — macOS multisampling causes compositing artifacts.
 
-Keyboard shortcuts (Cmd+0–9 views, Cmd+1 wireframe, Cmd+2 axes, Shift+Cmd+2 perspective) are handled by the main window's `ApplicationShortcut`-context QShortcuts, which check `QApplication.activeWindow()` and forward to the active viewer viewport via `_active_viewer_viewport()`.
+Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Shift+Cmd+1–3 toggles) are set directly on the `QAction` instances in the View menu, so they appear in the menu and work application-wide via the native macOS menu bar.
 
 ### ListViewer (QDialog)
 
