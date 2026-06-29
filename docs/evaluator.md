@@ -64,6 +64,8 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 **Booleans** (3D or 2D, dispatched by child type): `union`, `difference`, `intersection`
 
+`_builtin_csg` evaluates each **top-level child statement** separately. All bodies produced by a single statement are unioned together before the CSG operation is applied across statements. This matches OpenSCAD's implicit-union-within-scope rule: in `difference() { A; B; }`, if A evaluates to multiple bodies (e.g., a parent geometry plus an attached child returned by BOSL2's `attachable()`), all of A's bodies form the positive operand (unioned), not a chain of differences. Without this grouping, `difference()`'s flat body list would treat the 2nd body as a subtractor instead of part of the base.
+
 **Topology**: `hull`, `minkowski`, `projection`
 
 **Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`, `breakpoint()`

@@ -1886,42 +1886,71 @@ class Evaluator:
     # --- CSG ---
 
     def _builtin_csg(self, op: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        if not children:
+        # Evaluate each top-level geometry statement separately so their body groups are
+        # preserved.  For difference(), all bodies from the FIRST statement form the
+        # positive operand (unioned implicitly, as OpenSCAD does within a scope); bodies
+        # from each subsequent statement are unioned and then subtracted.  A flat
+        # evaluation loses this grouping and produces wrong results when BOSL2's
+        # attachable() returns multiple bodies (parent + attached children) as the first
+        # operand of difference().
+        assign_nodes = [c for c in node.children if isinstance(c, Assignment)]
+        geo_nodes = [c for c in node.children
+                     if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))]
+
+        # Process assignments first for side-effects (they update ctx.dyn in-place)
+        if assign_nodes:
+            self._eval_children(assign_nodes, ctx)
+
+        if not geo_nodes:
             return []
 
-        bg = [c for c in children if c.role == "background"]
-        fg = [c for c in children if c.role != "background"]
-        # highlight bodies participate in CSG AND come back as ghost-only overlays
-        hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
-
+        all_bg: list[ColoredBody] = []
+        all_hi: list[ColoredBody] = []
         csg_result: Optional[ColoredBody] = None
-        if fg:
+
+        for geo_node in geo_nodes:
+            stmt_bodies = self._eval_children([geo_node], ctx)
+
+            bg = [c for c in stmt_bodies if c.role == "background"]
+            fg = [c for c in stmt_bodies if c.role != "background"]
+            hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
+            all_bg.extend(bg)
+            all_hi.extend(hi)
+
             bodies_3d = [c for c in fg if c.body is not None]
             sections_2d = [c for c in fg if c.section is not None]
+
             if bodies_3d:
-                r = bodies_3d[0].body
+                # Union all 3D bodies from this statement before applying the op
+                grp = bodies_3d[0].body
                 for c in bodies_3d[1:]:
+                    grp = grp + c.body
+                if csg_result is None:
+                    csg_result = ColoredBody(body=grp, color=bodies_3d[0].color)
+                else:
                     if op == "union":
-                        r = r + c.body
+                        csg_result = replace(csg_result, body=csg_result.body + grp)
                     elif op == "difference":
-                        r = r - c.body
+                        csg_result = replace(csg_result, body=csg_result.body - grp)
                     elif op == "intersection":
-                        r = r ^ c.body
-                csg_result = ColoredBody(body=r, color=bodies_3d[0].color)
+                        csg_result = replace(csg_result, body=csg_result.body ^ grp)
             elif sections_2d:
-                r = sections_2d[0].section
+                # Union all 2D sections from this statement before applying the op
+                grp = sections_2d[0].section
                 for c in sections_2d[1:]:
+                    grp = grp + c.section
+                if csg_result is None:
+                    csg_result = ColoredBody(section=grp, color=sections_2d[0].color)
+                else:
                     if op == "union":
-                        r = r + c.section
+                        csg_result = replace(csg_result, section=csg_result.section + grp)
                     elif op == "difference":
-                        r = r - c.section
+                        csg_result = replace(csg_result, section=csg_result.section - grp)
                     elif op == "intersection":
-                        r = r ^ c.section
-                csg_result = ColoredBody(section=r, color=sections_2d[0].color)
+                        csg_result = replace(csg_result, section=csg_result.section ^ grp)
 
         # Return: CSG result + background ghosts + highlight overlays (separate from CSG result)
-        return ([csg_result] if csg_result is not None else []) + bg + hi
+        return ([csg_result] if csg_result is not None else []) + all_bg + all_hi
 
     def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         children = self._eval_children(node.children, ctx)
