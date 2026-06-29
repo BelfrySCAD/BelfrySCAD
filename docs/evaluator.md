@@ -163,6 +163,8 @@ The evaluator maintains a separate dynamic binding context threaded through each
 
 `_eval_children_lazy` also passes the caller's own `children_nodes` / `children_caller_ctx` through to the eval context, enabling nested `children()` forwarding chains (e.g. BOSL2's `attachable → multmatrix → _multmatrix → builtin multmatrix` where each layer forwards its caller's children via `children()`).
 
+`children(N)` (integer index) evaluates only the Nth **child statement** — not the Nth output body. This distinction matters when tag-based filtering causes a child statement to produce 0 bodies: body-index lookup would then map `children(1)` to whatever the 2nd body happens to be, which is the wrong statement. `_builtin_children` filters `ctx.children_nodes` to non-`Assignment`/non-declaration nodes (matching the `$children` count), picks the Nth node, and calls `_eval_children` on just that node with the propagated `$`-variable context. This correctly implements BOSL2's `attachable()` two-children pattern where `children(0)` is the geometry block and `children(1)` is the user-supplied attachment block — the geometry block may produce 0 bodies when filtered by `$tags_shown`, but `children(1)` must still return the attachment children.
+
 ## `include` vs `use`
 
 Exact OpenSCAD semantics:

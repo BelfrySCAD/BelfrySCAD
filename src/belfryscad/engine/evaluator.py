@@ -2872,16 +2872,33 @@ class Evaluator:
         return self._eval_children(ctx.children_nodes, eval_ctx)
 
     def _builtin_children(self, args: dict, ctx: EvalContext) -> list[ColoredBody]:
-        bodies = self._eval_children_lazy(ctx)
-        if not bodies:
-            return []
         idx = self._get_arg(args, 0, "index", None)
-        if idx is not None:
-            idx = int(idx)
-            if 0 <= idx < len(bodies):
-                return [bodies[idx]]
+        if idx is None:
+            return self._eval_children_lazy(ctx)
+        # children(N) must index into child STATEMENTS, not output bodies.
+        # A filtered statement may produce 0 bodies, shifting all subsequent
+        # body-index lookups — so we evaluate only the Nth statement directly.
+        idx = int(idx)
+        if not ctx.children_nodes:
             return []
-        return bodies
+        caller_ctx = ctx.children_caller_ctx
+        if caller_ctx is None:
+            return []
+        geo_nodes = [c for c in ctx.children_nodes
+                     if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))]
+        if idx < 0 or idx >= len(geo_nodes):
+            return []
+        eval_ctx = caller_ctx.child_ctx(
+            children_nodes=caller_ctx.children_nodes,
+            children_caller_ctx=caller_ctx.children_caller_ctx,
+        )
+        for k, v in ctx.dyn.items():
+            if k.startswith('$'):
+                eval_ctx.dyn[k] = v
+        for k, v in ctx.let.items():
+            if k.startswith('$'):
+                eval_ctx.let[k] = v
+        return self._eval_children([geo_nodes[idx]], eval_ctx)
 
     def _builtin_breakpoint(self, args: dict, node, ctx: EvalContext):
         cond = self._get_arg(args, 0, "condition", default=None)
