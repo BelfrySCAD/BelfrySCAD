@@ -1086,6 +1086,43 @@ class TestCSGEdgeCases:
         bodies, _ = run(src)
         assert bodies == []
 
+    def test_difference_first_stmt_multiple_bodies_unioned(self):
+        # When the first child statement of difference() produces multiple bodies
+        # (e.g., a module that emits two shapes), they must be unioned as the
+        # positive operand — not treated as sequential subtractors.
+        # Two non-overlapping cubes at z=+10 and z=-10; only a tiny cube at
+        # the origin is actually subtracted (no overlap with either cube).
+        src = """
+        module pair() {
+            translate([0, 0,  10]) cube([4, 4, 4], center=true);
+            translate([0, 0, -10]) cube([4, 4, 4], center=true);
+        }
+        difference() {
+            pair();               // statement 0: TWO bodies
+            cube(1, center=true); // statement 1: subtractor at origin
+        }
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        # Both cubes must survive: z ranges [8,12] and [-12,-8].
+        assert bb[2] == approx(-12)
+        assert bb[5] == approx(12)
+
+    def test_union_first_stmt_multiple_bodies(self):
+        # union() produces the same result regardless of body grouping, but
+        # verify that a multi-body first statement still contributes all bodies.
+        src = """
+        module pair() {
+            translate([0, 0,  5]) cube([2, 2, 2], center=true);
+            translate([0, 0, -5]) cube([2, 2, 2], center=true);
+        }
+        union() { pair(); }
+        """
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[2] == approx(-6)
+        assert bb[5] == approx(6)
+
 
 # ---------------------------------------------------------------------------
 # for loop body variables
@@ -2717,3 +2754,43 @@ class TestDollarVarChildren:
         bodies, _ = run(src)
         bb = bbox(bodies)
         assert bb[3] - bb[0] == approx(10)
+
+    def test_children_n_indexes_by_statement_not_body(self):
+        # children(N) must index by child STATEMENT, not by output body.
+        # Statement 0 is disabled (*) so it produces 0 bodies; the body list
+        # is therefore just [cube6_body].  The old code returned bodies[1]
+        # (OOB → nothing).  The fix evaluates statement 1 directly → cube(6).
+        src = """
+        module pick_second() { children(1); }
+        pick_second() {
+            *cube(10);  // statement 0: disabled, 0 bodies
+            cube(6);    // statement 1: must be returned by children(1)
+        }
+        """
+        bodies, _ = run(src)
+        assert bodies, "children(1) must return statement 1 even when statement 0 produces 0 bodies"
+        bb = bbox(bodies)
+        # cube(6) → side length 6; cube(10) would be 10
+        assert bb[3] - bb[0] == approx(6)
+
+    def test_children_n_correct_stmt_when_prior_stmt_is_empty(self):
+        # With three statements where statement 0 produces 0 bodies, children(1)
+        # must map to the small cube and children(2) to the large cube — not shifted.
+        src = """
+        module pick() {
+            children(1);  // must be cube(2), not cube(5)
+            children(2);  // must be cube(5)
+        }
+        pick() {
+            *cube(1);  // statement 0: disabled, 0 bodies
+            cube(2);   // statement 1
+            cube(5);   // statement 2
+        }
+        """
+        bodies, _ = run(src)
+        assert len(bodies) == 2
+        sides = sorted(
+            b.body.bounding_box()[3] - b.body.bounding_box()[0] for b in bodies
+        )
+        assert sides[0] == approx(2)  # cube(2)
+        assert sides[1] == approx(5)  # cube(5)
