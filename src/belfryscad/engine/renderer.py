@@ -512,12 +512,21 @@ class SceneRenderer:
                         )
                         buf.edge_vao.render(mgl.LINES)
 
+        # Axes and labels render before the ghost pass so that background ghost
+        # geometry correctly composites over them — axes "show through" the ghost.
+        if self.show_axes and self._gizmo_prog is not None:
+            self._render_axes(mvp)
+
+        if self.show_axes and self.show_scale_markers and self._label_prog is not None:
+            self._render_axis_labels(mvp)
+
         # --- Pass 2: background ghosts (%) — translucent, no depth write ---
         bg_bufs = [buf for buf in self._buffers if buf.role == "background"]
         if bg_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._ctx.depth_mask = False
+            self._ctx.enable(mgl.CULL_FACE)
             for buf in bg_bufs:
                 ghost_color = (*buf.color[:3], 0.2)
                 self._prog["model"].write(model.T.tobytes())
@@ -525,6 +534,7 @@ class SceneRenderer:
                 self._prog["object_color"].value = ghost_color
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
+            self._ctx.disable(mgl.CULL_FACE)
             self._ctx.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
@@ -550,20 +560,17 @@ class SceneRenderer:
                     buf.vao.render()
                 self._ctx.disable_direct(0x8037)
                 self._ctx.polygon_offset = (0.0, 0.0)
-            for buf in hi_ghost_bufs:
-                self._prog["model"].write(model.T.tobytes())
-                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
-                self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
-                self._prog["flat_preview"].value = buf.flat_preview
-                buf.vao.render()
+            if hi_ghost_bufs:
+                self._ctx.enable(mgl.CULL_FACE)  # cull back faces so interior isn't visible
+                for buf in hi_ghost_bufs:
+                    self._prog["model"].write(model.T.tobytes())
+                    self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
+                    self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
+                    self._prog["flat_preview"].value = buf.flat_preview
+                    buf.vao.render()
+                self._ctx.disable(mgl.CULL_FACE)
             self._ctx.depth_mask = True
             self._ctx.disable(mgl.BLEND)
-
-        if self.show_axes and self._gizmo_prog is not None:
-            self._render_axes(mvp)
-
-        if self.show_axes and self.show_scale_markers and self._label_prog is not None:
-            self._render_axis_labels(mvp)
 
         if self.show_crosshairs and self._gizmo_prog is not None:
             self._render_crosshairs(mvp)

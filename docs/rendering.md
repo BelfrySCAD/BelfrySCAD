@@ -58,12 +58,13 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.
 
-**Modifier render passes** — `_paint_scene()` runs three passes per eye:
+**Modifier render passes** — `_paint_scene()` runs the following sequence per eye:
 1. **Opaque pass**: all bodies with `role` not in `{"background", "highlight_ghost"}` rendered normally with full depth test and depth write.
-2. **Ghost pass** (`role="background"`, OpenSCAD `%`): rendered after the opaque pass with `SRC_ALPHA/ONE_MINUS_SRC_ALPHA` blending, depth test LESS, depth write disabled — the ghost appears only where no opaque geometry occludes it. Color uses the body's own color at 0.2 alpha. Background bodies are skipped by ray-cast picking.
-3. **Highlight overlay pass** (OpenSCAD `#`): covers two sub-cases:
-   - `role="highlight"` (top-level `#`): body is real geometry already rendered in the opaque pass. Re-rendered in this pass with polygon offset `(-1.0, -1.0)` shifting toward the camera so the overlay passes the LESS depth test, pink `(1.0, 0.08, 0.45, 0.35)`, blending on, depth write off.
-   - `role="highlight_ghost"` (`#` used inside a CSG op like `difference()`): the body was consumed by the CSG kernel and is NOT in the opaque pass. Rendered as a pink ghost using the depth buffer written by the opaque pass, so it is occluded by surrounding solid geometry. No polygon offset needed.
+2. **Axes and labels**: rendered after the opaque pass with full depth write still active, so they are composited correctly under the subsequent transparent ghost pass — ghost geometry (at 0.2 alpha) composites over the axes, making the axes visible through ghost objects.
+3. **Ghost pass** (`role="background"`, OpenSCAD `%`): `SRC_ALPHA/ONE_MINUS_SRC_ALPHA` blending, depth test LESS, depth write disabled, back-face culling on — the ghost appears only where no opaque geometry or axes occlude it. Color uses the body's own color at 0.2 alpha. Background bodies are skipped by ray-cast picking.
+4. **Highlight overlay pass** (OpenSCAD `#`): covers two sub-cases:
+   - `role="highlight"` (top-level `#`): body is real geometry already rendered in the opaque pass. Re-rendered with polygon offset `(-1.0, -1.0)` shifting toward the camera so the overlay passes the LESS depth test, pink `(1.0, 0.08, 0.45, 0.35)`, blending on, depth write off.
+   - `role="highlight_ghost"` (`#` used inside a CSG op like `difference()`): the body was consumed by the CSG kernel and is NOT in the opaque pass. Rendered as a pink ghost with back-face culling on, using the depth buffer written by the opaque pass, so it is occluded by surrounding solid geometry. No polygon offset needed.
 
 `MeshBuffer.role` stores the role string so the renderer can classify each buffer. Background buffers are excluded from ray-cast picking in `ray_cast()`.
 
