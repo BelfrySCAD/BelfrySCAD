@@ -1123,6 +1123,34 @@ class TestCSGEdgeCases:
         assert bb[2] == approx(-6)
         assert bb[5] == approx(6)
 
+    def test_intersection_empty_first_operand_gives_empty(self):
+        # intersection(∅, B) = ∅. When the first child statement of intersection()
+        # produces no geometry (disabled with *), the clip body from the second
+        # statement must NOT escape as the result.
+        src = "intersection() { *cube(10); cube(5); }"
+        bodies, _ = run(src)
+        assert bodies == []
+
+    def test_difference_empty_first_operand_gives_empty(self):
+        # difference(∅, B) = ∅. If the positive operand of difference() is empty,
+        # the subtractor must not become the result.
+        src = "difference() { *cube(10); cube(5); }"
+        bodies, _ = run(src)
+        assert bodies == []
+
+    def test_intersection_empty_second_operand_gives_empty(self):
+        # intersection(A, ∅) = ∅. If any operand is empty, result must be empty.
+        src = "intersection() { cube(5); *cube(10); }"
+        bodies, _ = run(src)
+        assert bodies == []
+
+    def test_difference_empty_subtractor_leaves_base(self):
+        # difference(A, ∅) = A. An empty subtractor is a no-op.
+        src = "difference() { cube(4); *cube(10); }"
+        bodies, _ = run(src)
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(4)
+
 
 # ---------------------------------------------------------------------------
 # for loop body variables

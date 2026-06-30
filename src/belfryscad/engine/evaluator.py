@@ -1920,6 +1920,15 @@ class Evaluator:
             bodies_3d = [c for c in fg if c.body is not None]
             sections_2d = [c for c in fg if c.section is not None]
 
+            if not bodies_3d and not sections_2d:
+                # Empty statement: intersection(∅, B)=∅ and difference(∅, B)=∅.
+                # Union just skips the empty contributor.
+                if op == "intersection":
+                    return all_bg + all_hi
+                if op == "difference" and csg_result is None:
+                    return all_bg + all_hi
+                continue
+
             if bodies_3d:
                 # Union all 3D bodies from this statement before applying the op
                 grp = bodies_3d[0].body

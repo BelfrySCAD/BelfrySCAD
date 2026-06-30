@@ -68,6 +68,8 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 `_builtin_csg` evaluates each **top-level child statement** separately. All bodies produced by a single statement are unioned together before the CSG operation is applied across statements. This matches OpenSCAD's implicit-union-within-scope rule: in `difference() { A; B; }`, if A evaluates to multiple bodies (e.g., a parent geometry plus an attached child returned by BOSL2's `attachable()`), all of A's bodies form the positive operand (unioned), not a chain of differences. Without this grouping, `difference()`'s flat body list would treat the 2nd body as a subtractor instead of part of the base.
 
+Empty statements are handled with correct set semantics: if a child statement produces no solid geometry (e.g., a background-modifier `%` or a disabled `*` child, or an `attachable()` whose `_is_shown()` returns false due to tag filtering), `intersection()` immediately returns empty (`∅ ∩ B = ∅`), and `difference()` returns empty when its first operand is empty (`∅ - B = ∅`). For `union()`, an empty contributor is simply skipped. This prevents clip geometry internal to BOSL2 modules like `half_of()` / `bottom_half()` from escaping as spurious output when tag filtering suppresses the object being clipped.
+
 **Topology**: `hull`, `minkowski`, `projection`
 
 **Control / utility**: `for`, `intersection_for`, `let`, `if`/`else`, `echo`, `assert` (modular + expression forms), `render`, `children()`, `breakpoint()`
