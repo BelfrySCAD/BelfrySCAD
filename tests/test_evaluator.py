@@ -1747,6 +1747,14 @@ class Test2DAndExtrusion:
         assert bodies[0].section is not None
         assert abs(bodies[0].section.area() - 0.5) < 0.01
 
+    def test_polygon_cw_winding_fills(self):
+        # polygon() must fill regardless of winding direction (OpenSCAD uses EvenOdd).
+        # CW triangle: same area as CCW triangle [[0,0],[1,0],[0,1]].
+        bodies, _ = run("polygon([[0,0],[0,1],[1,0]]);")
+        assert len(bodies) == 1
+        assert bodies[0].section is not None
+        assert abs(bodies[0].section.area() - 0.5) < 0.01
+
     def test_polygon_with_hole(self):
         # outer square minus inner square hole
         src = "polygon(points=[[0,0],[4,0],[4,4],[0,4],[1,1],[3,1],[3,3],[1,3]], paths=[[0,1,2,3],[4,5,6,7]]);"

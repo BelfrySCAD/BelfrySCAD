@@ -2688,7 +2688,7 @@ class Evaluator:
                 pts = [[float(p[0]), float(p[1])] for p in points]
                 if paths is None:
                     contour = np.array(pts, dtype=np.float64)
-                    cs = m3d.CrossSection([contour])
+                    cs = m3d.CrossSection([contour], m3d.FillRule.EvenOdd)
                 else:
                     contours = [np.array([pts[int(i)] for i in path], dtype=np.float64) for path in paths]
                     cs = m3d.CrossSection(contours, m3d.FillRule.EvenOdd)
