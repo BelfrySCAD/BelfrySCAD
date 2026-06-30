@@ -2953,7 +2953,7 @@ class Evaluator:
         # loop variables. Skip any assignment that also appears as a body node — those are
         # per-iteration let-like definitions, not loop variables.
         body_ids = {id(b) for b in node.body}
-        var_seqs: list[tuple[str, list]] = []
+        _av_pairs: list[tuple] = []
         for assign in node.assignments:
             if id(assign) in body_ids:
                 continue
@@ -2969,18 +2969,27 @@ class Evaluator:
                 values = list(values)  # iterate over characters
             elif not isinstance(values, list):
                 values = [values]
-            var_seqs.append((name, values))
+            _av_pairs.append((assign, name, values))
 
         result = []
         _debugging = self._debugging
-        for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
-                                     children_caller_ctx=ctx.children_caller_ctx)
-            for vname, val in combo:
-                loop_ctx.let[vname] = val
-            if _debugging and node.body:
-                self._check_debug(node.body[0], loop_ctx, expr_level=True)
-            result.extend(self._eval_children(node.body, loop_ctx))
+
+        def _nested(depth: int, parent_ctx: EvalContext) -> None:
+            if depth == len(_av_pairs):
+                if _debugging and node.body:
+                    self._check_debug(node.body[0], parent_ctx, expr_level=True)
+                result.extend(self._eval_children(node.body, parent_ctx))
+                return
+            assign_node, name, values = _av_pairs[depth]
+            for val in values:
+                child = parent_ctx.child_ctx(children_nodes=ctx.children_nodes,
+                                             children_caller_ctx=ctx.children_caller_ctx)
+                child.let[name] = val
+                if _debugging:
+                    self._check_debug(assign_node, child)
+                _nested(depth + 1, child)
+
+        _nested(0, ctx)
         return result
 
     @staticmethod
@@ -3487,7 +3496,7 @@ class Evaluator:
         return [v]
 
     def _eval_listcomp_for(self, node: ListCompFor, ctx: EvalContext) -> list:
-        var_seqs: list[tuple[str, list]] = []
+        _av_pairs: list[tuple] = []
         for assign in node.assignments:
             name = assign.name.name
             values = self._eval_expr(assign.expr, ctx)
@@ -3503,42 +3512,30 @@ class Evaluator:
                 values = list(values)  # iterate over characters
             else:
                 values = [values]
-            var_seqs.append((name, values))
+            _av_pairs.append((assign, name, values))
 
         result = []
         _debugging = self._debugging
         is_lc = type(node.body) is ListComprehension
 
-        if len(var_seqs) == 1:
-            name, values = var_seqs[0]
-            if not values:
-                return result
-            loop_ctx = ctx.let_child_ctx()
-            let_dict = loop_ctx.let
-            for val in values:
-                let_dict[name] = val
+        def _nested(depth: int, parent_ctx: EvalContext) -> None:
+            if depth == len(_av_pairs):
                 self._expr_depth += 1
-                if _debugging:
-                    self._check_debug(node, loop_ctx)
                 if is_lc:
-                    result.append(self._eval_list_comp(node.body, loop_ctx))
+                    result.append(self._eval_list_comp(node.body, parent_ctx))
                 else:
-                    result.extend(self._eval_list_comp_body(node.body, loop_ctx))
+                    result.extend(self._eval_list_comp_body(node.body, parent_ctx))
                 self._expr_depth -= 1
-            return result
+                return
+            assign_node, name, values = _av_pairs[depth]
+            for val in values:
+                child = parent_ctx.let_child_ctx()
+                child.let[name] = val
+                if _debugging:
+                    self._check_debug(assign_node, child)
+                _nested(depth + 1, child)
 
-        for combo in self._cartesian(var_seqs):
-            loop_ctx = ctx.let_child_ctx()
-            for vname, val in combo:
-                loop_ctx.let[vname] = val
-            self._expr_depth += 1
-            if _debugging:
-                self._check_debug(node, loop_ctx)
-            if is_lc:
-                result.append(self._eval_list_comp(node.body, loop_ctx))
-            else:
-                result.extend(self._eval_list_comp_body(node.body, loop_ctx))
-            self._expr_depth -= 1
+        _nested(0, ctx)
         return result
 
     _MAX_CFOR_ITERATIONS = 1_000_000

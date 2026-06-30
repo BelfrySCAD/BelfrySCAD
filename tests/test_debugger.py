@@ -440,6 +440,76 @@ class TestCStyleForStops:
 
 
 # ---------------------------------------------------------------------------
+# Normal for() loop variable-binding stops
+# ---------------------------------------------------------------------------
+
+class TestForAssignmentStops:
+    """for() loops should stop at each variable binding, in nested order,
+    before each body evaluation."""
+
+    # Listcomp multi-variable source:
+    #   line 1  x = [
+    #   line 2      for(            ← ListCompFor node
+    #   line 3          i=[0:2],    ← i binding (3 values: 0,1,2)
+    #   line 4          j=[0:1]     ← j binding (2 values: 0,1)
+    #   line 5      )
+    #   line 6      i*3+j           ← body expression (expr_level stop)
+    #   line 7  ];
+    _LC_SRC = "x = [\nfor(\ni=[0:2],\nj=[0:1]\n)\ni*3+j\n];\n"
+
+    # Modular multi-variable source:
+    #   line 1  for(                ← ModularFor node
+    #   line 2      i=[0:2],        ← i binding (3 values: 0,1,2)
+    #   line 3      j=[0:1]         ← j binding (2 values: 0,1)
+    #   line 4  )
+    #   line 5  echo(i*3+j);        ← body first stmt (expr_level body-entry + stmt echo)
+    _MOD_SRC = "for(\ni=[0:2],\nj=[0:1]\n)\necho(i*3+j);\n"
+
+    def test_listcomp_assignment_stops_fire(self):
+        """Each variable binding in a listcomp for should produce a statement-level stop."""
+        _, _, stops = _run_with_debug(self._LC_SRC)
+        i_stops = [s for s in _stmt_stops(stops) if s["line"] == 3]
+        j_stops = [s for s in _stmt_stops(stops) if s["line"] == 4]
+        # i iterates over [0,1,2] → 3 stops; j iterates [0,1] per i value → 6 stops
+        assert len(i_stops) == 3
+        assert len(j_stops) == 6
+
+    def test_listcomp_assignment_stop_order(self):
+        """Outer variable advances only after inner variable exhausts its range."""
+        _, _, stops = _run_with_debug(self._LC_SRC)
+        seq = [(s["line"], s["expr_level"]) for s in stops if s["line"] in (3, 4, 6)]
+        assert seq == [
+            (3, False),              # i=0
+            (4, False), (6, True),   # j=0, body
+            (4, False), (6, True),   # j=1, body
+            (3, False),              # i=1
+            (4, False), (6, True),
+            (4, False), (6, True),
+            (3, False),              # i=2
+            (4, False), (6, True),
+            (4, False), (6, True),
+        ]
+
+    def test_modular_assignment_stops_fire(self):
+        """Each variable binding in a modular for should produce a statement-level stop."""
+        _, _, stops = _run_with_debug(self._MOD_SRC)
+        i_stops = [s for s in _stmt_stops(stops) if s["line"] == 2]
+        j_stops = [s for s in _stmt_stops(stops) if s["line"] == 3]
+        assert len(i_stops) == 3
+        assert len(j_stops) == 6
+
+    def test_modular_assignment_stop_order(self):
+        """Outer variable (i) advances only after inner variable (j) exhausts its range."""
+        _, _, stops = _run_with_debug(self._MOD_SRC)
+        seq = [(s["line"], s["expr_level"]) for s in stops if s["line"] in (2, 3)]
+        assert seq == [
+            (2, False), (3, False), (3, False),  # i=0, j=0, j=1
+            (2, False), (3, False), (3, False),  # i=1, j=0, j=1
+            (2, False), (3, False), (3, False),  # i=2, j=0, j=1
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Error break
 # ---------------------------------------------------------------------------
 

@@ -51,14 +51,15 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **`TernaryOp`** — before condition evaluation (the chosen-branch pause is `expr_level=True`)
 - **`LetOp`** — before each assignment; `ModularLet` skips the `let(` node and steps through assignments individually
 - **`ListCompLet`** — before each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
-- **`ListCompFor`** — at the start of each iteration, after loop variables bind; Step Over alternates between the `for` line and the body line each iteration
+- **`ListCompFor`** — at each variable binding assignment as the loop iterates (statement-level stop per variable per value, in nested order so the rightmost variable cycles fastest); then at the body expression (`expr_level=True`) on each iteration
 - **`ListCompCFor`** — four distinct stop points per C-style `for (inits; cond; incrs) body`: (1) statement-level stop at each init assignment before the loop starts; (2) `expr_level=True` stop at the condition expression each time it is tested, including the final false-check that exits the loop; (3) statement-level stop at the `for` node at each body entry; (4) statement-level stop at each incr assignment after the body, per iteration
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition evaluation; the chosen branch is `expr_level=True` (in both `_eval_list_comp` and `_eval_list_comp_body`)
 
 **Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. All step commands (`into`, `over`, `out`) skip these checkpoints. Nodes calling `_check_debug(…, expr_level=True)`:
 - **`TernaryOp`** — at the chosen branch after condition resolution
 - **`ModularIf` / `ModularIfElse`** — `_eval_statement` already pauses at the `if` node; a second `expr_level=True` pause fires at the first statement of the chosen branch (falls back to `node` if the branch is empty)
-- **`ModularFor` / `ModularIntersectionFor`** — at the first body statement of each iteration, after loop variables bind into `loop_ctx` (body statements already get their own statement-level stops from `_eval_statement`)
+- **`ModularFor`** — at each variable binding assignment as the loop iterates (statement-level stop per variable per value, in nested order so the rightmost variable cycles fastest); then at the first body statement (`expr_level=True`) on each iteration (body statements also get their own statement-level stops from `_eval_statement`)
+- **`ModularIntersectionFor`** — at the first body statement of each iteration, after loop variables bind into `loop_ctx` (body statements already get their own statement-level stops from `_eval_statement`)
 - **`ListCompEach`** — before the body expression, in both `_eval_list_comp` and `_eval_list_comp_body`
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` and the fallthrough in `_eval_list_comp_body`
 
