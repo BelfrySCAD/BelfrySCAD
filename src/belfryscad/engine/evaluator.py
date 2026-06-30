@@ -3545,14 +3545,20 @@ class Evaluator:
 
     def _eval_listcomp_cfor(self, node: ListCompCFor, ctx: EvalContext) -> list:
         loop_ctx = ctx.let_child_ctx()
+        _debugging = self._debugging
         for assign in node.inits:
+            if _debugging:
+                self._check_debug(assign, loop_ctx)
             loop_ctx.let[assign.name.name] = self._eval_expr(assign.expr, loop_ctx)
 
         result = []
         iterations = 0
-        _debugging = self._debugging
         is_lc = type(node.body) is ListComprehension
-        while self._eval_expr(node.condition, loop_ctx):
+        while True:
+            if _debugging:
+                self._check_debug(node.condition, loop_ctx, expr_level=True)
+            if not self._eval_expr(node.condition, loop_ctx):
+                break
             iterations += 1
             if iterations > self._MAX_CFOR_ITERATIONS:
                 self.error("C-style for loop exceeded maximum iteration count", node)
@@ -3565,6 +3571,8 @@ class Evaluator:
                 result.extend(self._eval_list_comp_body(node.body, loop_ctx))
             self._expr_depth -= 1
             for assign in node.incrs:
+                if _debugging:
+                    self._check_debug(assign, loop_ctx)
                 loop_ctx.let[assign.name.name] = self._eval_expr(assign.expr, loop_ctx)
         return result
 

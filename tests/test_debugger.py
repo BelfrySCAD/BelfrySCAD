@@ -370,6 +370,76 @@ x = [
 
 
 # ---------------------------------------------------------------------------
+# C-style for loop stops
+# ---------------------------------------------------------------------------
+
+class TestCStyleForStops:
+    """C-style for loop (ListCompCFor) should stop at init assignments,
+    the condition, body entry, and incr assignments."""
+
+    # Source with each CFor part on its own line for line-number assertions:
+    #   line 1  a = [
+    #   line 2      for (             ← CFor node / body-entry stop
+    #   line 3          i = 0;        ← init assignment
+    #   line 4          i < 2;        ← condition
+    #   line 5          i = i + 1     ← incr assignment
+    #   line 6      ) i               ← body expression
+    #   line 7  ];
+    _SRC = "a = [\n    for (\n        i = 0;\n        i < 2;\n        i = i + 1\n    ) i\n];\n"
+
+    def test_init_assignments_are_statement_stops(self):
+        """Each init assignment should produce one statement-level stop before the loop."""
+        _, _, stops = _run_with_debug(self._SRC)
+        init_stops = [s for s in _stmt_stops(stops) if s["line"] == 3]
+        assert len(init_stops) == 1  # fires exactly once, before the loop
+
+    def test_condition_is_expr_level(self):
+        """Condition should get an expr-level stop each time it is checked,
+        including the final false-check that terminates the loop."""
+        _, _, stops = _run_with_debug(self._SRC)
+        cond_stops = [s for s in stops if s["line"] == 4 and s["expr_level"]]
+        # 2 iterations → 2 true checks + 1 false check = 3
+        assert len(cond_stops) == 3
+
+    def test_body_entry_fires_per_iteration(self):
+        """Each loop body entry should produce a statement-level stop at the for node."""
+        _, _, stops = _run_with_debug(self._SRC)
+        body_stops = [s for s in _stmt_stops(stops) if s["line"] == 2]
+        assert len(body_stops) == 2  # one per iteration
+
+    def test_incr_assignments_are_statement_stops(self):
+        """Each incr assignment should produce a statement-level stop per iteration."""
+        _, _, stops = _run_with_debug(self._SRC)
+        incr_stops = [s for s in _stmt_stops(stops) if s["line"] == 5]
+        assert len(incr_stops) == 2  # one per iteration
+
+    def test_multiple_inits_and_incrs(self):
+        """Multiple inits and incrs each get their own stops."""
+        src = "a = [for (i = 0, j = 0; i < 2; i = i + 1, j = j + 2) i + j];\n"
+        _, _, stops = _run_with_debug(src)
+        stmt = _stmt_stops(stops)
+        # outer assign(1) + 2 inits(2) + 2 body(2) + 2*2 incr(4) = 9 minimum
+        assert len(stmt) >= 9
+
+    def test_stop_order(self):
+        """Stops should follow init → (cond → body → incr)* → cond(false) order."""
+        _, _, stops = _run_with_debug(self._SRC)
+        # Build a simplified sequence: (line, expr_level)
+        seq = [(s["line"], s["expr_level"]) for s in stops
+               if s["line"] in (2, 3, 4, 5)]
+        assert seq == [
+            (3, False),  # init i=0
+            (4, True),   # condition (true, iter 1)
+            (2, False),  # body entry (iter 1)
+            (5, False),  # incr i=i+1 (iter 1)
+            (4, True),   # condition (true, iter 2)
+            (2, False),  # body entry (iter 2)
+            (5, False),  # incr i=i+1 (iter 2)
+            (4, True),   # condition (false, loop ends)
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Error break
 # ---------------------------------------------------------------------------
 

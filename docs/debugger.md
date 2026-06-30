@@ -51,7 +51,8 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **`TernaryOp`** — before condition evaluation (the chosen-branch pause is `expr_level=True`)
 - **`LetOp`** — before each assignment; `ModularLet` skips the `let(` node and steps through assignments individually
 - **`ListCompLet`** — before each assignment, in both `_eval_list_comp` and `_eval_list_comp_body`
-- **`ListCompFor` / `ListCompCFor`** — at the start of each iteration, after loop variables bind; Step Over alternates between the `for` line and the body line each iteration
+- **`ListCompFor`** — at the start of each iteration, after loop variables bind; Step Over alternates between the `for` line and the body line each iteration
+- **`ListCompCFor`** — four distinct stop points per C-style `for (inits; cond; incrs) body`: (1) statement-level stop at each init assignment before the loop starts; (2) `expr_level=True` stop at the condition expression each time it is tested, including the final false-check that exits the loop; (3) statement-level stop at the `for` node at each body entry; (4) statement-level stop at each incr assignment after the body, per iteration
 - **`ListCompIf` / `ListCompIfElse`** — at the `if` node before condition evaluation; the chosen branch is `expr_level=True` (in both `_eval_list_comp` and `_eval_list_comp_body`)
 
 **Expression-level step points**: `_check_debug` accepts `expr_level=True` for sub-expression pauses. All step commands (`into`, `over`, `out`) skip these checkpoints. Nodes calling `_check_debug(…, expr_level=True)`:
