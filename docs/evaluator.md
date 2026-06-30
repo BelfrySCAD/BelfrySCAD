@@ -58,6 +58,8 @@ Both methods accept `children_nodes` and `children_caller_ctx` to propagate defe
 
 **2D Primitives** (→ `ColoredBody.section`): `circle`, `square`, `polygon`, `text`
 
+`polygon()` uses `m3d.FillRule.EvenOdd` (matching OpenSCAD), which fills the interior regardless of contour winding direction. The default Manifold fill rule (`Positive`) would silently produce an empty `CrossSection` for clockwise-wound polygons — BOSL2's `teardrop2d()` returns CW polygons, which broke `onion()` and any shape that revolves a teardrop profile. `paths`-based polygons already used `EvenOdd`; this makes the no-paths case consistent.
+
 **Extrusion** (2D → 3D): `linear_extrude`, `rotate_extrude`, `roof`
 
 **Transforms** (3D and 2D): `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`, `color`, `offset`
