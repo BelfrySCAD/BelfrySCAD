@@ -519,8 +519,17 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
-        self._camera_label = QLabel("")
-        self._status_bar.addWidget(self._camera_label)
+        self._vpt_label = QLabel("")
+        self._vpt_label.setToolTip("Viewport Translate ($vpt)")
+        self._status_bar.addWidget(self._vpt_label)
+
+        self._vpr_label = QLabel("")
+        self._vpr_label.setToolTip("Viewport Rotation ($vpr)")
+        self._status_bar.addWidget(self._vpr_label)
+
+        self._vpd_label = QLabel("")
+        self._vpd_label.setToolTip("Viewport Distance ($vpd)")
+        self._status_bar.addWidget(self._vpd_label)
 
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
@@ -855,11 +864,9 @@ class MainWindow(QMainWindow):
         vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
         vpd = float(cam.distance)
-        self._camera_label.setText(
-            f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}],  "
-            f"$vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}],  "
-            f"$vpd = {vpd:.2f}"
-        )
+        self._vpt_label.setText(f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]")
+        self._vpr_label.setText(f"  $vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}]")
+        self._vpd_label.setText(f"  $vpd = {vpd:.2f}")
 
     def _update_fps(self):
         count = self._viewport._frame_count
