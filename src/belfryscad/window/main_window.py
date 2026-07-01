@@ -251,9 +251,9 @@ class _RenderCallback(QObject):
             self._file_tab.root_scope = root_scope
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float)
-    def on_finished(self, bodies, id_to_node, elapsed_ms: float):
-        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id)
+    @Slot(object, object, float, object)
+    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict):
+        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp)
 
     @Slot()
     def on_done(self):
@@ -267,7 +267,7 @@ class _RenderWorker(QObject):
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     ast_ready = Signal(object, object)   # (nodes, root_scope) — emitted after successful parse
-    finished = Signal(object, object, float)  # (bodies, id_to_node, elapsed_ms)
+    finished = Signal(object, object, float, object)  # (bodies, id_to_node, elapsed_ms, final_vp)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None):
@@ -368,7 +368,14 @@ class _RenderWorker(QObject):
             return
 
         bodies = to_renderable_bodies(bodies)
-        self.finished.emit(bodies, id_to_node, elapsed_ms)
+        final_vp = {}
+        if evaluator._root_ctx is not None:
+            dyn = evaluator._root_ctx.dyn
+            for k in ("$vpt", "$vpr", "$vpd", "$vpf"):
+                if k in dyn:
+                    v = dyn[k]
+                    final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
+        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp)
 
 
 class MainWindow(QMainWindow):
@@ -535,6 +542,17 @@ class MainWindow(QMainWindow):
         self._vpf_label = QLabel("")
         self._vpf_label.setToolTip("Viewport FOV ($vpf)")
         self._status_bar.addWidget(self._vpf_label)
+
+        for _lbl, _var in (
+            (self._vpt_label, "$vpt"),
+            (self._vpr_label, "$vpr"),
+            (self._vpd_label, "$vpd"),
+            (self._vpf_label, "$vpf"),
+        ):
+            _lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            _lbl.customContextMenuRequested.connect(
+                lambda pos, lbl=_lbl, var=_var: self._vp_label_context_menu(var, lbl, pos)
+            )
 
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
@@ -878,6 +896,27 @@ class MainWindow(QMainWindow):
         self._vpr_label.setText(f"  rotate = [{vpr_x:.1f}, 0.0, {vpr_z:.1f}]")
         self._vpd_label.setText(f"  dist = {vpd:.1f}")
         self._vpf_label.setText(f"  FoV = {vpf:.1f}")
+
+    def _vp_state_strings(self) -> dict:
+        import numpy as np
+        cam = self._viewport._renderer.camera
+        vpt = np.asarray(cam.target)
+        vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
+        vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
+        return {
+            "$vpt": f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]",
+            "$vpr": f"$vpr = [{vpr_x:.1f}, 0.0, {vpr_z:.1f}]",
+            "$vpd": f"$vpd = {float(cam.distance):.1f}",
+            "$vpf": f"$vpf = {float(cam.fov):.1f}",
+        }
+
+    def _vp_label_context_menu(self, var: str, label: QLabel, pos):
+        strings = self._vp_state_strings()
+        full = "\n".join(f"{s};" for s in strings.values())
+        menu = QMenu(self)
+        menu.addAction(f"Copy {var}", lambda: QApplication.clipboard().setText(strings[var]))
+        menu.addAction("Copy all $vp* values", lambda: QApplication.clipboard().setText(full))
+        menu.exec(label.mapToGlobal(pos))
 
     def _update_size_label(self, _w: int, _h: int):
         w = self._viewport.width()
@@ -1321,6 +1360,52 @@ class MainWindow(QMainWindow):
             pass
         return params
 
+    def _apply_vp_params(self, vp: dict) -> bool:
+        """Apply $vp* values from a script evaluation to the camera.
+
+        Returns True if any camera value actually changed, False if the
+        script's values matched the current camera state (no-op).
+        """
+        import math
+        import numpy as np
+        cam = self._viewport._renderer.camera
+        changed = False
+
+        if "$vpt" in vp:
+            v = vp["$vpt"]
+            if isinstance(v, (list, tuple)) and len(v) == 3:
+                new_target = np.array([float(v[0]), float(v[1]), float(v[2])], dtype=np.float32)
+                if not np.allclose(cam.target, new_target):
+                    cam.target = new_target
+                    changed = True
+
+        if "$vpr" in vp:
+            v = vp["$vpr"]
+            if isinstance(v, (list, tuple)) and len(v) == 3:
+                new_elev = (90.0 - float(v[0])) % 360.0
+                new_az   = (float(v[2]) + 270.0) % 360.0
+                if not math.isclose(cam.elevation, new_elev) or not math.isclose(cam.azimuth, new_az):
+                    cam.elevation = new_elev
+                    cam.azimuth   = new_az
+                    changed = True
+
+        if "$vpd" in vp:
+            new_d = float(vp["$vpd"])
+            if not math.isclose(cam.distance, new_d):
+                cam.distance = max(0.1, new_d)
+                changed = True
+
+        if "$vpf" in vp:
+            new_f = float(vp["$vpf"])
+            if not math.isclose(cam.fov, new_f):
+                cam.fov = max(1.0, min(120.0, new_f))
+                changed = True
+
+        if changed:
+            self._viewport.camera_changed.emit()
+            self._viewport.update()
+        return changed
+
     def _render(self, tab=None):
         if not isinstance(tab, QWidget):
             tab = self._current_tab()
@@ -1399,7 +1484,7 @@ class MainWindow(QMainWindow):
         else:
             QApplication.restoreOverrideCursor()
 
-    def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int):
+    def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int, final_vp: dict | None = None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
 
@@ -1414,6 +1499,9 @@ class MainWindow(QMainWindow):
 
         self._bodies = bodies
 
+        # If the script set $vp* variables, apply them to the camera and skip auto-fit.
+        script_moved_camera = bool(final_vp) and self._apply_vp_params(final_vp)
+
         try:
             import manifold3d as m3d
             import numpy as np
@@ -1423,9 +1511,9 @@ class MainWindow(QMainWindow):
                 bb = composed.bounding_box()
                 bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
                 bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
-                # Animation playback keeps the camera fixed across frames; only
-                # auto-fit on explicit (non-animation) renders.
-                if not self._animate_pane.is_playing():
+                # Skip auto-fit if the script explicitly positioned the camera,
+                # or if animation playback is active.
+                if not script_moved_camera and not self._animate_pane.is_playing():
                     self._viewport.frame_scene(bb_min, bb_max)
                 self.log(
                     f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
@@ -1818,6 +1906,7 @@ class MainWindow(QMainWindow):
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
+        self._apply_vp_params({k: locals_dict[k] for k in ("$vpt", "$vpr", "$vpd", "$vpf") if k in locals_dict})
         self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
 
