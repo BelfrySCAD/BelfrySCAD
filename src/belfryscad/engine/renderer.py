@@ -134,7 +134,7 @@ class Camera:
         self.elevation = 35.0
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self.fov = 45.0
+        self.fov = 22.5
         self.orthographic = False
         self.stereo = False
         self.viewer_ipd = 65.0           # mm — interpupillary distance
@@ -206,9 +206,9 @@ class Camera:
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray):
         center = (bb_min + bb_max) / 2
-        extent = np.linalg.norm(bb_max - bb_min)
+        radius = np.linalg.norm(bb_max - bb_min) / 2
         self.target = center.astype(np.float32)
-        self.distance = max(extent * 1.2, 1.0)
+        self.distance = max(radius / math.tan(math.radians(self.fov / 2)) * 1.1, 1.0)
 
 
 class MeshBuffer:

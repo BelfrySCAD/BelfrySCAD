@@ -251,7 +251,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 │                      ├────────────────────────────────┘               │
 │                      │  Console                                        │
 ├──────────────────────┴─────────────────────────────────────────────────┤
-│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00  $vpf = 45.00  0 FPS │  ← status bar
+│  $vpt=[0,…]  $vpr=[55,…]  $vpd=50.0  $vpf=22.5    1024 × 768    0 FPS │  ← status bar
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -261,7 +261,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **Debugger** (right dock, top): visible by default; right dock owns all four corner pixels so it spans the full window height
 - **Animate / Customizer** (right dock, bottom — tabbed together): both hidden by default; Animate opens via toolbar (F7) or View ▸ Show Animate; Customizer opens via View ▸ Show Customizer
 - **Console** (bottom dock): single running log per window; not per-tab
-- **Status bar**: bottom strip; four separate camera labels (`$vpt`, `$vpr`, `$vpd`, `$vpf`) each with a tooltip ("Viewport Translate ($vpt)", "Viewport Rotation ($vpr)", "Viewport Distance ($vpd)", "Viewport FOV ($vpf)"), plus an FPS counter on the right. All four values are also passed to the evaluator as OpenSCAD special variables via `_viewport_params()`.
+- **Status bar**: bottom strip; four camera labels (`$vpt` 2 dp, `$vpr`/`$vpd`/`$vpf` 1 dp) each with a tooltip ("Viewport Translate ($vpt)", "Viewport Rotation ($vpr)", "Viewport Distance ($vpd)", "Viewport FOV ($vpf)"); a viewport size label showing logical pixel dimensions (W × H, updated via `size_changed` signal from `resizeGL`); and an FPS counter. All four `$vp*` values are passed to the evaluator as OpenSCAD special variables via `_viewport_params()`. Default FOV is 22.5°.
 
 The editor, console, debugger, animate, and customizer panes are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock", "CustomizerDock". All four corners are owned by the side docks (left owns top-left/bottom-left, right owns top-right/bottom-right), so the bottom dock is constrained between them. `setDockNestingEnabled(True)` allows docks to be split within an area; `setAnimated(False)` works around a Qt crash in `QVariantAnimation` during drag-to-tab operations. On first launch (no saved `windowState` matching `_LAYOUT_VERSION`), `showEvent` fires a deferred `_set_default_layout` call: editor dock ≈ 40% width, right dock ≈ 25% width, bottom dock ≈ 25% height, right dock split 60/40 between debugger and customizer/animate. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
 
@@ -337,7 +337,7 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 **View**:
 - Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console / Show Debugger / Show Animate
 - —
-- Top / Bottom / Left / Right / Front / Back / Isometric (change azimuth/elevation only; preserve target and distance) / View All (frame geometry at 1.2× extent)
+- Top / Bottom / Left / Right / Front / Back / Isometric (change azimuth/elevation only; preserve target and distance) / View All (frame geometry: sets target to bounding-sphere center, distance = radius / tan(fov/2) × 1.1 — FOV-aware so result is consistent regardless of current `$vpf`)
 - —
 - Perspective (toggle perspective/orthographic projection)
 - —

@@ -28,6 +28,7 @@ class Viewport(QOpenGLWidget):
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
+    size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,6 +91,7 @@ class Viewport(QOpenGLWidget):
         if self._ctx:
             self._ctx.viewport = (0, 0, w, h)
             self._renderer.set_viewport(w, h)
+        self.size_changed.emit(w, h)
 
     def paintGL(self):
         try:
@@ -348,7 +350,10 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         deadspot = 5
         factor = 1.01 if delta < -deadspot else 0.99 if delta > deadspot else 1.0
-        cam.distance = max(0.1, cam.distance * factor)
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            cam.fov = max(1.0, min(120.0, cam.fov * factor))
+        else:
+            cam.distance = max(0.1, cam.distance * factor)
         self.camera_changed.emit()
         self.update()
 

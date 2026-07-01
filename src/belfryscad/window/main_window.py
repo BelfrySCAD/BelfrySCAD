@@ -418,6 +418,7 @@ class MainWindow(QMainWindow):
         self._viewport.rotate_committed.connect(self._on_rotate_committed)
         self._viewport.scale_committed.connect(self._on_scale_committed)
         self._viewport.camera_changed.connect(self._update_camera_label)
+        self._viewport.size_changed.connect(self._update_size_label)
         self.setCentralWidget(self._viewport)
 
         # Corner ownership and nesting must be set before any addDockWidget calls
@@ -537,6 +538,10 @@ class MainWindow(QMainWindow):
 
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
+
+        self._size_label = QLabel("")
+        self._size_label.setToolTip("Viewport size (pixels)")
+        self._status_bar.addPermanentWidget(self._size_label)
 
         self._fps_label = QLabel("")
         self._status_bar.addPermanentWidget(self._fps_label)
@@ -869,10 +874,15 @@ class MainWindow(QMainWindow):
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
         vpd = float(cam.distance)
         vpf = float(cam.fov)
-        self._vpt_label.setText(f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]")
-        self._vpr_label.setText(f"  $vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}]")
-        self._vpd_label.setText(f"  $vpd = {vpd:.2f}")
-        self._vpf_label.setText(f"  $vpf = {vpf:.2f}")
+        self._vpt_label.setText(f"  Viewport: translate = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]")
+        self._vpr_label.setText(f"  rotate = [{vpr_x:.1f}, 0.0, {vpr_z:.1f}]")
+        self._vpd_label.setText(f"  dist = {vpd:.1f}")
+        self._vpf_label.setText(f"  FoV = {vpf:.1f}")
+
+    def _update_size_label(self, _w: int, _h: int):
+        w = self._viewport.width()
+        h = self._viewport.height()
+        self._size_label.setText(f"({w} × {h})  ")
 
     def _update_fps(self):
         count = self._viewport._frame_count
