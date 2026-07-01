@@ -531,6 +531,10 @@ class MainWindow(QMainWindow):
         self._vpd_label.setToolTip("Viewport Distance ($vpd)")
         self._status_bar.addWidget(self._vpd_label)
 
+        self._vpf_label = QLabel("")
+        self._vpf_label.setToolTip("Viewport FOV ($vpf)")
+        self._status_bar.addWidget(self._vpf_label)
+
         self._coord_label = QLabel("")
         self._status_bar.addWidget(self._coord_label)
 
@@ -864,9 +868,11 @@ class MainWindow(QMainWindow):
         vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
         vpd = float(cam.distance)
+        vpf = float(cam.fov)
         self._vpt_label.setText(f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]")
         self._vpr_label.setText(f"  $vpr = [{vpr_x:.2f}, 0.00, {vpr_z:.2f}]")
         self._vpd_label.setText(f"  $vpd = {vpd:.2f}")
+        self._vpf_label.setText(f"  $vpf = {vpf:.2f}")
 
     def _update_fps(self):
         count = self._viewport._frame_count
@@ -1299,6 +1305,7 @@ class MainWindow(QMainWindow):
                     ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0,
                 ],
                 "$vpd": float(cam.distance),
+                "$vpf": float(cam.fov),
             })
         except Exception:
             pass

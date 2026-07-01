@@ -251,7 +251,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 │                      ├────────────────────────────────┘               │
 │                      │  Console                                        │
 ├──────────────────────┴─────────────────────────────────────────────────┤
-│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00              0 FPS │  ← status bar
+│  $vpt = [0.00, …]  $vpr = [55.00, …]  $vpd = 50.00  $vpf = 45.00  0 FPS │  ← status bar
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -261,7 +261,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **Debugger** (right dock, top): visible by default; right dock owns all four corner pixels so it spans the full window height
 - **Animate / Customizer** (right dock, bottom — tabbed together): both hidden by default; Animate opens via toolbar (F7) or View ▸ Show Animate; Customizer opens via View ▸ Show Customizer
 - **Console** (bottom dock): single running log per window; not per-tab
-- **Status bar**: bottom strip; three separate camera-position labels (`$vpt`, `$vpr`, `$vpd`) each with a tooltip ("Viewport Translate ($vpt)", "Viewport Rotation ($vpr)", "Viewport Distance ($vpd)"), plus an FPS counter on the right
+- **Status bar**: bottom strip; four separate camera labels (`$vpt`, `$vpr`, `$vpd`, `$vpf`) each with a tooltip ("Viewport Translate ($vpt)", "Viewport Rotation ($vpr)", "Viewport Distance ($vpd)", "Viewport FOV ($vpf)"), plus an FPS counter on the right. All four values are also passed to the evaluator as OpenSCAD special variables via `_viewport_params()`.
 
 The editor, console, debugger, animate, and customizer panes are `QDockWidget` instances — dockable to any side or floatable, with position/visibility persisted via `QSettings("BelfrySCAD", "BelfrySCAD")` (`saveState()`/`restoreState()`). Object names: "EditorDock", "ConsoleDock", "DebuggerDock", "AnimateDock", "CustomizerDock". All four corners are owned by the side docks (left owns top-left/bottom-left, right owns top-right/bottom-right), so the bottom dock is constrained between them. `setDockNestingEnabled(True)` allows docks to be split within an area; `setAnimated(False)` works around a Qt crash in `QVariantAnimation` during drag-to-tab operations. On first launch (no saved `windowState` matching `_LAYOUT_VERSION`), `showEvent` fires a deferred `_set_default_layout` call: editor dock ≈ 40% width, right dock ≈ 25% width, bottom dock ≈ 25% height, right dock split 60/40 between debugger and customizer/animate. The Debugger pane is a single shared widget on `MainWindow` (not per-tab).
 
