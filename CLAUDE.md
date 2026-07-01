@@ -63,6 +63,8 @@ No live preview. Full Manifold CSG processing runs when:
 
 - The user selects **Render** (toolbar or Design menu)
 - A **gizmo drag commits** (mouse-up)
+- A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
+- A **file is saved** (`_write_file` triggers `_render` after writing)
 
 The viewport always shows the last render's result; it stays static while the user edits code.
 

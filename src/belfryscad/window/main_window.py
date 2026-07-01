@@ -1094,8 +1094,9 @@ class MainWindow(QMainWindow):
                     settings.setValue("recentFiles", recents)
                     self._rebuild_recent_menu()
                 return
-        self._create_and_add_tab(path, text)
+        tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
+        self._render(tab)
 
     def _save_file(self):
         tab = self._current_tab()
@@ -1133,6 +1134,7 @@ class MainWindow(QMainWindow):
             get_document_manager().unregister(old_path, tab.editor)
         get_document_manager().register(path, tab.editor)
         self._update_recent_files(path)
+        self._render(tab)
         return True
 
     # ------------------------------------------------------------------

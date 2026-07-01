@@ -72,7 +72,7 @@ Lookup order: `scope.lookup_variable(word)` â†’ `scope.lookup_function(word)` â†
 
 The definition node's `.position.origin` gives the source file path, `.position.line` the 1-indexed line. Navigation uses `scroll_to_line(line)` which ensures at least 5 lines of context above and below:
 - Same file (or origin `None` / untitled tab): scroll current editor to the line
-- Different file: switch to a matching open tab by `file_path`, or open via `_create_and_add_tab()` (view-only, no render)
+- Different file: switch to a matching open tab by `file_path`, or open via `_create_and_add_tab()` followed by `_render(tab)`
 
 `_create_and_add_tab(path, text) -> FileTab` creates a `FileTab` (editor + file metadata) and adds it to `_tabs` in the editor dock. Also registers the editor with `DocumentManager` for cross-window sync. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`, `_find_or_open_tab`; not by `_new_document` (different setup path for blank tabs).
 
