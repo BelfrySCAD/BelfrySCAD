@@ -1408,6 +1408,13 @@ class _GridViewport(Viewport):
                 line_verts.append(np.concatenate([pts[a], col_color]))
                 line_verts.append(np.concatenate([pts[b], col_color]))
             if is_triangular:
+                if shared >= 2:
+                    c_range_diag = shared if col_wrap else shared - 1
+                    for c in range(c_range_diag):
+                        a = base_a + c
+                        b = base_b + (c + 1) % shared
+                        line_verts.append(np.concatenate([pts[a], diag_color]))
+                        line_verts.append(np.concatenate([pts[b], diag_color]))
                 fan = _grid_fan_spec(len_a, len_b, col_wrap)
                 if fan is not None:
                     anchor_in_a, anchor_col, longer_len, ks = fan
