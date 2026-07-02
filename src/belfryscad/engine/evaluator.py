@@ -315,12 +315,18 @@ def _build_skeleton_graph_with_holes(
     (so pass `p0[::-1]`); holes must be CCW-in-math (so pass each
     `hole[::-1]` since holes from manifold are CW-in-math).
 
-    Returns `(heights, adjacency, p0_keys, hole_keys_list, key_fn)` or None.
-      heights         : position-key → offset-distance (0 on boundary)
-      adjacency       : position-key → [neighbour keys]  (undirected)
-      p0_keys         : keys for p0 vertices in traversal order
-      hole_keys_list  : list of key lists, one list per hole in order
-      key_fn          : snap function `(x, y) → position-key`
+    Returns `(heights, adjacency, p0_keys, hole_keys_list, key_fn, degenerate_holes)`
+    or None.
+      heights          : position-key → offset-distance (0 on boundary)
+      adjacency        : position-key → [neighbour keys]  (undirected)
+      p0_keys          : keys for p0 vertices in traversal order
+      hole_keys_list   : list of key lists, one list per hole in order
+      key_fn           : snap function `(x, y) → position-key`
+      degenerate_holes : list of bool, parallel to hole_keys_list — True for
+                         holes whose skeleton was computed in isolation (no
+                         connection from the main polyskel run), meaning their
+                         boundary must be traced in reversed order (see
+                         `_skeleton_roof_component`)
     """
     try:
         all_pts = np.vstack([p0] + hole_arrays) if hole_arrays else p0
@@ -469,7 +475,65 @@ def _build_skeleton_graph_with_holes(
                         add_edge(prev, w)
                         prev = w
 
-        return heights, adjacency, p0_keys, hole_keys_list, key
+        # Post-process: for each hole whose boundary vertices have no interior
+        # skeleton connections, compute the hole's isolated straight skeleton
+        # and inject it.  polyskel sometimes fails to generate wavefront events
+        # for a hole when the hole is a simple degenerate shape (e.g. a triangular
+        # counter whose three bisectors converge simultaneously), producing no
+        # skeleton vertices attached to the hole.  Without an interior apex, all
+        # three hole-edge face traces cycle around the same flat triangle, making
+        # each hole edge appear four times in the final mesh → NotManifold.
+        # Running polyskel on the hole in isolation always works (e.g. gives the
+        # incenter for a triangle) and produces the correct roof faces.
+        #
+        # The isolated skeleton is computed by treating the hole polygon as its
+        # own mini *outer* polygon (CW-in-math, matching polyskel's convention),
+        # so its interior apex sits on the opposite side from a normal hole's
+        # skeleton (which faces the surrounding solid material). Consequently
+        # `_trace_face` must walk these particular holes' boundary edges in
+        # *reversed* (CCW) order — like an outer boundary trace — instead of the
+        # natural CW order used for holes with a genuine connection to the main
+        # skeleton. `degenerate_holes` records which holes need this treatment.
+        degenerate_holes: list[bool] = [False] * len(hole_keys_list)
+        for hidx, (hole_arr, hkeys) in enumerate(zip(hole_arrays, hole_keys_list)):
+            hole_key_set = set(hkeys)
+            has_interior = any(
+                heights.get(w, 0.0) > 0.0
+                for v in hkeys
+                for w in adjacency.get(v, [])
+                if w not in hole_key_set
+            )
+            if has_interior:
+                continue
+            degenerate_holes[hidx] = True
+            # Hole vertices are CW-in-math = what polyskel expects for an outer polygon.
+            hole_pts_iso = [(float(x), float(y)) for x, y in hole_arr]
+            iso = _run_skeletonize(hole_pts_iso, [])
+            if not iso:
+                continue
+            for st in iso:
+                s = key(st.source.x, st.source.y)
+                heights[s] = st.height
+                adjacency.setdefault(s, [])
+                by_angle_iso: dict[float, list] = {}
+                for sink in st.sinks:
+                    t = key(sink.x, sink.y)
+                    if t == s:
+                        continue
+                    heights.setdefault(t, 0.0)
+                    adjacency.setdefault(t, [])
+                    dx, dy = t[0] - s[0], t[1] - s[1]
+                    ang = round(math.atan2(dy, dx), 9)
+                    dist2 = dx * dx + dy * dy
+                    by_angle_iso.setdefault(ang, []).append((dist2, t))
+                for ang, group in by_angle_iso.items():
+                    group.sort()
+                    prev = s
+                    for _, t in group:
+                        add_edge(prev, t)
+                        prev = t
+
+        return heights, adjacency, p0_keys, hole_keys_list, key, degenerate_holes
     except Exception:
         return None
 
@@ -506,28 +570,49 @@ def _trace_face(adjacency: dict, u: tuple, v: tuple) -> Optional[list]:
 
 def _triangulate_planar_face(face_pts3d: np.ndarray) -> Optional[list[tuple[int, int, int]]]:
     """Triangulate a planar roof face given as 3D points (CCW order, all
-    coplanar). The projection basis derived from the first 3 points (`u`
-    along the first edge, `v = normal x u`) makes `_ear_clip`'s output map
-    directly to outward-facing 3D triangles, with no winding reversal.
+    coplanar). The normal is estimated via Newell's method (a sum over all
+    vertex pairs, not just the first 3): for an exactly planar CCW polygon
+    this is identical in direction to `cross(p1-p0, p2-p0)`, but it stays
+    numerically stable when the first few vertices happen to be near-collinear
+    (common along a straight or gently-curved boundary run), which the
+    3-point cross product cannot handle. The projection basis (`u` along the
+    first edge projected onto the fitted plane, `v = normal x u`) makes
+    `_ear_clip`'s output map directly to outward-facing 3D triangles, with no
+    winding reversal.
 
     Returns `None` if the face is degenerate (fewer than 3 points, near-zero
-    normal), not planar within tolerance, or ear-clipping fails.
+    normal or first edge), not planar within tolerance, or ear-clipping fails.
     """
     n = len(face_pts3d)
     if n < 3:
         return None
-    p0, p1, p2 = face_pts3d[0], face_pts3d[1], face_pts3d[2]
-    normal = np.cross(p1 - p0, p2 - p0)
+    nx = ny = nz = 0.0
+    for i in range(n):
+        x0, y0, z0 = face_pts3d[i]
+        x1, y1, z1 = face_pts3d[(i + 1) % n]
+        nx += (y0 - y1) * (z0 + z1)
+        ny += (z0 - z1) * (x0 + x1)
+        nz += (x0 - x1) * (y0 + y1)
+    normal = np.array([nx, ny, nz])
     norm_len = np.linalg.norm(normal)
     if norm_len < 1e-12:
         return None
     normal = normal / norm_len
-    u_axis = p1 - p0
-    u_axis = u_axis / np.linalg.norm(u_axis)
+
+    p0 = face_pts3d[0]
+    edge = face_pts3d[1] - p0
+    edge = edge - np.dot(edge, normal) * normal
+    edge_len = np.linalg.norm(edge)
+    if edge_len < 1e-12:
+        return None
+    u_axis = edge / edge_len
     v_axis = np.cross(normal, u_axis)
 
     span = max(float(np.linalg.norm(face_pts3d.max(axis=0) - face_pts3d.min(axis=0))), 1e-9)
-    tol = span * 1e-4
+    # Looser than the old 1e-4: real (but still flat, per straight-skeleton
+    # theory) facets can accumulate a bit more numerical noise from polyskel
+    # over many vertices than a simple 3-point check tolerated.
+    tol = span * 2e-3
     pts2d = np.zeros((n, 2))
     for i, p in enumerate(face_pts3d):
         rel = p - p0
@@ -541,34 +626,295 @@ def _triangulate_planar_face(face_pts3d: np.ndarray) -> Optional[list[tuple[int,
         return None
 
 
-def _skeleton_roof_component(
-    outer_arr: np.ndarray,
-    hole_arrs: list[np.ndarray],
-) -> Optional[m3d.Manifold]:
-    """Build a straight-skeleton roof for one connected component: a CCW outer
-    polygon and zero or more CW hole polygons. Returns a closed Manifold or None.
+def _split_pinched_face(face: list, classify, add_face_triangles) -> bool:
+    """Decompose a `_trace_face` result that spans a straight-skeleton "pinch"
+    — a thin-stroke split/collision event where a ridge directly touches a
+    *different* stretch of boundary — into its correct flat sub-facets, and
+    add each via `add_face_triangles`.
 
-    Floor faces: tessellated via shapely Delaunay (centroid-filtered for holes).
-    Roof faces: traced from each boundary edge in its natural direction using
-    `_trace_face`. For CCW outer edges the left side is the interior (roofable).
-    For CW hole edges the left side is also the exterior of the hole (roofable),
-    so natural direction works for both — no reversal needed.
+    `face[0]` is the vertex the trace started from, so the maximal run of
+    consecutive (non-SKEL) boundary points containing it is the face's "home"
+    run — the boundary edge(s) actually being traced. Any *other* maximal
+    boundary run found elsewhere in the cyclic face is foreign, even if it
+    shares the home run's ring (`classify(pt) -> (kind, ring_id)`): two
+    non-adjacent stretches of the very same outer or hole ring can end up in
+    one merged trace just as easily as outer-vs-hole can (e.g. where a bowl's
+    curve pinches against an unrelated stem). Each foreign run, plus the one
+    skeleton point flanking it on each side, forms its own small flat facet
+    (`add_face_triangles([before] + run + [after])`); the remainder of `face`
+    — with each such run replaced by a direct edge between its two flanking
+    points — forms the main flat facet. When only the home run is found this
+    reduces to triangulating `face` unchanged (the common, non-pinched case).
+    Returns False if any resulting sub-facet fails to triangulate (e.g. still
+    non-planar, or degenerates below 3 points). Used as a middle fallback tier
+    in `_build_roof_mesh`/`_skeleton_roof_component`, between ownership-
+    constrained tracing and plain unconstrained tracing.
+    """
+    n = len(face)
+    cats = [classify(p) for p in face]
+
+    runs: list[tuple[int, int]] = []
+    idx = 0
+    while idx < n:
+        cat = cats[idx]
+        if cat[0] != "SKEL":
+            start = idx
+            j = idx
+            while j + 1 < n and cats[j + 1] == cat:
+                j += 1
+            runs.append((start, j))
+            idx = j + 1
+        else:
+            idx += 1
+
+    home_run = next(r for r in runs if r[0] <= 0 <= r[1])
+    foreign_runs = [r for r in runs if r != home_run]
+
+    if not foreign_runs:
+        return add_face_triangles(face)
+
+    skip = set()
+    for (s, e) in foreign_runs:
+        skip.update(range(s, e + 1))
+    big_face = [face[k] for k in range(n) if k not in skip]
+
+    ok = len(big_face) >= 3 and add_face_triangles(big_face)
+    for (s, e) in foreign_runs:
+        before = face[(s - 1) % n]
+        after = face[(e + 1) % n]
+        small_face = [before] + face[s:e + 1] + [after]
+        ok = add_face_triangles(small_face) and ok
+    return ok
+
+
+class _UnionFind:
+    def __init__(self, items):
+        self.parent = {x: x for x in items}
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[ra] = rb
+
+
+def _edge_line(a: tuple, b: tuple) -> Optional[tuple]:
+    """Return `(point, unit_direction, unit_interior_normal)` for boundary
+    edge `a -> b`, where the normal points to the LEFT of `a -> b` — the
+    interior side for a CCW outer edge, and (per the polygon-winding
+    convention used throughout this module) also the interior/solid side for
+    a CW hole edge. `None` if the edge is degenerate (zero length).
+    """
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    if length < 1e-12:
+        return None
+    ux, uy = dx / length, dy / length
+    return (ax, ay), (ux, uy), (-uy, ux)
+
+
+def _assign_edge_ownership(
+    adjacency: dict,
+    heights: dict,
+    p0_keys: list,
+    hole_keys_list: list,
+) -> tuple[dict, dict]:
+    """Determine, for every graph vertex, which original boundary edge(s) its
+    roof facet belongs to — the information the plain undirected-adjacency
+    graph doesn't otherwise retain, and which a naive angle-sort walk
+    (`_trace_face`) can silently cross between when several boundary edges'
+    facets get merged by a "pass-through" vertex (no ridge to separate them).
+
+    Two edges are first grouped together (via union-find) whenever a shared
+    boundary vertex between them has no interior connection at all (a genuine
+    "no ridge here, these edges' facets are contiguous" case — most commonly a
+    flat or gently-curved boundary run). Then, per straight-skeleton theory, a
+    point's height equals its perpendicular distance to the line of whichever
+    edge(s) it belongs to — a "ridge" vertex is assigned to every edge group
+    whose line it sits at height-equal distance from (usually one, but
+    genuinely two or more at real ridge/valley junctions where facets meet).
+
+    Returns `(owners, group_of)`:
+      owners   : vertex-key -> set of edge-group ids that own it
+      group_of : edge_id ('OUTER', i) or ('HOLE', j, i) -> its group id
+    """
+    all_edge_ids: list = []
+    edge_lines: dict = {}
+    n0 = len(p0_keys)
+    for i in range(n0):
+        eid = ("OUTER", i)
+        all_edge_ids.append(eid)
+        line = _edge_line(p0_keys[i], p0_keys[(i + 1) % n0])
+        if line is not None:
+            edge_lines[eid] = line
+    for j, hkeys in enumerate(hole_keys_list):
+        nh = len(hkeys)
+        for i in range(nh):
+            eid = ("HOLE", j, i)
+            all_edge_ids.append(eid)
+            line = _edge_line(hkeys[i], hkeys[(i + 1) % nh])
+            if line is not None:
+                edge_lines[eid] = line
+
+    uf = _UnionFind(all_edge_ids)
+
+    def union_ring(ring_keys, kind, ring_idx=None):
+        n = len(ring_keys)
+        for i in range(n):
+            v = ring_keys[i]
+            nbrs = adjacency.get(v, [])
+            prev_pt, next_pt = ring_keys[(i - 1) % n], ring_keys[(i + 1) % n]
+            if len(nbrs) != 2 or not all(w in (prev_pt, next_pt) for w in nbrs):
+                continue
+            # No ridge separates this vertex's two edges — but that only means
+            # they share one flat facet if they're actually collinear. A
+            # coarsely-segmented curve (e.g. low $fn) can have a real bend at
+            # a vertex with no ridge event; merging across it would fold two
+            # differently-angled edges' facets into one non-planar "facet".
+            d1x, d1y = v[0] - prev_pt[0], v[1] - prev_pt[1]
+            d2x, d2y = next_pt[0] - v[0], next_pt[1] - v[1]
+            len1, len2 = math.hypot(d1x, d1y), math.hypot(d2x, d2y)
+            if len1 < 1e-12 or len2 < 1e-12:
+                continue
+            cross = (d1x * d2y - d1y * d2x) / (len1 * len2)
+            if abs(cross) > 0.02:  # ~1.1 degrees
+                continue
+            prev_id = ("OUTER", (i - 1) % n) if kind == "OUTER" else ("HOLE", ring_idx, (i - 1) % n)
+            cur_id = ("OUTER", i) if kind == "OUTER" else ("HOLE", ring_idx, i)
+            uf.union(prev_id, cur_id)
+
+    union_ring(p0_keys, "OUTER")
+    for j, hkeys in enumerate(hole_keys_list):
+        union_ring(hkeys, "HOLE", j)
+
+    group_of = {eid: uf.find(eid) for eid in all_edge_ids}
+
+    p0_index = {k: i for i, k in enumerate(p0_keys)}
+    hole_index = [{k: i for i, k in enumerate(hkeys)} for hkeys in hole_keys_list]
+
+    owners: dict[tuple, set] = {}
+    for v, h in heights.items():
+        owned: set = set()
+        if h <= 1e-9:
+            if v in p0_index:
+                i = p0_index[v]
+                owned.add(group_of[("OUTER", (i - 1) % n0)])
+                owned.add(group_of[("OUTER", i)])
+            else:
+                for j, hi in enumerate(hole_index):
+                    if v in hi:
+                        i = hi[v]
+                        nh = len(hole_keys_list[j])
+                        owned.add(group_of[("HOLE", j, (i - 1) % nh)])
+                        owned.add(group_of[("HOLE", j, i)])
+                        break
+        else:
+            best_diff = float("inf")
+            best_groups: set = set()
+            for eid, (pt, _ud, un) in edge_lines.items():
+                dist = (v[0] - pt[0]) * un[0] + (v[1] - pt[1]) * un[1]
+                if dist < -1e-6:
+                    continue  # vertex is on the wrong side of this edge's line
+                diff = abs(dist - h)
+                gid = group_of[eid]
+                if diff <= max(1e-6, h * 1e-4):
+                    owned.add(gid)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_groups = {gid}
+            if not owned:
+                owned = best_groups
+        owners[v] = owned
+    return owners, group_of
+
+
+def _trace_owned_face(adjacency: dict, owners: dict, group_id, u: tuple, v: tuple) -> Optional[list]:
+    """Like `_trace_face`, but only follows the "immediately clockwise"
+    neighbour while it's owned by `group_id` (see `_assign_edge_ownership`).
+    As soon as the next vertex belongs to a different facet, that's this
+    facet's natural boundary — return what's traced so far (an implicitly
+    closed polygon: the caller connects its last point straight back to `u`),
+    rather than blindly continuing into someone else's geometry the way a
+    plain angle-sort walk would.
+    """
+    start = (u, v)
+    face = [u]
+    cur_u, cur_v = u, v
+    for _ in range(2 * len(adjacency) + 4):
+        face.append(cur_v)
+        neighbors = adjacency.get(cur_v)
+        if not neighbors or len(neighbors) < 2:
+            return face if len(face) >= 3 else None
+        ordered = sorted(neighbors, key=lambda w: math.atan2(w[1] - cur_v[1], w[0] - cur_v[0]))
+        try:
+            idx = ordered.index(cur_u)
+        except ValueError:
+            return face if len(face) >= 3 else None
+        nxt = ordered[(idx - 1) % len(ordered)]
+        if nxt != u and group_id not in owners.get(nxt, ()):
+            return face if len(face) >= 3 else None
+        cur_u, cur_v = cur_v, nxt
+        if (cur_u, cur_v) == start:
+            return face[:-1]
+    return None
+
+
+def _build_roof_mesh(
+    p0: np.ndarray,
+    hole_arrs: list[np.ndarray],
+    heights: dict,
+    adjacency: dict,
+    p0_keys: list,
+    hole_keys_list: list,
+    degenerate_holes: list,
+    key,
+    strategy: str,
+) -> Optional[m3d.Manifold]:
+    """Build one candidate roof+floor mesh for a component, using one of three
+    face-tracing strategies. Returns a closed Manifold or None on any failure.
+
+    No single strategy handles every thin-stroke pinch/collision pattern a
+    real font can produce, so `_skeleton_roof_component` tries all three (in
+    order of how much cross-facet protection they offer) and keeps whichever
+    actually produces a valid manifold:
+
+    - `"owned"`: `_assign_edge_ownership` + `_trace_owned_face`. Computes,
+      from straight-skeleton geometry alone (a vertex's height must equal its
+      distance to the edge(s) it belongs to), which facet every vertex
+      actually belongs to, and refuses to trace across into a different
+      facet's territory. Handles most pinches (outer-vs-hole, two
+      non-adjacent runs of the same ring) correctly and precisely — but when
+      a ridge point is legitimately, exactly equidistant from *several*
+      boundary edges at once (a real hip/valley junction, common along
+      *repeatedly*-pinched thin strokes), each edge's trace can independently
+      give up right there and close via a "virtual chord" back to its own
+      start, with no guarantee some other trace produces the exact opposite
+      chord to pair with it — leaving the mesh open.
+    - `"split"`: plain `_trace_face` + `_split_pinched_face`. Traces without
+      any ownership constraint (so it can merge multiple facets into one
+      loop), then decomposes that loop after the fact by finding the "home"
+      run of boundary points containing the trace's start and treating any
+      other boundary run as a pinch to excise into its own small facet. Less
+      precise than `"owned"` (a coarser, single-pass heuristic) but doesn't
+      have the open-mesh failure mode, so it succeeds on some geometries
+      `"owned"` doesn't.
+    - `"plain"`: plain `_trace_face`, no cross-facet handling at all. Works
+      whenever a component simply has no such pinch to worry about.
     """
     try:
         from shapely.geometry import Polygon as _SPoly
         from shapely import constrained_delaunay_triangles as _cdt
 
-        p0 = _ccw_polygon(outer_arr)
-        n0 = len(p0)
-        if n0 < 3:
-            return None
-
-        graph = _build_skeleton_graph_with_holes(p0, hole_arrs)
-        if graph is None:
-            return None
-        heights, adjacency, p0_keys, hole_keys_list, key = graph
-        if len(set(p0_keys)) != n0:
-            return None
+        n0 = len(p0_keys)
+        heights = dict(heights)
+        adjacency = {k: list(v) for k, v in adjacency.items()}
 
         final_verts: list[tuple[float, float, float]] = []
         idx_map: dict[tuple, int] = {}
@@ -612,36 +958,85 @@ def _skeleton_roof_component(
                 tris.append(tuple(fi))
 
         # --- Roof faces for outer boundary edges (CCW: interior on left) ---
-        for i in range(n0):
-            face = _trace_face(adjacency, p0_keys[i], p0_keys[(i + 1) % n0])
-            if face is None or len(face) < 3:
-                return None
-            face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
-            face_tris = _triangulate_planar_face(face_pts3d)
-            if face_tris is None:
-                return None
-            face_idx = [vert_index(p) for p in face]
-            for (a, b, c) in face_tris:
-                tris.append((face_idx[a], face_idx[b], face_idx[c]))
-
-        # --- Roof faces for hole boundary edges ---
         # Holes are CW-in-math; the LEFT of each natural CW directed edge is
         # the exterior (roofable) region, so trace in the natural direction.
-        for hkeys in hole_keys_list:
+        # Degenerate holes (isolated skeleton, no connection to the main
+        # polyskel run) are the exception: their interior apex sits on the
+        # opposite side of the natural direction (the isolated skeleton was
+        # computed by treating the hole as its own tiny outer polygon), so
+        # `_trace_face` must be called on the reversed edge to find the correct
+        # face at all — but the found face's point order then comes out with
+        # the base edge in the same direction as the floor triangulation's
+        # (which always walks holes in their natural order), so it must be
+        # reversed again before triangulating to get the opposing winding a
+        # manifold mesh requires.
+        if strategy == "owned":
+            owners, group_of = _assign_edge_ownership(adjacency, heights, p0_keys, hole_keys_list)
+        elif strategy == "split":
+            p0_key_set = set(p0_keys)
+            hole_key_sets = [set(hkeys) for hkeys in hole_keys_list]
+
+            def classify(pt):
+                if pt in p0_key_set:
+                    return ("OUTER", -1)
+                for j, hs in enumerate(hole_key_sets):
+                    if pt in hs:
+                        return ("HOLE", j)
+                return ("SKEL", -1)
+
+        consumed: set[tuple] = set()
+
+        def add_face_triangles(face_pts_keys):
+            face_pts3d = np.array([(p[0], p[1], heights.get(p, 0.0)) for p in face_pts_keys])
+            face_tris = _triangulate_planar_face(face_pts3d)
+            if face_tris is None:
+                return False
+            face_idx = [vert_index(p) for p in face_pts_keys]
+            for (a, b, c) in face_tris:
+                tris.append((face_idx[a], face_idx[b], face_idx[c]))
+            nf = len(face_pts_keys)
+            for k in range(nf):
+                consumed.add((face_pts_keys[k], face_pts_keys[(k + 1) % nf]))
+            return True
+
+        def process_boundary_edge(edge_id, u, v):
+            if (u, v) in consumed:
+                return True
+            if strategy == "owned":
+                face = _trace_owned_face(adjacency, owners, group_of[edge_id], u, v)
+                if face is None or len(face) < 3:
+                    return False
+                return add_face_triangles(face)
+            face = _trace_face(adjacency, u, v)
+            if face is None or len(face) < 3:
+                return False
+            if strategy == "split":
+                return _split_pinched_face(face, classify, add_face_triangles)
+            return add_face_triangles(face)
+
+        for i in range(n0):
+            if not process_boundary_edge(("OUTER", i), p0_keys[i], p0_keys[(i + 1) % n0]):
+                return None
+
+        for j, (hkeys, is_degenerate) in enumerate(zip(hole_keys_list, degenerate_holes)):
             nh = len(hkeys)
             if len(set(hkeys)) != nh:
                 return None
             for i in range(nh):
-                face = _trace_face(adjacency, hkeys[i], hkeys[(i + 1) % nh])
-                if face is None or len(face) < 3:
-                    return None
-                face_pts3d = np.array([(p[0], p[1], heights[p]) for p in face])
-                face_tris = _triangulate_planar_face(face_pts3d)
-                if face_tris is None:
-                    return None
-                face_idx = [vert_index(p) for p in face]
-                for (a, b, c) in face_tris:
-                    tris.append((face_idx[a], face_idx[b], face_idx[c]))
+                u, v = hkeys[i], hkeys[(i + 1) % nh]
+                if is_degenerate:
+                    if (u, v) in consumed:
+                        continue
+                    face = _trace_face(adjacency, v, u)
+                    if face is not None:
+                        face = list(reversed(face))
+                    if face is None or len(face) < 3:
+                        return None
+                    if not add_face_triangles(face):
+                        return None
+                else:
+                    if not process_boundary_edge(("HOLE", j, i), u, v):
+                        return None
 
         if not tris or not final_verts:
             return None
@@ -655,6 +1050,40 @@ def _skeleton_roof_component(
         return body
     except Exception:
         return None
+
+
+def _skeleton_roof_component(
+    outer_arr: np.ndarray,
+    hole_arrs: list[np.ndarray],
+) -> Optional[m3d.Manifold]:
+    """Build a straight-skeleton roof for one connected component: a CCW outer
+    polygon and zero or more CW hole polygons. Returns a closed Manifold or None.
+
+    Tries `_build_roof_mesh`'s three tracing strategies in order — `"owned"`,
+    `"split"`, `"plain"` (see its docstring) — since each fails on a different,
+    non-overlapping class of thin-stroke geometry; trying all three covers far
+    more real fonts/glyphs than any single one alone.
+    """
+    p0 = _ccw_polygon(outer_arr)
+    n0 = len(p0)
+    if n0 < 3:
+        return None
+
+    graph = _build_skeleton_graph_with_holes(p0, hole_arrs)
+    if graph is None:
+        return None
+    heights, adjacency, p0_keys, hole_keys_list, key, degenerate_holes = graph
+    if len(set(p0_keys)) != n0:
+        return None
+
+    for strategy in ("owned", "split", "plain"):
+        body = _build_roof_mesh(
+            p0, hole_arrs, heights, adjacency, p0_keys, hole_keys_list,
+            degenerate_holes, key, strategy,
+        )
+        if body is not None:
+            return body
+    return None
 
 
 def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
