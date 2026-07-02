@@ -5,12 +5,12 @@ of points) need not be rectangular: rows may have different lengths (e.g. a
 cone's single-point apex row next to a wider base row).
 
 These test the pure-Python helpers only (`_is_grid`, `_grid_row_offsets`,
-`_grid_flat_to_rc`); the Qt/OpenGL rendering classes (`GridViewer`,
-`_GridViewport`) aren't covered here, consistent with the rest of the test
-suite (no existing tests instantiate Qt widgets).
+`_grid_flat_to_rc`, `_grid_is_triangular`); the Qt/OpenGL rendering classes
+(`GridViewer`, `_GridViewport`) aren't covered here, consistent with the
+rest of the test suite (no existing tests instantiate Qt widgets).
 """
 from belfryscad.window.data_viewers import (
-    _is_grid, _grid_row_offsets, _grid_flat_to_rc,
+    _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
 )
 
 
@@ -83,3 +83,24 @@ class TestGridFlatToRc:
         offsets = _grid_row_offsets(grid)
         assert _grid_flat_to_rc(0, offsets) == (0, 0)
         assert _grid_flat_to_rc(4, offsets) == (1, 2)
+
+
+class TestGridIsTriangular:
+    def test_rectangular_grid_is_not_triangular(self):
+        assert not _grid_is_triangular([3, 3, 3])
+
+    def test_apex_to_base_taper_is_triangular(self):
+        assert _grid_is_triangular([1, 8])
+
+    def test_triangular_number_progression_is_triangular(self):
+        assert _grid_is_triangular([1, 2, 3, 4])
+
+    def test_single_mismatch_among_matching_rows_is_triangular(self):
+        assert _grid_is_triangular([3, 3, 4, 4])
+
+    def test_row_wrap_considers_wraparound_pair(self):
+        # Without wrap, rows 0 and 2 (the endpoints) aren't adjacent.
+        assert not _grid_is_triangular([3, 3, 3], row_wrap=False)
+        # With wrap, the last row connects back to the first — a mismatch
+        # there also makes the grid triangular.
+        assert _grid_is_triangular([3, 3, 4], row_wrap=True)

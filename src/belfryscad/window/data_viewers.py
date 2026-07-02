@@ -78,6 +78,22 @@ def _grid_flat_to_rc(vi: int, row_offsets: list[int]) -> tuple[int, int]:
     return r, vi - row_offsets[r]
 
 
+def _grid_is_triangular(row_lens: list[int], row_wrap: bool = False) -> bool:
+    """A grid is "triangular" (as opposed to a plain rectangular quad grid)
+    if any two adjacent rows have different lengths — e.g. a cone's
+    single-point apex row next to a wider base row, or a triangular-number
+    row progression (1, 2, 3, ...). `_GridViewport` draws a third,
+    diagonal, line direction for such grids in addition to the row/column
+    lines every grid gets."""
+    rows = len(row_lens)
+    r_range = rows if row_wrap else rows - 1
+    for r in range(r_range):
+        r_next = (r + 1) % rows
+        if row_lens[r] != row_lens[r_next]:
+            return True
+    return False
+
+
 def _is_vnf(v) -> bool:
     if not (_is_list(v) and len(v) == 2):
         return False
@@ -1323,13 +1339,19 @@ class _GridViewport(Viewport):
 
         r_range = rows if row_wrap else rows - 1
 
-        # Row lines (orange, within one row) and column lines (blue, between
+        # Row lines (red, within one row) and column lines (blue, between
         # adjacent rows) — always drawn in both modes. Rows can have
         # different lengths (a ragged/non-rectangular grid): row lines use
         # each row's own length independently, and column lines between a
         # pair of rows are limited to the columns the two rows actually share.
-        row_color = np.array([0.85, 0.45, 0.1], dtype=np.float32)
+        # For a triangular grid (any two adjacent rows differ in length —
+        # e.g. a cone's apex-to-base taper, or a triangular-number row
+        # progression) a third, diagonal direction (green) is also drawn,
+        # completing the triangulation implied by the row-length mismatch.
+        row_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         col_color = np.array([0.15, 0.45, 0.85], dtype=np.float32)
+        diag_color = np.array([0.15, 0.75, 0.25], dtype=np.float32)
+        is_triangular = _grid_is_triangular(row_lens, row_wrap)
         line_verts = []
         for r in range(rows):
             n = row_lens[r]
@@ -1351,6 +1373,13 @@ class _GridViewport(Viewport):
                 b = base_b + c
                 line_verts.append(np.concatenate([pts[a], col_color]))
                 line_verts.append(np.concatenate([pts[b], col_color]))
+            if is_triangular and shared >= 2:
+                c_range_diag = shared if col_wrap else shared - 1
+                for c in range(c_range_diag):
+                    a = base_a + c
+                    b = base_b + (c + 1) % shared
+                    line_verts.append(np.concatenate([pts[a], diag_color]))
+                    line_verts.append(np.concatenate([pts[b], diag_color]))
         if line_verts:
             self._renderer.upload_lines(np.array(line_verts, dtype=np.float32))
 
