@@ -11,6 +11,7 @@ rest of the test suite (no existing tests instantiate Qt widgets).
 """
 from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
+    _grid_fan_spec,
 )
 
 
@@ -104,3 +105,40 @@ class TestGridIsTriangular:
         # With wrap, the last row connects back to the first — a mismatch
         # there also makes the grid triangular.
         assert _grid_is_triangular([3, 3, 4], row_wrap=True)
+
+
+class TestGridFanSpec:
+    def test_equal_lengths_needs_no_fan(self):
+        assert _grid_fan_spec(3, 3, col_wrap=False) is None
+
+    def test_apex_to_base_fans_every_base_edge(self):
+        # A single apex point (row A) fanning out to an 8-point base row
+        # (row B) needs 7 fan triangles/spokes to cover every base edge.
+        anchor_in_a, anchor_col, longer_len, ks = _grid_fan_spec(1, 8, col_wrap=False)
+        assert anchor_in_a is True
+        assert anchor_col == 0
+        assert longer_len == 8
+        assert list(ks) == [0, 1, 2, 3, 4, 5, 6]
+
+    def test_apex_to_base_col_wrap_closes_the_fan(self):
+        anchor_in_a, anchor_col, longer_len, ks = _grid_fan_spec(1, 8, col_wrap=True)
+        assert list(ks) == [0, 1, 2, 3, 4, 5, 6, 7]
+
+    def test_off_by_one_growth_needs_one_extra_triangle(self):
+        # Rows of length 2 then 3 (a triangular-number step): the shared
+        # prefix (columns 0-1) is a plain quad; only the extra column (2)
+        # needs a fan triangle.
+        anchor_in_a, anchor_col, longer_len, ks = _grid_fan_spec(2, 3, col_wrap=False)
+        assert anchor_in_a is True
+        assert anchor_col == 1
+        assert longer_len == 3
+        assert list(ks) == [1]
+
+    def test_direction_reverses_when_second_row_is_shorter(self):
+        # Same taper, but row A is now the longer one — the anchor should
+        # be identified as belonging to row B instead.
+        anchor_in_a, anchor_col, longer_len, ks = _grid_fan_spec(3, 2, col_wrap=False)
+        assert anchor_in_a is False
+        assert anchor_col == 1
+        assert longer_len == 3
+        assert list(ks) == [1]
