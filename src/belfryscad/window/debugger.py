@@ -288,6 +288,15 @@ class DebugSession(QObject):
         """Request the evaluator to pause at the next debug hook call."""
         self._pause_requested = True
 
+    def set_breakpoints(self, breakpoints: dict[str, set[int]]):
+        """Update the breakpoint set for a running/paused session — called
+        whenever a breakpoint is toggled in any editor tab while debugging,
+        so newly-added breakpoints take effect immediately rather than only
+        on the next Restart. Read by the hook (worker thread); reassigning
+        the dict wholesale (rather than mutating it) makes the update
+        atomic enough under the GIL without needing a lock."""
+        self._breakpoints = dict(breakpoints)
+
     def resume(self, command: str = "continue", mods: dict | None = None):
         self._resume_command = command
         self._pending_mods = dict(mods) if mods else {}
