@@ -385,11 +385,29 @@ def _build_skeleton_graph_with_holes(
             s = key(st.source.x, st.source.y)
             heights[s] = st.height
             adjacency.setdefault(s, [])
+            # Group sinks by angle from source.  When polyskel places multiple
+            # sinks on the same ray (collinear), adding all as direct edges
+            # creates same-angle neighbour pairs that confuse _trace_face's
+            # angle-sort.  Instead chain them: add source→closest only, then
+            # closest→next, … so the path is a sequence of short hops.
+            by_angle: dict[float, list] = {}
             for sink in st.sinks:
                 t = key(sink.x, sink.y)
+                if t == s:
+                    continue  # skip self-loop sinks
                 heights.setdefault(t, 0.0)
                 adjacency.setdefault(t, [])
-                add_edge(s, t)
+                dx, dy = t[0] - s[0], t[1] - s[1]
+                ang = round(math.atan2(dy, dx), 9)
+                dist2 = dx * dx + dy * dy
+                by_angle.setdefault(ang, []).append((dist2, t))
+            for ang, group in by_angle.items():
+                group.sort()  # ascending distance
+                # Connect source → closest (one short hop).
+                prev = s
+                for _, t in group:
+                    add_edge(prev, t)
+                    prev = t  # chain: each step only goes one hop further
 
         return heights, adjacency, p0_keys, hole_keys_list, key
     except Exception:
