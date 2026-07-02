@@ -1359,6 +1359,9 @@ def _font_tables_from_path(path: str, ttc_index: int = 0) -> dict:
         # Some fonts store glyph outlines in CFF rather than glyf.
         glyf_table = font.get("glyf")
         hmtx_table = font.get("hmtx")
+        name_table = font.get("name")
+        family_name = name_table.getBestFamilyName() if name_table else None
+        style_name = name_table.getBestSubFamilyName() if name_table else None
         _font_table_cache[key] = {
             "cmap": font.getBestCmap() or {},
             "hmtx": hmtx_table,
@@ -1369,6 +1372,8 @@ def _font_tables_from_path(path: str, ttc_index: int = 0) -> dict:
             "glyph_set": font.getGlyphSet(),
             "path": path,
             "ttc_index": ttc_index,
+            "family_name": family_name or "Liberation Sans",
+            "style_name": style_name or "Regular",
         }
     return _font_table_cache[key]
 
@@ -1444,7 +1449,7 @@ def _glyph_bounds(gname: str, font: dict) -> tuple[float, float, float, float] |
         def _endPath(self):
             pass
 
-    _BoundsPen(glyph_set).draw(glyph_set[gname])
+    glyph_set[gname].draw(_BoundsPen(glyph_set))
     if not xs:
         return None
     return min(xs), min(ys), max(xs), max(ys)
@@ -1518,8 +1523,9 @@ def _text_align_offset(halign: str, valign: str, m: dict) -> tuple[float, float]
 
 
 class _FlattenPen(BasePen):
-    """A `BasePen` that flattens glyph outlines (including quadratic Bezier
-    curves) into polygon contours, for building a `m3d.CrossSection`."""
+    """A `BasePen` that flattens glyph outlines — quadratic Bezier curves
+    (TrueType `glyf` glyphs) and cubic Bezier curves (CFF/OTF glyphs) alike —
+    into polygon contours, for building a `m3d.CrossSection`."""
 
     def __init__(self, glyphSet, segs: int):
         super().__init__(glyphSet)
@@ -1539,6 +1545,16 @@ class _FlattenPen(BasePen):
             t = i / self.segs
             x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * pt1[0] + t ** 2 * pt2[0]
             y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * pt1[1] + t ** 2 * pt2[1]
+            self._contour.append((x, y))
+
+    def _curveToOne(self, pt1, pt2, pt3):
+        p0 = self._contour[-1]
+        for i in range(1, self.segs + 1):
+            t = i / self.segs
+            mt = 1 - t
+            a, b, c, d = mt ** 3, 3 * mt ** 2 * t, 3 * mt * t ** 2, t ** 3
+            x = a * p0[0] + b * pt1[0] + c * pt2[0] + d * pt3[0]
+            y = a * p0[1] + b * pt1[1] + c * pt2[1] + d * pt3[1]
             self._contour.append((x, y))
 
     def _closePath(self):
@@ -4418,22 +4434,26 @@ class Evaluator:
         return OscObject(result)
 
     def _builtin_textmetrics(self, args: dict, node) -> OscObject:
-        """`textmetrics(text=.., size=.., halign=.., valign=.., spacing=..)`.
+        """`textmetrics(text=.., size=.., halign=.., valign=.., spacing=.., font=..)`.
 
-        Measures `text` against the bundled Liberation Sans font (see
-        `_measure_text`) and returns an `OscObject` with `position`, `size`,
-        `ascent`, `descent`, `offset`, `advance` — matching real OpenSCAD's
-        key order and (for Liberation Sans) numeric values. `font`,
-        `direction`, `language`, `script` are accepted but unused; see
-        docs/evaluator.md for known gaps.
+        Measures `text` against the font resolved by `font=` (an OpenSCAD/
+        fontconfig pattern, e.g. `"Times New Roman:style=Bold"`, via
+        `_resolve_font()` — same resolution `text()` uses) and returns an
+        `OscObject` with `position`, `size`, `ascent`, `descent`, `offset`,
+        `advance` — matching real OpenSCAD's key order. Falls back to the
+        bundled Liberation Sans if `font=` is unset, `fc-match` is
+        unavailable, or the font can't be found. `direction`/`language`/
+        `script` are accepted but unused; see docs/evaluator.md for known gaps.
         """
         text = self._get_arg(args, 0, "text", "")
         size = self._get_arg(args, 1, "size", 10)
         halign = self._get_arg(args, None, "halign", "left")
         valign = self._get_arg(args, None, "valign", "baseline")
         spacing = self._get_arg(args, None, "spacing", 1)
+        font_spec = self._get_arg(args, None, "font", "") or ""
 
-        m = _measure_text(text, size, spacing)
+        font = _resolve_font(str(font_spec))
+        m = _measure_text(text, size, spacing, font)
         ascent, descent = m["ascent"], m["descent"]
         advance_x = m["advance_x"]
 
@@ -4452,15 +4472,20 @@ class Evaluator:
         })
 
     def _builtin_fontmetrics(self, args: dict, node) -> OscObject:
-        """`fontmetrics(size=.., font=..)` — global metrics of the bundled
-        Liberation Sans font, scaled for `size`. Returns a nested `OscObject`
-        with `nominal`/`max`/`interline`/`font`. `font=` is echoed back into
-        `font.family` for round-tripping but doesn't change the measurements
-        (see docs/evaluator.md for known gaps)."""
+        """`fontmetrics(size=.., font=..)` — global metrics of the font
+        resolved by `font=` (via `_resolve_font()`, same resolution `text()`
+        and `textmetrics()` use), scaled for `size`. Returns a nested
+        `OscObject` with `nominal`/`max`/`interline`/`font`; `font.family`/
+        `font.style` report the *actually resolved* font's real name (read
+        from its `name` table via `getBestFamilyName()`/`getBestSubFamilyName()`),
+        not just an echo of the request — e.g. `font="Times New Roman:style=Bold"`
+        yields `family="Times New Roman"`, `style="Bold"`. Falls back to the
+        bundled Liberation Sans if `font=` is unset, `fc-match` is
+        unavailable, or the font can't be found."""
         size = self._get_arg(args, 0, "size", 10)
-        font_name = self._get_arg(args, None, "font", "Liberation Sans")
+        font_spec = self._get_arg(args, None, "font", "") or ""
 
-        font = _load_default_font()
+        font = _resolve_font(str(font_spec))
         head, hhea = font["head"], font["hhea"]
         scale = size * (100 / 72) / font["units_per_em"]
 
@@ -4475,8 +4500,8 @@ class Evaluator:
             }),
             "interline": (hhea.ascent - hhea.descent + hhea.lineGap) * scale,
             "font": OscObject({
-                "family": font_name,
-                "style": "Regular",
+                "family": font["family_name"],
+                "style": font["style_name"],
             }),
         })
 

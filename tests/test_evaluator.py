@@ -2627,13 +2627,29 @@ class TestTextMetrics:
             'font = object(family = "Liberation Sans", style = "Regular"))'
         ]
 
-    def test_fontmetrics_echoes_requested_font_family(self):
+    def test_fontmetrics_resolves_requested_font(self):
+        # Arial is metric-compatible with Liberation Sans by design (same
+        # hhea-derived nominal/interline), but "max" comes from the actual
+        # glyph bbox extremes in the *resolved* font's head table, so it
+        # differs — proving font= actually selects a different font rather
+        # than just being echoed back into the family name.
         _, echoes = run('echo(fontmetrics(size=10, font="Arial"));')
         assert echoes == [
             "ECHO: object(nominal = object(ascent = 12.5732, descent = -2.94325), "
-            "max = object(ascent = 13.6108, descent = -4.21143), interline = 15.9709, "
+            "max = object(ascent = 13.9703, descent = -4.50982), interline = 15.9709, "
             'font = object(family = "Arial", style = "Regular"))'
         ]
+
+    def test_fontmetrics_reports_resolved_style(self):
+        _, echoes = run('echo(fontmetrics(size=10, font="Times New Roman:style=Bold").font);')
+        assert echoes == ['ECHO: object(family = "Times New Roman", style = "Bold")']
+
+    def test_textmetrics_resolves_requested_font(self):
+        # Times New Roman's serif proportions measure differently from the
+        # default Liberation Sans for the same text/size.
+        _, echoes = run('echo(textmetrics(text="Hello", size=10, font="Times New Roman").size, '
+                         'textmetrics(text="Hello", size=10, font="Times New Roman")["ascent"]);')
+        assert echoes == ["ECHO: [30.1378, 9.83344], 9.64355"]
 
 
 # ---------------------------------------------------------------------------
@@ -2678,6 +2694,17 @@ class TestText:
         bb = bbox(run('linear_extrude(height=1) text("é", size=10);')[0])
         area = (bb[3] - bb[0]) * (bb[4] - bb[1])
         assert area > 0
+
+    def test_cff_font_renders(self):
+        # CFF/OTF glyphs use cubic Bezier curves (vs. TrueType's quadratic);
+        # this exercises that flattening path via a system CFF font.
+        bb = bbox(run(
+            'linear_extrude(height=1) text("Hi", size=10, font="STIXGeneral:style=Bold Italic");'
+        )[0])
+        assert bb[0] == approx(-0.333333, rel=1e-3)
+        assert bb[1] == pytest.approx(-0.125, abs=1e-3)
+        assert bb[3] == approx(14.4444, rel=1e-3)
+        assert bb[4] == approx(9.5, rel=1e-3)
 
     def test_spacing_increases_extent(self):
         bb1 = bbox(run('linear_extrude(height=1) text("AA", size=10, spacing=1);')[0])
