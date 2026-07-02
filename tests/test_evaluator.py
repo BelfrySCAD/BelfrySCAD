@@ -8,7 +8,7 @@ expression tests capture echo output.
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from belfryscad.engine.evaluator import Evaluator, EvalError
+from belfryscad.engine.evaluator import Evaluator, EvalError, _resolve_font
 
 
 def run(src: str):
@@ -19,6 +19,23 @@ def run(src: str):
     ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
     bodies, _ = ev.evaluate(nodes, root_scope)
     return bodies, echo_lines
+
+
+def skip_unless_font_installed(font_spec: str, expected_family: str):
+    """Skip a test if `font_spec` doesn't resolve (via fc-match) to a font
+    actually named `expected_family` on this machine. Arial/Times New
+    Roman/STIXGeneral aren't installed on every system (e.g. CI runners) —
+    fc-match then silently substitutes a metric-compatible fallback
+    (Liberation Sans/Serif), which has different real glyph metrics than
+    the tests' hardcoded expected values. Skip rather than assert against
+    whatever substitute happens to be installed."""
+    resolved = _resolve_font(font_spec)
+    family = resolved["family_name"]
+    if family.lower() != expected_family.lower():
+        pytest.skip(
+            f"{expected_family!r} not installed on this system "
+            f"(fc-match resolved {font_spec!r} to {family!r} instead)"
+        )
 
 
 def bbox(bodies):
@@ -2632,7 +2649,9 @@ class TestTextMetrics:
         # hhea-derived nominal/interline), but "max" comes from the actual
         # glyph bbox extremes in the *resolved* font's head table, so it
         # differs — proving font= actually selects a different font rather
-        # than just being echoed back into the family name.
+        # than just being echoed back into the family name. Skipped where
+        # Arial isn't installed (e.g. CI) — see skip_unless_font_installed.
+        skip_unless_font_installed("Arial", "Arial")
         _, echoes = run('echo(fontmetrics(size=10, font="Arial"));')
         assert echoes == [
             "ECHO: object(nominal = object(ascent = 12.5732, descent = -2.94325), "
@@ -2641,12 +2660,14 @@ class TestTextMetrics:
         ]
 
     def test_fontmetrics_reports_resolved_style(self):
+        skip_unless_font_installed("Times New Roman:style=Bold", "Times New Roman")
         _, echoes = run('echo(fontmetrics(size=10, font="Times New Roman:style=Bold").font);')
         assert echoes == ['ECHO: object(family = "Times New Roman", style = "Bold")']
 
     def test_textmetrics_resolves_requested_font(self):
         # Times New Roman's serif proportions measure differently from the
         # default Liberation Sans for the same text/size.
+        skip_unless_font_installed("Times New Roman", "Times New Roman")
         _, echoes = run('echo(textmetrics(text="Hello", size=10, font="Times New Roman").size, '
                          'textmetrics(text="Hello", size=10, font="Times New Roman")["ascent"]);')
         assert echoes == ["ECHO: [30.1378, 9.83344], 9.64355"]
@@ -2697,7 +2718,9 @@ class TestText:
 
     def test_cff_font_renders(self):
         # CFF/OTF glyphs use cubic Bezier curves (vs. TrueType's quadratic);
-        # this exercises that flattening path via a system CFF font.
+        # this exercises that flattening path via a system CFF font. Skipped
+        # where STIXGeneral isn't installed (e.g. CI).
+        skip_unless_font_installed("STIXGeneral:style=Bold Italic", "STIXGeneral")
         bb = bbox(run(
             'linear_extrude(height=1) text("Hi", size=10, font="STIXGeneral:style=Bold Italic");'
         )[0])
