@@ -869,6 +869,7 @@ class MainWindow(QMainWindow):
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
+        tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
                 tab,
@@ -1043,6 +1044,7 @@ class MainWindow(QMainWindow):
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
+        tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -1755,6 +1757,24 @@ class MainWindow(QMainWindow):
         self._animate_pane._fps_edit.setFocus()
         self._animate_pane._fps_edit.selectAll()
 
+    def _collect_breakpoints(self) -> dict[str, set[int]]:
+        """Breakpoints from all open tabs (per-file, 1-indexed)."""
+        breakpoints: dict[str, set[int]] = {}
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t and t.file_path and t.editor._breakpoints:
+                bp_set = {bn + 1 for bn in t.editor._breakpoints}
+                breakpoints[str(Path(t.file_path).resolve())] = bp_set
+        return breakpoints
+
+    def _on_breakpoints_changed(self):
+        """A breakpoint was toggled in some tab's editor gutter. If a debug
+        session is currently running/paused, push the updated breakpoint
+        set to it immediately — otherwise a newly-added breakpoint would
+        silently have no effect until the session is restarted."""
+        if self._debug_session is not None and self._debug_session.is_running():
+            self._debug_session.set_breakpoints(self._collect_breakpoints())
+
     def _start_debug(self):
         tab = self._current_tab()
         if not tab:
@@ -1829,13 +1849,7 @@ class MainWindow(QMainWindow):
         tab.editor.clear_errors()
         tab.root_scope = root_scope
 
-        # Collect breakpoints from all open tabs (per-file, 1-indexed)
-        breakpoints: dict[str, set[int]] = {}
-        for i in range(self._tabs.count()):
-            t = self._tabs.widget(i)
-            if t and t.file_path and t.editor._breakpoints:
-                bp_set = {bn + 1 for bn in t.editor._breakpoints}
-                breakpoints[str(Path(t.file_path).resolve())] = bp_set
+        breakpoints = self._collect_breakpoints()
 
         # Show the debugger dock and bring it to the front
         self._debugger_dock.show()
