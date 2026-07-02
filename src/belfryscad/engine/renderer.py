@@ -125,6 +125,56 @@ void main() {
 }
 """
 
+# Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
+# uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
+# meshes) rather than evaluated ColoredBody scenes. Unlike `_VERT`/`_FRAG`
+# (which show a hardcoded unlit magenta backface as an "inverted normal"
+# CSG warning), this shader lights the backface with a caller-supplied
+# `backface_color` — used as an orientation cue for arbitrary mesh data.
+_MESH_VERT = """
+#version 330 core
+in vec3 in_position;
+in vec3 in_normal;
+uniform mat4 mvp;
+out vec3 v_normal;
+out vec3 v_world_pos;
+void main() {
+    v_world_pos = in_position;
+    v_normal = in_normal;
+    gl_Position = mvp * vec4(in_position, 1.0);
+}
+"""
+
+_MESH_FRAG = """
+#version 330 core
+in vec3 v_normal;
+in vec3 v_world_pos;
+uniform vec4 object_color;
+uniform vec4 backface_color;
+uniform vec3 light_dir;
+uniform vec3 eye_pos;
+out vec4 fragColor;
+void main() {
+    vec3 n = normalize(v_normal);
+    vec3 col;
+    if (!gl_FrontFacing) {
+        n = -n;
+        col = backface_color.rgb;
+    } else {
+        col = object_color.rgb;
+    }
+    vec3 L = normalize(light_dir);
+    float diff = max(dot(n, L), 0.0);
+    float fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
+    vec3 lit = 0.35 * col + 0.50 * diff * col + 0.20 * fill * col;
+    vec3 V = normalize(eye_pos - v_world_pos);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(n, H), 0.0), 64.0) * 0.5;
+    lit += vec3(spec);
+    fragColor = vec4(lit, object_color.a);
+}
+"""
+
 
 class Camera:
     """Spherical-coordinate orbit camera."""
@@ -215,7 +265,9 @@ class MeshBuffer:
     def __init__(self, ctx: mgl.Context, vbo: mgl.Buffer, ibo: Optional[mgl.Buffer],
                  vao: mgl.VertexArray, num_indices: int, color: tuple,
                  cpu_v0: np.ndarray, cpu_v1: np.ndarray, cpu_v2: np.ndarray,
-                 tri_ids: np.ndarray,
+                 program: mgl.Program,
+                 tri_ids: Optional[np.ndarray] = None,
+                 backface_color: Optional[tuple] = None,
                  edge_vbo: Optional[mgl.Buffer] = None,
                  edge_vao: Optional[mgl.VertexArray] = None,
                  flat_preview: bool = False,
@@ -229,12 +281,32 @@ class MeshBuffer:
         self.cpu_v0 = cpu_v0
         self.cpu_v1 = cpu_v1
         self.cpu_v2 = cpu_v2
-        self.tri_ids = tri_ids
-        self.original_ids: set[int] = set(int(x) for x in tri_ids)
+        self.program = program
+        self.backface_color = backface_color
+        # tri_ids/original_ids drive CSG selection/ray_cast picking; buffers
+        # uploaded via SceneRenderer.upload_mesh (data viewers) with no
+        # tri_ids default to an all-zero id per triangle.
+        self.tri_ids = tri_ids if tri_ids is not None else np.zeros(len(cpu_v0), dtype=np.int32)
+        self.original_ids: set[int] = set(int(x) for x in self.tri_ids)
         self.edge_vbo = edge_vbo
         self.edge_vao = edge_vao
         self.flat_preview = flat_preview
         self.role = role
+
+
+class LineBuffer:
+    """A raw line-segment VBO/VAO uploaded via `SceneRenderer.upload_lines`."""
+    def __init__(self, vbo: mgl.Buffer, vao: mgl.VertexArray):
+        self.vbo = vbo
+        self.vao = vao
+
+
+class PointBuffer:
+    """A raw point-marker (pre-tessellated, e.g. octahedra) VBO/VAO uploaded
+    via `SceneRenderer.upload_points`."""
+    def __init__(self, vbo: mgl.Buffer, vao: mgl.VertexArray):
+        self.vbo = vbo
+        self.vao = vao
 
 
 class SceneRenderer:
@@ -250,7 +322,12 @@ class SceneRenderer:
         self._label_texture_scale = 4
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
+        self._mesh_prog: Optional[mgl.Program] = None
         self._buffers: list[MeshBuffer] = []
+        self._line_buffers: list[LineBuffer] = []
+        self._point_buffers: list[PointBuffer] = []
+        self.depth_test_points: bool = False
+        self.line_width: float = 1.0
         self.camera = Camera()
         self._viewport: tuple[int, int] = (800, 600)
         self._default_color = (0.9, 0.85, 0.1, 1.0)
@@ -277,8 +354,11 @@ class SceneRenderer:
         # Old GL context (if any) is already destroyed by Qt — just drop stale refs.
         self._label_tex_cache.clear()
         self._buffers.clear()
+        self._line_buffers.clear()
+        self._point_buffers.clear()
         self._ctx = ctx
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
+        self._mesh_prog = ctx.program(vertex_shader=_MESH_VERT, fragment_shader=_MESH_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
         self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
         self._label_prog = ctx.program(vertex_shader=_LABEL_VERT, fragment_shader=_LABEL_FRAG)
@@ -388,10 +468,125 @@ class SceneRenderer:
         color = cb.color if cb.color is not None else self._default_color
         return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
+                          program=self._prog,
                           tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao,
                           flat_preview=cb.flat_preview, role=cb.role)
 
-    def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0):
+    # ------------------------------------------------------------------
+    # Generic raw-buffer upload API — for data viewers displaying arbitrary
+    # geometry (VNF meshes, paths, grids), not evaluated ColoredBody scenes.
+    # These append to the same `_buffers`/`_line_buffers`/`_point_buffers`
+    # lists the CSG/axes/gizmo rendering already uses, so camera framing and
+    # `ray_cast` picking work generically across both kinds of content.
+    # ------------------------------------------------------------------
+
+    def upload_mesh(self, positions: np.ndarray, normals: np.ndarray,
+                     color: tuple = (0.9, 0.85, 0.1, 1.0),
+                     backface_color: Optional[tuple] = None,
+                     edge_positions: Optional[np.ndarray] = None,
+                     edge_colors: Optional[np.ndarray] = None,
+                     tri_ids: Optional[np.ndarray] = None) -> MeshBuffer:
+        """Upload a raw triangle mesh with no CSG model-matrix/highlight
+        support. `positions`/`normals` are (3T, 3) arrays, one row per
+        triangle corner (T triangles, ordered tri0.v0, tri0.v1, tri0.v2,
+        tri1.v0, ...). Pass `tri_ids` (one id per triangle) to make the mesh
+        participate in `ray_cast` picking."""
+        interleaved = np.concatenate([positions, normals], axis=1).astype(np.float32)
+        vbo = self._ctx.buffer(interleaved.tobytes())
+        vao = self._ctx.vertex_array(
+            self._mesh_prog, [(vbo, "3f 3f", "in_position", "in_normal")],
+        )
+        edge_vbo = edge_vao = None
+        if edge_positions is not None and edge_colors is not None:
+            edge_data = np.concatenate([edge_positions, edge_colors], axis=1).astype(np.float32)
+            edge_vbo = self._ctx.buffer(edge_data.tobytes())
+            edge_vao = self._ctx.vertex_array(
+                self._edge_prog, [(edge_vbo, "3f 3f", "in_position", "in_color")],
+            )
+        v0, v1, v2 = positions[0::3], positions[1::3], positions[2::3]
+        buf = MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
+                          cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
+                          program=self._mesh_prog, tri_ids=tri_ids,
+                          backface_color=backface_color,
+                          edge_vbo=edge_vbo, edge_vao=edge_vao, role="normal")
+        self._buffers.append(buf)
+        return buf
+
+    def upload_lines(self, data: np.ndarray) -> LineBuffer:
+        """`data` rows are `[x, y, z, r, g, b]`; each consecutive pair of rows
+        is one line segment (drawn with `GL_LINES`)."""
+        vbo = self._ctx.buffer(data.astype(np.float32).tobytes())
+        vao = self._ctx.vertex_array(
+            self._gizmo_prog, [(vbo, "3f 3f", "in_position", "in_color")],
+        )
+        lb = LineBuffer(vbo, vao)
+        self._line_buffers.append(lb)
+        return lb
+
+    def upload_points(self, data: np.ndarray) -> PointBuffer:
+        """`data` rows are `[x, y, z, r, g, b]`; drawn as `GL_TRIANGLES`
+        (pre-tessellated point markers, e.g. octahedra, one per point)."""
+        vbo = self._ctx.buffer(data.astype(np.float32).tobytes())
+        vao = self._ctx.vertex_array(
+            self._gizmo_prog, [(vbo, "3f 3f", "in_position", "in_color")],
+        )
+        pb = PointBuffer(vbo, vao)
+        self._point_buffers.append(pb)
+        return pb
+
+    def clear_lines(self):
+        """Release only `upload_lines` buffers."""
+        for lb in self._line_buffers:
+            lb.vao.release()
+            lb.vbo.release()
+        self._line_buffers.clear()
+
+    def clear_points(self):
+        """Release only `upload_points` buffers (data viewers rebuild these
+        frequently — on zoom or selection change — without touching lines)."""
+        for pb in self._point_buffers:
+            pb.vao.release()
+            pb.vbo.release()
+        self._point_buffers.clear()
+
+    def clear_simple_buffers(self):
+        """Release everything uploaded via `upload_lines`/`upload_points`
+        (does not touch CSG or `upload_mesh` buffers — see `_clear_buffers`)."""
+        self.clear_lines()
+        self.clear_points()
+
+    def pick_nearest_point(self, points: np.ndarray, px: float, py: float, w: int, h: int) -> int:
+        """Screen-project `points` (N, 3) through the current camera and
+        return the index of the nearest one to `(px, py)`, or -1 if none is
+        within the pick threshold. See `nearest_point_index` for the pure
+        projection math."""
+        aspect = w / h if h > 0 else 1.0
+        mvp = self.camera.projection_matrix(aspect) @ self.camera.view_matrix()
+        return nearest_point_index(points, mvp, px, py, w, h)
+
+    def _render_simple_lines(self, mvp: np.ndarray):
+        if not self._line_buffers or self._gizmo_prog is None:
+            return
+        old_lw = self._ctx.line_width
+        self._ctx.line_width = self.line_width
+        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        for lb in self._line_buffers:
+            lb.vao.render(mgl.LINES)
+        self._ctx.line_width = old_lw
+
+    def _render_simple_points(self, mvp: np.ndarray):
+        if not self._point_buffers or self._gizmo_prog is None:
+            return
+        if not self.depth_test_points:
+            self._ctx.disable(mgl.DEPTH_TEST)
+        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        for pb in self._point_buffers:
+            pb.vao.render(mgl.TRIANGLES)
+        if not self.depth_test_points:
+            self._ctx.enable(mgl.DEPTH_TEST)
+
+    def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0,
+              extra_paint=None):
         if self._ctx is None or self._prog is None:
             return
 
@@ -433,19 +628,19 @@ class SceneRenderer:
             self._viewport = (w // 2, h)
 
             self._ctx.viewport = (0, 0, half_gl_w, gl_h)
-            self._paint_scene(left_view, proj, L_world)
+            self._paint_scene(left_view, proj, L_world, extra_paint)
 
             self._ctx.viewport = (half_gl_w, 0, half_gl_w, gl_h)
-            self._paint_scene(right_view, proj, L_world)
+            self._paint_scene(right_view, proj, L_world, extra_paint)
 
             self._viewport = (w, h)
             self._ctx.viewport = (0, 0, gl_w, gl_h)
         else:
             aspect = w / h if h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
-            self._paint_scene(center_view, proj, L_world)
+            self._paint_scene(center_view, proj, L_world, extra_paint)
 
-    def _paint_scene(self, view: np.ndarray, proj: np.ndarray, L_world: np.ndarray):
+    def _paint_scene(self, view: np.ndarray, proj: np.ndarray, L_world: np.ndarray, extra_paint=None):
         """Render one eye's worth of scene: geometry, edges, axes, labels, gizmo."""
         mvp = proj @ view
         model = np.eye(4, dtype=np.float32)
@@ -481,6 +676,19 @@ class SceneRenderer:
         opaque_bufs = [buf for buf in self._buffers if buf.role not in ("background", "highlight_ghost")]
         buf_models: list[np.ndarray] = []
         for buf in opaque_bufs:
+            if buf.program is not self._prog:
+                # Generic (data-viewer) mesh uploaded via upload_mesh: no CSG
+                # model matrix, selection highlight, or drag transform — draw
+                # it in place, lit with its own caller-supplied backface color.
+                self._mesh_prog["mvp"].write((proj @ view).T.astype(np.float32).tobytes())
+                self._mesh_prog["light_dir"].value = tuple(L_world)
+                self._mesh_prog["eye_pos"].value = tuple(eye_pos)
+                self._mesh_prog["object_color"].value = buf.color
+                self._mesh_prog["backface_color"].value = buf.backface_color or (1.0, 0.0, 1.0, 1.0)
+                buf.vao.render()
+                buf_models.append(model)
+                continue
+
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
             color = _highlight_color(buf.color) if is_selected else buf.color
 
@@ -511,6 +719,15 @@ class SceneRenderer:
                             (proj @ view @ buf_model).T.astype(np.float32).tobytes()
                         )
                         buf.edge_vao.render(mgl.LINES)
+
+        # Raw line/point geometry uploaded via upload_lines/upload_points (data
+        # viewers: wireframes, vertex markers), then per-viewer overlay hook
+        # (blinking selection markers etc.), before axes so ghost/highlight
+        # passes below still correctly composite over everything.
+        self._render_simple_lines(mvp)
+        self._render_simple_points(mvp)
+        if extra_paint is not None:
+            extra_paint(mvp)
 
         # Axes and labels render before the ghost pass so that background ghost
         # geometry correctly composites over them — axes "show through" the ghost.
@@ -1254,6 +1471,30 @@ def _highlight_color(color: tuple) -> tuple:
             min(1.0, g * 0.35 + 0.65),
             min(1.0, b * 0.35),
             a)
+
+
+def nearest_point_index(points: np.ndarray, mvp: np.ndarray, px: float, py: float,
+                         w: int, h: int, threshold_px: float = 12.0) -> int:
+    """Screen-project `points` (N, 3) through `mvp` and return the index of
+    the one nearest to `(px, py)` in screen space, or -1 if none is within
+    `threshold_px` (or `points`/`w`/`h` are degenerate). Points behind the
+    camera (`w_clip <= 0`) are excluded. Pure math, no GL/Qt dependency —
+    shared by `SceneRenderer.pick_nearest_point` and directly unit-testable."""
+    if len(points) == 0 or w <= 0 or h <= 0:
+        return -1
+    ones = np.ones((len(points), 1), dtype=np.float64)
+    homog = np.concatenate([points, ones], axis=1)
+    clip = (mvp.astype(np.float64) @ homog.T).T  # (N, 4)
+    w_clip = clip[:, 3]
+    valid = w_clip > 1e-12
+    ndc = np.divide(clip[:, :2], w_clip[:, None],
+                     out=np.full((len(points), 2), np.inf), where=valid[:, None])
+    sx = (ndc[:, 0] * 0.5 + 0.5) * w
+    sy = (1.0 - (ndc[:, 1] * 0.5 + 0.5)) * h
+    d2 = (sx - px) ** 2 + (sy - py) ** 2
+    d2 = np.where(valid, d2, np.inf)
+    best = int(np.argmin(d2))
+    return best if d2[best] < threshold_px * threshold_px else -1
 
 
 # ------------------------------------------------------------------

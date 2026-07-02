@@ -787,7 +787,7 @@ class MainWindow(QMainWindow):
                              lambda p=preset: self._set_view(p),
                              QKeySequence(key))
         view_menu.addSeparator()
-        self._act_spin = self._add_checkable(view_menu, "Spin", False, self._viewport.set_spinning)
+        self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
         view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
@@ -2112,13 +2112,21 @@ class MainWindow(QMainWindow):
             tab = self._tabs.widget(i)
             if tab:
                 self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
-        cam = self._viewport._renderer.camera
-        cam.viewer_ipd = viewer_ipd
-        cam.viewer_screen_dist = viewer_screen_dist
-        cam.stereo_depth_scale = stereo_depth_scale
-        cam.screen_dpi = self._viewport.screen().physicalDotsPerInch()
-        if self._viewport._renderer.camera.stereo:
-            self._viewport.update()
+        # Data-viewer dialogs (VNF/Path/Grid) each own a real Viewport/camera
+        # too, so their stereo settings should track preference changes the
+        # same way the main window's does, not just at dialog-open time.
+        from PySide6.QtWidgets import QApplication
+        viewports = [self._viewport] + [
+            w._vp for w in QApplication.topLevelWidgets() if hasattr(w, '_vp')
+        ]
+        for vp in viewports:
+            cam = vp._renderer.camera
+            cam.viewer_ipd = viewer_ipd
+            cam.viewer_screen_dist = viewer_screen_dist
+            cam.stereo_depth_scale = stereo_depth_scale
+            cam.screen_dpi = vp.screen().physicalDotsPerInch()
+            if cam.stereo:
+                vp.update()
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
@@ -2293,61 +2301,50 @@ class MainWindow(QMainWindow):
             return active._vp
         return None
 
-    def _viewer_or_toggle(self, action, vp_attr: str):
-        """Toggle a viewport attr on the active viewer, or fall back to toggling the menu action."""
-        vp = self._active_viewer_viewport()
-        if vp is not None:
-            cur = getattr(vp, vp_attr)
-            setattr(vp, vp_attr, not cur)
-            vp.update()
-        else:
-            action.toggle()
+    def _target_viewport(self):
+        """Whichever viewport a View-menu toggle/shortcut should affect: the
+        active data-viewer dialog's, if one is focused, else the main
+        window's. Every viewport (main window and data viewers alike) is a
+        `Viewport` wrapping a `SceneRenderer`, so callers can always reach
+        camera/display state via `vp._renderer....` regardless of which one
+        this returns."""
+        return self._active_viewer_viewport() or self._viewport
+
+    def _toggle_spin(self, enabled: bool):
+        self._target_viewport().set_spinning(enabled)
 
     def _toggle_perspective(self, perspective: bool):
-        vp = self._active_viewer_viewport()
-        if vp is not None:
-            vp.orthographic = not perspective
-            vp.update()
-            return
-        self._viewport._renderer.camera.orthographic = not perspective
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.camera.orthographic = not perspective
+        vp.update()
 
     def _toggle_stereo(self, enabled: bool):
-        self._viewport._renderer.camera.stereo = enabled
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.camera.stereo = enabled
+        vp.update()
 
     def _toggle_axes(self, visible):
-        vp = self._active_viewer_viewport()
-        if vp is not None:
-            vp.show_axes = visible
-            vp.update()
-            return
-        self._viewport._renderer.show_axes = visible
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.show_axes = visible
+        vp.update()
 
     def _toggle_edges(self, visible):
-        vp = self._active_viewer_viewport()
-        if vp is not None:
-            vp.show_edges = not vp.show_edges
-            vp.update()
-            return
-        self._viewport._renderer.show_edges = visible
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.show_edges = visible
+        vp.update()
 
     def _toggle_scale_markers(self, visible):
-        self._viewport._renderer.show_scale_markers = visible
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.show_scale_markers = visible
+        vp.update()
 
     def _toggle_crosshairs(self, visible):
-        self._viewport._renderer.show_crosshairs = visible
-        self._viewport.update()
+        vp = self._target_viewport()
+        vp._renderer.show_crosshairs = visible
+        vp.update()
 
     def _set_view(self, preset):
-        vp = self._active_viewer_viewport()
-        if vp is not None:
-            vp.set_view_preset(preset)
-            return
-        self._viewport.set_view_preset(preset)
+        self._target_viewport().set_view_preset(preset)
 
     def _font_size_increase(self):
         if e := self._current_editor():

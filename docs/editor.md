@@ -283,17 +283,26 @@ self._toggle_perspective(perspective)
 
 ## Data Viewers
 
-Implemented in `src/belfryscad/window/data_viewers.py`. Three viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
+Implemented in `src/belfryscad/window/data_viewers.py`. Four viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
 
-### _SimpleViewport (QOpenGLWidget)
+### Shared viewport: `Viewport` (`window/viewport.py`) + `SceneRenderer` (`engine/renderer.py`)
 
-Base class for viewer 3D viewports. Orbit camera (azimuth/elevation/distance/target), own ModernGL shader programs (line, mesh with backface_color, edge, label). Axis rendering with ticks and labels ported from the main `SceneRenderer` (`_nice_spacings`, `_fmt_tick`). `schedule_load(fn)` defers geometry uploads until after `initializeGL()`. `set_view_preset()` for named views (top/bottom/left/right/front/back/isometric). Supports perspective/orthographic toggle, axes toggle, edge toggle. Mouse-centered zoom (wheel shifts target toward cursor). No custom `QSurfaceFormat` — macOS multisampling causes compositing artifacts.
+`VNFViewer`/`PathViewer`/`GridViewer` each embed the **same** `Viewport(QOpenGLWidget)` class the main window uses (as a thin per-dialog subclass — `_VNFViewport`, `_PathViewport`, `_GridViewport` — adding only picking and blinking-selection-marker overlays), rather than a separate simplified reimplementation. This means every main-window viewport feature — perspective/orthographic, stereo (cross-eye), spin (auto-rotate), show axes, show edges, show scale markers, show crosshairs, view presets, mouse-centered zoom — works identically in a data-viewer dialog, and `MainWindow`'s View-menu shortcuts apply to whichever one currently has focus (see "Keyboard shortcuts" below). There used to be a second, independent `_SimpleViewport` implementation duplicating most of this; it was deleted once all three dialogs were migrated (confirmed no remaining references before removal).
 
-Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) are set directly on the `QAction` instances in the View menu, so they appear in the menu and work application-wide via the native macOS menu bar.
+Each dialog constructs its own `Viewport(parent, selectable=False)` — `selectable=False` is the one behavioral difference from the main window's viewport: it disables the Ctrl+click "select an AST/CSG original-id" gesture (meaningless for raw display data, and would otherwise stop Ctrl+drag from orbiting), while everything else about mouse handling (plain-drag orbit, right-drag pan, wheel zoom, Alt-drag light) works the same. Gizmo dragging and the debug-session busy-spinner overlay are main-window-only *features* of `Viewport` (opt-in via `set_active_tool`/`set_render_busy`/`set_debug_busy`), not main-window-only *code paths* — data viewers simply never call those methods, so they stay dormant.
+
+`SceneRenderer` gained a **generic raw-buffer upload API**, additive alongside its existing `ColoredBody`/CSG-mesh path (`load_geometry`), for exactly this use case — geometry with no CSG/original-id/gizmo concept:
+- `upload_mesh(positions, normals, color=..., backface_color=None, edge_positions=None, edge_colors=None, tri_ids=None) -> MeshBuffer` — `positions`/`normals` are `(3T, 3)` arrays, one row per triangle corner. Appends to the same `_buffers` list CSG bodies use (distinguished by `MeshBuffer.program is self._prog` vs. the separate `_mesh_prog`, branched in `_paint_scene`'s opaque pass), so camera-framing and `ray_cast` picking work generically across both. Passing `tri_ids` (one id per triangle) lets the mesh participate in `ray_cast`.
+- `upload_lines(data) -> LineBuffer` / `upload_points(data) -> PointBuffer` — rows are `[x, y, z, r, g, b]`; lines drawn `GL_LINES`, points drawn `GL_TRIANGLES` (pre-tessellated markers, e.g. octahedra). Both reuse the existing `_gizmo_prog` (its shader is byte-identical to what a standalone line/point shader would be). `clear_lines()`/`clear_points()`/`clear_simple_buffers()` release them independent of `_clear_buffers()` (CSG-only).
+- `pick_nearest_point(points, px, py, w, h) -> int` — screen-space nearest-point picking, wrapping the pure module-level `nearest_point_index()` (pytest-covered in `tests/test_renderer.py`, no GL/Qt dependency). Replaces three independently-duplicated nearest-point search loops (Path/Grid vertex picking, VNF vertex hover tooltip).
+- `ray_cast()`/`camera_ray()` (pre-existing, used for the main window's Ctrl+click AST selection) are reused as-is for `VNFViewer`'s face picking, once its mesh buffer's `tri_ids` is populated with its own face-index array — this deleted ~60 lines of independently-duplicated vectorized Möller–Trumbore that `_VNFViewport._pick_face` used to carry.
+- `Viewport` itself gained `schedule_load(fn)` (defers a geometry-load call until `initializeGL()` has run — needed since a dialog constructs its viewport and loads geometry before the widget is ever shown), a `_paint_extra(mvp)` no-op hook (subclasses override it for overlay geometry, called every frame right after the generic lines/points pass), `scroll_to_visible(pt)` (pans the camera minimally to keep a point on screen), and cached-bbox reframing (`frame_scene()` caches its bounds so "View All" works even when a dialog's geometry lives only in line/point buffers with no per-vertex CPU arrays to scan).
+
+Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) are set directly on the `QAction` instances in the View menu, so they appear in the menu and work application-wide via the native macOS menu bar — meaning they fire regardless of which *window* currently has OS focus, main window or a data-viewer dialog. Each handler (`_toggle_perspective`, `_toggle_stereo`, `_toggle_spin`, `_toggle_axes`, `_toggle_edges`, `_toggle_scale_markers`, `_toggle_crosshairs`, `_set_view`) resolves its target via `MainWindow._target_viewport()`, which returns `_active_viewer_viewport()` (the active window's `_vp`, if it's a data-viewer dialog) or falls back to `self._viewport` (the main window's own). Since every viewport now has the identical `vp._renderer.<attr>` shape, every handler is a uniform two-liner.
 
 ### ListViewer (QDialog)
 
-`QTableWidget` with key/value columns. Recursive drill-down via context menu for nested lists/dicts.
+`QTableWidget` with key/value columns. Recursive drill-down via context menu for nested lists/dicts. No 3D viewport.
 
 ### VNFViewer (QDialog)
 
@@ -301,29 +310,30 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 - **Vertices tab**: `QTableWidget`, 0-indexed rows, X/Y/Z columns sized for 6 digits. Multi-select (extended selection). Selected vertices shown as blinking (red↔white, 250ms) axis-aligned octahedron markers in the viewport, ~7px screen size regardless of zoom (rebuilt on wheel). Hovering a highlighted vertex shows a tooltip with index and coordinates.
 - **Faces tab**: `QTableWidget`, 0-indexed rows, single "Vertex Indices" column. Selecting a face highlights it green in the viewport (polygon offset overlay), deselects all vertices, and selects the face's referenced vertices.
-- **Viewport**: `_VNFViewport(_SimpleViewport)`. Backfaces rendered magenta. Face picking via vectorized Moller–Trumbore ray–triangle intersection. Clicking a face in viewport emits `face_clicked` signal, switches to Faces tab, and selects the row.
+- **Viewport**: `_VNFViewport(Viewport)`. Backfaces rendered magenta (`upload_mesh`'s `backface_color`). Face picking via `SceneRenderer.camera_ray()` + `ray_cast()` — the mesh is uploaded with `tri_ids` set to its own OpenSCAD face-index array (`VNFViewer._load_mesh`), so a ray hit resolves straight back to the face index. Clicking a face in viewport emits `face_clicked` signal, switches to Faces tab, and selects the row.
 
 ### PathViewer (QDialog)
 
 `QSplitter`: `_PathViewport` on left, vertex table on right. "Close Path" checkbox (20px left padding) and Dismiss button (20px right padding) below.
 
 - **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights the corresponding vertices in the viewport.
-- **Viewport**: `_PathViewport(_SimpleViewport)`. Black lines at 2× width. Axis-aligned octahedron vertex markers (~7px screen size, rebuilt on zoom): green for unselected, red↔white blink (250ms) for selected. Hovering a marker shows a tooltip with index and coordinates. Clicking a marker in the viewport emits `vertex_clicked`, deselects all, and selects the clicked vertex.
+- **Viewport**: `_PathViewport(Viewport)`. Black lines at 2× width (`SceneRenderer.line_width`). Axis-aligned octahedron vertex markers (~7px screen size, rebuilt on zoom): green for unselected, red↔white blink (250ms) for selected. Hovering a marker shows a tooltip with index and coordinates. Clicking a marker in the viewport emits `vertex_clicked`, deselects all, and selects the clicked vertex.
 - **Close Path**: checkbox toggles whether the last vertex connects back to the first.
 - **Bezier**: checkbox switches line rendering from straight segments to cubic Bezier curves. Every 4 points form one cubic segment (P0, C1, C2, P3) with shared endpoints between consecutive segments. Open paths require 3k+1 points; closed paths require 3k points (last segment wraps to first). Each curve is tessellated into 32 line segments.
 - 2D paths (all Z=0) start in top-down orthographic; 3D paths start in perspective orbit.
 
 ### GridViewer (QDialog)
 
-`QSplitter`: `_GridViewport` on left, Row dropdown + vertex table on right. Dismiss button (20px right padding) below. Detects lists of lists of points where all rows have equal length.
+`QSplitter`: `_GridViewport` on left, Row dropdown + vertex table on right. Dismiss button (20px right padding) below. Detects lists of lists of points (`_is_grid`); rows need **not** be the same length — a ragged/non-rectangular grid (e.g. a cone's single-point apex row next to a wider base row) is supported, not just a rectangular one.
 
 - **Row dropdown**: `QComboBox` selects which grid row to display in the vertex table. Changing the row highlights that row's vertices in the viewport.
-- **"Row Points (N)" label**: shows the point count for the selected row.
+- **"Row Points (N)" label**: shows the point count for the selected row (rows can have different counts).
 - **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights individual vertices in the viewport.
-- **Viewport**: `_GridViewport(_SimpleViewport)`. Always draws row lines (blue) and column lines (orange) via `upload_lines`. In faces mode, also draws triangulated quad mesh faces (yellow both sides) via `upload_mesh`. `show_edges = True` enables `GL_POLYGON_OFFSET_FILL` when a mesh is present, pushing face triangles slightly back so the skeleton lines always render in front. Vertex markers are depth-tested (occluded by mesh). Green octahedrons for unselected, red↔white blink (250ms) for selected. Hovering shows `[row,col]: (x, y, z)` tooltip. Clicking a vertex switches the dropdown to that row and selects the vertex in the table.
+- **Flat indexing for ragged rows**: since rows can differ in length, point index ↔ `(row, col)` conversion isn't simple `divmod` arithmetic. `_grid_row_offsets(grid)` computes cumulative per-row flat-index offsets once (`offsets[r]` = flat index of row `r`'s first point); `_grid_flat_to_rc(vi, offsets)` (a `bisect` lookup) converts a flat index back to `(row, col)`. Both `GridViewer` and `_GridViewport` share this scheme instead of assuming a uniform column count.
+- **Viewport**: `_GridViewport(Viewport)`. Always draws row lines (orange, within one row) and column lines (blue, between adjacent rows) via `SceneRenderer.upload_lines`. Row lines use each row's own length independently. Column lines/quad faces between a pair of rows are limited to `min(len(row_r), len(row_{r+1}))` — the columns the two rows actually share — so a ragged grid's connections and mesh taper gracefully instead of requiring every row to match; a row pair sharing fewer than 2 columns (e.g. an apex row next to any other row) simply contributes no quads there. In faces mode, also draws triangulated quad mesh faces (yellow both sides) via `upload_mesh`. `show_edges = True` enables `GL_POLYGON_OFFSET_FILL` when a mesh is present, pushing face triangles slightly back so the skeleton lines always render in front. Vertex markers are depth-tested (occluded by mesh, `SceneRenderer.depth_test_points = True`). Green octahedrons for unselected, red↔white blink (250ms) for selected. Hovering shows `[row,col]: (x, y, z)` tooltip. Clicking a vertex switches the dropdown to that row and selects the vertex in the table.
 - **Faces**: checkbox (checked by default). When on, renders triangulated quad mesh faces behind the skeleton lines. When off, shows skeleton lines only.
-- **Col Wrap**: checkbox connects last column back to first, closing the grid horizontally.
-- **Row Wrap**: checkbox connects last row back to first, closing the grid vertically. Both wraps together form a torus.
+- **Col Wrap**: checkbox connects each row's last point back to its own first point, closing that row's line loop (and, in faces mode, the mesh) horizontally — applied per row, so it works even when rows have different lengths.
+- **Row Wrap**: checkbox connects the last row back to the first, closing the grid vertically (limited to the columns shared between the last and first rows, same as any other adjacent row pair). Both wraps together form a torus for a rectangular grid.
 - 2D grids start in top-down orthographic; 3D grids start in perspective orbit.
 
 ## Menu Structure

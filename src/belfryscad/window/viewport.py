@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 import time
 import numpy as np
 
@@ -30,15 +31,24 @@ class Viewport(QOpenGLWidget):
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, selectable: bool = True):
         super().__init__(parent)
         self.setMinimumSize(400, 300)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._ctx = None
         self._renderer = SceneRenderer()
         self._last_mouse: QPoint | None = None
         self._mouse_button: Qt.MouseButton | None = None
         self.setMouseTracking(True)
         self._frame_count: int = 0
+        self._pending_load = None
+        self._last_bb_min: np.ndarray | None = None
+        self._last_bb_max: np.ndarray | None = None
+
+        # Ctrl+click AST-id selection (main window only — data-viewer
+        # subclasses pass selectable=False so Ctrl+drag orbits like any
+        # other drag instead of attempting to select/ray-cast).
+        self._selectable = selectable
 
         # Tool state
         self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale
@@ -86,6 +96,20 @@ class Viewport(QOpenGLWidget):
         import moderngl
         self._ctx = moderngl.create_context(require=330)
         self._renderer.initialize(self._ctx)
+        if self._pending_load is not None:
+            fn = self._pending_load
+            self._pending_load = None
+            fn()
+
+    def schedule_load(self, fn):
+        """Schedule a geometry-load function to run once GL is initialized
+        (immediately if it already is). Lets callers (e.g. a dialog
+        constructing this widget) load geometry before `initializeGL` has
+        necessarily run yet."""
+        if self._ctx is not None:
+            fn()
+        else:
+            self._pending_load = fn
 
     def resizeGL(self, w, h):
         if self._ctx:
@@ -96,11 +120,17 @@ class Viewport(QOpenGLWidget):
     def paintGL(self):
         try:
             fbo_id = self.defaultFramebufferObject()
-            self._renderer.paint(qt_fbo_id=fbo_id)
+            self._renderer.paint(qt_fbo_id=fbo_id, extra_paint=self._paint_extra)
             self._frame_count += 1
         except Exception as e:
             import traceback
             print("paintGL error:", traceback.format_exc())
+
+    def _paint_extra(self, mvp: np.ndarray):
+        """Hook for subclasses (data-viewer dialogs) to draw their own
+        overlay geometry — e.g. blinking selection markers — in the same
+        eye's `mvp` as the main scene. No-op by default."""
+        pass
 
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
@@ -123,12 +153,15 @@ class Viewport(QOpenGLWidget):
         self.update()
 
     def frame_scene(self, bb_min, bb_max):
+        # Cache the bounds so "View All" can reframe from them directly (see
+        # _frame_all) instead of only being able to derive bounds by scanning
+        # live buffers — needed for data viewers whose geometry lives in
+        # upload_lines/upload_points buffers, which carry no per-vertex CPU
+        # arrays the way CSG MeshBuffers do.
+        self._last_bb_min = bb_min.copy() if hasattr(bb_min, "copy") else bb_min
+        self._last_bb_max = bb_max.copy() if hasattr(bb_max, "copy") else bb_max
         self._renderer.camera.frame_bounds(bb_min, bb_max)
         self.camera_changed.emit()
-        self.update()
-
-    def set_background_color(self, r, g, b):
-        self._renderer._bg_color = (r, g, b, 1.0)
         self.update()
 
     def set_active_tool(self, tool_id: int):
@@ -244,7 +277,14 @@ class Viewport(QOpenGLWidget):
         self.update()
 
     def _frame_all(self, cam):
-        import numpy as np
+        # Prefer the bounds cached by the last frame_scene() call (always
+        # available for data viewers, whose line/point-only geometry has no
+        # per-vertex CPU arrays to scan); fall back to deriving bounds live
+        # from mesh buffers (today's main-window behavior, still needed for
+        # the very first load before frame_scene has ever been called).
+        if self._last_bb_min is not None and self._last_bb_max is not None:
+            cam.frame_bounds(self._last_bb_min, self._last_bb_max)
+            return
         buffers = self._renderer._buffers
         if not buffers:
             return
@@ -263,6 +303,44 @@ class Viewport(QOpenGLWidget):
         self.camera_changed.emit()
         self.update()
 
+    def scroll_to_visible(self, pt: np.ndarray):
+        """Pan the camera target the minimum amount to keep `pt` within the
+        visible area (used by data-viewer dialogs to keep a newly-selected
+        vertex/face on screen)."""
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        cam = self._renderer.camera
+        aspect = w / h
+        mvp = cam.projection_matrix(aspect) @ cam.view_matrix()
+        clip = mvp @ np.array([pt[0], pt[1], pt[2], 1.0], dtype=np.float32)
+        if abs(clip[3]) < 1e-9:
+            return
+        ndc_x = clip[0] / clip[3]
+        ndc_y = clip[1] / clip[3]
+        threshold = 0.85
+        dx_ndc = 0.0
+        dy_ndc = 0.0
+        if ndc_x > threshold:
+            dx_ndc = ndc_x - threshold
+        elif ndc_x < -threshold:
+            dx_ndc = ndc_x + threshold
+        if ndc_y > threshold:
+            dy_ndc = ndc_y - threshold
+        elif ndc_y < -threshold:
+            dy_ndc = ndc_y + threshold
+        if dx_ndc == 0.0 and dy_ndc == 0.0:
+            return
+        view = cam.view_matrix()
+        right = view[0, :3].astype(np.float32)
+        up = view[1, :3].astype(np.float32)
+        half_h = cam.distance * math.tan(math.radians(cam.fov / 2))
+        cam.target = (cam.target
+                      + right * dx_ndc * half_h * aspect
+                      + up * dy_ndc * half_h).astype(np.float32)
+        self.camera_changed.emit()
+        self.update()
+
     # ------------------------------------------------------------------
     # Mouse input
     # ------------------------------------------------------------------
@@ -270,8 +348,10 @@ class Viewport(QOpenGLWidget):
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
 
-        # Cmd+click → selection (takes priority over everything)
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        # Cmd+click → selection (takes priority over everything). Data-viewer
+        # subclasses set selectable=False so Ctrl+drag orbits instead — they
+        # have their own plain-click pick logic and no AST/original-id concept.
+        if self._selectable and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._do_selection(pos)
             return
 
