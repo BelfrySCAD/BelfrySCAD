@@ -919,33 +919,109 @@ class OscObject:
 
 
 _FONT_PATH = Path(__file__).parent.parent / "resources" / "fonts" / "LiberationSans-Regular.ttf"
-_default_font_cache: Optional[dict] = None
+_font_table_cache: dict[tuple[str, int], dict] = {}  # (path, ttc_index) → font tables
+
+
+def _font_tables_from_path(path: str, ttc_index: int = 0) -> dict:
+    """Load font tables from a file path, using a module-level cache."""
+    key = (path, ttc_index)
+    if key not in _font_table_cache:
+        font = TTFont(path, fontNumber=ttc_index)
+        # Some fonts store glyph outlines in CFF rather than glyf.
+        glyf_table = font.get("glyf")
+        hmtx_table = font.get("hmtx")
+        _font_table_cache[key] = {
+            "cmap": font.getBestCmap() or {},
+            "hmtx": hmtx_table,
+            "glyf": glyf_table,
+            "units_per_em": font["head"].unitsPerEm,
+            "head": font["head"],
+            "hhea": font.get("hhea"),
+            "glyph_set": font.getGlyphSet(),
+            "path": path,
+            "ttc_index": ttc_index,
+        }
+    return _font_table_cache[key]
 
 
 def _load_default_font() -> dict:
-    """Lazily load the bundled Liberation Sans font and cache its tables.
+    """Load the bundled Liberation Sans font."""
+    return _font_tables_from_path(str(_FONT_PATH), 0)
 
-    `textmetrics()`/`fontmetrics()` always measure against this single
-    bundled font regardless of the requested `font=` — see docs/evaluator.md
-    for the rationale (real OpenSCAD resolves `font=` via fontconfig/CoreText,
-    which is out of scope here).
+
+_font_spec_cache: dict[str, dict] = {}  # font-spec string → font tables
+
+
+def _resolve_font(font_spec: str) -> dict:
+    """Resolve an OpenSCAD/fontconfig font spec to font tables.
+
+    Uses `fc-match` to find the best-matching system font for `font_spec`
+    (e.g. `"Times New Roman:style=Bold"`).  Falls back to the bundled
+    Liberation Sans if `fc-match` is not available or the spec is empty.
     """
-    global _default_font_cache
-    if _default_font_cache is None:
-        font = TTFont(str(_FONT_PATH))
-        _default_font_cache = {
-            "cmap": font.getBestCmap(),
-            "hmtx": font["hmtx"],
-            "glyf": font["glyf"],
-            "units_per_em": font["head"].unitsPerEm,
-            "head": font["head"],
-            "hhea": font["hhea"],
-            "glyph_set": font.getGlyphSet(),
-        }
-    return _default_font_cache
+    if not font_spec:
+        return _load_default_font()
+    if font_spec in _font_spec_cache:
+        return _font_spec_cache[font_spec]
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["fc-match", "--format=%{file}:%{index}\n", font_spec],
+            capture_output=True, text=True, timeout=3,
+        )
+        line = result.stdout.strip()
+        if line and ":" in line:
+            parts = line.rsplit(":", 1)
+            fpath, idx_str = parts[0], parts[1]
+            ttc_index = int(idx_str) if idx_str.isdigit() else 0
+            if Path(fpath).exists():
+                tables = _font_tables_from_path(fpath, ttc_index)
+                _font_spec_cache[font_spec] = tables
+                return tables
+    except Exception:
+        pass
+    tables = _load_default_font()
+    _font_spec_cache[font_spec] = tables
+    return tables
 
 
-def _measure_text(text: str, size: float, spacing: float) -> dict:
+def _glyph_bounds(gname: str, font: dict) -> tuple[float, float, float, float] | None:
+    """Return (xMin, yMin, xMax, yMax) in font units for glyph `gname`, or None
+    if the glyph is empty/whitespace.  Works for both TrueType (glyf table) and
+    CFF (glyph_set pen draw) fonts."""
+    glyf = font.get("glyf")
+    if glyf is not None:
+        g = glyf[gname]
+        if g.numberOfContours == 0:
+            return None
+        return g.xMin, g.yMin, g.xMax, g.yMax
+    # CFF/OTF: derive bounds by drawing the glyph contours
+    glyph_set = font["glyph_set"]
+    if gname not in glyph_set:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+
+    class _BoundsPen(BasePen):
+        def _moveTo(self, pt):
+            xs.append(pt[0]); ys.append(pt[1])
+        def _lineTo(self, pt):
+            xs.append(pt[0]); ys.append(pt[1])
+        def _curveToOne(self, bcp1, bcp2, pt):
+            for p in (bcp1, bcp2, pt):
+                xs.append(p[0]); ys.append(p[1])
+        def _closePath(self):
+            pass
+        def _endPath(self):
+            pass
+
+    _BoundsPen(glyph_set).draw(glyph_set[gname])
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _measure_text(text: str, size: float, spacing: float, font: dict | None = None) -> dict:
     """Lay out `text` left-to-right and return its ink-bbox/advance metrics
     in OpenSCAD units, scaled for `size` (see docs/evaluator.md for the
     scale-factor and per-glyph layout derivation).
@@ -955,8 +1031,9 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
     each renderable glyph, used by `text()`) — aggregates are all `0` and
     `glyphs` is empty if `text` contains no measurable glyphs.
     """
-    font = _load_default_font()
-    cmap, hmtx, glyf = font["cmap"], font["hmtx"], font["glyf"]
+    if font is None:
+        font = _load_default_font()
+    cmap, hmtx = font["cmap"], font["hmtx"]
     scale = size * (100 / 72) / font["units_per_em"]
 
     pen_x = 0.0
@@ -968,12 +1045,13 @@ def _measure_text(text: str, size: float, spacing: float) -> dict:
         if gname is None:
             continue
         advance, _lsb = hmtx[gname]
-        glyph = glyf[gname]
-        if glyph.numberOfContours != 0:
-            left = pen_x * scale + glyph.xMin * scale
-            right = pen_x * scale + glyph.xMax * scale
-            top = glyph.yMax * scale
-            bottom = glyph.yMin * scale
+        bounds = _glyph_bounds(gname, font)
+        if bounds is not None:
+            xmin, ymin, xmax, ymax = bounds
+            left = pen_x * scale + xmin * scale
+            right = pen_x * scale + xmax * scale
+            top = ymax * scale
+            bottom = ymin * scale
             if not has_ink:
                 ink_min_x, ink_max_x, ascent, descent = left, right, top, bottom
                 has_ink = True
@@ -1047,16 +1125,19 @@ class _FlattenPen(BasePen):
 # nanobind-bound objects held in a module-level cache for the life of the
 # process get reported as "leaked" at interpreter shutdown (finalization
 # order races the manifold3d module's own teardown).
-_glyph_contour_cache: dict[tuple[str, int], list[np.ndarray]] = {}
+# Key: (font_path, ttc_index, glyph_name, segs)
+_glyph_contour_cache: dict[tuple, list[np.ndarray]] = {}
 
 
-def _glyph_cross_section(gname: str, segs: int) -> m3d.CrossSection:
+def _glyph_cross_section(gname: str, segs: int, font: dict | None = None) -> m3d.CrossSection:
     """Return the (unscaled, font-units) `m3d.CrossSection` for glyph `gname`,
-    flattening curves into `segs` segments. Contours cached per `(gname, segs)`."""
-    key = (gname, segs)
+    flattening curves into `segs` segments. Contours cached per font+glyph+segs."""
+    if font is None:
+        font = _load_default_font()
+    key = (font.get("path", ""), font.get("ttc_index", 0), gname, segs)
     contours = _glyph_contour_cache.get(key)
     if contours is None:
-        glyph_set = _load_default_font()["glyph_set"]
+        glyph_set = font["glyph_set"]
         pen = _FlattenPen(glyph_set, segs)
         glyph_set[gname].draw(pen)
         contours = [np.array(c, dtype=np.float64) for c in pen.contours]
@@ -2787,29 +2868,31 @@ class Evaluator:
             return None
 
     def _builtin_text(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        """`text(text=.., size=.., halign=.., valign=.., spacing=..)`.
+        """`text(text=.., size=.., font=.., halign=.., valign=.., spacing=..)`.
 
-        Renders `text` as 2D glyph outlines from the bundled Liberation Sans
-        font, laid out and aligned using the same `_measure_text`/
-        `_text_align_offset` infrastructure as `textmetrics()`. `font`,
-        `direction`, `language`, `script` are accepted but unused; see
-        docs/evaluator.md for known gaps.
+        Renders `text` as 2D glyph outlines, using the font specified by `font=`
+        (an OpenSCAD/fontconfig pattern such as `"Times New Roman:style=Bold"`).
+        Resolved via `fc-match` when available; falls back to bundled Liberation
+        Sans if the font cannot be found.  `direction`, `language`, `script` are
+        accepted but unused.
         """
         text = self._get_arg(args, 0, "text", "")
         size = self._get_arg(args, 1, "size", 10)
+        font_spec = self._get_arg(args, None, "font", "") or ""
         halign = self._get_arg(args, None, "halign", "left")
         valign = self._get_arg(args, None, "valign", "baseline")
         spacing = self._get_arg(args, None, "spacing", 1)
 
         try:
-            m = _measure_text(text, size, spacing)
-            font = _load_default_font()
+            font = _resolve_font(str(font_spec))
             scale = size * (100 / 72) / font["units_per_em"]
             segs = max(2, self._fn(ctx) // 2)
 
+            m = _measure_text(text, size, spacing, font)
+
             sections = []
             for gname, pen_x_scaled in m["glyphs"]:
-                glyph_cs = _glyph_cross_section(gname, segs)
+                glyph_cs = _glyph_cross_section(gname, segs, font)
                 sections.append(glyph_cs.scale([scale, scale]).translate([pen_x_scaled, 0]))
 
             cs = m3d.CrossSection.batch_boolean(sections, m3d.OpType.Add) if sections else m3d.CrossSection()
