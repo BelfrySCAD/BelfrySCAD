@@ -377,7 +377,33 @@ def _build_skeleton_graph_with_holes(
         # polyskel: outer as CW-in-math, holes as CCW-in-math
         outer_pts = [(float(x), float(y)) for x, y in p0[::-1]]
         holes_pts = [[(float(x), float(y)) for x, y in h[::-1]] for h in hole_arrays]
-        subtrees = skeletonize(outer_pts, holes_pts if holes_pts else None)
+        # polyskel can hang (infinite loop) on degenerate polygon configurations
+        # (e.g. exact axis-aligned vertices that trigger numerical edge cases in
+        # the skeleton sweep algorithm).  Run it in a daemon thread and abort if
+        # it doesn't finish in time; then retry with a tiny deterministic jitter
+        # to break the degeneracy, which typically lets polyskel converge.
+        import threading as _threading
+        import random as _random
+
+        def _run_skeletonize(outer, holes, timeout=2.0):
+            _res: list = [None]
+            def _run():
+                _res[0] = skeletonize(outer, holes if holes else None)
+            _t = _threading.Thread(target=_run, daemon=True)
+            _t.start()
+            _t.join(timeout=timeout)
+            return None if _t.is_alive() else _res[0]
+
+        subtrees = _run_skeletonize(outer_pts, holes_pts)
+        if subtrees is None:
+            # Retry with a tiny deterministic jitter to break numerical degeneracy.
+            _rng = _random.Random(0xBEEF)
+            _j = tol * 0.1  # < tol so key() snaps back; still breaks numeric degeneracy
+            outer_jit = [(x + _rng.uniform(-_j, _j), y + _rng.uniform(-_j, _j))
+                         for x, y in outer_pts]
+            holes_jit = [[(x + _rng.uniform(-_j, _j), y + _rng.uniform(-_j, _j))
+                          for x, y in h] for h in holes_pts]
+            subtrees = _run_skeletonize(outer_jit, holes_jit)
         if not subtrees:
             return None
 
