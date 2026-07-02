@@ -478,7 +478,7 @@ def _skeleton_roof_component(
     """
     try:
         from shapely.geometry import Polygon as _SPoly
-        from shapely.ops import triangulate as _stri
+        from shapely import constrained_delaunay_triangles as _cdt
 
         p0 = _ccw_polygon(outer_arr)
         n0 = len(p0)
@@ -509,13 +509,12 @@ def _skeleton_roof_component(
             for (i, j, k2) in _ear_clip(p0):
                 tris.append((vert_index(p0_keys[k2]), vert_index(p0_keys[j]), vert_index(p0_keys[i])))
         else:
-            # Holes: shapely Delaunay + centroid filter to exclude hole regions.
-            # Shapely's triangle winding is inconsistent, so we check each triangle's
-            # signed area and reverse if necessary to ensure a downward (-z) normal.
+            # Holes: constrained Delaunay (respects polygon boundary edges) +
+            # centroid filter. Winding check ensures a downward (-z) normal.
             outer_2d = [(float(p[0]), float(p[1])) for p in p0]
             holes_2d = [[(float(p[0]), float(p[1])) for p in h] for h in hole_arrs]
             shape = _SPoly(outer_2d, holes_2d)
-            for tri in _stri(shape):
+            for tri in _cdt(shape).geoms:
                 if not shape.contains(tri.centroid):
                     continue
                 coords = list(tri.exterior.coords)[:3]
@@ -630,8 +629,9 @@ def _skeleton_roof_general(cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
         pieces: list[m3d.Manifold] = []
         for (outer_arr, comp_holes) in components:
             b = _skeleton_roof_component(outer_arr, comp_holes)
-            if b is not None:
-                pieces.append(b)
+            if b is None:
+                return None  # partial failure — let caller fall back to SDF
+            pieces.append(b)
 
         if not pieces:
             return None
