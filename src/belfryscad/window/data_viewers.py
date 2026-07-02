@@ -78,6 +78,55 @@ def _grid_flat_to_rc(vi: int, row_offsets: list[int]) -> tuple[int, int]:
     return r, vi - row_offsets[r]
 
 
+def _grid_is_triangular(row_lens: list[int], row_wrap: bool = False) -> bool:
+    """A grid is "triangular" (as opposed to a plain rectangular quad grid)
+    if any two adjacent rows have different lengths — e.g. a cone's
+    single-point apex row next to a wider base row, or a triangular-number
+    row progression (1, 2, 3, ...). `_GridViewport` draws a third,
+    diagonal, line direction for such grids in addition to the row/column
+    lines every grid gets."""
+    rows = len(row_lens)
+    r_range = rows if row_wrap else rows - 1
+    for r in range(r_range):
+        r_next = (r + 1) % rows
+        if row_lens[r] != row_lens[r_next]:
+            return True
+    return False
+
+
+def _grid_fan_spec(len_a: int, len_b: int, col_wrap: bool):
+    """Describes the "fan" needed to give every point a face/line when two
+    adjacent grid rows (lengths `len_a`, `len_b`) differ in length — e.g. a
+    cone's single-point apex row fanning out to its multi-point base row, or
+    a triangular-number row progression's one extra point per step. The
+    shared prefix (columns `[0, min(len_a, len_b))`) is already handled by
+    ordinary quad/column logic; this covers only the longer row's remaining
+    points, anchored at the shorter row's last shared-index point.
+
+    Returns `None` if `len_a == len_b` (no fan needed — a plain quad
+    connects the two rows completely). Otherwise returns
+    `(anchor_in_a, anchor_col, longer_len, ks)`:
+    - `anchor_in_a`: whether the anchor point belongs to row A (True) or
+      row B (False) — i.e. whether A or B is the shorter row.
+    - `anchor_col`: the anchor's column index (`min(len_a, len_b) - 1`,
+      valid in both rows since it's within the shared prefix).
+    - `longer_len`: the longer row's length.
+    - `ks`: 0-based column indices into the *longer* row; each `k` is one
+      fan triangle `(longer[k], anchor, longer[k+1])` if `anchor_in_a`,
+      else `(anchor, longer[k], longer[k+1])` — and, for lines, one spoke
+      edge `(anchor, longer[(k+1) % longer_len])` (the edge `anchor` to
+      `longer[k]` for the first `k` is already drawn by the shared-prefix
+      column line).
+    """
+    if len_a == len_b:
+        return None
+    shared = min(len_a, len_b)
+    anchor_in_a = len_a <= len_b
+    longer_len = len_b if anchor_in_a else len_a
+    longer_range = longer_len if col_wrap else longer_len - 1
+    return anchor_in_a, shared - 1, longer_len, range(shared - 1, longer_range)
+
+
 def _is_vnf(v) -> bool:
     if not (_is_list(v) and len(v) == 2):
         return False
@@ -1323,13 +1372,19 @@ class _GridViewport(Viewport):
 
         r_range = rows if row_wrap else rows - 1
 
-        # Row lines (orange, within one row) and column lines (blue, between
+        # Row lines (red, within one row) and column lines (blue, between
         # adjacent rows) — always drawn in both modes. Rows can have
         # different lengths (a ragged/non-rectangular grid): row lines use
         # each row's own length independently, and column lines between a
         # pair of rows are limited to the columns the two rows actually share.
-        row_color = np.array([0.85, 0.45, 0.1], dtype=np.float32)
+        # For a triangular grid (any two adjacent rows differ in length —
+        # e.g. a cone's apex-to-base taper, or a triangular-number row
+        # progression) a third, diagonal direction (green) is also drawn,
+        # completing the triangulation implied by the row-length mismatch.
+        row_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         col_color = np.array([0.15, 0.45, 0.85], dtype=np.float32)
+        diag_color = np.array([0.15, 0.75, 0.25], dtype=np.float32)
+        is_triangular = _grid_is_triangular(row_lens, row_wrap)
         line_verts = []
         for r in range(rows):
             n = row_lens[r]
@@ -1344,49 +1399,75 @@ class _GridViewport(Viewport):
                 line_verts.append(np.concatenate([pts[b], row_color]))
         for r in range(r_range):
             r_next = (r + 1) % rows
-            shared = min(row_lens[r], row_lens[r_next])
+            len_a, len_b = row_lens[r], row_lens[r_next]
+            shared = min(len_a, len_b)
             base_a, base_b = row_offsets[r], row_offsets[r_next]
             for c in range(shared):
                 a = base_a + c
                 b = base_b + c
                 line_verts.append(np.concatenate([pts[a], col_color]))
                 line_verts.append(np.concatenate([pts[b], col_color]))
+            if is_triangular:
+                fan = _grid_fan_spec(len_a, len_b, col_wrap)
+                if fan is not None:
+                    anchor_in_a, anchor_col, longer_len, ks = fan
+                    anchor_idx = (base_a if anchor_in_a else base_b) + anchor_col
+                    longer_base = base_b if anchor_in_a else base_a
+                    for k in ks:
+                        spoke = longer_base + (k + 1) % longer_len
+                        line_verts.append(np.concatenate([pts[anchor_idx], diag_color]))
+                        line_verts.append(np.concatenate([pts[spoke], diag_color]))
         if line_verts:
             self._renderer.upload_lines(np.array(line_verts, dtype=np.float32))
 
         # Quad faces (faces mode only); polygon offset fill (from show_edges=True)
         # ensures the skeleton lines render in front of the mesh faces. Each
-        # row pair contributes quads only across the columns it shares with
-        # its neighbour, so a ragged grid's mesh tapers gracefully instead of
-        # requiring every row to be the same length.
+        # row pair contributes quads across the columns it shares with its
+        # neighbour, plus a fan (`_grid_fan_spec`) covering any points beyond
+        # that shared range — e.g. a cone's apex row fanning out to its base
+        # row, or a triangular-number row's one extra point per step — so a
+        # ragged grid's mesh has no missing/uncovered points instead of only
+        # tapering down to whichever row is shorter.
         if draw_faces:
             tris_pos = []
             tris_norm = []
+
+            def _add_tri(p0, p1, p2):
+                n = np.cross(p1 - p0, p2 - p0)
+                ln = np.linalg.norm(n)
+                if ln > 0:
+                    n = n / ln
+                tris_pos.extend([p0, p1, p2])
+                tris_norm.extend([n, n, n])
+
             for r in range(r_range):
                 r_next = (r + 1) % rows
-                shared = min(row_lens[r], row_lens[r_next])
-                if shared < 2:
-                    continue
-                c_range = shared if col_wrap else shared - 1
+                len_a, len_b = row_lens[r], row_lens[r_next]
+                shared = min(len_a, len_b)
                 base_a, base_b = row_offsets[r], row_offsets[r_next]
-                for c in range(c_range):
-                    i00 = base_a + c
-                    i01 = base_a + (c + 1) % shared
-                    i10 = base_b + c
-                    i11 = base_b + (c + 1) % shared
-                    p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
-                    n1 = np.cross(p01 - p00, p11 - p00)
-                    ln1 = np.linalg.norm(n1)
-                    if ln1 > 0:
-                        n1 /= ln1
-                    tris_pos.extend([p00, p01, p11])
-                    tris_norm.extend([n1, n1, n1])
-                    n2 = np.cross(p11 - p00, p10 - p00)
-                    ln2 = np.linalg.norm(n2)
-                    if ln2 > 0:
-                        n2 /= ln2
-                    tris_pos.extend([p00, p11, p10])
-                    tris_norm.extend([n2, n2, n2])
+                if shared >= 2:
+                    c_range = shared if col_wrap else shared - 1
+                    for c in range(c_range):
+                        i00 = base_a + c
+                        i01 = base_a + (c + 1) % shared
+                        i10 = base_b + c
+                        i11 = base_b + (c + 1) % shared
+                        p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
+                        _add_tri(p00, p01, p11)
+                        _add_tri(p00, p11, p10)
+                fan = _grid_fan_spec(len_a, len_b, col_wrap)
+                if fan is not None:
+                    anchor_in_a, anchor_col, longer_len, ks = fan
+                    anchor_idx = (base_a if anchor_in_a else base_b) + anchor_col
+                    longer_base = base_b if anchor_in_a else base_a
+                    p_anchor = pts[anchor_idx]
+                    for k in ks:
+                        p_k = pts[longer_base + k]
+                        p_k1 = pts[longer_base + (k + 1) % longer_len]
+                        if anchor_in_a:
+                            _add_tri(p_k, p_anchor, p_k1)
+                        else:
+                            _add_tri(p_anchor, p_k, p_k1)
             if tris_pos:
                 self._renderer.upload_mesh(np.array(tris_pos, dtype=np.float32),
                                  np.array(tris_norm, dtype=np.float32),
