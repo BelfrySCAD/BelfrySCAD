@@ -409,6 +409,40 @@ def _build_skeleton_graph_with_holes(
                     add_edge(prev, t)
                     prev = t  # chain: each step only goes one hop further
 
+        # Post-process: resolve same-angle neighbour pairs that arise when two
+        # different subtrees share the same source vertex but each contributes a
+        # sink along the same ray.  The per-subtree chain above only fixes
+        # within-subtree duplicates; this pass fixes the cross-subtree case.
+        # For each vertex V with two neighbours A (closer) and B (farther) at
+        # the same angle, replace the V→B shortcut with a chain hop A→B and
+        # remove V→B.  Repeat until the graph is stable.
+        changed = True
+        while changed:
+            changed = False
+            for v in list(adjacency):
+                by_ang: dict[float, list] = {}
+                for w in list(adjacency[v]):
+                    dx, dy = w[0] - v[0], w[1] - v[1]
+                    ang = round(math.atan2(dy, dx), 9)
+                    dist2 = dx * dx + dy * dy
+                    by_ang.setdefault(ang, []).append((dist2, w))
+                for ang, group in by_ang.items():
+                    if len(group) < 2:
+                        continue
+                    group.sort()
+                    changed = True
+                    prev = v
+                    for i, (_, w) in enumerate(group):
+                        if i == 0:
+                            prev = w
+                            continue
+                        if w in adjacency.get(v, []):
+                            adjacency[v].remove(w)
+                        if v in adjacency.get(w, []):
+                            adjacency[w].remove(v)
+                        add_edge(prev, w)
+                        prev = w
+
         return heights, adjacency, p0_keys, hole_keys_list, key
     except Exception:
         return None
