@@ -471,7 +471,7 @@ class _DetachedTabBar(QWidget):
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
-    _LAYOUT_VERSION = 3
+    _LAYOUT_VERSION = 4
 
     def __init__(self):
         super().__init__()
