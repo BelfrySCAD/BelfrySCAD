@@ -1736,6 +1736,10 @@ class Evaluator:
             "resize": self._resolve_transform,
             "multmatrix": self._resolve_transform,
             "color": self._resolve_color,
+            "hull": self._resolve_hull,
+            "minkowski": self._resolve_minkowski,
+            "offset": self._resolve_offset,
+            "projection": self._resolve_projection,
         }
         self._GENERATE_DISPATCH = {
             "cube": self._generate_cube,
@@ -1753,6 +1757,10 @@ class Evaluator:
             "resize": self._generate_transform,
             "multmatrix": self._generate_transform,
             "color": self._generate_color,
+            "hull": self._generate_hull,
+            "minkowski": self._generate_minkowski,
+            "offset": self._generate_offset,
+            "projection": self._generate_projection,
         }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -2310,14 +2318,6 @@ class Evaluator:
             return self._builtin_csg("difference", node, ctx)
         if name == "intersection":
             return self._builtin_csg("intersection", node, ctx)
-        if name == "hull":
-            return self._builtin_hull(node, ctx)
-        if name == "minkowski":
-            return self._builtin_minkowski(node, ctx)
-        if name == "offset":
-            return self._body_list(self._builtin_offset(args, node, ctx))
-        if name == "projection":
-            return self._body_list(self._builtin_projection(args, node, ctx))
         if name == "linear_extrude":
             return self._body_list(self._builtin_linear_extrude(args, node, ctx))
         if name == "rotate_extrude":
@@ -2759,13 +2759,27 @@ class Evaluator:
         # Return: CSG result + background ghosts + highlight overlays (separate from CSG result)
         return ([csg_result] if csg_result is not None else []) + all_bg + all_hi
 
-    def _builtin_hull(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        if not children:
-            return []
-        bg = [c for c in children if c.role == "background"]
-        fg = [c for c in children if c.role != "background"]
+    @staticmethod
+    def _split_by_role(bodies: list[ColoredBody]) -> tuple[list[ColoredBody], list[ColoredBody], list[ColoredBody]]:
+        """Split a flat body list into (background, foreground,
+        highlight_ghost) per the %/# modifier convention — shared by
+        hull/minkowski's generate steps (previously duplicated identically
+        in both, plus a per-statement-group variant in _builtin_csg)."""
+        bg = [c for c in bodies if c.role == "background"]
+        fg = [c for c in bodies if c.role != "background"]
         hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
+        return bg, fg, hi
+
+    def _resolve_hull(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
+        return {}
+
+    def _generate_hull(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        bodies = flatten_csg_tree(children)
+        if not bodies:
+            return []
+        bg, fg, hi = self._split_by_role(bodies)
         hull_result: Optional[ColoredBody] = None
         if fg:
             bodies_3d = [c.body for c in fg if c.body is not None]
@@ -3434,43 +3448,52 @@ class Evaluator:
         cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
         return ColoredBody(section=cs, color=ctx.color)
 
-    def _builtin_offset(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        cs = self._to_cross_section(children)
-        if cs is None:
-            return None
+    def _resolve_offset(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
         r = self._get_arg(args, None, "r", None)
         delta = self._get_arg(args, None, "delta", None)
         chamfer = bool(self._get_arg(args, None, "chamfer", False))
+        segs = self._fn(ctx, abs(float(r))) if r is not None else None
+        return {"r": r, "delta": delta, "chamfer": chamfer, "segs": segs, "color": ctx.color}
+
+    def _generate_offset(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        bodies = flatten_csg_tree(children)
+        cs = self._to_cross_section(bodies)
+        if cs is None:
+            return []
+        r, delta, chamfer = params["r"], params["delta"], params["chamfer"]
         if r is not None:
-            segs = self._fn(ctx, abs(float(r)))
-            result = cs.offset(float(r), m3d.JoinType.Round, circular_segments=segs)
+            result = cs.offset(float(r), m3d.JoinType.Round, circular_segments=params["segs"])
         elif delta is not None:
             jt = m3d.JoinType.Miter if chamfer else m3d.JoinType.Square
             result = cs.offset(float(delta), jt)
         else:
-            return children[0] if children else None
-        return ColoredBody(section=result, color=ctx.color)
+            return [bodies[0]] if bodies else []
+        return [ColoredBody(section=result, color=params["color"])]
 
-    def _builtin_projection(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        bodies_3d = [c for c in children if c.body is not None]
+    def _resolve_projection(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
+        return {"cut": bool(self._get_arg(args, None, "cut", False))}
+
+    def _generate_projection(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        bodies = flatten_csg_tree(children)
+        bodies_3d = [c for c in bodies if c.body is not None]
         if not bodies_3d:
-            return None
+            return []
         combined = self._combine(bodies_3d).body
-        cut = bool(self._get_arg(args, None, "cut", False))
         try:
-            if cut:
+            if params["cut"]:
                 cs = combined.slice(0.0)
             else:
                 raw = combined.project()
                 # project() may produce self-intersecting polygons; re-fill to clean up
                 polys = raw.to_polygons()
                 cs = m3d.CrossSection(polys, m3d.FillRule.Positive) if polys else raw
-            return ColoredBody(section=cs, color=bodies_3d[0].color)
+            return [ColoredBody(section=cs, color=bodies_3d[0].color)]
         except Exception as e:
             self.error(f"projection: {e}", node)
-            return None
 
     def _resolve_2d(self, node: ModularCall, ctx: EvalContext) -> dict:
         """circle/square/polygon share one dispatch entry, matching
@@ -3696,11 +3719,14 @@ class Evaluator:
             return None
         return body.simplify(edge_length * 0.05)
 
-    def _builtin_minkowski(self, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        bg = [c for c in children if c.role == "background"]
-        fg = [c for c in children if c.role != "background"]
-        hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
+    def _resolve_minkowski(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
+        return {}
+
+    def _generate_minkowski(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        bodies = flatten_csg_tree(children)
+        bg, fg, hi = self._split_by_role(bodies)
         bodies_3d = [c for c in fg if c.body is not None]
         if not bodies_3d:
             return bg + hi

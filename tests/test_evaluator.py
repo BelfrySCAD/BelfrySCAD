@@ -3048,11 +3048,12 @@ class TestCSGTreeResolveGenerateSplit:
     def test_migrated_kinds_registered_unmigrated_kinds_not(self):
         _, _, ev = run_tree("cube(1);")
         for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text",
-                     "translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color"):
+                     "translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color",
+                     "hull", "minkowski", "offset", "projection"):
             assert kind in ev._RESOLVE_DISPATCH
             assert kind in ev._GENERATE_DISPATCH
-        for kind in ("union", "difference", "intersection", "hull", "minkowski",
-                     "offset", "projection", "linear_extrude"):
+        for kind in ("union", "difference", "intersection", "linear_extrude",
+                     "rotate_extrude", "roof", "surface", "import"):
             assert kind not in ev._RESOLVE_DISPATCH
             assert kind not in ev._GENERATE_DISPATCH
 
@@ -3123,7 +3124,9 @@ class TestCSGTreeResolveGenerateSplit:
         r, g, b = bodies[0].color[:3]
         assert r == approx(1.0) and g == approx(0.0, rel=1) and b == approx(0.0, rel=1)
 
-    def test_migrated_leaf_inside_unmigrated_hull(self):
+    def test_migrated_leaf_inside_migrated_hull_and_transform(self):
+        # hull() and translate() were both migrated in later steps (3, 2);
+        # still a useful direct regression check alongside cube.
         bb = bbox(run("hull() { cube(1); translate([5,0,0]) cube(1); }")[0])
         assert bb[3] - bb[0] == approx(6)
 
@@ -3134,9 +3137,10 @@ class TestCSGTreeResolveGenerateSplit:
         bb = bbox(run(src)[0])
         assert bb[3] - bb[0] == approx(4)  # still a 4x4x4 cube's extent, just with holes
 
-    def test_polyhedron_inside_unmigrated_minkowski(self):
-        # CW-from-outside face winding (OpenSCAD convention), matching
-        # TestNewBuiltins.test_polyhedron_tetrahedron.
+    def test_polyhedron_inside_migrated_minkowski(self):
+        # minkowski() was migrated in step 3; still a useful direct
+        # regression check. CW-from-outside face winding (OpenSCAD
+        # convention), matching TestNewBuiltins.test_polyhedron_tetrahedron.
         tet = "polyhedron(points=[[0,0,0],[1,0,0],[0,1,0],[0,0,1]], faces=[[0,1,2],[0,3,1],[0,2,3],[1,3,2]])"
         bodies, _ = run(f"minkowski() {{ {tet}; cube(0.1); }}")
         assert len(bodies) == 1
@@ -3189,11 +3193,10 @@ class TestCSGTreeStep2Transforms:
         r, g, b = bodies[0].color[:3]
         assert r == approx(0.0, rel=1) and b == approx(1.0)
 
-    def test_migrated_transform_wraps_still_unmigrated_offset(self):
-        # offset() is not migrated yet (step 5) — this is the current
-        # mixed-migration boundary: a migrated wrapper (translate) around a
-        # not-yet-migrated one (offset). If offset() silently returned no
-        # bodies, translate's flatten_csg_tree(children) would see nothing.
+    def test_migrated_transform_wraps_migrated_offset_wraps_unmigrated_extrude(self):
+        # offset() was migrated in step 3 (was still un-migrated when this
+        # test was first written in step 2) — translate/offset are now both
+        # migrated, wrapping the still-unmigrated linear_extrude (step 5).
         bb = bbox(run("linear_extrude(height=1) translate([5,0]) offset(r=1) square(2);")[0])
         assert bb[3] - bb[0] == approx(4)  # 2x2 square offset(r=1) -> 4x4, translate doesn't change extent
         assert bb[0] == approx(4) and bb[3] == approx(8)
@@ -3215,6 +3218,76 @@ class TestCSGTreeStep2Transforms:
             "mirror([1,0,0]) cube(1);",
             'color("green") cylinder(h=2, r=1);',
             "resize([2,2,2]) sphere(1);",
+        ]:
+            bodies, _, ev = run_tree(src)
+            assert flatten_csg_tree(ev.csg_tree) == bodies
+
+
+# ---------------------------------------------------------------------------
+# CSG tree Phase 2, step 3 — resolve/generate split for topology (hull,
+# minkowski, projection, offset). Still interim (generated immediately, not
+# yet deferred — see docs/evaluator.md).
+# ---------------------------------------------------------------------------
+
+class TestCSGTreeStep3Topology:
+    def test_topology_kinds_registered(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("hull", "minkowski", "offset", "projection"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+
+    def test_hull_minkowski_params_empty(self):
+        # hull()/minkowski() take no arguments — only children matter.
+        _, _, ev = run_tree("hull() { cube(1); sphere(1); }")
+        assert ev.csg_tree[0].params == {}
+        _, _, ev = run_tree("minkowski() { cube(1); sphere(1); }")
+        assert ev.csg_tree[0].params == {}
+
+    def test_offset_params_shape(self):
+        _, _, ev = run_tree("offset(r=2) square(4);")
+        params = ev.csg_tree[0].params
+        assert params["r"] == 2
+        assert params["delta"] is None
+        assert params["segs"] is not None
+
+        _, _, ev = run_tree("offset(delta=1, chamfer=true) square(4);")
+        params = ev.csg_tree[0].params
+        assert params["delta"] == 1
+        assert params["chamfer"] is True
+        assert params["segs"] is None
+
+    def test_projection_params_shape(self):
+        _, _, ev = run_tree("projection(cut=true) cube(2);")
+        assert ev.csg_tree[0].params == {"cut": True}
+        _, _, ev = run_tree("projection() cube(2);")
+        assert ev.csg_tree[0].params == {"cut": False}
+
+    def test_migrated_hull_wraps_migrated_leaves(self):
+        bb = bbox(run("hull() { cube(1); translate([5,0,0]) cube(1); }")[0])
+        assert bb[3] - bb[0] == approx(6)
+
+    def test_migrated_offset_wraps_still_unmigrated_union(self):
+        # union() is not migrated yet (step 4) — migrated offset wrapping a
+        # not-yet-migrated union of two migrated 2D leaves. If union()
+        # silently returned no bodies, offset's _to_cross_section(bodies)
+        # would see nothing.
+        src = "linear_extrude(height=1) offset(r=1) union() { square(2); translate([3,0]) square(2); }"
+        bb = bbox(run(src)[0])
+        assert bb[0] == approx(-1) and bb[3] == approx(6)
+
+    def test_migrated_projection_wraps_still_unmigrated_union(self):
+        src = "linear_extrude(height=1) projection() union() { cube(2); translate([3,0,0]) cube(2); }"
+        bodies = run(src)[0]
+        assert len(bodies) == 1
+        bb = bbox(bodies)
+        assert bb[0] == approx(0) and bb[3] == approx(5)
+
+    def test_flatten_matches_evaluate_result_with_topology(self):
+        for src in [
+            "hull() { cube(1); translate([3,0,0]) sphere(1); }",
+            "minkowski() { cube(1); sphere(0.2); }",
+            "offset(r=1) square(2);",
+            "projection() cube(2);",
         ]:
             bodies, _, ev = run_tree(src)
             assert flatten_csg_tree(ev.csg_tree) == bodies
