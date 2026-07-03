@@ -340,7 +340,7 @@ class ListViewer(QDialog):
         menu = QMenu(self)
         sub_title = f"{self._title}[{key}]"
         if _is_list(val) or _is_oscobject(val):
-            menu.addAction("View in List...", lambda: _open_list_viewer(
+            menu.addAction("View as List...", lambda: _open_list_viewer(
                 sub_title, val, self))
         if _is_vnf(val):
             menu.addAction("View as VNF...", lambda: _open_vnf_viewer(
@@ -1984,7 +1984,7 @@ def _open_affine_matrix_viewer(title: str, value, parent=None):
 def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
     """Add viewer actions to a QMenu based on the value's type."""
     if _is_list(value) or _is_oscobject(value):
-        menu.addAction("View in List...", lambda: _open_list_viewer(name, value, parent))
+        menu.addAction("View as List...", lambda: _open_list_viewer(name, value, parent))
     if _is_vnf(value):
         menu.addAction("View as VNF...", lambda: _open_vnf_viewer(name, value, parent))
     if _is_grid(value):
