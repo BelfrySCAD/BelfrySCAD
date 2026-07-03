@@ -1602,6 +1602,26 @@ class ColoredBody:
     role: str = "normal"  # "normal" | "highlight" (#, real geom) | "highlight_ghost" (#, inside CSG) | "background" (%) | "show_only" (!)
 
 
+@dataclass
+class CSGNode:
+    """One node in the persistent, coarse-grained CSG tree built as a side
+    effect of eager evaluation. Complements — does not replace — id_to_node
+    (Manifold originalID -> AST node), which stays the fine-grained
+    per-triangle provenance table used for WYSIWYG ray-cast picking.
+
+    kind is a human-readable label (a ModularCall's call name, e.g. "cube",
+    "union", "my_bracket"; or "highlight"/"background"/"show_only"/
+    "intersection_for" for the four non-ModularCall wrapper kinds) — not a
+    guaranteed-unique discriminator, since a user module may shadow a builtin
+    name. Consumers needing certainty should check type(node) / is_builtin.
+    """
+    kind: str
+    node: ASTNode
+    bodies: list[ColoredBody]
+    is_builtin: bool = True
+    children: list["CSGNode"] = field(default_factory=list)
+
+
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
 # in the 3D viewport — the renderer/exporter only know how to handle Manifold
 # meshes, and real OpenSCAD's flat 2D preview has no Manifold equivalent.
@@ -1619,6 +1639,18 @@ def to_renderable_bodies(bodies: list[ColoredBody]) -> list[ColoredBody]:
         if cb.body is None and cb.section is not None else cb
         for cb in bodies
     ]
+
+
+def flatten_csg_tree(tree: list[CSGNode]) -> list[ColoredBody]:
+    """Concatenate every top-level node's already-computed .bodies (NOT
+    recursing into .children — a parent's .bodies already is the fully
+    resolved/combined result of its children, e.g. a union node's .bodies
+    is the merged CSG result, not to be added on top of its children's
+    individual bodies too). Reproduces evaluate()'s returned body list
+    exactly for any script with no top-level `!` (show_only) — evaluate()'s
+    own post-hoc show_only filter is applied once across the whole flat
+    result and is not itself represented by any single tree node."""
+    return [b for node in tree for b in node.bodies]
 
 
 _DEFAULT_DOLLAR = {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_modules": 0}
@@ -1678,6 +1710,8 @@ class EvalContext:
 class Evaluator:
     def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None):
         self.id_to_node: dict[int, ASTNode] = {}
+        self.csg_tree: list[CSGNode] = []
+        self._tree_stack: list[list[CSGNode]] = [self.csg_tree]
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
         self._call_stack: list = []
@@ -1903,6 +1937,8 @@ class Evaluator:
         self._resolve_use_statements(nodes, root_scope)
         self._call_stack.clear()
         self._frame_ctxs.clear()
+        self.csg_tree = []
+        self._tree_stack = [self.csg_tree]
         ctx = EvalContext(scope=root_scope)
         if viewport_params:
             ctx.dyn.update(viewport_params)
@@ -1924,7 +1960,65 @@ class Evaluator:
     # Statement dispatch
     # ------------------------------------------------------------------
 
+    # AST node types that get their own CSGNode in self.csg_tree. ModularCall
+    # covers every primitive/transform/boolean/hull/minkowski/children()/
+    # user-module call. The three tagging modifiers (#/%/!) each wrap exactly
+    # one child. ModularIntersectionFor is the one control-flow-shaped node
+    # that is NOT transparent like for/if/let: it combines its per-iteration
+    # children into a single intersected result (see _eval_intersection_for),
+    # so its iterations must nest under one tree node just like union()'s
+    # children nest under a union node — otherwise flatten_csg_tree() would
+    # return the pre-intersection per-iteration bodies instead of the actual
+    # combined result. ModularModifierDisable (*) is deliberately excluded:
+    # it never evaluates its child at all, so there is nothing to record.
+    _TREE_NODE_TYPES = (
+        ModularCall,
+        ModularModifierHighlight,
+        ModularModifierBackground,
+        ModularModifierShowOnly,
+        ModularIntersectionFor,
+    )
+
+    def _tree_node_kind(self, node: ASTNode, ctx: EvalContext) -> tuple[str, bool]:
+        """Return (kind, is_builtin) for a node in _TREE_NODE_TYPES. is_builtin
+        is only meaningful for ModularCall (False when `name` resolves to a
+        user module via ctx.scope.lookup_module) — a user module can shadow a
+        builtin name, so `kind` alone is not a unique discriminator."""
+        if isinstance(node, ModularCall):
+            name = node.name.name
+            return name, ctx.scope.lookup_module(name) is None
+        if isinstance(node, ModularModifierHighlight):
+            return "highlight", True
+        if isinstance(node, ModularModifierBackground):
+            return "background", True
+        if isinstance(node, ModularModifierShowOnly):
+            return "show_only", True
+        return "intersection_for", True  # ModularIntersectionFor
+
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
+        """Thin wrapper around _eval_statement_impl that additionally builds
+        self.csg_tree as a side effect, with zero change to the returned
+        bodies. For the five _TREE_NODE_TYPES, pushes a new children
+        accumulator before evaluating, pops it in a finally (so a raised
+        EvalError cleanly discards the in-progress node rather than
+        corrupting a parent's accumulator), then appends the completed
+        CSGNode to whichever accumulator is now on top of the stack. Every
+        recursive call site already calls self._eval_statement(...), so
+        nesting composes automatically with no other call site changes."""
+        if not isinstance(node, self._TREE_NODE_TYPES):
+            return self._eval_statement_impl(node, ctx)
+        self._tree_stack.append([])
+        try:
+            bodies = self._eval_statement_impl(node, ctx)
+        finally:
+            children = self._tree_stack.pop()
+        kind, is_builtin = self._tree_node_kind(node, ctx)
+        tree_node = CSGNode(kind=kind, node=node, bodies=bodies,
+                             is_builtin=is_builtin, children=children)
+        self._tree_stack[-1].append(tree_node)
+        return bodies
+
+    def _eval_statement_impl(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
         self._last_ctx = ctx
         t = type(node)
         if t is not ModuleDeclaration and t is not FunctionDeclaration and t is not ModularLet:

@@ -8,7 +8,9 @@ expression tests capture echo output.
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from belfryscad.engine.evaluator import Evaluator, EvalError, _resolve_font
+from belfryscad.engine.evaluator import (
+    Evaluator, EvalError, _resolve_font, CSGNode, flatten_csg_tree,
+)
 
 
 def run(src: str):
@@ -19,6 +21,17 @@ def run(src: str):
     ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
     bodies, _ = ev.evaluate(nodes, root_scope)
     return bodies, echo_lines
+
+
+def run_tree(src: str):
+    """Like run(), but also returns the Evaluator so tests can inspect
+    its csg_tree. Returns (bodies, echo_lines, evaluator)."""
+    echo_lines = []
+    nodes = getASTfromString(src, include_comments=False)
+    root_scope = build_scopes(nodes)
+    ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
+    bodies, _ = ev.evaluate(nodes, root_scope)
+    return bodies, echo_lines, ev
 
 
 def skip_unless_font_installed(font_spec: str, expected_family: str):
@@ -2880,3 +2893,140 @@ class TestDollarVarChildren:
         )
         assert sides[0] == approx(2)  # cube(2)
         assert sides[1] == approx(5)  # cube(5)
+
+
+# ---------------------------------------------------------------------------
+# CSG tree (Evaluator.csg_tree) — Phase 1 of the evaluator refactor: an
+# explicit, persistent tree built as a side effect of eager evaluation,
+# purely additive (bodies/echo output are unaffected). See docs/evaluator.md
+# "CSG tree" section.
+# ---------------------------------------------------------------------------
+
+class TestCSGTree:
+    def test_single_primitive_one_node(self):
+        _, _, ev = run_tree("cube(2);")
+        assert len(ev.csg_tree) == 1
+        node = ev.csg_tree[0]
+        assert node.kind == "cube"
+        assert node.is_builtin is True
+        assert node.children == []
+
+    def test_union_nests_children(self):
+        _, _, ev = run_tree("union() { cube(1); sphere(1); }")
+        assert len(ev.csg_tree) == 1
+        node = ev.csg_tree[0]
+        assert node.kind == "union"
+        assert [c.kind for c in node.children] == ["cube", "sphere"]
+
+    def test_highlight_wraps_one_child(self):
+        _, _, ev = run_tree("#cube(2);")
+        assert len(ev.csg_tree) == 1
+        assert ev.csg_tree[0].kind == "highlight"
+        assert len(ev.csg_tree[0].children) == 1
+        assert ev.csg_tree[0].children[0].kind == "cube"
+
+    def test_background_wraps_one_child(self):
+        _, _, ev = run_tree("%sphere(2);")
+        assert len(ev.csg_tree) == 1
+        assert ev.csg_tree[0].kind == "background"
+        assert ev.csg_tree[0].children[0].kind == "sphere"
+
+    def test_color_wraps_one_child(self):
+        _, _, ev = run_tree('color("red") cube(2);')
+        assert len(ev.csg_tree) == 1
+        assert ev.csg_tree[0].kind == "color"
+        assert len(ev.csg_tree[0].children) == 1
+        assert ev.csg_tree[0].children[0].kind == "cube"
+
+    def test_for_produces_sibling_nodes_no_for_node(self):
+        _, _, ev = run_tree("for (i=[0:2]) cube(i+1);")
+        # transparent: 3 sibling cube nodes directly at root, no "for" node
+        assert [n.kind for n in ev.csg_tree] == ["cube", "cube", "cube"]
+
+    def test_if_is_transparent(self):
+        _, _, ev = run_tree("if (true) cube(1); if (false) sphere(1);")
+        # true branch's cube attaches directly at root; false branch never runs
+        assert [n.kind for n in ev.csg_tree] == ["cube"]
+
+    def test_intersection_for_gets_its_own_combiner_node(self):
+        src = "intersection_for(i=[0:2]) rotate([0,0,i*60]) cube([10,2,10], center=true);"
+        bodies, _, ev = run_tree(src)
+        assert len(ev.csg_tree) == 1
+        node = ev.csg_tree[0]
+        assert node.kind == "intersection_for"
+        assert len(node.children) == 3          # one rotate(...) per iteration
+        assert node.bodies == bodies             # the combined (post-^) result, not the 3 pre-intersection bodies
+        assert len(node.bodies) == 1
+
+    def test_user_module_call_is_not_builtin(self):
+        _, _, ev = run_tree("module foo() { cube(1); } foo();")
+        assert len(ev.csg_tree) == 1
+        node = ev.csg_tree[0]
+        assert node.kind == "foo"
+        assert node.is_builtin is False
+        assert len(node.children) == 1
+        assert node.children[0].kind == "cube"
+
+    def test_disable_produces_no_tree_node(self):
+        _, _, ev = run_tree("*cube(1);")
+        assert ev.csg_tree == []
+
+    def test_nested_mix(self):
+        src = """
+        module box(s) { cube(s); }
+        union() {
+            #box(2);
+            translate([5,0,0]) %sphere(1);
+        }
+        """
+        _, _, ev = run_tree(src)
+        assert len(ev.csg_tree) == 1
+        union_node = ev.csg_tree[0]
+        assert union_node.kind == "union"
+        assert len(union_node.children) == 2
+        hl, tr = union_node.children
+        assert hl.kind == "highlight"
+        assert hl.children[0].kind == "box" and hl.children[0].is_builtin is False
+        assert tr.kind == "translate"
+        assert tr.children[0].kind == "background"
+        assert tr.children[0].children[0].kind == "sphere"
+
+    @pytest.mark.parametrize("src", [
+        "cube(2);",
+        "union() { cube(1); sphere(1); }",
+        "difference() { cube([4,4,4]); cube([2,2,2]); }",
+        "for (i=[0:2]) cube(i+1);",
+        "module box(s) { cube(s); } box(3);",
+        'color("red") translate([1,0,0]) cube(1);',
+        "%cube(1); cube(2);",
+    ])
+    def test_flatten_matches_evaluate_result(self, src):
+        # Regression proof: flattening the tree reproduces evaluate()'s own
+        # result for any script with no top-level `!` (show_only).
+        bodies, _, ev = run_tree(src)
+        assert flatten_csg_tree(ev.csg_tree) == bodies
+
+    def test_flatten_vs_evaluate_with_top_level_show_only(self):
+        # Documented exception: evaluate()'s own post-hoc show_only filter
+        # (applied once, outside any single tree node) makes evaluate()'s
+        # result a strict subset of the flattened (pre-filter) tree.
+        src = "cube(1); !cube(3);"
+        bodies, _, ev = run_tree(src)
+        flat = flatten_csg_tree(ev.csg_tree)
+        assert len(flat) == 2                        # both top-level statements recorded
+        assert len(bodies) == 1                       # evaluate()'s post-filter result
+        assert bodies[0].role == "show_only"
+        filtered = [b for b in flat if b.role in ("show_only", "highlight")]
+        assert filtered == bodies                     # replaying evaluate()'s own filter matches exactly
+
+    def test_error_mid_subtree_leaves_valid_partial_tree(self):
+        # An EvalError raised deep inside a subtree must not corrupt the
+        # parent's accumulator — the in-progress node is simply never
+        # appended, and prior completed siblings remain intact.
+        src = 'cube(1); union() { sphere(1); assert(false, "boom"); }'
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(echo_fn=lambda msg: None)
+        with pytest.raises(EvalError):
+            ev.evaluate(nodes, root_scope)
+        assert [n.kind for n in ev.csg_tree] == ["cube"]
