@@ -1729,6 +1729,13 @@ class Evaluator:
             "square": self._resolve_2d,
             "polygon": self._resolve_2d,
             "text": self._resolve_text,
+            "translate": self._resolve_transform,
+            "rotate": self._resolve_transform,
+            "scale": self._resolve_transform,
+            "mirror": self._resolve_transform,
+            "resize": self._resolve_transform,
+            "multmatrix": self._resolve_transform,
+            "color": self._resolve_color,
         }
         self._GENERATE_DISPATCH = {
             "cube": self._generate_cube,
@@ -1739,6 +1746,13 @@ class Evaluator:
             "square": self._generate_2d,
             "polygon": self._generate_2d,
             "text": self._generate_text,
+            "translate": self._generate_transform,
+            "rotate": self._generate_transform,
+            "scale": self._generate_transform,
+            "mirror": self._generate_transform,
+            "resize": self._generate_transform,
+            "multmatrix": self._generate_transform,
+            "color": self._generate_color,
         }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -2290,10 +2304,6 @@ class Evaluator:
     def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         args, ctx = self._resolve_call_args(node, ctx)
 
-        if name in ("translate", "rotate", "scale", "mirror", "resize", "multmatrix"):
-            return self._builtin_transform(name, args, node, ctx)
-        if name == "color":
-            return self._builtin_color(args, node, ctx)
         if name == "union":
             return self._builtin_csg("union", node, ctx)
         if name == "difference":
@@ -2497,10 +2507,21 @@ class Evaluator:
 
     # --- transforms ---
 
-    def _builtin_transform(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
+    def _resolve_transform(self, node: ModularCall, ctx: EvalContext) -> dict:
+        name = node.name.name
+        args, ctx = self._resolve_call_args(node, ctx)
+        # Evaluate children for the side effect of building their CSGNodes
+        # (pushed onto self._tree_stack) — the returned bodies themselves
+        # are discarded here; generate reads them back via each child
+        # CSGNode's own .bodies, which is correct regardless of whether a
+        # given child is itself migrated or still eager.
+        self._eval_children(node.children, ctx)
+        return {"name": name, "args": args}
+
+    def _generate_transform(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        name, args = params["name"], params["args"]
         result = []
-        for b in children:
+        for b in flatten_csg_tree(children):
             if b.section is not None:
                 result.append(replace(b, section=self._apply_transform_2d(name, args, b.section)))
             elif b.body is not None:
@@ -2626,7 +2647,8 @@ class Evaluator:
 
     # --- color ---
 
-    def _builtin_color(self, args: dict, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
+    def _resolve_color(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         c = self._get_arg(args, 0, "c", [1, 1, 1, 1])
         alpha = float(self._get_arg(args, 1, "alpha", 1.0))
         if isinstance(c, str):
@@ -2637,8 +2659,12 @@ class Evaluator:
             rgba = (1.0, 1.0, 1.0, 1.0)
 
         child_ctx = ctx.child_ctx(color=rgba)
-        children = self._eval_children(node.children, child_ctx)
-        return [replace(b, color=rgba) for b in children]
+        self._eval_children(node.children, child_ctx)  # side effect only, see _resolve_transform
+        return {"rgba": rgba}
+
+    def _generate_color(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        rgba = params["rgba"]
+        return [replace(b, color=rgba) for b in flatten_csg_tree(children)]
 
     def _css_color(self, name: str, alpha: float = 1.0) -> tuple:
         if name.startswith("#"):
