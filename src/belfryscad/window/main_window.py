@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QTabWidget, QPlainTextEdit, QToolBar, QStatusBar,
+    QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
     QDockWidget, QApplication, QMenu,
 )
@@ -378,6 +378,96 @@ class _RenderWorker(QObject):
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp)
 
 
+class _DetachedTabBar(QWidget):
+    """A `QTabWidget`-compatible facade whose `QTabBar` (`self.tab_bar`) is a
+    free-standing widget the caller places wherever it likes — e.g. in a
+    toolbar spanning the full window width, rather than confined to
+    whatever dock happens to contain the tab pages — while the pages
+    themselves live in a `QStackedWidget` that *is* this widget's own
+    layout (so `self` can drop into a dock exactly where a plain
+    `QTabWidget` used to). Implements only the subset of `QTabWidget`'s
+    API `MainWindow` actually uses, so no call site needs to change."""
+
+    currentChanged = Signal(int)
+    tabCloseRequested = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.tab_bar = QTabBar()
+        self._stack = QStackedWidget()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._stack)
+
+        self.tab_bar.currentChanged.connect(self._on_bar_current_changed)
+        self.tab_bar.tabCloseRequested.connect(self.tabCloseRequested)
+        self.tab_bar.tabMoved.connect(self._on_tab_moved)
+
+    def _on_bar_current_changed(self, index: int):
+        self._stack.setCurrentIndex(index)
+        self.currentChanged.emit(index)
+
+    def _on_tab_moved(self, from_index: int, to_index: int):
+        widget = self._stack.widget(from_index)
+        self._stack.removeWidget(widget)
+        self._stack.insertWidget(to_index, widget)
+
+    def addTab(self, widget: QWidget, label: str) -> int:
+        stack_index = self._stack.addWidget(widget)
+        bar_index = self.tab_bar.addTab(label)
+        assert stack_index == bar_index, "tab_bar and stack indices diverged"
+        return bar_index
+
+    def removeTab(self, index: int):
+        widget = self._stack.widget(index)
+        if widget is not None:
+            self._stack.removeWidget(widget)
+        self.tab_bar.removeTab(index)
+
+    def widget(self, index: int) -> QWidget | None:
+        return self._stack.widget(index)
+
+    def count(self) -> int:
+        return self._stack.count()
+
+    def currentIndex(self) -> int:
+        return self._stack.currentIndex()
+
+    def setCurrentIndex(self, index: int):
+        self.tab_bar.setCurrentIndex(index)
+        # QTabBar doesn't emit currentChanged when the index is unchanged,
+        # but the stack still needs to reflect it the first time a page is
+        # added at the already-current index.
+        self._stack.setCurrentIndex(index)
+
+    def currentWidget(self) -> QWidget | None:
+        return self._stack.currentWidget()
+
+    def setCurrentWidget(self, widget: QWidget):
+        self.setCurrentIndex(self._stack.indexOf(widget))
+
+    def indexOf(self, widget: QWidget) -> int:
+        return self._stack.indexOf(widget)
+
+    def setTabText(self, index: int, text: str):
+        self.tab_bar.setTabText(index, text)
+
+    def setTabsClosable(self, closable: bool):
+        self.tab_bar.setTabsClosable(closable)
+
+    def setMovable(self, movable: bool):
+        self.tab_bar.setMovable(movable)
+
+    def setDocumentMode(self, doc_mode: bool):
+        self.tab_bar.setDocumentMode(doc_mode)
+
+    def setTabPosition(self, position):
+        pass  # the tab bar always renders in its own strip; only "North" is ever requested
+
+    def tabBar(self) -> QTabBar:
+        return self.tab_bar
+
+
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
@@ -418,6 +508,20 @@ class MainWindow(QMainWindow):
         self._toolbar = self._make_toolbar()
         self.addToolBar(self._toolbar)
 
+        # Tab bar strip: a full-width row directly under the toolbar, holding
+        # only the editor tab bar. A dedicated QToolBar is used (rather than
+        # putting the tab bar inside the Editor dock, as a plain QTabWidget
+        # would) because the toolbar area always spans the full window width
+        # above the dock/central-widget area, whereas the Editor dock is only
+        # as wide as its own dock area — cramped once many tabs are open.
+        self._tab_bar_toolbar = QToolBar("Tab Bar")
+        self._tab_bar_toolbar.setObjectName("TabBarToolBar")
+        self._tab_bar_toolbar.setMovable(False)
+        self._tab_bar_toolbar.setFloatable(False)
+        self._tab_bar_toolbar.setContentsMargins(0, 0, 0, 0)
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tab_bar_toolbar)
+
         # Viewport is the central widget
         self._viewport = Viewport()
         self._viewport.selection_changed.connect(self._on_selection_changed)
@@ -438,13 +542,13 @@ class MainWindow(QMainWindow):
         self.setAnimated(False)  # Qt bug: dock drag-to-tab animation crashes via null QVariantAnimation
 
         # --- Editor dock (left) — added first so left area owns the splitter root ---
-        self._tabs = QTabWidget()
+        self._tabs = _DetachedTabBar()
         self._tabs.setDocumentMode(True)
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(True)
-        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(self._tab_changed)
+        self._tab_bar_toolbar.addWidget(self._tabs.tab_bar)
 
         self._editor_dock = QDockWidget("Editor", self)
         self._editor_dock.setObjectName("EditorDock")
@@ -750,7 +854,7 @@ class MainWindow(QMainWindow):
         # View
         view_menu = mb.addMenu("View")
         self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
-        self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tabs.tabBar().setVisible)
+        self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tab_bar_toolbar.setVisible)
 
         self._act_show_editor = self._editor_dock.toggleViewAction()
         self._act_show_editor.setText("Show Editor")
