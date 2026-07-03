@@ -3030,3 +3030,108 @@ class TestCSGTree:
         with pytest.raises(EvalError):
             ev.evaluate(nodes, root_scope)
         assert [n.kind for n in ev.csg_tree] == ["cube"]
+
+
+# ---------------------------------------------------------------------------
+# CSG tree Phase 2, step 1 — resolve/generate split for leaf primitives
+# (cube, sphere, cylinder, polyhedron, circle, square, polygon, text).
+# Geometry computation is still eager (generated immediately after resolve,
+# not yet deferred to a separate pass — see docs/evaluator.md), so behavior
+# is identical to before the split; these tests cover the new params shape
+# and specifically the "mixed migration" hazard the split's design has to
+# avoid: a migrated leaf's bodies must still show up correctly inside a
+# not-yet-migrated wrapper (union/transform/color/hull), not get silently
+# dropped.
+# ---------------------------------------------------------------------------
+
+class TestCSGTreeResolveGenerateSplit:
+    def test_migrated_kinds_registered_unmigrated_kinds_not(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+        for kind in ("union", "difference", "intersection", "translate", "color", "hull"):
+            assert kind not in ev._RESOLVE_DISPATCH
+            assert kind not in ev._GENERATE_DISPATCH
+
+    def test_cube_params_shape(self):
+        _, _, ev = run_tree("cube([2,3,4], center=true);")
+        params = ev.csg_tree[0].params
+        assert params["size"] == [2.0, 3.0, 4.0]
+        assert params["center"] is True
+        assert "color" in params
+
+    def test_sphere_params_shape(self):
+        _, _, ev = run_tree("sphere(r=5, $fn=12);")
+        params = ev.csg_tree[0].params
+        assert "verts" in params and "tris" in params
+        assert params["verts"].shape[1] == 3
+
+    def test_cylinder_params_shape(self):
+        _, _, ev = run_tree("cylinder(h=10, r1=2, r2=4);")
+        params = ev.csg_tree[0].params
+        assert params["h"] == 10.0
+        assert params["r1"] == 2.0
+        assert params["r2"] == 4.0
+        assert params["segs"] >= 3
+
+    def test_polyhedron_params_shape(self):
+        src = "polyhedron(points=[[0,0,0],[1,0,0],[0,1,0],[0,0,1]], faces=[[0,1,2],[0,1,3],[0,2,3],[1,2,3]]);"
+        _, _, ev = run_tree(src)
+        params = ev.csg_tree[0].params
+        assert "verts" in params and "tri_arr" in params
+
+    def test_circle_square_polygon_params_shape(self):
+        _, _, ev = run_tree("circle(r=3, $fn=8);")
+        assert ev.csg_tree[0].params["name"] == "circle"
+        assert ev.csg_tree[0].params["r"] == 3.0
+
+        _, _, ev = run_tree("square([2,5]);")
+        assert ev.csg_tree[0].params["name"] == "square"
+        assert ev.csg_tree[0].params["size"] == [2.0, 5.0]
+
+        _, _, ev = run_tree("polygon(points=[[0,0],[1,0],[0,1]]);")
+        assert ev.csg_tree[0].params["name"] == "polygon"
+        assert ev.csg_tree[0].params["paths"] is None
+
+    def test_text_params_shape(self):
+        _, _, ev = run_tree('text("Hi", size=10);')
+        params = ev.csg_tree[0].params
+        assert "font_spec" in params and "glyphs" in params and "scale" in params
+
+    def test_migrated_leaf_inside_unmigrated_union(self):
+        # union() is NOT migrated yet — this is exactly the mixed-migration
+        # hazard case: if the migrated cube/sphere silently returned no
+        # bodies, union's eager per-statement grouping would treat them as
+        # empty statements and drop them from the result.
+        bb = bbox(run('union() { cube(2, center=true); translate([5,0,0]) sphere(1); }')[0])
+        assert bb[3] - bb[0] == approx(7)  # spans from cube's left edge to sphere's right edge
+
+    def test_migrated_leaf_inside_unmigrated_transform(self):
+        bb = bbox(run("translate([10,0,0]) cube(2, center=true);")[0])
+        assert bb[0] == approx(9) and bb[3] == approx(11)
+
+    def test_migrated_leaf_inside_unmigrated_color(self):
+        bodies, _ = run('color("red") sphere(2);')
+        assert len(bodies) == 1
+        r, g, b = bodies[0].color[:3]
+        assert r == approx(1.0) and g == approx(0.0, rel=1) and b == approx(0.0, rel=1)
+
+    def test_migrated_leaf_inside_unmigrated_hull(self):
+        bb = bbox(run("hull() { cube(1); translate([5,0,0]) cube(1); }")[0])
+        assert bb[3] - bb[0] == approx(6)
+
+    def test_migrated_leaf_inside_unmigrated_for_and_difference(self):
+        # for() is transparent (Phase 1), difference() is not yet migrated —
+        # both migrated (cube) and not-yet-migrated (difference) layers stacked.
+        src = "difference() { cube(4, center=true); for (i=[-1:2:1]) translate([i*3,0,0]) sphere(0.5); }"
+        bb = bbox(run(src)[0])
+        assert bb[3] - bb[0] == approx(4)  # still a 4x4x4 cube's extent, just with holes
+
+    def test_polyhedron_inside_unmigrated_minkowski(self):
+        # CW-from-outside face winding (OpenSCAD convention), matching
+        # TestNewBuiltins.test_polyhedron_tetrahedron.
+        tet = "polyhedron(points=[[0,0,0],[1,0,0],[0,1,0],[0,0,1]], faces=[[0,1,2],[0,3,1],[0,2,3],[1,3,2]])"
+        bodies, _ = run(f"minkowski() {{ {tet}; cube(0.1); }}")
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() > 0

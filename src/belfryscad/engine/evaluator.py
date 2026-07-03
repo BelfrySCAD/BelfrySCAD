@@ -1620,6 +1620,7 @@ class CSGNode:
     bodies: list[ColoredBody]
     is_builtin: bool = True
     children: list["CSGNode"] = field(default_factory=list)
+    params: dict = field(default_factory=dict)
 
 
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
@@ -1712,6 +1713,33 @@ class Evaluator:
         self.id_to_node: dict[int, ASTNode] = {}
         self.csg_tree: list[CSGNode] = []
         self._tree_stack: list[list[CSGNode]] = [self.csg_tree]
+        # Phase 2 (in progress): builtins migrated to a resolve/generate split
+        # register here, keyed by builtin name (== CSGNode.kind). Migrated
+        # builtins still generate immediately (interim behavior — see
+        # docs/evaluator.md "CSG tree" section) rather than being deferred to
+        # a separate pass; only once every builtin is migrated does that
+        # change. Un-migrated builtins are absent from both dicts and keep
+        # going through the old eager _eval_builtin dispatch.
+        self._RESOLVE_DISPATCH = {
+            "cube": self._resolve_cube,
+            "sphere": self._resolve_sphere,
+            "cylinder": self._resolve_cylinder,
+            "polyhedron": self._resolve_polyhedron,
+            "circle": self._resolve_2d,
+            "square": self._resolve_2d,
+            "polygon": self._resolve_2d,
+            "text": self._resolve_text,
+        }
+        self._GENERATE_DISPATCH = {
+            "cube": self._generate_cube,
+            "sphere": self._generate_sphere,
+            "cylinder": self._generate_cylinder,
+            "polyhedron": self._generate_polyhedron,
+            "circle": self._generate_2d,
+            "square": self._generate_2d,
+            "polygon": self._generate_2d,
+            "text": self._generate_text,
+        }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
         self._call_stack: list = []
@@ -2004,15 +2032,37 @@ class Evaluator:
         corrupting a parent's accumulator), then appends the completed
         CSGNode to whichever accumulator is now on top of the stack. Every
         recursive call site already calls self._eval_statement(...), so
-        nesting composes automatically with no other call site changes."""
+        nesting composes automatically with no other call site changes.
+
+        Migrated builtins (kind in self._RESOLVE_DISPATCH — Phase 2, in
+        progress) take a different branch: resolve_fn produces a plain-data
+        params dict with no Manifold calls, then generate_fn is called
+        immediately (not deferred yet — see docs/evaluator.md) to preserve
+        identical observable behavior while builtins are migrated one group
+        at a time. This ordering matters: computing kind/is_builtin BEFORE
+        dispatching (rather than only after, as in the pre-Phase-2 version)
+        is what lets a migrated node be identified up front instead of only
+        after eagerly evaluating it the old way.
+        """
         if not isinstance(node, self._TREE_NODE_TYPES):
             return self._eval_statement_impl(node, ctx)
+        kind, is_builtin = self._tree_node_kind(node, ctx)
+        resolve_fn = self._RESOLVE_DISPATCH.get(kind) if is_builtin else None
         self._tree_stack.append([])
+        if resolve_fn is not None:
+            try:
+                params = resolve_fn(node, ctx)
+            finally:
+                children = self._tree_stack.pop()
+            bodies = self._GENERATE_DISPATCH[kind](params, children, node)
+            tree_node = CSGNode(kind=kind, node=node, bodies=bodies,
+                                 is_builtin=is_builtin, children=children, params=params)
+            self._tree_stack[-1].append(tree_node)
+            return bodies
         try:
             bodies = self._eval_statement_impl(node, ctx)
         finally:
             children = self._tree_stack.pop()
-        kind, is_builtin = self._tree_node_kind(node, ctx)
         tree_node = CSGNode(kind=kind, node=node, bodies=bodies,
                              is_builtin=is_builtin, children=children)
         self._tree_stack[-1].append(tree_node)
@@ -2225,19 +2275,21 @@ class Evaluator:
     # Built-in modules
     # ------------------------------------------------------------------
 
-    def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
+    def _resolve_call_args(self, node: ModularCall, ctx: EvalContext) -> tuple[dict, EvalContext]:
+        """Resolve a ModularCall's arguments and apply any $-prefixed
+        named-arg dynamic-context overrides (e.g. sphere(r=2, $fn=64)).
+        Shared by _eval_builtin (for not-yet-migrated builtins) and every
+        migrated _resolve_* method (Phase 2), which bypass _eval_builtin's
+        dispatch entirely and so need this logic themselves."""
         args = self._resolve_args(node.arguments, ctx)
-        # $-prefixed named args (e.g. $fn=32) override the dynamic context for this call
         dyn_overrides = {k: v for k, v in args.items() if isinstance(k, str) and k.startswith("$")}
         if dyn_overrides:
             ctx = ctx.child_ctx(dyn={**ctx.dyn, **dyn_overrides})
+        return args, ctx
 
-        if name == "cube":
-            return self._body_list(self._builtin_cube(args, node, ctx))
-        if name == "sphere":
-            return self._body_list(self._builtin_sphere(args, node, ctx))
-        if name == "cylinder":
-            return self._body_list(self._builtin_cylinder(args, node, ctx))
+    def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
+        args, ctx = self._resolve_call_args(node, ctx)
+
         if name in ("translate", "rotate", "scale", "mirror", "resize", "multmatrix"):
             return self._builtin_transform(name, args, node, ctx)
         if name == "color":
@@ -2252,12 +2304,6 @@ class Evaluator:
             return self._builtin_hull(node, ctx)
         if name == "minkowski":
             return self._builtin_minkowski(node, ctx)
-        if name == "polyhedron":
-            return self._body_list(self._builtin_polyhedron(args, node, ctx))
-        if name in ("circle", "square", "polygon"):
-            return self._body_list(self._builtin_2d(name, args, node, ctx))
-        if name == "text":
-            return self._body_list(self._builtin_text(args, node, ctx))
         if name == "offset":
             return self._body_list(self._builtin_offset(args, node, ctx))
         if name == "projection":
@@ -2317,6 +2363,14 @@ class Evaluator:
             self.id_to_node[int(orig_id)] = node
         return ColoredBody(body=body, color=ctx.color)
 
+    def _tag_generated(self, body: m3d.Manifold, node: ASTNode, color) -> ColoredBody:
+        """Generate-phase equivalent of _tag(): takes an already-resolved
+        color instead of ctx, since ctx isn't available once a builtin has
+        been migrated to the resolve/generate split (Phase 2)."""
+        for orig_id in body.to_mesh().run_original_id:
+            self.id_to_node[int(orig_id)] = node
+        return ColoredBody(body=body, color=color)
+
     def _fn(self, ctx: EvalContext, r: float = 0.0) -> int:
         fn = ctx.dyn.get("$fn", 0)
         if isinstance(fn, (int, float)) and fn > 0:
@@ -2330,16 +2384,25 @@ class Evaluator:
         r = abs(r) if isinstance(r, (int, float)) and math.isfinite(r) else 0.0
         return int(math.ceil(max(5, min(360.0 / fa, r * 2.0 * math.pi / fs))))
 
-    def _builtin_cube(self, args: dict, node: ModularCall, ctx: EvalContext) -> ColoredBody:
+    # --- cube (resolve/generate — Phase 2) ---
+
+    def _resolve_cube(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         size = self._get_arg(args, 0, "size", 1.0)
         center = bool(self._get_arg(args, 1, "center", False))
         if isinstance(size, (int, float)):
             size = [size, size, size]
         size = [float(s) for s in size]
-        body = m3d.Manifold.cube(size, center)
-        return self._tag(body, node, ctx)
+        return {"size": size, "center": center, "color": ctx.color}
 
-    def _builtin_sphere(self, args: dict, node: ModularCall, ctx: EvalContext) -> ColoredBody:
+    def _generate_cube(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        body = m3d.Manifold.cube(params["size"], params["center"])
+        return [self._tag_generated(body, node, params["color"])]
+
+    # --- sphere (resolve/generate — Phase 2) ---
+
+    def _resolve_sphere(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         r = self._get_arg(args, 0, "r", None)
         d = self._get_arg(args, None, "d", None)
         if d is not None:
@@ -2390,11 +2453,17 @@ class Evaluator:
 
         verts_arr = np.array(verts, dtype=np.float32)
         tris_arr = np.array(tris, dtype=np.uint32)
-        mesh = m3d.Mesh(vert_properties=verts_arr, tri_verts=tris_arr)
-        body = m3d.Manifold(mesh)
-        return self._tag(body, node, ctx)
+        return {"verts": verts_arr, "tris": tris_arr, "color": ctx.color}
 
-    def _builtin_cylinder(self, args: dict, node: ModularCall, ctx: EvalContext) -> ColoredBody:
+    def _generate_sphere(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        mesh = m3d.Mesh(vert_properties=params["verts"], tri_verts=params["tris"])
+        body = m3d.Manifold(mesh)
+        return [self._tag_generated(body, node, params["color"])]
+
+    # --- cylinder (resolve/generate — Phase 2) ---
+
+    def _resolve_cylinder(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         h = float(self._get_arg(args, 0, "h", 1.0))
         r = self._get_arg(args, 1, "r", None)
         r1 = self._get_arg(args, None, "r1", None)
@@ -2418,8 +2487,13 @@ class Evaluator:
             r2 = r1
         segs = self._fn(ctx, max(float(r1), float(r2)))
 
-        body = m3d.Manifold.cylinder(h, float(r1), float(r2), circular_segments=segs, center=center)
-        return self._tag(body, node, ctx)
+        return {"h": h, "r1": float(r1), "r2": float(r2), "center": center,
+                "segs": segs, "color": ctx.color}
+
+    def _generate_cylinder(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        body = m3d.Manifold.cylinder(params["h"], params["r1"], params["r2"],
+                                      circular_segments=params["segs"], center=params["center"])
+        return [self._tag_generated(body, node, params["color"])]
 
     # --- transforms ---
 
@@ -2677,21 +2751,19 @@ class Evaluator:
                     hull_result = ColoredBody(section=m3d.CrossSection.batch_hull(sections), color=fg[0].color)
         return ([hull_result] if hull_result is not None else []) + bg + hi
 
-    def _builtin_polyhedron(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _resolve_polyhedron(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         points = self._get_arg(args, 0, "points", None)
         faces = self._get_arg(args, 1, "faces", None)
         if faces is None:
             faces = self._get_arg(args, 1, "triangles", None)  # legacy alias
         if points is None or faces is None:
             self.error("polyhedron: 'points' and 'faces' are required", node)
-            return None
         if not isinstance(points, list) or not isinstance(faces, list):
             self.error("polyhedron: 'points' and 'faces' must be lists", node)
-            return None
         for i, p in enumerate(points):
             if not isinstance(p, list) or len(p) != 3 or any(c is None for c in p):
                 self.error(f"polyhedron: point[{i}] is not a valid [x,y,z] coordinate", node)
-                return None
         try:
             verts = np.array([[float(c) for c in p] for p in points], dtype=np.float64)
             # Deduplicate vertices — VNF meshes (e.g. from BOSL2) often have
@@ -2710,12 +2782,17 @@ class Evaluator:
                     if a != b and b != c and a != c:
                         tris.append([a, b, c])
             tri_arr = np.array(tris, dtype=np.uint32) if tris else np.zeros((0, 3), dtype=np.uint32)
-            mesh = m3d.Mesh(vert_properties=verts, tri_verts=tri_arr)
-            body = m3d.Manifold(mesh)
-            return self._tag(body, node, ctx)
         except Exception as e:
             self.error(f"polyhedron: {e}", node)
-            return None
+        return {"verts": verts, "tri_arr": tri_arr, "color": ctx.color}
+
+    def _generate_polyhedron(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        try:
+            mesh = m3d.Mesh(vert_properties=params["verts"], tri_verts=params["tri_arr"])
+            body = m3d.Manifold(mesh)
+            return [self._tag_generated(body, node, params["color"])]
+        except Exception as e:
+            self.error(f"polyhedron: {e}", node)
 
     def _builtin_surface(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         file_arg = self._get_arg(args, 0, "file", None)
@@ -3369,7 +3446,12 @@ class Evaluator:
             self.error(f"projection: {e}", node)
             return None
 
-    def _builtin_2d(self, name: str, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _resolve_2d(self, node: ModularCall, ctx: EvalContext) -> dict:
+        """circle/square/polygon share one dispatch entry, matching
+        _builtin_2d's own name-based if/elif structure (kind == name for a
+        ModularCall, so name is re-derived from node.name.name here)."""
+        name = node.name.name
+        args, ctx = self._resolve_call_args(node, ctx)
         try:
             if name == "circle":
                 r = self._get_arg(args, 0, "r", None)
@@ -3378,35 +3460,47 @@ class Evaluator:
                     r = d / 2
                 if r is None:
                     r = 1.0
-                segs = self._fn(ctx, float(r))
-                cs = m3d.CrossSection.circle(float(r), segs)
-            elif name == "square":
+                r = float(r)
+                segs = self._fn(ctx, r)
+                return {"name": name, "r": r, "segs": segs, "color": ctx.color}
+            if name == "square":
                 size = self._get_arg(args, 0, "size", 1.0)
                 center = bool(self._get_arg(args, 1, "center", False))
                 if isinstance(size, (int, float)):
                     size = [size, size]
-                cs = m3d.CrossSection.square([float(size[0]), float(size[1])], center)
-            elif name == "polygon":
-                points = self._get_arg(args, 0, "points", None)
-                paths = self._get_arg(args, 1, "paths", None)
-                if points is None:
-                    self.error("polygon: 'points' is required", node)
-                    return None
-                pts = [[float(p[0]), float(p[1])] for p in points]
+                return {"name": name, "size": [float(size[0]), float(size[1])],
+                        "center": center, "color": ctx.color}
+            # polygon
+            points = self._get_arg(args, 0, "points", None)
+            paths = self._get_arg(args, 1, "paths", None)
+            if points is None:
+                self.error("polygon: 'points' is required", node)
+            pts = [[float(p[0]), float(p[1])] for p in points]
+            path_indices = None if paths is None else [[int(i) for i in path] for path in paths]
+            return {"name": name, "pts": pts, "paths": path_indices, "color": ctx.color}
+        except Exception as e:
+            self.error(f"{name}: {e}", node)
+
+    def _generate_2d(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        name = params["name"]
+        try:
+            if name == "circle":
+                cs = m3d.CrossSection.circle(params["r"], params["segs"])
+            elif name == "square":
+                cs = m3d.CrossSection.square(params["size"], params["center"])
+            else:  # polygon
+                pts, paths = params["pts"], params["paths"]
                 if paths is None:
                     contour = np.array(pts, dtype=np.float64)
                     cs = m3d.CrossSection([contour], m3d.FillRule.EvenOdd)
                 else:
-                    contours = [np.array([pts[int(i)] for i in path], dtype=np.float64) for path in paths]
+                    contours = [np.array([pts[i] for i in path], dtype=np.float64) for path in paths]
                     cs = m3d.CrossSection(contours, m3d.FillRule.EvenOdd)
-            else:
-                return None
-            return ColoredBody(section=cs, color=ctx.color)
+            return [ColoredBody(section=cs, color=params["color"])]
         except Exception as e:
             self.error(f"{name}: {e}", node)
-            return None
 
-    def _builtin_text(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _resolve_text(self, node: ModularCall, ctx: EvalContext) -> dict:
         """`text(text=.., size=.., font=.., halign=.., valign=.., spacing=..)`.
 
         Renders `text` as 2D glyph outlines, using the font specified by `font=`
@@ -3415,6 +3509,7 @@ class Evaluator:
         Sans if the font cannot be found.  `direction`, `language`, `script` are
         accepted but unused.
         """
+        args, ctx = self._resolve_call_args(node, ctx)
         text = self._get_arg(args, 0, "text", "")
         size = self._get_arg(args, 1, "size", 10)
         font_spec = self._get_arg(args, None, "font", "") or ""
@@ -3426,21 +3521,30 @@ class Evaluator:
             font = _resolve_font(str(font_spec))
             scale = size * (100 / 72) / font["units_per_em"]
             segs = max(2, self._fn(ctx) // 2)
-
             m = _measure_text(text, size, spacing, font)
-
-            sections = []
-            for gname, pen_x_scaled in m["glyphs"]:
-                glyph_cs = _glyph_cross_section(gname, segs, font)
-                sections.append(glyph_cs.scale([scale, scale]).translate([pen_x_scaled, 0]))
-
-            cs = m3d.CrossSection.batch_boolean(sections, m3d.OpType.Add) if sections else m3d.CrossSection()
             offset_x, offset_y = _text_align_offset(halign, valign, m)
-            cs = cs.translate([offset_x, offset_y])
-            return ColoredBody(section=cs, color=ctx.color)
         except Exception as e:
             self.error(f"text: {e}", node)
-            return None
+        # font_spec (not the font dict itself) is cached: _resolve_font()
+        # memoizes per spec string, so re-resolving it in generate is cheap
+        # and doesn't need the (possibly large) font dict carried through.
+        return {"font_spec": str(font_spec), "glyphs": m["glyphs"], "scale": scale,
+                "segs": segs, "offset": (offset_x, offset_y), "color": ctx.color}
+
+    def _generate_text(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        try:
+            font = _resolve_font(params["font_spec"])
+            scale = params["scale"]
+            sections = []
+            for gname, pen_x_scaled in params["glyphs"]:
+                glyph_cs = _glyph_cross_section(gname, params["segs"], font)
+                sections.append(glyph_cs.scale([scale, scale]).translate([pen_x_scaled, 0]))
+            cs = m3d.CrossSection.batch_boolean(sections, m3d.OpType.Add) if sections else m3d.CrossSection()
+            offset_x, offset_y = params["offset"]
+            cs = cs.translate([offset_x, offset_y])
+            return [ColoredBody(section=cs, color=params["color"])]
+        except Exception as e:
+            self.error(f"text: {e}", node)
 
     def _builtin_linear_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
         children = self._eval_children(node.children, ctx)
