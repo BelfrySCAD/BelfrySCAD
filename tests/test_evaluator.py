@@ -3049,11 +3049,11 @@ class TestCSGTreeResolveGenerateSplit:
         _, _, ev = run_tree("cube(1);")
         for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text",
                      "translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color",
-                     "hull", "minkowski", "offset", "projection"):
+                     "hull", "minkowski", "offset", "projection",
+                     "union", "difference", "intersection", "intersection_for"):
             assert kind in ev._RESOLVE_DISPATCH
             assert kind in ev._GENERATE_DISPATCH
-        for kind in ("union", "difference", "intersection", "linear_extrude",
-                     "rotate_extrude", "roof", "surface", "import"):
+        for kind in ("linear_extrude", "rotate_extrude", "roof", "surface", "import"):
             assert kind not in ev._RESOLVE_DISPATCH
             assert kind not in ev._GENERATE_DISPATCH
 
@@ -3102,11 +3102,12 @@ class TestCSGTreeResolveGenerateSplit:
         params = ev.csg_tree[0].params
         assert "font_spec" in params and "glyphs" in params and "scale" in params
 
-    def test_migrated_leaf_inside_unmigrated_union(self):
-        # union() is NOT migrated yet — this is exactly the mixed-migration
-        # hazard case: if the migrated cube/sphere silently returned no
-        # bodies, union's eager per-statement grouping would treat them as
-        # empty statements and drop them from the result.
+    def test_migrated_leaf_inside_migrated_union(self):
+        # union() was migrated in step 4; still a useful direct regression
+        # check for the mixed-migration hazard this test was first written
+        # for (when union was still eager: if a migrated cube/sphere
+        # silently returned no bodies, union's per-statement grouping would
+        # treat them as empty statements and drop them from the result).
         bb = bbox(run('union() { cube(2, center=true); translate([5,0,0]) sphere(1); }')[0])
         assert bb[3] - bb[0] == approx(7)  # spans from cube's left edge to sphere's right edge
 
@@ -3130,9 +3131,11 @@ class TestCSGTreeResolveGenerateSplit:
         bb = bbox(run("hull() { cube(1); translate([5,0,0]) cube(1); }")[0])
         assert bb[3] - bb[0] == approx(6)
 
-    def test_migrated_leaf_inside_unmigrated_for_and_difference(self):
-        # for() is transparent (Phase 1), difference() is not yet migrated —
-        # both migrated (cube) and not-yet-migrated (difference) layers stacked.
+    def test_migrated_leaf_inside_for_inside_migrated_difference(self):
+        # for() is transparent (Phase 1); difference() was migrated in step
+        # 4 and specifically needs group_sizes bookkeeping to correctly
+        # group a for loop's variable number of contributed tree children
+        # into "the second statement" for its per-statement CSG grouping.
         src = "difference() { cube(4, center=true); for (i=[-1:2:1]) translate([i*3,0,0]) sphere(0.5); }"
         bb = bbox(run(src)[0])
         assert bb[3] - bb[0] == approx(4)  # still a 4x4x4 cube's extent, just with holes
@@ -3201,9 +3204,9 @@ class TestCSGTreeStep2Transforms:
         assert bb[3] - bb[0] == approx(4)  # 2x2 square offset(r=1) -> 4x4, translate doesn't change extent
         assert bb[0] == approx(4) and bb[3] == approx(8)
 
-    def test_migrated_color_wraps_still_unmigrated_union(self):
-        # union() is not migrated yet (step 4) — migrated color wrapping a
-        # not-yet-migrated union of two migrated leaves.
+    def test_migrated_color_wraps_migrated_union(self):
+        # union() was migrated in step 4 — migrated color wrapping a
+        # migrated union of two migrated leaves.
         bodies, _ = run('color("red") union() { cube(1); translate([3,0,0]) cube(1); }')
         assert len(bodies) == 1
         bb = bbox(bodies)
@@ -3266,16 +3269,14 @@ class TestCSGTreeStep3Topology:
         bb = bbox(run("hull() { cube(1); translate([5,0,0]) cube(1); }")[0])
         assert bb[3] - bb[0] == approx(6)
 
-    def test_migrated_offset_wraps_still_unmigrated_union(self):
-        # union() is not migrated yet (step 4) — migrated offset wrapping a
-        # not-yet-migrated union of two migrated 2D leaves. If union()
-        # silently returned no bodies, offset's _to_cross_section(bodies)
-        # would see nothing.
+    def test_migrated_offset_wraps_migrated_union(self):
+        # union() was migrated in step 4 — migrated offset wrapping a
+        # migrated union of two migrated 2D leaves.
         src = "linear_extrude(height=1) offset(r=1) union() { square(2); translate([3,0]) square(2); }"
         bb = bbox(run(src)[0])
         assert bb[0] == approx(-1) and bb[3] == approx(6)
 
-    def test_migrated_projection_wraps_still_unmigrated_union(self):
+    def test_migrated_projection_wraps_migrated_union(self):
         src = "linear_extrude(height=1) projection() union() { cube(2); translate([3,0,0]) cube(2); }"
         bodies = run(src)[0]
         assert len(bodies) == 1
@@ -3288,6 +3289,127 @@ class TestCSGTreeStep3Topology:
             "minkowski() { cube(1); sphere(0.2); }",
             "offset(r=1) square(2);",
             "projection() cube(2);",
+        ]:
+            bodies, _, ev = run_tree(src)
+            assert flatten_csg_tree(ev.csg_tree) == bodies
+
+
+# ---------------------------------------------------------------------------
+# CSG tree Phase 2, step 4 — resolve/generate split for booleans (union/
+# difference/intersection) and intersection_for. The genuinely tricky step:
+# these do per-statement (or per-iteration) grouping, and for/if/let are
+# transparent in the tree (Phase 1), so a single top-level statement can
+# contribute a variable, unmarked number of tree children — group_sizes
+# bookkeeping (measuring self._tree_stack[-1] length deltas) recovers the
+# grouping without needing to inspect AST structure. Still interim
+# (generated immediately, not yet deferred — see docs/evaluator.md).
+# ---------------------------------------------------------------------------
+
+class TestCSGTreeStep4Booleans:
+    def test_boolean_kinds_registered(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("union", "difference", "intersection", "intersection_for"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+
+    def test_union_params_shape_one_group_per_statement(self):
+        _, _, ev = run_tree("union() { cube(1); sphere(1); translate([3,0,0]) cube(1); }")
+        node = ev.csg_tree[0]
+        assert node.kind == "union"
+        assert node.params["op"] == "union"
+        assert node.params["group_sizes"] == [1, 1, 1]
+        assert len(node.children) == 3
+
+    def test_intersection_for_params_shape(self):
+        _, _, ev = run_tree("intersection_for(i=[0:2]) rotate([0,0,i*60]) cube([10,2,10], center=true);")
+        node = ev.csg_tree[0]
+        assert node.kind == "intersection_for"
+        assert node.params["group_sizes"] == [1, 1, 1]
+
+    def test_for_nested_in_union_contributes_one_group_of_many(self):
+        # A single top-level `for` statement inside union() must count as
+        # ONE group in group_sizes, even though it contributes 3 sibling
+        # tree children (for is transparent — Phase 1) — otherwise the
+        # union's per-statement grouping would misinterpret the 3 spheres
+        # as 3 separate top-level statements instead of 1.
+        src = "union() { cube(1); for (i=[0:2]) translate([2+i*2,0,0]) sphere(0.5); }"
+        bodies, _, ev = run_tree(src)
+        node = ev.csg_tree[0]
+        assert node.params["group_sizes"] == [1, 3]
+        assert len(node.children) == 4  # cube + 3 spheres, flattened in the tree
+        bb = bbox(bodies)
+        assert bb[0] == approx(0) and bb[3] == approx(6.5)
+
+    def test_if_else_nested_in_difference_contributes_one_group(self):
+        src = ("difference() { cube(4, center=true); "
+               "if (true) { translate([1,0,0]) sphere(0.5); } else { sphere(2); } }")
+        bodies, _, ev = run_tree(src)
+        node = ev.csg_tree[0]
+        assert node.params["group_sizes"] == [1, 1]  # true-branch: 1 sphere (not 2 — else never ran)
+        bb = bbox(bodies)
+        # Carving a small sphere out of the cube doesn't change the outer extent.
+        assert bb[0] == approx(-2) and bb[3] == approx(2)
+
+    def test_let_nested_in_intersection_contributes_one_group(self):
+        src = "intersection() { cube(4, center=true); let(r=1.5) sphere(r); }"
+        bodies, _, ev = run_tree(src)
+        node = ev.csg_tree[0]
+        assert node.params["group_sizes"] == [1, 1]
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() < 64  # strictly smaller than the 4^3 cube
+
+    def test_intersection_for_iteration_with_multiple_statements(self):
+        # Each iteration's body can itself contain a variable number of
+        # geometry statements (here via if/else) — group_sizes must track
+        # per-ITERATION size, not assume 1 tree child per iteration.
+        src = ("intersection_for(i=[0:1]) { "
+               "if (i==0) { cube(3, center=true); } else { cube(2, center=true); } }")
+        bodies, _, ev = run_tree(src)
+        node = ev.csg_tree[0]
+        assert node.params["group_sizes"] == [1, 1]
+        bb = bbox(bodies)
+        # Intersection of cube(3) and cube(2), both centered -> cube(2)'s extent.
+        assert bb[0] == approx(-1) and bb[3] == approx(1)
+
+    def test_intersection_empty_operand_anywhere_discards_whole_result(self):
+        # intersection(A, ∅, B) = ∅ regardless of position — an empty
+        # operand nullifies the whole result, even one already established
+        # from prior non-empty statements.
+        bodies = run("intersection() { cube(3); *cube(10); cube(2); }")[0]
+        assert bodies == []
+
+    def test_difference_later_empty_operand_just_skipped_not_discarded(self):
+        # Only an empty FIRST (positive) operand empties a difference — a
+        # later empty operand just subtracts nothing and is skipped.
+        bodies = run("difference() { cube(3); *cube(10); }")[0]
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() == approx(27)
+
+    def test_difference_first_empty_operand_discards_whole_result(self):
+        bodies = run("difference() { *cube(3); cube(2); }")[0]
+        assert bodies == []
+
+    def test_union_skips_disabled_middle_statement(self):
+        bodies = run("union() { cube(1); *cube(10); translate([3,0,0]) cube(1); }")[0]
+        assert len(bodies) == 1
+        assert bodies[0].body.volume() == approx(2)
+
+    def test_migrated_union_wraps_still_unmigrated_linear_extrude(self):
+        # linear_extrude() is not migrated yet (step 5) — migrated union
+        # wrapping a not-yet-migrated extrude. If linear_extrude silently
+        # returned no bodies, union's per-statement grouping would drop it.
+        bodies = run("union() { cube(1); translate([3,0,0]) linear_extrude(height=2) square(1); }")[0]
+        assert len(bodies) == 1
+        bb = bbox(bodies)
+        assert bb[0] == approx(0) and bb[3] == approx(4)
+
+    def test_flatten_matches_evaluate_result_with_booleans(self):
+        for src in [
+            "union() { cube(1); sphere(1); }",
+            "difference() { cube([4,4,4]); cube([2,2,2]); }",
+            "intersection() { cube(3, center=true); sphere(2); }",
+            "union() { cube(1); for (i=[0:2]) translate([2+i*2,0,0]) sphere(0.5); }",
+            "intersection_for(i=[0:2]) rotate([0,0,i*60]) cube([10,2,10], center=true);",
         ]:
             bodies, _, ev = run_tree(src)
             assert flatten_csg_tree(ev.csg_tree) == bodies

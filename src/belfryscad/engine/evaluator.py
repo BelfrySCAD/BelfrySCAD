@@ -1740,6 +1740,10 @@ class Evaluator:
             "minkowski": self._resolve_minkowski,
             "offset": self._resolve_offset,
             "projection": self._resolve_projection,
+            "union": self._resolve_csg,
+            "difference": self._resolve_csg,
+            "intersection": self._resolve_csg,
+            "intersection_for": self._resolve_intersection_for,
         }
         self._GENERATE_DISPATCH = {
             "cube": self._generate_cube,
@@ -1761,6 +1765,10 @@ class Evaluator:
             "minkowski": self._generate_minkowski,
             "offset": self._generate_offset,
             "projection": self._generate_projection,
+            "union": self._generate_csg,
+            "difference": self._generate_csg,
+            "intersection": self._generate_csg,
+            "intersection_for": self._generate_intersection_for,
         }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -2130,8 +2138,6 @@ class Evaluator:
             return self._eval_children(branch, ctx)
         if t is ModularFor:
             return self._eval_for(node, ctx)
-        if t is ModularIntersectionFor:
-            return self._eval_intersection_for(node, ctx)
         if t is ModularLet:
             return self._eval_let_block(node, ctx)
         if t is ModularEcho:
@@ -2312,12 +2318,6 @@ class Evaluator:
     def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         args, ctx = self._resolve_call_args(node, ctx)
 
-        if name == "union":
-            return self._builtin_csg("union", node, ctx)
-        if name == "difference":
-            return self._builtin_csg("difference", node, ctx)
-        if name == "intersection":
-            return self._builtin_csg("intersection", node, ctx)
         if name == "linear_extrude":
             return self._body_list(self._builtin_linear_extrude(args, node, ctx))
         if name == "rotate_extrude":
@@ -2683,7 +2683,7 @@ class Evaluator:
 
     # --- CSG ---
 
-    def _builtin_csg(self, op: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
+    def _resolve_csg(self, node: ModularCall, ctx: EvalContext) -> dict:
         # Evaluate each top-level geometry statement separately so their body groups are
         # preserved.  For difference(), all bodies from the FIRST statement form the
         # positive operand (unioned implicitly, as OpenSCAD does within a scope); bodies
@@ -2691,6 +2691,25 @@ class Evaluator:
         # evaluation loses this grouping and produces wrong results when BOSL2's
         # attachable() returns multiple bodies (parent + attached children) as the first
         # operand of difference().
+        #
+        # group_sizes records, per top-level statement, how many CSGNode
+        # children it contributed to self._tree_stack[-1] — needed because
+        # for/if/let are "transparent" in the tree (Phase 1), so one
+        # statement can contribute a variable, unmarked number of tree
+        # children (e.g. a for loop's iterations) with no boundary marker
+        # otherwise. Measured as a stack-length delta: pure bookkeeping, no
+        # Manifold calls, safe here.
+        #
+        # This resolve step also replicates today's eager per-statement
+        # short-circuit exactly: once intersection hits an empty operand, or
+        # difference's would-be-first operand is empty, remaining statements
+        # are never evaluated at all (matching current behavior — their
+        # side effects, if any, don't happen today either). That's safe to
+        # decide here only because children are still generated immediately
+        # (interim design, see docs/evaluator.md) — this will need
+        # rethinking once generation is truly deferred in the final cutover.
+        op = node.name.name
+        args, ctx = self._resolve_call_args(node, ctx)
         assign_nodes = [c for c in node.children if isinstance(c, Assignment)]
         geo_nodes = [c for c in node.children
                      if not isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration))]
@@ -2699,19 +2718,38 @@ class Evaluator:
         if assign_nodes:
             self._eval_children(assign_nodes, ctx)
 
-        if not geo_nodes:
-            return []
+        group_sizes: list[int] = []
+        csg_result_established = False
+        for geo_node in geo_nodes:
+            before = len(self._tree_stack[-1])
+            self._eval_children([geo_node], ctx)
+            after = len(self._tree_stack[-1])
+            group_sizes.append(after - before)
 
+            stmt_bodies = flatten_csg_tree(self._tree_stack[-1][before:after])
+            fg = [c for c in stmt_bodies if c.role != "background"]
+            if not any(c.body is not None or c.section is not None for c in fg):
+                if op == "intersection":
+                    break
+                if op == "difference" and not csg_result_established:
+                    break
+                continue
+            csg_result_established = True
+        return {"op": op, "group_sizes": group_sizes}
+
+    def _generate_csg(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        op = params["op"]
         all_bg: list[ColoredBody] = []
         all_hi: list[ColoredBody] = []
         csg_result: Optional[ColoredBody] = None
+        idx = 0
 
-        for geo_node in geo_nodes:
-            stmt_bodies = self._eval_children([geo_node], ctx)
+        for size in params["group_sizes"]:
+            group_nodes = children[idx:idx + size]
+            idx += size
+            stmt_bodies = flatten_csg_tree(group_nodes)
 
-            bg = [c for c in stmt_bodies if c.role == "background"]
-            fg = [c for c in stmt_bodies if c.role != "background"]
-            hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
+            bg, fg, hi = self._split_by_role(stmt_bodies)
             all_bg.extend(bg)
             all_hi.extend(hi)
 
@@ -2719,12 +2757,17 @@ class Evaluator:
             sections_2d = [c for c in fg if c.section is not None]
 
             if not bodies_3d and not sections_2d:
-                # Empty statement: intersection(∅, B)=∅ and difference(∅, B)=∅.
-                # Union just skips the empty contributor.
+                # Empty statement: intersection(∅, B)=∅ discards any csg_result
+                # already built from prior statements (matches resolve's own
+                # short-circuit — group_sizes never has entries past this
+                # point for intersection). difference(∅, B)=∅ only applies
+                # while no positive operand has been established yet; union
+                # just skips the empty contributor and keeps going.
                 if op == "intersection":
-                    return all_bg + all_hi
+                    csg_result = None
+                    break
                 if op == "difference" and csg_result is None:
-                    return all_bg + all_hi
+                    break
                 continue
 
             if bodies_3d:
@@ -2734,13 +2777,12 @@ class Evaluator:
                     grp = grp + c.body
                 if csg_result is None:
                     csg_result = ColoredBody(body=grp, color=bodies_3d[0].color)
-                else:
-                    if op == "union":
-                        csg_result = replace(csg_result, body=csg_result.body + grp)
-                    elif op == "difference":
-                        csg_result = replace(csg_result, body=csg_result.body - grp)
-                    elif op == "intersection":
-                        csg_result = replace(csg_result, body=csg_result.body ^ grp)
+                elif op == "union":
+                    csg_result = replace(csg_result, body=csg_result.body + grp)
+                elif op == "difference":
+                    csg_result = replace(csg_result, body=csg_result.body - grp)
+                elif op == "intersection":
+                    csg_result = replace(csg_result, body=csg_result.body ^ grp)
             elif sections_2d:
                 # Union all 2D sections from this statement before applying the op
                 grp = sections_2d[0].section
@@ -2748,13 +2790,12 @@ class Evaluator:
                     grp = grp + c.section
                 if csg_result is None:
                     csg_result = ColoredBody(section=grp, color=sections_2d[0].color)
-                else:
-                    if op == "union":
-                        csg_result = replace(csg_result, section=csg_result.section + grp)
-                    elif op == "difference":
-                        csg_result = replace(csg_result, section=csg_result.section - grp)
-                    elif op == "intersection":
-                        csg_result = replace(csg_result, section=csg_result.section ^ grp)
+                elif op == "union":
+                    csg_result = replace(csg_result, section=csg_result.section + grp)
+                elif op == "difference":
+                    csg_result = replace(csg_result, section=csg_result.section - grp)
+                elif op == "intersection":
+                    csg_result = replace(csg_result, section=csg_result.section ^ grp)
 
         # Return: CSG result + background ghosts + highlight overlays (separate from CSG result)
         return ([csg_result] if csg_result is not None else []) + all_bg + all_hi
@@ -3857,13 +3898,20 @@ class Evaluator:
         for combo in _product(*value_lists):
             yield list(zip(names, combo))
 
-    def _eval_intersection_for(self, node: ModularIntersectionFor, ctx: EvalContext) -> list[ColoredBody]:
+    def _resolve_intersection_for(self, node: ModularIntersectionFor, ctx: EvalContext) -> dict:
+        # group_sizes records, per loop iteration, how many CSGNode children
+        # it contributed — same rationale as _resolve_csg's group_sizes
+        # (the loop body can itself contain for/if/let, which are
+        # transparent in the tree, so one iteration can contribute a
+        # variable number of tree children). Combining each iteration's
+        # children into one body (_combine, a real Manifold call) is
+        # deferred to generate — only the plain-data grouping happens here.
         var_seqs: list[tuple[str, list]] = []
         for assign in node.assignments:
             name = assign.name.name
             values = self._eval_expr(assign.expr, ctx)
             if values is None:
-                return []
+                return {"group_sizes": []}
             if isinstance(values, OscRange):
                 values = list(values)
             elif isinstance(values, OscObject):
@@ -3876,7 +3924,7 @@ class Evaluator:
 
         body_node = node.body if isinstance(node.body, list) else [node.body]
         _debugging = self._debugging
-        iterations = []
+        group_sizes: list[int] = []
         for combo in self._cartesian(var_seqs):
             loop_ctx = ctx.child_ctx(children_nodes=ctx.children_nodes,
                                      children_caller_ctx=ctx.children_caller_ctx)
@@ -3884,9 +3932,21 @@ class Evaluator:
                 loop_ctx.let[vname] = val
             if _debugging and body_node:
                 self._check_debug(body_node[0], loop_ctx, expr_level=True)
-            children = self._eval_children(body_node, loop_ctx)
-            if children:
-                iterations.append(self._combine(children))
+            before = len(self._tree_stack[-1])
+            self._eval_children(body_node, loop_ctx)
+            after = len(self._tree_stack[-1])
+            group_sizes.append(after - before)
+        return {"group_sizes": group_sizes}
+
+    def _generate_intersection_for(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        idx = 0
+        iterations = []
+        for size in params["group_sizes"]:
+            group_nodes = children[idx:idx + size]
+            idx += size
+            stmt_bodies = flatten_csg_tree(group_nodes)
+            if stmt_bodies:
+                iterations.append(self._combine(stmt_bodies))
 
         if not iterations:
             return []
