@@ -54,7 +54,7 @@ Right-clicking in the editor builds a standard Qt context menu, then appends ide
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known variable — locals, globals, constants, or `$`-specials):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
 - **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value`, which calls `self._console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
-- **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid).
+- **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid, matrix).
 
 The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision), which covers locals, globals, constants, and `$`-specials. `Qt.WordUnderCursor` excludes `$`, so `contextMenuEvent` manually checks whether the character immediately before the selection is `$` and prepends it — allowing `$fn`, `$t`, etc. to match.
 
@@ -283,7 +283,7 @@ self._toggle_perspective(perspective)
 
 ## Data Viewers
 
-Implemented in `src/belfryscad/window/data_viewers.py`. Four viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
+Implemented in `src/belfryscad/window/data_viewers.py`. Five viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
 
 ### Shared viewport: `Viewport` (`window/viewport.py`) + `SceneRenderer` (`engine/renderer.py`)
 
@@ -335,6 +335,10 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 - **Col Wrap**: checkbox connects each row's last point back to its own first point, closing that row's line loop (and, in faces mode, the mesh) horizontally — applied per row, so it works even when rows have different lengths.
 - **Row Wrap**: checkbox connects the last row back to the first, closing the grid vertically (limited to the columns shared between the last and first rows, same as any other adjacent row pair). Both wraps together form a torus for a rectangular grid.
 - 2D grids start in top-down orthographic; 3D grids start in perspective orbit.
+
+### MatrixViewer (QDialog)
+
+`QTableWidget` only, no 3D viewport — displays a square 2x2 through 5x5 list of lists of numbers (`_is_matrix`, e.g. an affine/rotation matrix) as an NxN grid of cells. Row/column headers are 0-indexed (`_style_table_headers` for the header look, shared with `GridViewer`'s vertex table). Read-only for now (`NoEditTriggers`); cells are plain `QTableWidgetItem`s, so making them editable later only needs the item flags flipped and an `itemChanged` handler, not a rewrite. Dialog size is computed from the table's content size (`resizeColumnsToContents` + summed column/row extents) rather than a fixed constant, since 2x2 and 5x5 need noticeably different window sizes. No overlap with `_is_grid`: a grid row is a list of *points* (2/3-number lists) — one nesting level deeper than a matrix row, which is a list of plain numbers. There *is* overlap with `_is_path`, though: a 2x2 or 3x3 matrix's rows are themselves valid 2D/3D points, so both "View as Path..." and "View as Matrix..." can appear for the same value; 4x4/5x5 rows are too long to match `_is_path`'s point-length check (2 or 3), so only "View as Matrix..." appears there.
 
 ## Menu Structure
 
