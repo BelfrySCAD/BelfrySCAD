@@ -3047,10 +3047,12 @@ class TestCSGTree:
 class TestCSGTreeResolveGenerateSplit:
     def test_migrated_kinds_registered_unmigrated_kinds_not(self):
         _, _, ev = run_tree("cube(1);")
-        for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text"):
+        for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text",
+                     "translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color"):
             assert kind in ev._RESOLVE_DISPATCH
             assert kind in ev._GENERATE_DISPATCH
-        for kind in ("union", "difference", "intersection", "translate", "color", "hull"):
+        for kind in ("union", "difference", "intersection", "hull", "minkowski",
+                     "offset", "projection", "linear_extrude"):
             assert kind not in ev._RESOLVE_DISPATCH
             assert kind not in ev._GENERATE_DISPATCH
 
@@ -3107,11 +3109,15 @@ class TestCSGTreeResolveGenerateSplit:
         bb = bbox(run('union() { cube(2, center=true); translate([5,0,0]) sphere(1); }')[0])
         assert bb[3] - bb[0] == approx(7)  # spans from cube's left edge to sphere's right edge
 
-    def test_migrated_leaf_inside_unmigrated_transform(self):
+    def test_migrated_leaf_inside_migrated_transform(self):
+        # translate() was migrated in step 2 (both this and cube are now
+        # resolve/generate); still a useful direct regression check.
         bb = bbox(run("translate([10,0,0]) cube(2, center=true);")[0])
         assert bb[0] == approx(9) and bb[3] == approx(11)
 
-    def test_migrated_leaf_inside_unmigrated_color(self):
+    def test_migrated_leaf_inside_migrated_color(self):
+        # color() was migrated in step 2 (both this and sphere are now
+        # resolve/generate); still a useful direct regression check.
         bodies, _ = run('color("red") sphere(2);')
         assert len(bodies) == 1
         r, g, b = bodies[0].color[:3]
@@ -3135,3 +3141,80 @@ class TestCSGTreeResolveGenerateSplit:
         bodies, _ = run(f"minkowski() {{ {tet}; cube(0.1); }}")
         assert len(bodies) == 1
         assert bodies[0].body.volume() > 0
+
+
+# ---------------------------------------------------------------------------
+# CSG tree Phase 2, step 2 — resolve/generate split for transforms
+# (translate/rotate/scale/mirror/multmatrix/resize) and color. Still
+# interim (generated immediately, not yet deferred — see docs/evaluator.md).
+# ---------------------------------------------------------------------------
+
+class TestCSGTreeStep2Transforms:
+    def test_transform_kinds_registered(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+
+    def test_translate_params_shape(self):
+        _, _, ev = run_tree("translate([1,2,3]) cube(1);")
+        node = ev.csg_tree[0]
+        assert node.kind == "translate"
+        assert node.params["name"] == "translate"
+        assert node.params["args"][0] == [1, 2, 3]
+        assert len(node.children) == 1 and node.children[0].kind == "cube"
+
+    def test_resize_params_shape_and_generate_uses_child_bbox(self):
+        # resize's generate step needs its own (already-generated) child's
+        # bounding_box() — confirmed safe since it's this node's own child,
+        # not a different node's output.
+        bb = bbox(run("resize([4,4,4]) sphere(1);")[0])
+        assert bb[3] - bb[0] == approx(4)
+        assert bb[4] - bb[1] == approx(4)
+
+    def test_color_params_shape(self):
+        _, _, ev = run_tree('color([0,1,0,1]) cube(1);')
+        node = ev.csg_tree[0]
+        assert node.kind == "color"
+        assert node.params["rgba"] == (0.0, 1.0, 0.0, 1.0)
+
+    def test_migrated_transform_wraps_migrated_transform(self):
+        # Both translate and scale are migrated — nested migrated wrappers.
+        bb = bbox(run("translate([10,0,0]) scale([2,2,2]) cube(1, center=true);")[0])
+        assert bb[0] == approx(9) and bb[3] == approx(11)
+
+    def test_migrated_color_wraps_migrated_transform_wraps_migrated_leaf(self):
+        bodies, _ = run('color("blue") translate([1,0,0]) sphere(1);')
+        assert len(bodies) == 1
+        r, g, b = bodies[0].color[:3]
+        assert r == approx(0.0, rel=1) and b == approx(1.0)
+
+    def test_migrated_transform_wraps_still_unmigrated_offset(self):
+        # offset() is not migrated yet (step 5) — this is the current
+        # mixed-migration boundary: a migrated wrapper (translate) around a
+        # not-yet-migrated one (offset). If offset() silently returned no
+        # bodies, translate's flatten_csg_tree(children) would see nothing.
+        bb = bbox(run("linear_extrude(height=1) translate([5,0]) offset(r=1) square(2);")[0])
+        assert bb[3] - bb[0] == approx(4)  # 2x2 square offset(r=1) -> 4x4, translate doesn't change extent
+        assert bb[0] == approx(4) and bb[3] == approx(8)
+
+    def test_migrated_color_wraps_still_unmigrated_union(self):
+        # union() is not migrated yet (step 4) — migrated color wrapping a
+        # not-yet-migrated union of two migrated leaves.
+        bodies, _ = run('color("red") union() { cube(1); translate([3,0,0]) cube(1); }')
+        assert len(bodies) == 1
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(4)
+        assert bodies[0].color[:3][0] == approx(1.0)
+
+    def test_flatten_matches_evaluate_result_with_transforms_and_color(self):
+        for src in [
+            "translate([1,0,0]) cube(1);",
+            "rotate([0,0,45]) cube(1);",
+            "scale([2,1,1]) sphere(1);",
+            "mirror([1,0,0]) cube(1);",
+            'color("green") cylinder(h=2, r=1);',
+            "resize([2,2,2]) sphere(1);",
+        ]:
+            bodies, _, ev = run_tree(src)
+            assert flatten_csg_tree(ev.csg_tree) == bodies
