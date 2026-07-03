@@ -2,16 +2,18 @@
 Tests for the GridViewer shape-detection and flat-index helpers in
 `belfryscad.window.data_viewers` — specifically that a "grid" (list of lists
 of points) need not be rectangular: rows may have different lengths (e.g. a
-cone's single-point apex row next to a wider base row).
+cone's single-point apex row next to a wider base row). Also covers
+`_is_matrix`, the shape-detection helper for MatrixViewer.
 
 These test the pure-Python helpers only (`_is_grid`, `_grid_row_offsets`,
-`_grid_flat_to_rc`, `_grid_is_triangular`); the Qt/OpenGL rendering classes
-(`GridViewer`, `_GridViewport`) aren't covered here, consistent with the
-rest of the test suite (no existing tests instantiate Qt widgets).
+`_grid_flat_to_rc`, `_grid_is_triangular`, `_grid_fan_spec`, `_is_matrix`);
+the Qt/OpenGL rendering classes (`GridViewer`, `_GridViewport`,
+`MatrixViewer`) aren't covered here, consistent with the rest of the test
+suite (no existing tests instantiate Qt widgets).
 """
 from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
-    _grid_fan_spec,
+    _grid_fan_spec, _is_matrix, _is_path,
 )
 
 
@@ -142,3 +144,52 @@ class TestGridFanSpec:
         assert anchor_col == 1
         assert longer_len == 3
         assert list(ks) == [1]
+
+
+class TestIsMatrix:
+    def test_2x2_is_matrix(self):
+        assert _is_matrix([[1, 2], [3, 4]])
+
+    def test_5x5_is_matrix(self):
+        assert _is_matrix([[i * 5 + j for j in range(5)] for i in range(5)])
+
+    def test_6x6_is_too_big(self):
+        assert not _is_matrix([[i * 6 + j for j in range(6)] for i in range(6)])
+
+    def test_1x1_is_too_small(self):
+        assert not _is_matrix([[1]])
+
+    def test_non_square_is_not_matrix(self):
+        assert not _is_matrix([[1, 2, 3], [4, 5, 6]])
+
+    def test_ragged_rows_not_matrix(self):
+        assert not _is_matrix([[1, 2], [3, 4, 5]])
+
+    def test_non_numeric_entry_is_not_matrix(self):
+        assert not _is_matrix([[1, "a"], [3, 4]])
+
+    def test_flat_list_is_not_matrix(self):
+        assert not _is_matrix([1, 2, 3, 4])
+
+    def test_matrix_never_satisfies_is_grid(self):
+        # No overlap with GridViewer: _is_grid expects each row to be a
+        # list of *points* (2/3-number lists) — one nesting level deeper
+        # than a matrix row, which is a list of plain numbers.
+        m = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        assert _is_matrix(m)
+        assert not _is_grid(m)
+
+    def test_2x2_and_3x3_matrix_also_satisfies_is_path(self):
+        # Real overlap: a 2x2 or 3x3 matrix's rows are themselves valid
+        # 2D/3D points, so it's also a valid path of 2 or 3 points.
+        assert _is_matrix([[1, 2], [3, 4]])
+        assert _is_path([[1, 2], [3, 4]])
+        m3 = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        assert _is_matrix(m3)
+        assert _is_path(m3)
+
+    def test_4x4_matrix_does_not_satisfy_is_path(self):
+        # Rows of length 4 fail _is_path's point-length check (2 or 3).
+        m4 = [[i * 4 + j for j in range(4)] for i in range(4)]
+        assert _is_matrix(m4)
+        assert not _is_path(m4)

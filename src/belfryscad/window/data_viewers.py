@@ -4,6 +4,8 @@ Data viewer windows launched from the debugger's variable context menu.
 - ListViewer: scrollable table for lists and OscObject values
 - VNFViewer: 3D mesh viewer for [vertices, faces] structures
 - PathViewer: 2D/3D path viewer with point markers and connecting lines
+- GridViewer: 3D viewer for (possibly ragged) lists of lists of points
+- MatrixViewer: table view for square 2x2-5x5 lists of lists of numbers
 """
 from __future__ import annotations
 import bisect
@@ -140,6 +142,18 @@ def _is_vnf(v) -> bool:
                and all(isinstance(i, (int, float)) for i in f) for f in faces)
 
 
+def _is_matrix(v) -> bool:
+    """A matrix is a square list of lists of numbers, 2x2 through 5x5 —
+    e.g. a transform matrix. No overlap with `_is_grid`: a grid row is a
+    list of *points* (2/3-number lists), one nesting level deeper than a
+    matrix row, which is a list of plain numbers."""
+    if not (_is_list(v) and 2 <= len(v) <= 5):
+        return False
+    n = len(v)
+    return all(_is_list(row) and len(row) == n
+               and all(isinstance(x, (int, float)) for x in row) for row in v)
+
+
 _HEADER_STYLE = (
     "QHeaderView::section {"
     "  background-color: #e8e8e8;"
@@ -238,9 +252,67 @@ class ListViewer(QDialog):
         if _is_path(val):
             menu.addAction("View as Path...", lambda: _open_path_viewer(
                 sub_title, val, self))
+        if _is_matrix(val):
+            menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(
+                sub_title, val, self))
         if menu.isEmpty():
             return
         menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+# ---------------------------------------------------------------------------
+# Matrix Viewer
+# ---------------------------------------------------------------------------
+
+class MatrixViewer(QDialog):
+    """Displays a square 2x2-5x5 list of lists of numbers as a grid of
+    cells, row/column headers 0-indexed to match OpenSCAD list indexing.
+    Read-only for now — cells use QTableWidgetItem, so making them
+    editable later (e.g. to write changes back to the source) only needs
+    the item flags and an itemChanged handler, not a rewrite."""
+
+    def __init__(self, title: str, value: list, parent=None):
+        super().__init__(parent)
+        self._title = title
+        self.setWindowTitle(f"Matrix Viewer: {title}")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._value = value
+
+        n = len(value)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        self._table = QTableWidget()
+        self._table.setFont(QFont("Menlo", 11))
+        self._table.setRowCount(n)
+        self._table.setColumnCount(n)
+        self._table.setHorizontalHeaderLabels([str(c) for c in range(n)])
+        self._table.setVerticalHeaderLabels([str(r) for r in range(n)])
+        _style_table_headers(self._table)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        for r, row in enumerate(value):
+            for c, val in enumerate(row):
+                item = QTableWidgetItem(_fmt_short(val))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(r, c, item)
+        self._table.resizeColumnsToContents()
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.addStretch()
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self.close)
+        btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+        col_w = sum(self._table.columnWidth(c) for c in range(n))
+        row_h = sum(self._table.rowHeight(r) for r in range(n))
+        width = col_w + self._table.verticalHeader().width() + 40
+        height = row_h + self._table.horizontalHeader().height() + 80
+        self.resize(max(220, width), max(180, height))
 
 
 # ---------------------------------------------------------------------------
@@ -1692,6 +1764,11 @@ def _open_grid_viewer(title: str, value, parent=None):
     dlg.show()
 
 
+def _open_matrix_viewer(title: str, value, parent=None):
+    dlg = MatrixViewer(title, value, parent)
+    dlg.show()
+
+
 def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
     """Add viewer actions to a QMenu based on the value's type."""
     if _is_list(value) or _is_oscobject(value):
@@ -1702,3 +1779,5 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as Grid...", lambda: _open_grid_viewer(name, value, parent))
     if _is_path(value):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))
+    if _is_matrix(value):
+        menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(name, value, parent))
