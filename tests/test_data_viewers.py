@@ -3,17 +3,21 @@ Tests for the GridViewer shape-detection and flat-index helpers in
 `belfryscad.window.data_viewers` — specifically that a "grid" (list of lists
 of points) need not be rectangular: rows may have different lengths (e.g. a
 cone's single-point apex row next to a wider base row). Also covers
-`_is_matrix`, the shape-detection helper for MatrixViewer.
+`_is_matrix`/`_is_affine_matrix`, the shape-detection helpers for
+MatrixViewer/AffineMatrixViewer, and the affine-transform math helpers.
 
 These test the pure-Python helpers only (`_is_grid`, `_grid_row_offsets`,
-`_grid_flat_to_rc`, `_grid_is_triangular`, `_grid_fan_spec`, `_is_matrix`);
-the Qt/OpenGL rendering classes (`GridViewer`, `_GridViewport`,
-`MatrixViewer`) aren't covered here, consistent with the rest of the test
-suite (no existing tests instantiate Qt widgets).
+`_grid_flat_to_rc`, `_grid_is_triangular`, `_grid_fan_spec`, `_is_matrix`,
+`_is_affine_matrix`, `_affine_reference_shape`, `_affine_shape_edges`,
+`_apply_affine`); the Qt/OpenGL rendering classes (`GridViewer`,
+`_GridViewport`, `MatrixViewer`, `AffineMatrixViewer`, `_AffineViewport`)
+aren't covered here, consistent with the rest of the test suite (no
+existing tests instantiate Qt widgets).
 """
 from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
-    _grid_fan_spec, _is_matrix, _is_path,
+    _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix,
+    _affine_reference_shape, _affine_shape_edges, _apply_affine,
 )
 
 
@@ -193,3 +197,105 @@ class TestIsMatrix:
         m4 = [[i * 4 + j for j in range(4)] for i in range(4)]
         assert _is_matrix(m4)
         assert not _is_path(m4)
+
+
+class TestIsAffineMatrix:
+    def test_3x3_identity_is_affine(self):
+        assert _is_affine_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+    def test_4x4_identity_is_affine(self):
+        assert _is_affine_matrix(
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        )
+
+    def test_3x3_translation_is_affine(self):
+        assert _is_affine_matrix([[1, 0, 5], [0, 1, -2], [0, 0, 1]])
+
+    def test_wrong_bottom_row_is_not_affine(self):
+        assert not _is_affine_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 2]])
+        assert not _is_affine_matrix([[1, 0, 0], [0, 1, 0], [1, 0, 1]])
+
+    def test_2x2_is_never_affine(self):
+        # Too small to be a homogeneous 2D or 3D affine matrix.
+        assert not _is_affine_matrix([[1, 0], [0, 1]])
+
+    def test_5x5_is_never_affine(self):
+        assert not _is_affine_matrix([[1 if i == j else 0 for j in range(5)]
+                                       for i in range(5)])
+
+    def test_non_square_is_not_affine(self):
+        assert not _is_affine_matrix([[1, 0, 0], [0, 1, 0]])
+
+    def test_every_affine_matrix_also_satisfies_is_matrix(self):
+        m = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        assert _is_affine_matrix(m)
+        assert _is_matrix(m)
+
+
+class TestAffineReferenceShape:
+    def test_2d_shape_is_unit_square(self):
+        pts = _affine_reference_shape(3)
+        assert len(pts) == 4
+        for p in pts:
+            assert len(p) == 2
+            assert abs(abs(p[0]) - 0.5) < 1e-9
+            assert abs(abs(p[1]) - 0.5) < 1e-9
+
+    def test_3d_shape_is_unit_cube(self):
+        pts = _affine_reference_shape(4)
+        assert len(pts) == 8
+        for p in pts:
+            assert len(p) == 3
+            for c in p:
+                assert abs(abs(c) - 0.5) < 1e-9
+
+    def test_2d_edges_form_a_closed_loop(self):
+        edges = _affine_shape_edges(3)
+        assert len(edges) == 4
+        touched = sorted(i for e in edges for i in e)
+        assert touched == [0, 0, 1, 1, 2, 2, 3, 3]
+
+    def test_3d_edges_form_a_valid_cube_wireframe(self):
+        edges = _affine_shape_edges(4)
+        assert len(edges) == 12
+        # Every corner touches exactly 3 edges in a cube.
+        from collections import Counter
+        counts = Counter(i for e in edges for i in e)
+        assert set(counts.values()) == {3}
+        assert set(counts.keys()) == set(range(8))
+
+
+class TestApplyAffine:
+    def test_identity_2d_leaves_points_unchanged(self):
+        identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        pts = [[1, 2], [-3, 4]]
+        out = _apply_affine(identity, pts)
+        assert out == pts
+
+    def test_translation_2d(self):
+        m = [[1, 0, 2], [0, 1, 3], [0, 0, 1]]
+        out = _apply_affine(m, [[0, 0], [1, 1]])
+        assert out == [[2.0, 3.0], [3.0, 4.0]]
+
+    def test_rotation_90deg_2d(self):
+        m = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+        out = _apply_affine(m, [[1, 0]])
+        assert abs(out[0][0] - 0) < 1e-9
+        assert abs(out[0][1] - 1) < 1e-9
+
+    def test_scale_3d(self):
+        m = [[2, 0, 0, 0], [0, 3, 0, 0], [0, 0, 4, 0], [0, 0, 0, 1]]
+        out = _apply_affine(m, [[1, 1, 1]])
+        assert out == [[2.0, 3.0, 4.0]]
+
+    def test_mirror_flips_sign(self):
+        m = [[-1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        out = _apply_affine(m, [[0.5, 0.5]])
+        assert out == [[-0.5, 0.5]]
+
+    def test_identity_3d_reference_shape_unchanged(self):
+        identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        cube = _affine_reference_shape(4)
+        out = _apply_affine(identity, cube)
+        for p, o in zip(cube, out):
+            assert all(abs(a - b) < 1e-9 for a, b in zip(p, o))
