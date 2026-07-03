@@ -6,6 +6,8 @@ Data viewer windows launched from the debugger's variable context menu.
 - PathViewer: 2D/3D path viewer with point markers and connecting lines
 - GridViewer: 3D viewer for (possibly ragged) lists of lists of points
 - MatrixViewer: table view for square 2x2-5x5 lists of lists of numbers
+- AffineMatrixViewer: table + viewport for 3x3/4x4 homogeneous affine
+  transform matrices, visualizing their effect on a reference square/cube
 """
 from __future__ import annotations
 import bisect
@@ -154,6 +156,62 @@ def _is_matrix(v) -> bool:
                and all(isinstance(x, (int, float)) for x in row) for row in v)
 
 
+def _is_affine_matrix(v) -> bool:
+    """A 3x3 (2D) or 4x4 (3D) homogeneous affine transform matrix: same
+    square-numeric-list shape as `_is_matrix`, but additionally the
+    bottom row must be the homogeneous identity row `[0, ..., 0, 1]`
+    (within floating-point tolerance) — what actually makes a matrix
+    "affine" rather than an arbitrary NxN array of numbers. Every affine
+    matrix is also a `_is_matrix` match (3x3/4x4 are both in its 2-5
+    range), so both viewers can apply to the same value."""
+    if not (_is_list(v) and len(v) in (3, 4)):
+        return False
+    n = len(v)
+    if not all(_is_list(row) and len(row) == n
+               and all(isinstance(x, (int, float)) for x in row) for row in v):
+        return False
+    expected = [0.0] * (n - 1) + [1.0]
+    return all(abs(float(a) - b) < 1e-9 for a, b in zip(v[-1], expected))
+
+
+def _affine_reference_shape(n: int) -> list:
+    """Corner points of the reference shape used to visualize an affine
+    transform: a unit square centered at the origin for a 3x3 (2D)
+    matrix (`n == 3`), or a unit cube for a 4x4 (3D) matrix (`n == 4`)."""
+    if n == 3:
+        return [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+    return [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+    ]
+
+
+_AFFINE_SQUARE_EDGES = [(0, 1), (1, 2), (2, 3), (3, 0)]
+_AFFINE_CUBE_EDGES = [
+    (0, 1), (1, 2), (2, 3), (3, 0),
+    (4, 5), (5, 6), (6, 7), (7, 4),
+    (0, 4), (1, 5), (2, 6), (3, 7),
+]
+
+
+def _affine_shape_edges(n: int) -> list:
+    """Edge index pairs connecting `_affine_reference_shape(n)`'s corners."""
+    return _AFFINE_SQUARE_EDGES if n == 3 else _AFFINE_CUBE_EDGES
+
+
+def _apply_affine(matrix: list, points: list) -> list:
+    """Apply an NxN homogeneous affine matrix to a list of (N-1)-dim
+    points, returning the transformed (N-1)-dim points as plain lists."""
+    m = np.array(matrix, dtype=np.float64)
+    n = m.shape[0]
+    result = []
+    for p in points:
+        homog = np.array(list(p) + [1.0], dtype=np.float64)
+        transformed = m @ homog
+        result.append(transformed[:n - 1].tolist())
+    return result
+
+
 _HEADER_STYLE = (
     "QHeaderView::section {"
     "  background-color: #e8e8e8;"
@@ -166,6 +224,44 @@ _HEADER_STYLE = (
 def _style_table_headers(table: QTableWidget):
     table.horizontalHeader().setStyleSheet(_HEADER_STYLE)
     table.verticalHeader().setStyleSheet(_HEADER_STYLE)
+
+
+def _octa_faces(r: float, is_2d: bool) -> list:
+    """Triangle triples (as vertex-offset vectors) forming an octahedron
+    point marker of "radius" `r` — a flattened diamond in the XY plane
+    when `is_2d`, a full octahedron otherwise. Shared by every viewport
+    that draws corner/vertex markers (`_GridViewport`, `_PathViewport`,
+    `_AffineViewport`)."""
+    px = np.array([r, 0, 0])
+    nx = np.array([-r, 0, 0])
+    py = np.array([0, r, 0])
+    ny = np.array([0, -r, 0])
+    pz = np.array([0, 0, r])
+    nz = np.array([0, 0, -r])
+    if is_2d:
+        return [
+            (py, px, ny), (ny, px, py),
+            (py, nx, ny), (ny, nx, py),
+        ]
+    return [
+        (pz, px, py), (pz, py, nx), (pz, nx, ny), (pz, ny, px),
+        (nz, py, px), (nz, nx, py), (nz, ny, nx), (nz, px, ny),
+    ]
+
+
+def _viewport_marker_radius(vp: "Viewport") -> float:
+    """Screen-space-constant marker radius (in world units) for `vp`'s
+    current camera distance/FOV/height, so point markers stay ~7px on
+    screen regardless of zoom. Shared by every viewport that rebuilds
+    marker geometry on zoom (`_GridViewport`, `_PathViewport`,
+    `_AffineViewport`)."""
+    cam = vp._renderer.camera
+    vh = vp.height()
+    if vh > 0:
+        world_per_px = 2.0 * cam.distance * math.tan(math.radians(cam.fov / 2)) / vh
+    else:
+        world_per_px = cam.distance * 0.003
+    return world_per_px * 3.5
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +351,9 @@ class ListViewer(QDialog):
         if _is_matrix(val):
             menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(
                 sub_title, val, self))
+        if _is_affine_matrix(val):
+            menu.addAction("View as Affine Transform...", lambda: _open_affine_matrix_viewer(
+                sub_title, val, self))
         if menu.isEmpty():
             return
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -313,6 +412,154 @@ class MatrixViewer(QDialog):
         width = col_w + self._table.verticalHeader().width() + 40
         height = row_h + self._table.horizontalHeader().height() + 80
         self.resize(max(220, width), max(180, height))
+
+
+# ---------------------------------------------------------------------------
+# Affine Matrix Viewer
+# ---------------------------------------------------------------------------
+
+class _AffineViewport(Viewport):
+    """Viewport showing a reference unit square/cube (gray wireframe)
+    alongside its image under an affine transform matrix (orange
+    wireframe + corner markers), for `AffineMatrixViewer`. The first
+    corner of the transformed shape is marked red rather than orange, so
+    reflections/orientation flips are visible even though the untransformed
+    shape has no other distinguishing features."""
+
+    def __init__(self, matrix: list, parent=None):
+        super().__init__(parent, selectable=False)
+        cam = self._renderer.camera
+        cam.fov = 45.0
+        self._renderer.line_width = 2.0
+        self._is_2d = len(matrix) == 3
+        self._corners: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        if self._is_2d:
+            cam.azimuth = 0.0
+            cam.elevation = 90.0
+            cam.orthographic = True
+        else:
+            cam.orthographic = False
+        self.schedule_load(lambda: self.load_matrix(matrix))
+
+    @staticmethod
+    def _to_3d(points: list) -> np.ndarray:
+        return np.array(
+            [[p[0], p[1], p[2] if len(p) > 2 else 0.0] for p in points],
+            dtype=np.float32,
+        )
+
+    def load_matrix(self, matrix: list):
+        self._renderer._clear_buffers()
+        self._renderer.clear_simple_buffers()
+
+        n = len(matrix)
+        ref = _affine_reference_shape(n)
+        transformed = _apply_affine(matrix, ref)
+        edges = _affine_shape_edges(n)
+
+        ref_pts = self._to_3d(ref)
+        xf_pts = self._to_3d(transformed)
+        self._corners = xf_pts
+
+        bb_min = np.minimum(ref_pts.min(axis=0), xf_pts.min(axis=0))
+        bb_max = np.maximum(ref_pts.max(axis=0), xf_pts.max(axis=0))
+        self.frame_scene(bb_min, bb_max)
+
+        ref_color = np.array([0.55, 0.55, 0.55], dtype=np.float32)
+        xf_color = np.array([0.9, 0.45, 0.1], dtype=np.float32)
+        line_verts = []
+        for a, b in edges:
+            line_verts.append(np.concatenate([ref_pts[a], ref_color]))
+            line_verts.append(np.concatenate([ref_pts[b], ref_color]))
+        for a, b in edges:
+            line_verts.append(np.concatenate([xf_pts[a], xf_color]))
+            line_verts.append(np.concatenate([xf_pts[b], xf_color]))
+        self._renderer.upload_lines(np.array(line_verts, dtype=np.float32))
+
+        self._build_point_markers()
+        self.update()
+
+    def _build_point_markers(self):
+        self._renderer.clear_points()
+        if len(self._corners) == 0 or self._ctx is None:
+            return
+        r = _viewport_marker_radius(self)
+        faces = _octa_faces(r, self._is_2d)
+        first_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
+        rest_color = np.array([0.9, 0.45, 0.1], dtype=np.float32)
+        marker_tris = []
+        for i, pt in enumerate(self._corners):
+            color = first_color if i == 0 else rest_color
+            for v0, v1, v2 in faces:
+                marker_tris.append(np.concatenate([pt + v0, color]))
+                marker_tris.append(np.concatenate([pt + v1, color]))
+                marker_tris.append(np.concatenate([pt + v2, color]))
+        if marker_tris:
+            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+
+
+class AffineMatrixViewer(QDialog):
+    """Visualizes a 3x3 (2D) or 4x4 (3D) homogeneous affine transform
+    matrix by showing a reference unit square/cube next to its image
+    under the matrix, alongside the matrix's numbers (read-only, same
+    convention as `MatrixViewer`)."""
+
+    def __init__(self, title: str, value: list, parent=None):
+        super().__init__(parent)
+        self._title = title
+        self.setWindowTitle(f"Affine Transform Viewer: {title}")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._value = value
+        n = len(value)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._vp = _AffineViewport(value, self)
+        splitter.addWidget(self._vp)
+
+        table_container = QWidget()
+        tc_layout = QVBoxLayout(table_container)
+        tc_layout.setContentsMargins(0, 0, 0, 0)
+        tc_layout.addWidget(QLabel(f"{n}x{n} Matrix"))
+        self._table = QTableWidget()
+        self._table.setFont(QFont("Menlo", 11))
+        self._table.setRowCount(n)
+        self._table.setColumnCount(n)
+        self._table.setHorizontalHeaderLabels([str(c) for c in range(n)])
+        self._table.setVerticalHeaderLabels([str(r) for r in range(n)])
+        _style_table_headers(self._table)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        for r, row in enumerate(value):
+            for c, val in enumerate(row):
+                item = QTableWidgetItem(_fmt_short(val))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(r, c, item)
+        self._table.resizeColumnsToContents()
+        tc_layout.addWidget(self._table)
+        splitter.addWidget(table_container)
+
+        t = self._table
+        table_w = (t.verticalHeader().width()
+                   + sum(t.columnWidth(j) for j in range(n))
+                   + t.frameWidth() * 2 + 20)
+        splitter.setSizes([600, table_w])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        layout.addWidget(splitter, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.addStretch()
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self.close)
+        btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+        self.resize(600 + table_w, 480)
 
 
 # ---------------------------------------------------------------------------
@@ -1039,30 +1286,10 @@ class _PathViewport(Viewport):
         self.update()
 
     def _octa_faces(self, r):
-        px = np.array([r, 0, 0])
-        nx = np.array([-r, 0, 0])
-        py = np.array([0, r, 0])
-        ny = np.array([0, -r, 0])
-        pz = np.array([0, 0, r])
-        nz = np.array([0, 0, -r])
-        if self._is_2d:
-            return [
-                (py, px, ny), (ny, px, py),
-                (py, nx, ny), (ny, nx, py),
-            ]
-        return [
-            (pz, px, py), (pz, py, nx), (pz, nx, ny), (pz, ny, px),
-            (nz, py, px), (nz, nx, py), (nz, ny, nx), (nz, px, ny),
-        ]
+        return _octa_faces(r, self._is_2d)
 
     def _world_per_px_radius(self):
-        cam = self._renderer.camera
-        vh = self.height()
-        if vh > 0:
-            world_per_px = 2.0 * cam.distance * math.tan(math.radians(cam.fov / 2)) / vh
-        else:
-            world_per_px = cam.distance * 0.003
-        return world_per_px * 3.5
+        return _viewport_marker_radius(self)
 
     def _build_point_markers(self):
         self._renderer.clear_points()
@@ -1558,30 +1785,10 @@ class _GridViewport(Viewport):
         self.update()
 
     def _octa_faces(self, r):
-        px = np.array([r, 0, 0])
-        nx = np.array([-r, 0, 0])
-        py = np.array([0, r, 0])
-        ny = np.array([0, -r, 0])
-        pz = np.array([0, 0, r])
-        nz = np.array([0, 0, -r])
-        if self._is_2d:
-            return [
-                (py, px, ny), (ny, px, py),
-                (py, nx, ny), (ny, nx, py),
-            ]
-        return [
-            (pz, px, py), (pz, py, nx), (pz, nx, ny), (pz, ny, px),
-            (nz, py, px), (nz, nx, py), (nz, ny, nx), (nz, px, ny),
-        ]
+        return _octa_faces(r, self._is_2d)
 
     def _world_per_px_radius(self):
-        cam = self._renderer.camera
-        vh = self.height()
-        if vh > 0:
-            world_per_px = 2.0 * cam.distance * math.tan(math.radians(cam.fov / 2)) / vh
-        else:
-            world_per_px = cam.distance * 0.003
-        return world_per_px * 3.5
+        return _viewport_marker_radius(self)
 
     def _build_point_markers(self):
         self._renderer.clear_points()
@@ -1769,6 +1976,11 @@ def _open_matrix_viewer(title: str, value, parent=None):
     dlg.show()
 
 
+def _open_affine_matrix_viewer(title: str, value, parent=None):
+    dlg = AffineMatrixViewer(title, value, parent)
+    dlg.show()
+
+
 def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
     """Add viewer actions to a QMenu based on the value's type."""
     if _is_list(value) or _is_oscobject(value):
@@ -1781,3 +1993,5 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))
     if _is_matrix(value):
         menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(name, value, parent))
+    if _is_affine_matrix(value):
+        menu.addAction("View as Affine Transform...", lambda: _open_affine_matrix_viewer(name, value, parent))

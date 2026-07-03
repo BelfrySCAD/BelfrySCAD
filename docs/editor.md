@@ -54,7 +54,7 @@ Right-clicking in the editor builds a standard Qt context menu, then appends ide
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known variable — locals, globals, constants, or `$`-specials):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
 - **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value`, which calls `self._console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
-- **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid, matrix).
+- **View 'x'…** submenu — populated by `build_viewer_menu()` from `data_viewers.py`; only appears when the value type supports a viewer (list, VNF, path, grid, matrix, affine transform).
 
 The available variables come from the innermost debug frame: `{**outer_scope, **local_scope}` (local overrides outer on collision), which covers locals, globals, constants, and `$`-specials. `Qt.WordUnderCursor` excludes `$`, so `contextMenuEvent` manually checks whether the character immediately before the selection is `$` and prepends it — allowing `$fn`, `$t`, etc. to match.
 
@@ -288,7 +288,7 @@ self._toggle_perspective(perspective)
 
 ## Data Viewers
 
-Implemented in `src/belfryscad/window/data_viewers.py`. Five viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
+Implemented in `src/belfryscad/window/data_viewers.py`. Six viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`.
 
 ### Shared viewport: `Viewport` (`window/viewport.py`) + `SceneRenderer` (`engine/renderer.py`)
 
@@ -344,6 +344,14 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 ### MatrixViewer (QDialog)
 
 `QTableWidget` only, no 3D viewport — displays a square 2x2 through 5x5 list of lists of numbers (`_is_matrix`, e.g. an affine/rotation matrix) as an NxN grid of cells. Row/column headers are 0-indexed (`_style_table_headers` for the header look, shared with `GridViewer`'s vertex table). Read-only for now (`NoEditTriggers`); cells are plain `QTableWidgetItem`s, so making them editable later only needs the item flags flipped and an `itemChanged` handler, not a rewrite. Dialog size is computed from the table's content size (`resizeColumnsToContents` + summed column/row extents) rather than a fixed constant, since 2x2 and 5x5 need noticeably different window sizes. No overlap with `_is_grid`: a grid row is a list of *points* (2/3-number lists) — one nesting level deeper than a matrix row, which is a list of plain numbers. There *is* overlap with `_is_path`, though: a 2x2 or 3x3 matrix's rows are themselves valid 2D/3D points, so both "View as Path..." and "View as Matrix..." can appear for the same value; 4x4/5x5 rows are too long to match `_is_path`'s point-length check (2 or 3), so only "View as Matrix..." appears there.
+
+### AffineMatrixViewer (QDialog)
+
+`QSplitter`: `_AffineViewport` on left, read-only matrix table (same look as `MatrixViewer`'s) on right. Dismiss button below. Detects specifically a homogeneous **affine transform** matrix — `_is_affine_matrix`: a 3x3 (2D) or 4x4 (3D) `_is_matrix` whose bottom row is exactly the homogeneous identity row `[0, ..., 0, 1]` (within float tolerance) — as opposed to an arbitrary numeric matrix, which just gets `MatrixViewer`'s plain table. Every affine matrix also satisfies `_is_matrix` (3x3/4x4 are in its 2-5 range), so "View as Matrix..." and "View as Affine Transform..." both appear in the context menu for the same value.
+
+- **Reference shape**: `_affine_reference_shape(n)` — a unit square centered at the origin for `n == 3` (2D), a unit cube for `n == 4` (3D); `_affine_shape_edges(n)` gives the wireframe edge index pairs (4 for the square, the standard 12-edge cube wireframe for the cube).
+- **Transform math**: `_apply_affine(matrix, points)` — promotes each `(N-1)`-dim point to homogeneous coordinates (`[x, y, ..., 1]`), multiplies by the matrix, and drops the trailing `1` back off. Pure/`numpy`-only, pytest-covered independent of any Qt/GL setup.
+- **Viewport**: `_AffineViewport(Viewport)`. Draws the reference shape as a gray wireframe and its transformed image as an orange wireframe (`SceneRenderer.upload_lines`), both via the shared `_octa_faces`/`_viewport_marker_radius` module-level helpers (extracted from what used to be near-identical duplicated methods on `_GridViewport` and `_PathViewport`, now used by all three). The transformed shape's corners get octahedron point markers too, with the **first corner marked red** rather than orange — since a plain square/cube has no other visual landmark, this is what makes reflections/orientation flips (e.g. a negative-determinant matrix) visible at a glance instead of looking identical to a non-mirrored rotation. Camera framing (`frame_scene`) covers the union of both shapes' bounding boxes. 2D matrices start in top-down orthographic; 3D matrices start in perspective orbit — same convention as `GridViewer`/`PathViewer`.
 
 ## Menu Structure
 
