@@ -733,12 +733,24 @@ class TestGeneratePartialRender:
 # loop, since queued cross-thread signals are never delivered without one.
 # ---------------------------------------------------------------------------
 
-def _run_debug_session(path: str, on_pause_line) -> tuple[list[int], int]:
+def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple[list[int], int]:
     """Start a real DebugSession on the file at `path`. `on_pause_line(line)`
     is called at each pause and must return a resume command string (e.g.
-    "continue", "step_to_child"). Returns (paused_lines, finished_body_count)."""
+    "continue", "step_to_child"). Returns (paused_lines, finished_body_count).
+
+    Deliberately avoids a nested QCoreApplication.exec() — a manual
+    processEvents()-and-sleep poll loop instead, driven by a plain
+    wall-clock deadline. A prior QTimer-triggered-app.quit() version of this
+    helper was flaky specifically on Linux CI (never locally, never on the
+    PR that introduced it, and inconsistently across which of the 4 tests
+    in this class failed from run to run) — symptomatic of a platform-
+    specific re-entrant-event-loop quirk rather than a logic bug in the
+    feature itself. Polling avoids relying on nested QCoreApplication.exec()
+    semantics at all.
+    """
     import sys
-    from PySide6.QtCore import QCoreApplication, QTimer
+    import time as _time
+    from PySide6.QtCore import QCoreApplication
     from openscad_lalr_parser import getASTfromFile
     from belfryscad.window.debugger import DebugSession
 
@@ -756,25 +768,27 @@ def _run_debug_session(path: str, on_pause_line) -> tuple[list[int], int]:
 
     def on_finished(bodies, id2node):
         result["count"] = len(bodies)
-        app.quit()
 
     def on_errored(msg):
         result["count"] = -1
-        app.quit()
 
     session.paused.connect(on_paused)
     session.finished.connect(on_finished)
     session.errored.connect(on_errored)
     session.start(nodes, root_scope, breakpoints={}, current_file=path)
-    QTimer.singleShot(15000, app.quit)  # safety timeout — never actually expected to fire
-    app.exec()
+
+    deadline = _time.monotonic() + timeout
+    while result["count"] is None and _time.monotonic() < deadline:
+        app.processEvents()
+        _time.sleep(0.001)
+
     session.paused.disconnect()
     session.finished.disconnect()
     session.errored.disconnect()
-    # If the safety timeout fired (session still running/paused), stop it so
-    # its worker thread doesn't linger blocked into the next test — and
-    # either way, join so the next test starts with a clean slate rather
-    # than racing a still-finishing thread for the GIL.
+    # If the deadline was hit (session still running/paused), stop it so its
+    # worker thread doesn't linger blocked into the next test — and either
+    # way, join so the next test starts with a clean slate rather than
+    # racing a still-finishing thread for the GIL.
     if session.is_running():
         session.stop()
     if session._thread is not None:
