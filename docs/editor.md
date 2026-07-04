@@ -201,8 +201,11 @@ Preferences live under the `editor/` key group in `QSettings("BelfrySCAD", "Belf
 | Indent size | `editor/indentSize` | `4` |
 | Show column guide | `editor/showColumnGuide` | `True` |
 | Column guide column | `editor/columnGuide` | `80` |
+| Color theme | `viewport/colorTheme` | `"Cornfield"` |
 
 `MainWindow._apply_preferences()` reads all settings and pushes them to every open tab via `_apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)`. Called on startup (end of `_restore_settings()`) and after the dialog is accepted. New tabs from `_new_document()` and `_create_and_add_tab()` also call it to inherit current settings immediately.
+
+**Color theme**: the Viewport section's "Color theme" dropdown (`preferences.py`) lists the named themes in `color_themes.COLOR_THEMES` — each a `{"background", "object", "axes"}` triple of RGBA tuples lifted from OpenSCAD's built-in render color schemes (`background`, `cgal-face-front`, and `axes-color`; "Cornfield" is a manual entry — OpenSCAD's classic default scheme — with `axes` hardcoded to black rather than taken from a JSON file). `_apply_preferences()` looks up the selected theme and sets `renderer.bg_color`, `renderer._default_color`, and `renderer.axes_color` on every open `Viewport`, including data-viewer dialogs, then calls `vp.update()` to repaint immediately. All three are resolved fresh every `paint()`/`_render_axes()`/`_get_label_texture()` call rather than baked into uploaded geometry: `MeshBuffer.color` stores the `ColoredBody`'s explicit `color()` override or `None`, and the draw loop substitutes `renderer._default_color` at draw time when it's `None`; `axes_color` only recolors the negative-axis lines/ticks and tick labels (the "gray" elements) — the positive X/Y/Z axis lines and ticks keep their fixed red/green/blue. Axis-label textures are cached by `(text, axes_color)` so a theme change invalidates stale-colored labels. All theme fields take effect on the next repaint without needing a full re-render.
 
 `CodeEditor.set_indent_size(n)` stores `_indent_size` and updates `tabStopDistance`. Indent/unindent logic lives in `CodeEditor._indent_lines()`/`_unindent_lines()`, called both from `keyPressEvent` (Tab/Shift+Tab) and the Edit menu actions. Both handle single-line and multi-line selections.
 

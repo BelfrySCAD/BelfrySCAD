@@ -16,6 +16,7 @@ from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assig
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
+from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
 from belfryscad.window.document_manager import get_document_manager
 
 import re
@@ -2273,6 +2274,7 @@ class MainWindow(QMainWindow):
         viewer_ipd = load_preference("viewport/viewerIPD", float)
         viewer_screen_dist = load_preference("viewport/viewerScreenDist", float)
         stereo_depth_scale = load_preference("viewport/stereoDepthScale", float)
+        theme = COLOR_THEMES.get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
         for i in range(self._tabs.count()):
@@ -2292,8 +2294,10 @@ class MainWindow(QMainWindow):
             cam.viewer_screen_dist = viewer_screen_dist
             cam.stereo_depth_scale = stereo_depth_scale
             cam.screen_dpi = vp.screen().physicalDotsPerInch()
-            if cam.stereo:
-                vp.update()
+            vp._renderer.bg_color = theme["background"]
+            vp._renderer._default_color = theme["object"]
+            vp._renderer.axes_color = theme["axes"]
+            vp.update()
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
