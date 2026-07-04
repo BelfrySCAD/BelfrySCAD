@@ -676,6 +676,7 @@ class TestGeneratePartialRender:
         # tolerate degenerate input rather than raising).
         class _FakeEvaluator:
             csg_tree: list = []
+            _tree_stack: list = [[]]
 
             def generate_tree(self, tree):
                 raise RuntimeError("boom")
@@ -683,3 +684,34 @@ class TestGeneratePartialRender:
         bodies, error = _generate_partial_render(_FakeEvaluator())
         assert bodies is None
         assert error == "boom"
+
+    def test_picks_up_leaves_still_nested_in_an_unfinished_parent(self):
+        # Regression: for a script whose whole geometry is one deeply-nested
+        # top-level statement (e.g. difference(){union(){cube();sphere();}
+        # cylinder();}), ev.csg_tree (the top-level list) stays completely
+        # empty for the entire time spent stepping through cube()/sphere(),
+        # since difference()'s own CSGNode isn't appended anywhere until
+        # every child has finished resolving — including union(), which
+        # itself doesn't finish until cube() *and* sphere() both have.
+        # _generate_partial_render must still show cube() at this point by
+        # looking at every level of ev._tree_stack, not just ev.csg_tree.
+        src = "difference() {\n  union() {\n    cube(10);\n    sphere(10);\n  }\n  cylinder(h=10,d=10);\n}\n"
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        paused_at_sphere = {}
+
+        def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None):
+            if line == 4 and not expr_level and not paused_at_sphere:
+                # Paused right at sphere(10) — cube(10) has resolved (its
+                # CSGNode sits in union()'s still-in-progress accumulator)
+                # but neither union() nor difference() has finished yet.
+                paused_at_sphere["bodies"], paused_at_sphere["error"] = _generate_partial_render(ev)
+                assert ev.csg_tree == []  # confirms the scenario this test targets
+            return ("continue", {})
+
+        ev = Evaluator(debug_hook=hook)
+        ev.evaluate(nodes, root_scope)
+
+        assert paused_at_sphere["error"] is None
+        assert len(paused_at_sphere["bodies"]) == 1
+        assert paused_at_sphere["bodies"][0].body.volume() == pytest.approx(1000)  # cube(10)^3
