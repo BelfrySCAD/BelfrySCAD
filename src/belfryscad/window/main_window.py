@@ -2027,7 +2027,13 @@ class MainWindow(QMainWindow):
             return
         self._set_debug_busy(False)
         if partial_bodies is not None:
-            self._viewport.load_geometry(partial_bodies)
+            try:
+                self._viewport.load_geometry(partial_bodies)
+            except Exception as e:
+                # Never let a live partial-render display failure abort the
+                # rest of the pause UI update (pane state, execution-line
+                # highlight, locals) — it's a best-effort preview.
+                self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin,
                                        partial_error=partial_error)
         innermost = all_frame_locals[0] if all_frame_locals else {}
@@ -2042,7 +2048,10 @@ class MainWindow(QMainWindow):
             return
         self._set_debug_busy(False)
         if partial_bodies is not None:
-            self._viewport.load_geometry(partial_bodies)
+            try:
+                self._viewport.load_geometry(partial_bodies)
+            except Exception as e:
+                self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin,
                                             partial_error=partial_error)
         innermost = all_frame_locals[0] if all_frame_locals else {}
