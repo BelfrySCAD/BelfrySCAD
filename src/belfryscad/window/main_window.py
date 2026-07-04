@@ -1962,10 +1962,12 @@ class MainWindow(QMainWindow):
         self._debug_tab = tab
         self._debug_session = DebugSession(self)
         self._debug_session.paused.connect(
-            lambda origin, line, frames, stk: self._on_debug_paused(origin, line, frames, stk)
+            lambda origin, line, frames, stk, pbodies, perr: self._on_debug_paused(
+                origin, line, frames, stk, pbodies, perr)
         )
         self._debug_session.error_break.connect(
-            lambda origin, line, msg, frames, stk: self._on_debug_error_break(origin, line, msg, frames, stk)
+            lambda origin, line, msg, frames, stk, pbodies, perr: self._on_debug_error_break(
+                origin, line, msg, frames, stk, pbodies, perr)
         )
         self._debug_session.finished.connect(
             lambda bodies, id2node: self._on_debug_finished(bodies, id2node)
@@ -2019,22 +2021,30 @@ class MainWindow(QMainWindow):
                 target_tab.editor.set_execution_line(line)
                 self._tabs.setCurrentIndex(idx)
 
-    def _on_debug_paused(self, origin: str, line: int, all_frame_locals: list, call_stack: list):
+    def _on_debug_paused(self, origin: str, line: int, all_frame_locals: list, call_stack: list,
+                        partial_bodies=None, partial_error: str | None = None):
         if not self._debug_tab:
             return
         self._set_debug_busy(False)
-        self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin)
+        if partial_bodies is not None:
+            self._viewport.load_geometry(partial_bodies)
+        self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin,
+                                       partial_error=partial_error)
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         self._apply_vp_params({k: locals_dict[k] for k in ("$vpt", "$vpr", "$vpd", "$vpf") if k in locals_dict})
         self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
 
-    def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list):
+    def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list,
+                              partial_bodies=None, partial_error: str | None = None):
         if not self._debug_tab:
             return
         self._set_debug_busy(False)
-        self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin)
+        if partial_bodies is not None:
+            self._viewport.load_geometry(partial_bodies)
+        self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin,
+                                            partial_error=partial_error)
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         self._show_debug_line(origin, line)

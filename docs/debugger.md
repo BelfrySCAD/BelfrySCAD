@@ -8,12 +8,14 @@ Signals (emitted from the worker thread; Qt queues them to main):
 
 | Signal | Args | When |
 |---|---|---|
-| `paused` | `origin, line, all_frame_locals, call_stack` | Hit a breakpoint or step |
-| `error_break` | `origin, line, msg, all_frame_locals, call_stack` | Any runtime error |
+| `paused` | `origin, line, all_frame_locals, call_stack, partial_bodies, partial_error` | Hit a breakpoint or step |
+| `error_break` | `origin, line, msg, all_frame_locals, call_stack, partial_bodies, partial_error` | Any runtime error |
 | `finished` | `bodies, id_to_node` | Evaluation completed |
 | `errored` | `str` | Unhandled exception after error_break resume |
 | `logged` | `str` | Echo/print output from the evaluator (thread-safe via signal) |
 | `logged_value` | `str, object` | Function return value (name, value) — viewer-aware alternative to `logged` for step-over/step-out return values |
+
+`partial_bodies`/`partial_error` (Phase 3 — see "Live partial-tree rendering" below) are the result of `_generate_partial_render(self._ev)`, called right before every emit of `paused`/`error_break`.
 
 `all_frame_locals` is a list of frame dicts, **innermost first**, with an extra `<toplevel>` entry appended when inside a call. `all_frame_locals[0]` matches row 0 (innermost) of the call-stack list. Each entry:
 
@@ -28,6 +30,16 @@ Signals (emitted from the worker thread; Qt queues them to main):
 **Pause during execution** — `DebugSession.pause()` sets `_pause_requested`. The hook checks/consumes this flag at the top of every call, triggering an immediate pause regardless of breakpoints or step state — useful for interrupting a long-running evaluation.
 
 **Error break** — `Evaluator(error_break_fn=self._error_break)` intercepts every `error()` call before raising `EvalError`. `_error_break` emits `error_break` and blocks until the user resumes; afterward `EvalError` propagates normally (caught by `_run`, triggers `errored`).
+
+## Live partial-tree rendering (Phase 3)
+
+`_run()` assigns `self._ev = ev` right after constructing the `Evaluator`, before calling `ev.evaluate(...)` — the hook closure (already a bound method's inner function) can then reach `self._ev.csg_tree`/`self._ev.generate_tree()`. See `docs/evaluator.md` § "CSG tree" for the two-pass resolve/generate design this depends on: `generate_tree()` can be called on any (possibly partial) tree at any point, since resolve never depends on a node's generated bodies.
+
+`_generate_partial_render(ev)` (module-level function in `debugger.py`) does a best-effort `generate_tree(ev.csg_tree)` over whatever's been resolved so far, converts the result via `to_renderable_bodies()`, and returns `(bodies, None)` on success or `(None, str(e))` if any `generate_fn` raises. Called from both `hook()` and `_error_break()`, right before every `paused`/`error_break` emit — so **every** pause (breakpoint hit, Step Into/Over/Out, the Pause button, and error breaks) triggers a live regeneration, not just step commands that cross a module-call boundary. `generate_tree()` always recomputes from scratch (no caching, matching the project's "full Manifold rebuild on every render trigger" convention), so this cost grows with the tree across a debug session — single-stepping through a large script gets progressively slower as more of the tree accumulates. Known, accepted trade-off for the chosen trigger scope, not a bug.
+
+`MainWindow._on_debug_paused`/`_on_debug_error_break` receive the two new trailing args: if `partial_bodies is not None`, `self._viewport.load_geometry(partial_bodies)` runs before `set_paused`/`set_error_break`, so the viewport shows a growing partial model at each pause instead of staying blank for the whole session (previously: `_start_debug()` cleared the viewport and nothing repainted it until `finished`). `partial_error`, when set, is forwarded to `DebuggerPane.set_paused`/`set_error_break`'s new `partial_error` keyword, which shows a small warning label (`⚠ live view stale: {msg}`) below the status label — the viewport keeps showing the last successfully rendered geometry, but the warning flags that it's now potentially stale. The warning clears on the next successful partial render, or when `set_running()`/`set_idle()` runs (a fresh run or leaving debug mode makes a warning about the *previous* pause moot).
+
+A partial-render failure is not expected to come from mere incompleteness — every `generate_fn`'s empty/partial-child handling (Phase 2) already tolerates a tree with fewer children than its final form will have (e.g. `union`/`difference`/`intersection` are no-ops that return their one child unaltered with only one operand resolved so far). A real failure here is more likely a genuine script problem (e.g. malformed `polygon()` points) surfacing earlier than usual, via the live preview, rather than only at the end of evaluation.
 
 ## Call stack display
 
@@ -115,10 +127,12 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 | Method | Status label | Continue/Pause btn | Step buttons | Stop | Restart |
 |---|---|---|---|---|---|
 | `set_running()` | "Running…" | **Pause** (enabled) | Disabled | Enabled | Enabled |
-| `set_paused(line, frames, stack, origin)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |
-| `set_error_break(line, msg, frames, stack, origin)` | "Line N: \<error\>" | **Continue** (enabled) | Disabled | Enabled | Enabled |
+| `set_paused(line, frames, stack, origin, partial_error)` | "Paused at line N" | **Continue** (enabled) | All enabled | Enabled | Enabled |
+| `set_error_break(line, msg, frames, stack, origin, partial_error)` | "Line N: \<error\>" | **Continue** (enabled) | Disabled | Enabled | Enabled |
 | `set_idle()` | "Not debugging" | **Continue** (disabled) | Disabled | Disabled | Disabled |
 
 The Continue/Pause button is a single `_btn_continue` widget whose icon/behavior depends on state: running → pause icon, emits `pause_requested`; otherwise → continue icon, emits `continue_requested`. `_set_continue_mode()` restores the continue icon and clears `_is_running`; called at the start of `set_paused`, `set_error_break`, and `set_idle`.
+
+`set_paused`/`set_error_break`'s `partial_error` (Phase 3, default `None`) is forwarded to `_set_partial_warning()`, which shows/hides the `_partial_warn_label` described above.
 
 **Restart** — `_on_debug_restart()` in `main_window.py` stops the current session (`self._debug_session.stop()`, sets `self._debug_session = None`), clears execution line highlights across all tabs, then calls `_start_debug()`. Since `_debug_session` is already `None`, the "already running → continue" guard doesn't fire and a fresh parse + session starts from the top.
