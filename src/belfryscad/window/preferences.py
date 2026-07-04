@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QHBoxLayout, QVBoxLayout,
+    QDialog, QFormLayout, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
 )
 from PySide6.QtGui import QFont, QFontDatabase
@@ -35,25 +35,29 @@ def save_preferences(values: dict):
 
 
 class PreferencesDialog(QDialog):
-    def __init__(self, parent=None):
+    """Every control saves and applies its value immediately on change —
+    there's no OK/Cancel, just a Close button."""
+
+    def __init__(self, parent=None, on_change=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.setModal(True)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(360)
+        self._on_change = on_change
 
         s = QSettings("BelfrySCAD", "BelfrySCAD")
 
         outer = QVBoxLayout(self)
-        outer.setSpacing(16)
+        outer.setSpacing(12)
         outer.setContentsMargins(20, 20, 20, 20)
 
-        # --- Editor section ---
-        editor_label = QLabel("<b>Editor</b>")
-        outer.addWidget(editor_label)
+        tabs = QTabWidget()
+        outer.addWidget(tabs)
 
-        form = QFormLayout()
+        # --- Editor tab ---
+        editor_tab = QWidget()
+        form = QFormLayout(editor_tab)
         form.setSpacing(8)
-        form.setContentsMargins(12, 0, 0, 0)
 
         # Font family
         self._font_family = QComboBox()
@@ -71,6 +75,9 @@ class PreferencesDialog(QDialog):
         idx = self._font_family.findText(current_family)
         if idx >= 0:
             self._font_family.setCurrentIndex(idx)
+        self._font_family.currentTextChanged.connect(
+            lambda v: self._emit("editor/fontFamily", v)
+        )
         form.addRow("Font:", self._font_family)
 
         # Font size
@@ -78,6 +85,7 @@ class PreferencesDialog(QDialog):
         self._font_size.setRange(8, 30)
         self._font_size.setSuffix(" pt")
         self._font_size.setValue(s.value("editor/fontSize", _DEFAULTS["editor/fontSize"], type=int))
+        self._font_size.valueChanged.connect(lambda v: self._emit("editor/fontSize", v))
         form.addRow("Font size:", self._font_size)
 
         # Indent size
@@ -85,6 +93,7 @@ class PreferencesDialog(QDialog):
         self._indent_size.setRange(1, 8)
         self._indent_size.setSuffix(" spaces")
         self._indent_size.setValue(s.value("editor/indentSize", _DEFAULTS["editor/indentSize"], type=int))
+        self._indent_size.valueChanged.connect(lambda v: self._emit("editor/indentSize", v))
         form.addRow("Indent size:", self._indent_size)
 
         # Column guide
@@ -97,19 +106,19 @@ class PreferencesDialog(QDialog):
         self._guide_column.setValue(s.value("editor/columnGuide", _DEFAULTS["editor/columnGuide"], type=int))
         self._guide_column.setEnabled(self._show_guide.isChecked())
         self._show_guide.toggled.connect(self._guide_column.setEnabled)
+        self._show_guide.toggled.connect(lambda v: self._emit("editor/showColumnGuide", v))
+        self._guide_column.valueChanged.connect(lambda v: self._emit("editor/columnGuide", v))
         guide_row.addWidget(self._show_guide)
         guide_row.addWidget(self._guide_column)
         guide_row.addStretch()
         form.addRow("Column guide:", guide_row)
 
-        outer.addLayout(form)
+        tabs.addTab(editor_tab, "Editor")
 
-        # --- Viewport section ---
-        outer.addWidget(QLabel("<b>Viewport</b>"))
-
-        vp_form = QFormLayout()
+        # --- Viewport tab ---
+        viewport_tab = QWidget()
+        vp_form = QFormLayout(viewport_tab)
         vp_form.setSpacing(8)
-        vp_form.setContentsMargins(12, 0, 0, 0)
 
         current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
         self._viewer_ipd = QDoubleSpinBox()
@@ -118,6 +127,7 @@ class PreferencesDialog(QDialog):
         self._viewer_ipd.setDecimals(1)
         self._viewer_ipd.setValue(current_ipd)
         self._viewer_ipd.setToolTip("Distance between the centres of your pupils.")
+        self._viewer_ipd.valueChanged.connect(lambda v: self._emit("viewport/viewerIPD", v))
         vp_form.addRow("Eye separation (IPD):", self._viewer_ipd)
 
         current_sdist = s.value("viewport/viewerScreenDist", _DEFAULTS["viewport/viewerScreenDist"], type=float)
@@ -127,6 +137,7 @@ class PreferencesDialog(QDialog):
         self._viewer_screen_dist.setDecimals(0)
         self._viewer_screen_dist.setValue(current_sdist)
         self._viewer_screen_dist.setToolTip("Distance from your eyes to the screen.")
+        self._viewer_screen_dist.valueChanged.connect(lambda v: self._emit("viewport/viewerScreenDist", v))
         vp_form.addRow("Screen distance:", self._viewer_screen_dist)
 
         scale_row = QHBoxLayout()
@@ -141,6 +152,9 @@ class PreferencesDialog(QDialog):
         self._stereo_scale.valueChanged.connect(
             lambda v: self._stereo_scale_label.setText(f"{v}%")
         )
+        self._stereo_scale.valueChanged.connect(
+            lambda v: self._emit("viewport/stereoDepthScale", v / 100.0)
+        )
         scale_row.addWidget(self._stereo_scale)
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
@@ -150,27 +164,19 @@ class PreferencesDialog(QDialog):
         self._color_theme.addItems(sorted(COLOR_THEMES))
         idx = self._color_theme.findText(current_theme)
         self._color_theme.setCurrentIndex(idx if idx >= 0 else 0)
+        self._color_theme.currentTextChanged.connect(
+            lambda v: self._emit("viewport/colorTheme", v)
+        )
         vp_form.addRow("Color theme:", self._color_theme)
 
-        outer.addLayout(vp_form)
+        tabs.addTab(viewport_tab, "Viewport")
 
-        # --- Buttons ---
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        # --- Close button ---
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
         outer.addWidget(buttons)
 
-    def get_values(self) -> dict:
-        return {
-            "editor/fontFamily": self._font_family.currentText(),
-            "editor/fontSize": self._font_size.value(),
-            "editor/indentSize": self._indent_size.value(),
-            "editor/showColumnGuide": self._show_guide.isChecked(),
-            "editor/columnGuide": self._guide_column.value(),
-            "viewport/viewerIPD": self._viewer_ipd.value(),
-            "viewport/viewerScreenDist": self._viewer_screen_dist.value(),
-            "viewport/stereoDepthScale": self._stereo_scale.value() / 100.0,
-            "viewport/colorTheme": self._color_theme.currentText(),
-        }
+    def _emit(self, key, value):
+        save_preferences({key: value})
+        if self._on_change:
+            self._on_change()

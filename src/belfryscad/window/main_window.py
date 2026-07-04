@@ -15,7 +15,7 @@ from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
-from belfryscad.window.preferences import PreferencesDialog, load_preference, save_preferences
+from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
 from belfryscad.window.document_manager import get_document_manager
 
@@ -2260,10 +2260,8 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentIndex(idx)
 
     def _open_preferences(self):
-        dialog = PreferencesDialog(parent=self)
-        if dialog.exec() == PreferencesDialog.DialogCode.Accepted:
-            save_preferences(dialog.get_values())
-            self._apply_preferences()
+        dialog = PreferencesDialog(parent=self, on_change=self._apply_preferences)
+        dialog.exec()
 
     def _apply_preferences(self):
         family = load_preference("editor/fontFamily")
