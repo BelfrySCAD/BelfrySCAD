@@ -1807,6 +1807,7 @@ class Evaluator:
         self._error_break_fn = error_break_fn
         self._return_hook = return_hook
         self._last_locals: dict = {}
+        self._last_children_positions: Optional[list[tuple[Optional[str], int]]] = None
         self._last_all_frame_locals: list = []
         self._last_ctx: EvalContext | None = None
         self._root_ctx: EvalContext | None = None
@@ -1895,6 +1896,29 @@ class Evaluator:
         self._last_all_frame_locals = all_frame_locals
         return self._last_locals, all_frame_locals
 
+    @staticmethod
+    def _child_statement_positions(node: ASTNode) -> Optional[list[tuple[Optional[str], int]]]:
+        """(origin, line) for each top-level, non-declaration child of
+        `node` (a ModularCall's `.children` — the `{ ... }` block passed to
+        a module call), if any. Used by the debugger's "Step to Child"
+        command to know which statements children()/children(N) might
+        forward control to — stashed on self._last_children_positions
+        rather than threaded through the debug_hook callback itself, so
+        adding it doesn't change that protocol's signature (every
+        hand-rolled test hook would otherwise need updating)."""
+        node_children = getattr(node, 'children', None)
+        if not node_children:
+            return None
+        positions = []
+        for c in node_children:
+            if isinstance(c, (Assignment, ModuleDeclaration, FunctionDeclaration)):
+                continue
+            cpos = getattr(c, 'position', None)
+            cline = getattr(cpos, 'line', None) if cpos else None
+            if cline is not None:
+                positions.append((getattr(cpos, 'origin', None), int(cline)))
+        return positions or None
+
     def _check_debug(self, node: ASTNode, ctx: EvalContext, forced: bool = False, expr_level: bool = False):
         if self._debug_hook is None:
             return
@@ -1903,6 +1927,7 @@ class Evaluator:
         if line is None:
             return
         origin = getattr(pos, 'origin', None)
+        self._last_children_positions = self._child_statement_positions(node)
 
         cmd, mods = self._debug_hook(
             int(line), len(self._call_stack),

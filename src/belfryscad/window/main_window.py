@@ -571,6 +571,7 @@ class MainWindow(QMainWindow):
         self._debugger_pane.pause_requested.connect(self._on_debug_pause)
         self._debugger_pane.step_into_requested.connect(self._on_debug_step_into)
         self._debugger_pane.step_over_requested.connect(self._on_debug_step_over)
+        self._debugger_pane.step_to_child_requested.connect(self._on_debug_step_to_child)
         self._debugger_pane.step_out_requested.connect(self._on_debug_step_out)
         self._debugger_pane.restart_requested.connect(self._on_debug_restart)
         self._debugger_pane.stop_requested.connect(self._on_debug_stop)
@@ -583,6 +584,7 @@ class MainWindow(QMainWindow):
             (Qt.Key.Key_F5, self._debugger_pane._btn_continue),
             (Qt.Key.Key_F10, self._debugger_pane._btn_step_over),
             (Qt.Key.Key_F11, self._debugger_pane._btn_step_into),
+            (Qt.Modifier.CTRL | Qt.Key.Key_F11, self._debugger_pane._btn_step_to_child),
             (Qt.Modifier.SHIFT | Qt.Key.Key_F11, self._debugger_pane._btn_step_out),
             (Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5, self._debugger_pane._btn_restart),
             (Qt.Modifier.SHIFT | Qt.Key.Key_F5, self._debugger_pane._btn_stop),
@@ -2173,6 +2175,16 @@ class MainWindow(QMainWindow):
         self._debugger_pane.set_running()
         self._set_debug_busy(True)
         self._debug_session.resume("step_out", mods)
+
+    def _on_debug_step_to_child(self):
+        if not self._debug_session:
+            return
+        mods = self._debugger_pane.get_modifications()
+        self._clear_all_debug_locals()
+        self._clear_all_execution_lines()
+        self._debugger_pane.set_running()
+        self._set_debug_busy(True)
+        self._debug_session.resume("step_to_child", mods)
 
     def _on_debug_restart(self):
         restart_tab = self._debug_tab
