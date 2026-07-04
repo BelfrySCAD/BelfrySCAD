@@ -171,6 +171,7 @@ class PreferencesDialog(QDialog):
 
         tabs.addTab(viewport_tab, "Viewport")
         tabs.tabBar().moveTab(1, 0)  # Viewport first
+        tabs.setCurrentIndex(0)     # ...and selected by default
 
         # --- Close button ---
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
