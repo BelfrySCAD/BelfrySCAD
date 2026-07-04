@@ -715,3 +715,190 @@ class TestGeneratePartialRender:
         assert paused_at_sphere["error"] is None
         assert len(paused_at_sphere["bodies"]) == 1
         assert paused_at_sphere["bodies"][0].body.volume() == pytest.approx(1000)  # cube(10)^3
+
+
+# ---------------------------------------------------------------------------
+# Step to Child — resumes execution until control reaches one of the paused
+# call's own children()-forwarded statements, regardless of how much of the
+# module's internal logic runs first; falls back to stopping when the call
+# returns if it never calls children() at all (same safety net Step Out
+# already has, so it can't hang).
+#
+# This exercises real DebugSession threading (unlike the rest of this file,
+# which drives Evaluator's debug_hook directly) because the feature is
+# specifically about the interplay between Evaluator._check_debug stashing
+# _last_children_positions and DebugSession's hook reading it back at
+# resume time — a pure-hook test can't see that half of the mechanism.
+# Uses a bare QCoreApplication + a safety-timeout QTimer to pump the event
+# loop, since queued cross-thread signals are never delivered without one.
+# ---------------------------------------------------------------------------
+
+def _run_debug_session(path: str, on_pause_line) -> tuple[list[int], int]:
+    """Start a real DebugSession on the file at `path`. `on_pause_line(line)`
+    is called at each pause and must return a resume command string (e.g.
+    "continue", "step_to_child"). Returns (paused_lines, finished_body_count)."""
+    import sys
+    from PySide6.QtCore import QCoreApplication, QTimer
+    from openscad_lalr_parser import getASTfromFile
+    from belfryscad.window.debugger import DebugSession
+
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
+    nodes = getASTfromFile(path, include_comments=False)
+    root_scope = build_scopes(nodes)
+
+    session = DebugSession()
+    paused_lines: list[int] = []
+    result = {"count": None}
+
+    def on_paused(origin, line, frames, stk, pbodies, perr):
+        paused_lines.append(line)
+        session.resume(on_pause_line(line))
+
+    def on_finished(bodies, id2node):
+        result["count"] = len(bodies)
+        app.quit()
+
+    def on_errored(msg):
+        result["count"] = -1
+        app.quit()
+
+    session.paused.connect(on_paused)
+    session.finished.connect(on_finished)
+    session.errored.connect(on_errored)
+    session.start(nodes, root_scope, breakpoints={}, current_file=path)
+    QTimer.singleShot(5000, app.quit)  # safety timeout — never actually expected to fire
+    app.exec()
+    session.paused.disconnect()
+    session.finished.disconnect()
+    session.errored.disconnect()
+    return paused_lines, result["count"]
+
+
+class TestLastChildrenPositions:
+    """Evaluator._check_debug stashes self._last_children_positions right
+    before calling the debug hook — the (origin, line) pairs of a paused
+    ModularCall's own top-level children, which DebugSession reads at
+    resume time for Step to Child. Tested directly against Evaluator here
+    (no DebugSession/Qt needed), matching this file's usual convention."""
+
+    def test_populated_at_a_call_with_children(self):
+        seen = {}
+
+        def hook(line, depth, *, forced=False, expr_level=False,
+                 expr_depth=0, origin=None, get_frames=None):
+            if line == 4 and not expr_level:
+                seen["positions"] = ev._last_children_positions
+            return ("continue", {})
+
+        src = "module foo(bar) {\n    echo(bar);\n}\nfoo(1) {\n    cube(42);\n    sphere(13);\n}\n"
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(debug_hook=hook)
+        ev.evaluate(nodes, root_scope)
+
+        assert [line for _origin, line in seen["positions"]] == [5, 6]
+
+    def test_none_for_a_call_with_no_children(self):
+        seen = {}
+
+        def hook(line, depth, *, forced=False, expr_level=False,
+                 expr_depth=0, origin=None, get_frames=None):
+            if line == 1 and not expr_level:
+                seen["positions"] = ev._last_children_positions
+            return ("continue", {})
+
+        nodes = getASTfromString("cube(1);\n", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(debug_hook=hook)
+        ev.evaluate(nodes, root_scope)
+
+        assert seen["positions"] is None
+
+
+class TestStepToChild:
+    def test_stops_at_child_reached_immediately(self, tmp_path):
+        src = "module foo(bar) {\n    echo(bar);\n    children();\n}\nfoo(1) {\n    cube(42);\n    sphere(13);\n}\necho(\"Done\");\n"
+        path = tmp_path / "step_to_child_immediate.scad"
+        path.write_text(src)
+
+        def on_pause(line):
+            return "step_to_child" if line == 5 else "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause)
+        assert 6 in paused_lines  # cube(42);
+        assert count == 2
+
+    def test_reaches_child_after_internal_module_logic(self, tmp_path):
+        # Same as above, but the module does several statements of its own
+        # bookkeeping before ever calling children() — Step to Child must
+        # skip past all of it regardless.
+        src = (
+            "module foo(bar) {\n"
+            "    a = bar + 1;\n"
+            "    b = a * 2;\n"
+            "    echo(a, b);\n"
+            "    children();\n"
+            "}\n"
+            "foo(1) {\n"
+            "    cube(42);\n"
+            "    sphere(13);\n"
+            "}\n"
+            "echo(\"Done\");\n"
+        )
+        path = tmp_path / "step_to_child_delayed.scad"
+        path.write_text(src)
+
+        def on_pause(line):
+            return "step_to_child" if line == 7 else "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause)
+        assert 8 in paused_lines  # cube(42);
+        assert count == 2
+
+    def test_stops_at_whichever_child_children_call_reaches_first(self, tmp_path):
+        # children(1) invoked before children(0) — Step to Child should land
+        # on whichever child actually runs first (sphere), not the one
+        # written first in the caller's { } block (cube).
+        src = (
+            "module reversed(bar) {\n"
+            "    echo(bar);\n"
+            "    children(1);\n"
+            "    children(0);\n"
+            "}\n"
+            "reversed(1) {\n"
+            "    cube(42);\n"
+            "    sphere(13);\n"
+            "}\n"
+            "echo(\"Done\");\n"
+        )
+        path = tmp_path / "step_to_child_reversed.scad"
+        path.write_text(src)
+
+        def on_pause(line):
+            return "step_to_child" if line == 6 else "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause)
+        assert 8 in paused_lines  # sphere(13) — children(1), reached first
+        assert count == 2
+
+    def test_falls_back_to_call_return_when_children_never_invoked(self, tmp_path):
+        # The module ignores its children entirely. Step to Child must not
+        # hang — same safety net Step Out already relies on.
+        src = (
+            "module ignores_children(bar) {\n"
+            "    echo(bar);\n"
+            "}\n"
+            "ignores_children(1) {\n"
+            "    cube(42);\n"
+            "    sphere(13);\n"
+            "}\n"
+            "echo(\"Done\");\n"
+        )
+        path = tmp_path / "step_to_child_no_children.scad"
+        path.write_text(src)
+
+        def on_pause(line):
+            return "step_to_child" if line == 4 else "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause)
+        assert count == 0  # neither cube nor sphere ever evaluated

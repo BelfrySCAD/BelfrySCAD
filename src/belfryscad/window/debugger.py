@@ -182,10 +182,11 @@ class DebugSession(QObject):
         self._breakpoints: dict[str, set[int]] = {}
         # Step state (at most one active, cleared on each pause)
         self._break_on_first: bool = False
-        self._step_cmd: str | None = None  # "into", "over", "out"
+        self._step_cmd: str | None = None  # "into", "over", "out", "to_child"
         self._step_line: int = 0            # line at pause (for into/over: pause when line changes)
         self._step_depth: int = 0           # depth at pause (over: same depth; out: less than)
         self._step_origin: str = ""         # file at pause (over: same file; into: detect file change)
+        self._step_to_child_targets: set = set()  # (origin, line) pairs from _last_children_positions at the paused call site
         self._stopped: bool = False
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
@@ -199,6 +200,7 @@ class DebugSession(QObject):
         self._step_line = 0
         self._step_depth = 0
         self._step_origin = ""
+        self._step_to_child_targets = set()
         self._stopped = False
         self._pause_requested = False
         self._pending_mods = {}
@@ -246,6 +248,16 @@ class DebugSession(QObject):
                 )
             elif step == "out":
                 step_hit = depth < self._step_depth and not expr_level
+            elif step == "to_child":
+                # Pause the first time control reaches one of the paused
+                # call's own children (wherever children()/children(N)
+                # forwards to them) — or, if the module never calls
+                # children() at all, fall back to the same "call returned"
+                # safety net step_out uses, so this can never hang.
+                step_hit = not expr_level and (
+                    (resolved_origin, line) in self._step_to_child_targets
+                    or depth < self._step_depth
+                )
 
             should_pause = (
                 forced
@@ -284,6 +296,14 @@ class DebugSession(QObject):
                 self._step_line = line
                 self._step_depth = depth
                 self._step_origin = resolved_origin
+            elif cmd == "step_to_child":
+                self._step_cmd = "to_child"
+                self._step_line = line
+                self._step_depth = depth
+                self._step_origin = resolved_origin
+                self._step_to_child_targets = set(
+                    (self._ev._last_children_positions if self._ev is not None else None) or []
+                )
 
             return ("continue", mods)
         return hook
@@ -363,6 +383,7 @@ class DebuggerPane(QWidget):
     pause_requested = Signal()
     step_into_requested = Signal()
     step_over_requested = Signal()
+    step_to_child_requested = Signal()
     step_out_requested = Signal()
     restart_requested = Signal()
     stop_requested = Signal()
@@ -397,6 +418,10 @@ class DebuggerPane(QWidget):
         self._btn_step_into.setIcon(_debug_icon("step-into"))
         self._btn_step_into.setToolTip("Step Into (F11)")
         self._btn_step_into.setFixedSize(28, 28)
+        self._btn_step_to_child = QPushButton()
+        self._btn_step_to_child.setIcon(_debug_icon("step-to-child"))
+        self._btn_step_to_child.setToolTip("Step to Child (⌃F11)")
+        self._btn_step_to_child.setFixedSize(28, 28)
         self._btn_step_out = QPushButton()
         self._btn_step_out.setIcon(_debug_icon("step-out"))
         self._btn_step_out.setToolTip("Step Out (⇧F11)")
@@ -411,7 +436,7 @@ class DebuggerPane(QWidget):
         self._btn_stop.setFixedSize(28, 28)
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
-                    self._btn_step_out, self._btn_restart, self._btn_stop):
+                    self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setFlat(True)
             btn.setEnabled(btn is self._btn_restart)
 
@@ -428,7 +453,7 @@ class DebuggerPane(QWidget):
         stack_header.addWidget(QLabel("Call Stack"))
         stack_header.addStretch()
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
-                    self._btn_step_out, self._btn_restart, self._btn_stop):
+                    self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             stack_header.addWidget(btn)
         sv.addLayout(stack_header)
         self._stack_list = QListWidget()
@@ -492,6 +517,7 @@ class DebuggerPane(QWidget):
         self._btn_continue.clicked.connect(self._on_continue_pause_clicked)
         self._btn_step_into.clicked.connect(self.step_into_requested)
         self._btn_step_over.clicked.connect(self.step_over_requested)
+        self._btn_step_to_child.clicked.connect(self.step_to_child_requested)
         self._btn_step_out.clicked.connect(self.step_out_requested)
         self._btn_restart.clicked.connect(self.restart_requested)
         self._btn_stop.clicked.connect(self.stop_requested)
@@ -651,7 +677,7 @@ class DebuggerPane(QWidget):
         self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
         self._populate_vars(self._all_frame_locals[self._innermost_row], is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
-                    self._btn_step_out, self._btn_restart, self._btn_stop):
+                    self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
     def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = "",
@@ -674,6 +700,7 @@ class DebuggerPane(QWidget):
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
         self._btn_step_over.setEnabled(False)
+        self._btn_step_to_child.setEnabled(False)
         self._btn_step_out.setEnabled(False)
         self._btn_restart.setEnabled(True)
         self._btn_stop.setEnabled(True)
@@ -690,7 +717,7 @@ class DebuggerPane(QWidget):
         self._btn_continue.setIcon(_debug_icon("pause"))
         self._btn_continue.setToolTip("Pause (F5)")
         self._btn_continue.setEnabled(True)
-        for btn in (self._btn_step_into, self._btn_step_over, self._btn_step_out):
+        for btn in (self._btn_step_into, self._btn_step_over, self._btn_step_to_child, self._btn_step_out):
             btn.setEnabled(False)
         self._btn_restart.setEnabled(True)
         self._btn_stop.setEnabled(True)
@@ -700,7 +727,7 @@ class DebuggerPane(QWidget):
         self._set_partial_warning(None)
         self._status.setText("Not debugging")
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
-                    self._btn_step_out, self._btn_stop):
+                    self._btn_step_to_child, self._btn_step_out, self._btn_stop):
             btn.setEnabled(False)
         self._btn_restart.setEnabled(True)
         self._stack_list.clear()

@@ -95,7 +95,7 @@ Right-clicking a variable name **in the code editor** while the debugger is paus
 
 ## DebuggerPane states
 
-Toolbar button order: Continue/Pause · Step Over · Step Into · Step Out · Restart · Stop
+Toolbar button order: Continue/Pause · Step Over · Step Into · Step to Child · Step Out · Restart · Stop
 
 Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected to `btn.click`):
 
@@ -104,6 +104,7 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 | F5 | Continue / Pause |
 | F10 | Step Over |
 | F11 | Step Into |
+| ⌃F11 (Ctrl+F11) | Step to Child |
 | Shift+F11 | Step Out |
 | Shift+Cmd+F5 | Restart |
 | Shift+F5 | Stop |
@@ -117,6 +118,10 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 **Step Over** — Resume execution until code at this call stack level (or shallower, if the function returns) is on another line in the current file, or a breakpoint is reached. User-defined function calls at exactly `_step_depth + 1` (direct calls on the stepped-over line) emit `DebugSession.logged_value(display_name, value)`, routed through `MainWindow._on_debug_print_value` → `log_value_to_tab` → `tab.console.append_value`. This stores the original Python value for the console right-click viewer menu. Nested calls within those functions do not print.
 
 **Step Into** — Resume execution until code is on another line or in another file, at any call stack level, or a breakpoint is reached.
+
+**Step to Child** — From a paused module call site (e.g. `foo(bar) {`), resume execution and stop the first time control reaches one of that call's own `{ ... }` children statements — wherever the module body's `children()`/`children(N)` ends up invoking them — regardless of how much of the module's own internal logic (tag filtering, BOSL2 attachment math, etc.) runs first. Unlike Step Over (skips the whole call as one unit) or Step Into (enters the module's own *definition* body, forcing you to step through its internals line by line), this jumps straight to the geometry the *caller* actually wrote. If the module never calls `children()` at all, falls back to stopping when the call returns — the same safety net Step Out relies on, so it can never hang.
+
+Implementation: `Evaluator._check_debug` stashes `self._last_children_positions` — the `(origin, line)` pairs of the paused `ModularCall` node's own top-level, non-declaration children — right before invoking the debug hook, via `Evaluator._child_statement_positions(node)`. This is deliberately *not* threaded through the `debug_hook` callback's own signature (which would require updating every hand-rolled test hook in `tests/test_debugger.py`); instead, `DebugSession`'s hook reads `self._ev._last_children_positions` directly at resume time, capturing it into `self._step_to_child_targets` — the same pattern already used for `_ev.csg_tree`/`generate_tree()` in the live partial-render feature above. `hook()`'s step dispatch gains a `"to_child"` branch: `step_hit = (resolved_origin, line) in self._step_to_child_targets or depth < self._step_depth` (both gated by `not expr_level`) — the first clause catches whichever child is reached first in execution order (e.g. a module calling `children(1)` before `children(0)`), the second is the call-return fallback.
 
 **Step Out** — Resume execution until the call stack level is less than the current level, or a breakpoint is reached. The return value of the function being exited is emitted via `DebugSession.logged_value` (same viewer-aware path as Step Over).
 
