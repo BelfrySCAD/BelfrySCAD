@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
         if name_value is not None:
             name, value = name_value
             from belfryscad.window.data_viewers import build_viewer_menu
-            view_sub = QMenu(f"View '{name}'…", self._console)
+            view_sub = QMenu(f"View '{name}' as...", self._console)
             build_viewer_menu(view_sub, name, value, self._console)
             if not view_sub.isEmpty():
                 menu.addSeparator()
