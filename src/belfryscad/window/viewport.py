@@ -6,9 +6,26 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QPixmap
 
 from belfryscad.engine.renderer import SceneRenderer
+from belfryscad.window.debugger import _debug_icon
+
+
+def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor) -> QPixmap:
+    """Render a debug-*.svg icon at `size`x`size`, recolored solid `color`
+    (keeping the original alpha/shape) — the debugger buttons need the
+    icon's normal dark-gray color, but the viewport's dark translucent
+    overlay needs it in white for contrast."""
+    pixmap = _debug_icon(name).pixmap(size, size)
+    recolored = QPixmap(pixmap.size())
+    recolored.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(recolored)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(recolored.rect(), color)
+    painter.end()
+    return recolored
 
 
 _RING_PERP1 = [
@@ -211,7 +228,7 @@ class Viewport(QOpenGLWidget):
         self._render_busy = False
         self._busy_timer.stop()
         if paused:
-            self._busy_label.setText(" Paused ")
+            self._busy_label.setPixmap(_recolored_icon_pixmap("pause", 48, Qt.GlobalColor.white))
             self._busy_label.adjustSize()
             x = (self.width() - self._busy_label.width()) // 2
             y = (self.height() - self._busy_label.height()) // 2

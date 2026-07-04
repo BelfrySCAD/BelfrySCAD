@@ -35,23 +35,23 @@
      id="g1">
     <path
        id="line1"
-       style="stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-opacity:1"
+       style="stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-opacity:1"
        d="M 4.5045582,20.590884 H 13.81365"
        sodipodi:nodetypes="cc" />
     <path
        id="polyline1"
-       style="fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+       style="fill:none;stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
        d="m 11.12274,24.354519 3.690909,-3.763636 -3.727273,-3.981818"
        sodipodi:nodetypes="ccc" />
   </g>
   <path
-     style="fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+     style="fill:none;stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
      d="m 7.7499871,24.827272 v 4.1 H 27.495442 V 8.018182 L 22.568169,3.0909092 7.7499871,3.0727274 V 15.999999"
      id="path3"
      sodipodi:nodetypes="ccccccc" />
   <text
      xml:space="preserve"
-     style="font-size:5.33333px;font-family:Arial;-inkscape-font-specification:Arial;writing-mode:lr-tb;direction:ltr;fill:#000000;fill-opacity:1;stroke:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
+     style="font-size:5.33333px;font-family:Arial;-inkscape-font-specification:Arial;writing-mode:lr-tb;direction:ltr;fill:#444444;fill-opacity:1;stroke:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
      x="18.50909"
      y="21.381819"
      id="text6"><tspan
@@ -60,7 +60,7 @@
        y="21.381819"
        id="tspan8" /></text>
   <path
-     style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+     style="fill:none;stroke:#444444;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
      d="M 27.527273,8.8727273 H 21.781819 V 3.1272727"
      id="path1"
      sodipodi:nodetypes="ccc" />

@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QListWidget, QTableWidget, QTableWidgetItem, QPushButton,
+    QTableWidget, QTableWidgetItem, QPushButton,
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
     QMenu,
 )
@@ -456,8 +456,20 @@ class DebuggerPane(QWidget):
                     self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             stack_header.addWidget(btn)
         sv.addLayout(stack_header)
-        self._stack_list = QListWidget()
+        self._stack_list = QTableWidget(0, 3)
         self._stack_list.setFont(mono)
+        self._stack_list.setHorizontalHeaderLabels(["Name", "File", "Line"])
+        from belfryscad.window.data_viewers import _style_table_headers
+        _style_table_headers(self._stack_list)
+        stack_header_view = self._stack_list.horizontalHeader()
+        stack_header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        stack_header_view.resizeSection(0, 90)
+        stack_header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        stack_header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        stack_header_view.resizeSection(2, 50)
+        self._stack_list.verticalHeader().setVisible(False)
+        self._stack_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._stack_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         # Keep active highlight color even when the list loses keyboard focus.
         pal = self._stack_list.palette()
         pal.setColor(QPalette.ColorGroup.Inactive,
@@ -521,7 +533,7 @@ class DebuggerPane(QWidget):
         self._btn_step_out.clicked.connect(self.step_out_requested)
         self._btn_restart.clicked.connect(self.restart_requested)
         self._btn_stop.clicked.connect(self.stop_requested)
-        self._stack_list.currentRowChanged.connect(self._on_frame_selected)
+        self._stack_list.currentCellChanged.connect(lambda row, col, prow, pcol: self._on_frame_selected(row))
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
 
@@ -551,47 +563,63 @@ class DebuggerPane(QWidget):
                         mods[name] = parsed
         return mods
 
-    def _populate_stack(self, call_stack: list, pause_origin: str = "", pause_line: int = 0):
+    def _set_stack_row(self, row: int, name: str, file_str: str, line_str: str):
+        for col, text in enumerate((name, file_str, line_str)):
+            item = QTableWidgetItem(text)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if col == 2:  # Line
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._stack_list.setItem(row, col, item)
+
+    def _populate_stack(self, call_stack: list, pause_origin: str = "", pause_line: int = 0,
+                        main_file: str = ""):
         self._stack_list.blockSignals(True)
-        self._stack_list.clear()
+        self._stack_list.setRowCount(0)
         self._stack_positions.clear()
+        main_file_name = os.path.basename(main_file) if main_file else ''
         # call_stack is [toplevel, outermost, ..., innermost].
         # Navigation: each entry shows where it calls the next;
         # the innermost (last) entry shows the current pause point.
+        # A blank origin means "the main file" (position.origin is None for
+        # top-level nodes there) — fall back to main_file/main_file_name so
+        # the File column and click-navigation both still resolve correctly
+        # when debugging a saved file, rather than showing/going nowhere.
         non_toplevel = [e for e in call_stack if e[0] != "toplevel"]
         for i, entry in enumerate(call_stack):
+            row = self._stack_list.rowCount()
+            self._stack_list.insertRow(row)
             if entry[0] == "toplevel":
-                self._stack_list.addItem("<toplevel>")
                 if non_toplevel:
                     cp = non_toplevel[0][2]  # call_pos of first callee
-                    self._stack_positions.append((
-                        getattr(cp, 'origin', '') or '',
-                        int(getattr(cp, 'line', 0)) if cp else 0))
+                    cp_origin = getattr(cp, 'origin', '') or ''
+                    cp_line = int(getattr(cp, 'line', 0)) if cp else 0
                 else:
-                    self._stack_positions.append(("", 0))
+                    cp_origin = pause_origin
+                    cp_line = pause_line
+                self._stack_positions.append((cp_origin or main_file, cp_line))
+                file_str = os.path.basename(cp_origin) if cp_origin else main_file_name
+                self._set_stack_row(row, "<toplevel>", file_str, str(cp_line) if cp_line else '')
             else:
                 name = entry[1]
                 decl_pos = entry[3] if len(entry) > 3 else None
                 decl_line = str(getattr(decl_pos, 'line', '?')) if decl_pos is not None else '?'
                 decl_origin = getattr(decl_pos, 'origin', '') if decl_pos is not None else ''
-                file_str = os.path.basename(decl_origin) if decl_origin else ''
-                if file_str:
-                    self._stack_list.addItem(f"{name}()  {file_str}:{decl_line}")
-                else:
-                    self._stack_list.addItem(f"{name}()  line {decl_line}")
+                file_str = os.path.basename(decl_origin) if decl_origin else main_file_name
+                self._set_stack_row(row, f"{name}()", file_str, decl_line)
                 # Find the next non-toplevel entry after this one
                 next_idx = i + 1
                 next_entry = call_stack[next_idx] if next_idx < len(call_stack) and call_stack[next_idx][0] != "toplevel" else None
                 if next_entry is not None:
                     cp = next_entry[2]  # call_pos of callee
+                    cp_origin = getattr(cp, 'origin', '') or ''
                     self._stack_positions.append((
-                        getattr(cp, 'origin', '') or '',
+                        cp_origin or main_file,
                         int(getattr(cp, 'line', 0)) if cp else 0))
                 else:
-                    self._stack_positions.append((pause_origin, pause_line))
-        if self._stack_list.count() > 0:
-            row = min(self._innermost_row, self._stack_list.count() - 1)
-            self._stack_list.setCurrentRow(row)
+                    self._stack_positions.append((pause_origin or main_file, pause_line))
+        if self._stack_list.rowCount() > 0:
+            row = min(self._innermost_row, self._stack_list.rowCount() - 1)
+            self._stack_list.setCurrentCell(row, 0)
         self._stack_list.blockSignals(False)
 
     def _populate_vars(self, frame_data: dict, is_innermost: bool = False):
@@ -659,7 +687,7 @@ class DebuggerPane(QWidget):
             self._partial_warn_label.hide()
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = "",
-                   partial_error: str | None = None):
+                   partial_error: str | None = None, main_file: str = ""):
         self._set_continue_mode()
         self._set_partial_warning(partial_error)
         self._status.setText(f"Paused at line {line}")
@@ -674,14 +702,14 @@ class DebuggerPane(QWidget):
         dyn_names = innermost.get("dyn_names", set())
         self._original_locals = {k: _fmt(v) for k, v in innermost.get("local_scope", {}).items()
                                   if k in dyn_names}
-        self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file)
         self._populate_vars(self._all_frame_locals[self._innermost_row], is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
     def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = "",
-                        partial_error: str | None = None):
+                        partial_error: str | None = None, main_file: str = ""):
         self._set_continue_mode()
         self._set_partial_warning(partial_error)
         display = msg.removeprefix("ERROR: ")
@@ -695,7 +723,7 @@ class DebuggerPane(QWidget):
             self._all_frame_locals = list(all_frame_locals)
             self._innermost_row = 0
         self._original_locals = {}
-        self._populate_stack(call_stack, pause_origin=origin, pause_line=line)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file)
         self._populate_vars(self._all_frame_locals[self._innermost_row])
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
@@ -730,5 +758,5 @@ class DebuggerPane(QWidget):
                     self._btn_step_to_child, self._btn_step_out, self._btn_stop):
             btn.setEnabled(False)
         self._btn_restart.setEnabled(True)
-        self._stack_list.clear()
+        self._stack_list.setRowCount(0)
         self._vars_table.setRowCount(0)
