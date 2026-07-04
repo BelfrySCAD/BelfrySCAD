@@ -8,7 +8,8 @@ expr_level, origin).
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from belfryscad.engine.evaluator import Evaluator, EvalError
+from belfryscad.engine.evaluator import Evaluator, EvalContext, EvalError
+from belfryscad.window.debugger import _generate_partial_render
 
 
 def _make_recorder():
@@ -581,3 +582,61 @@ b = 2;
         forced = [s for s in stops if s["forced"]]
         assert len(forced) == 1
         assert forced[0]["line"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — live partial-tree rendering during debugging.
+#
+# _generate_partial_render(ev) is the one piece of new logic testable
+# without touching DebugSession/Qt at all (no test in this repo instantiates
+# DebugSession or any Qt widget — the rest of Phase 3 is thin signal/UI
+# plumbing verified manually). It's called from DebugSession's hook and
+# _error_break right before every pause, so the viewport can show whatever's
+# been resolved so far.
+# ---------------------------------------------------------------------------
+
+class TestGeneratePartialRender:
+    def _resolve_only(self, src: str) -> Evaluator:
+        """Build ev.csg_tree via the resolve pass only (no generate_tree()
+        call yet) — same manual-resolve pattern used in
+        TestCSGTreeStep6FinalCutover (test_evaluator.py)."""
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev._resolve_use_statements(nodes, root_scope)
+        ev.csg_tree = []
+        ev._tree_stack = [ev.csg_tree]
+        ctx = EvalContext(scope=root_scope)
+        ev._root_ctx = ctx
+        for node in nodes:
+            ev._eval_statement(node, ctx)
+        return ev
+
+    def test_success_renders_whatever_is_resolved_so_far(self):
+        ev = self._resolve_only("cube(1); sphere(1);")
+        bodies, error = _generate_partial_render(ev)
+        assert error is None
+        assert len(bodies) == 2
+
+    def test_success_on_empty_tree(self):
+        # The very first pause (break-on-first) happens before any
+        # statement has resolved — csg_tree is empty at that point.
+        ev = self._resolve_only("")
+        bodies, error = _generate_partial_render(ev)
+        assert error is None
+        assert bodies == []
+
+    def test_failure_is_caught_and_reported_not_raised(self):
+        # A fake evaluator whose generate_tree() raises — deterministic way
+        # to exercise the catch-and-report contract without depending on
+        # what real generate_fns happen to raise on (Manifold tends to
+        # tolerate degenerate input rather than raising).
+        class _FakeEvaluator:
+            csg_tree: list = []
+
+            def generate_tree(self, tree):
+                raise RuntimeError("boom")
+
+        bodies, error = _generate_partial_render(_FakeEvaluator())
+        assert bodies is None
+        assert error == "boom"

@@ -129,12 +129,32 @@ def _parse_val(s: str):
     return None
 
 
+def _generate_partial_render(ev) -> tuple[list | None, str | None]:
+    """Best-effort generate_tree() over whatever's been resolved so far.
+    Returns (renderable_bodies, None) on success, (None, error_message) if
+    a generate_fn raises. Empty/partial child lists are already handled
+    gracefully by every generate_fn (Phase 2), so a real failure here is
+    more likely a genuine script problem surfacing earlier than usual (via
+    a live preview) than a false positive from mere incompleteness — either
+    way, it must not abort the debug session."""
+    from belfryscad.engine.evaluator import to_renderable_bodies
+    try:
+        return to_renderable_bodies(ev.generate_tree(ev.csg_tree)), None
+    except Exception as e:
+        return None, str(e)
+
+
 class DebugSession(QObject):
     """Runs the evaluator in a daemon worker thread, pausing at breakpoints."""
 
     # All emitted from the worker thread — PySide6 queues these to the main thread.
-    paused = Signal(str, int, object, object)       # origin, line, all_frame_locals (list, innermost first), call_stack
-    error_break = Signal(str, int, str, object, object)  # origin, line, error header, all_frame_locals, call_stack
+    # paused/error_break's trailing (partial_bodies, partial_error) come from
+    # _generate_partial_render() on self._ev.csg_tree, called just before
+    # each emit — a live, best-effort render of whatever's been resolved so
+    # far (Phase 3). partial_bodies is None (not []) when generation itself
+    # failed; partial_error then carries the message.
+    paused = Signal(str, int, object, object, object, object)       # origin, line, all_frame_locals (list, innermost first), call_stack, partial_bodies, partial_error
+    error_break = Signal(str, int, str, object, object, object, object)  # origin, line, error header, all_frame_locals, call_stack, partial_bodies, partial_error
     finished = Signal(object, object)          # bodies, id_to_node
     errored = Signal(str)
     logged = Signal(str)
@@ -155,6 +175,7 @@ class DebugSession(QObject):
         self._stopped: bool = False
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
+        self._ev = None  # set in _run() once the Evaluator exists, so the hook/_error_break can call generate_tree() on its csg_tree
 
     def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], viewport_params: dict | None = None, current_file: str | None = None):
         self._current_file = os.path.realpath(current_file) if current_file else None
@@ -229,7 +250,11 @@ class DebugSession(QObject):
 
             (locals_dict, all_frame_locals), call_stack = get_frames()
             display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
-            self.paused.emit(origin or "", line, list(all_frame_locals), display_stack)
+            partial_bodies, partial_error = (
+                _generate_partial_render(self._ev) if self._ev is not None else (None, None)
+            )
+            self.paused.emit(origin or "", line, list(all_frame_locals), display_stack,
+                              partial_bodies, partial_error)
             self._pause_event.clear()
             self._pause_event.wait()
 
@@ -257,7 +282,11 @@ class DebugSession(QObject):
         if self._stopped:
             return
         display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
-        self.error_break.emit(origin or "", line, msg, list(all_frame_locals), display_stack)
+        partial_bodies, partial_error = (
+            _generate_partial_render(self._ev) if self._ev is not None else (None, None)
+        )
+        self.error_break.emit(origin or "", line, msg, list(all_frame_locals), display_stack,
+                               partial_bodies, partial_error)
         self._pause_event.clear()
         self._pause_event.wait()
 
@@ -272,6 +301,7 @@ class DebugSession(QObject):
     def _run(self, nodes, root_scope, viewport_params: dict):
         from belfryscad.engine.evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break, return_hook=self._on_function_return)
+        self._ev = ev  # hook()/_error_break() read this to call generate_tree() on ev.csg_tree
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
             if not self._stopped:
@@ -440,6 +470,11 @@ class DebuggerPane(QWidget):
         self._status = QLabel("Not debugging")
         layout.addWidget(self._status)
 
+        self._partial_warn_label = QLabel("")
+        self._partial_warn_label.setStyleSheet("QLabel { color: #d08a00; }")
+        self._partial_warn_label.hide()
+        layout.addWidget(self._partial_warn_label)
+
         self._btn_continue.clicked.connect(self._on_continue_pause_clicked)
         self._btn_step_into.clicked.connect(self.step_into_requested)
         self._btn_step_over.clicked.connect(self.step_over_requested)
@@ -576,8 +611,17 @@ class DebuggerPane(QWidget):
         build_viewer_menu(menu, name, value, self)
         menu.exec(self._vars_table.viewport().mapToGlobal(pos))
 
-    def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = ""):
+    def _set_partial_warning(self, msg: str | None):
+        if msg:
+            self._partial_warn_label.setText(f"⚠ live view stale: {msg}")
+            self._partial_warn_label.show()
+        else:
+            self._partial_warn_label.hide()
+
+    def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = "",
+                   partial_error: str | None = None):
         self._set_continue_mode()
+        self._set_partial_warning(partial_error)
         self._status.setText(f"Paused at line {line}")
         # Reorder to match display: [toplevel, outermost, ..., innermost]
         if len(all_frame_locals) > 1:
@@ -596,8 +640,10 @@ class DebuggerPane(QWidget):
                     self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
-    def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = ""):
+    def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = "",
+                        partial_error: str | None = None):
         self._set_continue_mode()
+        self._set_partial_warning(partial_error)
         display = msg.removeprefix("ERROR: ")
         if len(display) > 80:
             display = display[:77] + "…"
@@ -625,6 +671,7 @@ class DebuggerPane(QWidget):
 
     def set_running(self):
         self._is_running = True
+        self._set_partial_warning(None)
         self._status.setText("Running…")
         self._btn_continue.setIcon(_debug_icon("pause"))
         self._btn_continue.setToolTip("Pause (F5)")
@@ -636,6 +683,7 @@ class DebuggerPane(QWidget):
 
     def set_idle(self):
         self._set_continue_mode()
+        self._set_partial_warning(None)
         self._status.setText("Not debugging")
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_out, self._btn_stop):
