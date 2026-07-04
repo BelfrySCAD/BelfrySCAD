@@ -46,3 +46,6 @@ htmlcov/
 test*.scad
 ntest*.scad
 profile_eval.py
+
+# graphify
+graphify-out/
