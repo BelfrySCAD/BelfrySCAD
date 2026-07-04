@@ -2103,9 +2103,20 @@ class Evaluator:
         genuinely unknown module names) falls back to
         _resolve_fallback_call, which still builds the tree correctly via
         the pre-existing _eval_modular_call dispatch.
+
+        The _check_debug(node, ctx) call below is this method's own
+        responsibility for _TREE_NODE_TYPES — _eval_statement_impl (which
+        calls it for every other statement type) is never reached for these
+        nodes, since the isinstance check above always routes them here
+        instead. Without this, no geometry-producing statement (any
+        ModularCall, plus the #/%/! modifiers and intersection_for) would
+        ever pause the debugger or advance step state.
         """
         if not isinstance(node, self._TREE_NODE_TYPES):
             return self._eval_statement_impl(node, ctx)
+        self._last_ctx = ctx
+        if self._debugging:
+            self._check_debug(node, ctx)
         kind, is_builtin = self._tree_node_kind(node, ctx)
         resolve_fn = (self._RESOLVE_DISPATCH.get(kind) if is_builtin else None) or self._resolve_fallback_call
         self._tree_stack.append([])

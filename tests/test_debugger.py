@@ -84,6 +84,49 @@ class TestStatementStops:
 
 
 # ---------------------------------------------------------------------------
+# Geometry statement stops (ModularCall/modifiers/intersection_for) —
+# regression coverage for a bug where _eval_statement's CSG-tree wrapper
+# (added in CSG tree Phase 2) intercepts every _TREE_NODE_TYPES node before
+# _eval_statement_impl ever runs, but never called _check_debug itself —
+# meaning no geometry-producing statement paused the debugger at all, from
+# Phase 2 step 1 onward. No existing test caught this since every prior
+# test in this file only ever used assignments/control-flow, never a
+# geometry statement.
+# ---------------------------------------------------------------------------
+
+class TestGeometryStatementStops:
+    def test_single_primitive_is_statement_stop(self):
+        _, _, stops = _run_with_debug("cube(1);\n")
+        stmt = _stmt_stops(stops)
+        assert len(stmt) == 1
+        assert stmt[0]["line"] == 1
+
+    def test_mixed_assignments_and_geometry_all_stop(self):
+        # Assignments run before geometry in the same scope (OpenSCAD
+        # semantics), but every statement should still get its own stop.
+        _, _, stops = _run_with_debug("a = 1;\ncube(1);\nsphere(1);\nb = 2;\n")
+        lines = sorted(_lines(_stmt_stops(stops)))
+        assert lines == [1, 2, 3, 4]
+
+    def test_modifier_and_wrapped_child_both_stop(self):
+        _, _, stops = _run_with_debug("#cube(1);\n")
+        stmt = _stmt_stops(stops)
+        assert len(stmt) == 2
+        assert all(s["line"] == 1 for s in stmt)
+
+    def test_boolean_op_and_each_child_stop(self):
+        _, _, stops = _run_with_debug("union() { cube(1); sphere(1); }\n")
+        stmt = _stmt_stops(stops)
+        assert len(stmt) == 3
+
+    def test_module_call_stops_at_call_site_and_inside_body(self):
+        _, _, stops = _run_with_debug("module foo() { cube(1); }\nfoo();\n")
+        stmt = _stmt_stops(stops)
+        by_line_depth = sorted((s["line"], s["depth"]) for s in stmt)
+        assert by_line_depth == [(1, 1), (2, 0)]
+
+
+# ---------------------------------------------------------------------------
 # Ternary conditionals
 # ---------------------------------------------------------------------------
 
