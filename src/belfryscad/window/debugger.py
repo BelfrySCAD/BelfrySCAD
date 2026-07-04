@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QPushButton,
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
-    QMenu,
+    QMenu, QLineEdit,
 )
 from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtCore import Qt, QObject, Signal
@@ -489,13 +489,16 @@ class DebuggerPane(QWidget):
         vars_header = QHBoxLayout()
         vars_header.setContentsMargins(0, 0, 0, 0)
         self._filter_combo = QComboBox()
-        self._filter_combo.addItem("Local Variables",   "locals")
-        self._filter_combo.addItem("Global Variables",  "globals")
-        self._filter_combo.addItem("$Special Variables","specials")
-        self._filter_combo.addItem("CONSTANTS",         "constants")
+        self._filter_combo.addItem("Local",    "locals")
+        self._filter_combo.addItem("Global",   "globals")
+        self._filter_combo.addItem("$special", "specials")
+        self._filter_combo.addItem("CONST",    "constants")
         self._filter_combo.setCurrentIndex(0)
         vars_header.addWidget(self._filter_combo)
-        vars_header.addStretch()
+        self._var_search = QLineEdit()
+        self._var_search.setPlaceholderText("Search…")
+        self._var_search.setClearButtonEnabled(True)
+        vars_header.addWidget(self._var_search, 1)
         self._hidden_check = QCheckBox("Hiddens")
         self._hidden_check.setToolTip("Show variables starting with _ or $_")
         vars_header.addWidget(self._hidden_check)
@@ -536,6 +539,7 @@ class DebuggerPane(QWidget):
         self._stack_list.currentCellChanged.connect(lambda row, col, prow, pcol: self._on_frame_selected(row))
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         self._hidden_check.toggled.connect(self._on_filter_changed)
+        self._var_search.textChanged.connect(self._apply_search_filter)
 
     def set_splitter_orientation(self, orientation: Qt.Orientation):
         self._splitter.setOrientation(orientation)
@@ -638,6 +642,14 @@ class DebuggerPane(QWidget):
             if not (is_innermost and category == "locals" and name in dyn_names):
                 val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._vars_table.setItem(row, 1, val_item)
+        self._apply_search_filter()
+
+    def _apply_search_filter(self, _=None):
+        text = self._var_search.text().strip().lower()
+        for row in range(self._vars_table.rowCount()):
+            name_item = self._vars_table.item(row, 0)
+            match = not text or (name_item is not None and text in name_item.text().lower())
+            self._vars_table.setRowHidden(row, not match)
 
     def _on_frame_selected(self, row: int):
         if row < 0 or row >= len(self._all_frame_locals):
@@ -760,3 +772,4 @@ class DebuggerPane(QWidget):
         self._btn_restart.setEnabled(True)
         self._stack_list.setRowCount(0)
         self._vars_table.setRowCount(0)
+        self._var_search.clear()
