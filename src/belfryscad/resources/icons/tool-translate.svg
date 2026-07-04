@@ -39,7 +39,7 @@
      id="g1">
     <path
        id="path9"
-       style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#000000;fill-opacity:1;stroke-width:0.889744;enable-background:accumulate;stop-color:#000000"
+       style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#444444;fill-opacity:1;stroke-width:0.889744;enable-background:accumulate;stop-color:#444444"
        d="m 16,2.653846 -3.558975,7.694892 2.617949,-0.6153846 0.05128,5.3769026 H 9.5282252 L 10.348738,12.441025 2.653846,16 10.348738,19.558975 9.5282252,16.889744 h 5.5820308 v 5.325621 L 12.441025,21.651262 16,29.346154 l 3.558975,-7.694892 -2.669231,0.564103 v -5.325621 h 5.428185 L 21.651262,19.558975 29.346154,16 l -7.694892,-3.558975 0.666667,2.669231 h -5.428185 l -0.05128,-5.3769026 2.720513,0.6153846 z"
        sodipodi:nodetypes="ccccccccccccccccccccccccc" />
   </g>

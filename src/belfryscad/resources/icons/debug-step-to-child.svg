@@ -46,20 +46,20 @@
      stroke-linecap="round"
      stroke-linejoin="round"
      id="ellipse1"
-     style="stroke:#000000;stroke-opacity:1" />
+     style="stroke:#444444;stroke-opacity:1" />
   <path
      id="line1"
-     style="stroke:#000000;stroke-width:2.5;stroke-linecap:round"
+     style="stroke:#444444;stroke-width:2.5;stroke-linecap:round"
      d="M 16,2.537744 V 17.528653"
      sodipodi:nodetypes="cc" />
   <path
      id="polyline1"
-     style="fill:none;stroke:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
+     style="fill:none;stroke:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
      d="M 10.690909,13.365017 16,19.028653 l 5.309091,-5.7"
      sodipodi:nodetypes="ccc" />
   <text
      xml:space="preserve"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:Menlo;-inkscape-font-specification:Menlo;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:Menlo;-inkscape-font-specification:Menlo;writing-mode:lr-tb;direction:ltr;fill:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
      x="-1.7646673"
      y="27.008663"
      id="text1"><tspan
@@ -70,7 +70,7 @@
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Courier;-inkscape-font-specification:Courier">{</tspan></text>
   <text
      xml:space="preserve"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:Menlo;-inkscape-font-specification:Menlo;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:Menlo;-inkscape-font-specification:Menlo;writing-mode:lr-tb;direction:ltr;fill:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
      x="20.962605"
      y="27.008663"
      id="text2"><tspan

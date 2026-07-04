@@ -34,14 +34,14 @@
   <path
      d="M7 4 L7 28 Q7 29 8 29 L24 29 Q25 29 25 28 L25 11 L19 4 Z"
      fill="none"
-     stroke="#000000"
+     stroke="#444444"
      stroke-width="2.5"
      stroke-linejoin="round"
      id="path1" />
   <path
      d="M19 4 L19 11 L25 11"
      fill="none"
-     stroke="#000000"
+     stroke="#444444"
      stroke-width="2.5"
      stroke-linejoin="round"
      id="path2" />
@@ -49,12 +49,12 @@
      id="g1"
      transform="translate(2.3636364,6.0727273)">
     <path
-       style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
+       style="fill:none;stroke:#444444;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
        d="m 12.163637,16 h 7.672726"
        id="path3"
        sodipodi:nodetypes="cc" />
     <path
-       style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
+       style="fill:none;stroke:#444444;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
        d="m 16,12.163637 v 7.672726"
        id="path3-8"
        sodipodi:nodetypes="cc" />

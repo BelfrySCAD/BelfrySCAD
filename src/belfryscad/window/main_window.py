@@ -2037,7 +2037,7 @@ class MainWindow(QMainWindow):
                 # highlight, locals) — it's a best-effort preview.
                 self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin,
-                                       partial_error=partial_error)
+                                       partial_error=partial_error, main_file=self._debug_tab.file_path or "")
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         self._apply_vp_params({k: locals_dict[k] for k in ("$vpt", "$vpr", "$vpd", "$vpf") if k in locals_dict})
@@ -2055,7 +2055,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin,
-                                            partial_error=partial_error)
+                                            partial_error=partial_error, main_file=self._debug_tab.file_path or "")
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         self._show_debug_line(origin, line)

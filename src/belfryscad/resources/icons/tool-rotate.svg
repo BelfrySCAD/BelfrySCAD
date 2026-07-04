@@ -44,11 +44,11 @@
          id="g2"
          transform="matrix(1,0,0,-1,0,32)">
         <path
-           style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#000000;enable-background:accumulate;stop-color:#000000"
+           style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#444444;enable-background:accumulate;stop-color:#444444"
            d="M 16.956403,3.4223296 C 15.769689,3.3545483 14.561297,3.4651041 13.368512,3.7680327 8.5973743,4.9797473 5.0683449,9.0216052 4.5110905,13.912564 3.953836,18.803523 6.4824692,23.53754 10.858747,25.791471 c 4.376277,2.253931 9.699215,1.565348 13.357421,-1.728516 L 22.977887,22.686002 C 19.88689,25.469149 15.404134,26.049443 11.706403,24.144986 8.0086716,22.240529 5.8781295,18.256113 6.3489811,14.123502 6.8198327,9.9908906 9.7922221,6.5848385 13.82359,5.5610015 17.854959,4.5371644 22.092184,6.1108945 24.477887,9.5180327 L 25.993512,8.4574859 C 23.875896,5.4332162 20.516546,3.6256736 16.956403,3.4223296 Z"
            id="path6" />
         <path
-           style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#000000;fill-rule:evenodd;enable-background:accumulate;stop-color:#000000"
+           style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#444444;fill-rule:evenodd;enable-background:accumulate;stop-color:#444444"
            d="m 27.565319,19.801219 -2.8529,8.795678 -6.192803,-6.877805 z"
            id="path4" />
       </g>
