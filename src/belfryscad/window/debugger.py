@@ -136,10 +136,24 @@ def _generate_partial_render(ev) -> tuple[list | None, str | None]:
     gracefully by every generate_fn (Phase 2), so a real failure here is
     more likely a genuine script problem surfacing earlier than usual (via
     a live preview) than a false positive from mere incompleteness — either
-    way, it must not abort the debug session."""
+    way, it must not abort the debug session.
+
+    Deliberately generates from ev._tree_stack flattened across *all*
+    nesting levels, not just ev.csg_tree (the top-level list). A CSGNode
+    only gets appended to its parent's accumulator once that parent's own
+    resolve_fn returns — so for a script whose whole geometry is one
+    deeply-nested top-level statement (e.g. difference(){union(){cube();
+    sphere();} cylinder();}), ev.csg_tree stays completely empty for the
+    entire time spent stepping through cube()/sphere()/cylinder(), since
+    difference()'s own CSGNode isn't appended anywhere until every child
+    (transitively) has finished resolving. Flattening every level of the
+    stack picks up already-resolved leaves (e.g. cube()'s CSGNode sitting
+    in union()'s still-in-progress accumulator) instead of only nodes
+    whose entire enclosing statement chain has already completed."""
     from belfryscad.engine.evaluator import to_renderable_bodies
     try:
-        return to_renderable_bodies(ev.generate_tree(ev.csg_tree)), None
+        partial_nodes = [node for level in ev._tree_stack for node in level]
+        return to_renderable_bodies(ev.generate_tree(partial_nodes)), None
     except Exception as e:
         return None, str(e)
 
