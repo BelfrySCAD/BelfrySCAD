@@ -463,7 +463,7 @@ class DebuggerPane(QWidget):
         _style_table_headers(self._stack_list)
         stack_header_view = self._stack_list.horizontalHeader()
         stack_header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        stack_header_view.resizeSection(0, 90)
+        stack_header_view.resizeSection(0, 120)
         stack_header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         stack_header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         stack_header_view.resizeSection(2, 50)
