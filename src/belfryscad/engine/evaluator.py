@@ -1604,10 +1604,18 @@ class ColoredBody:
 
 @dataclass
 class CSGNode:
-    """One node in the persistent, coarse-grained CSG tree built as a side
-    effect of eager evaluation. Complements — does not replace — id_to_node
-    (Manifold originalID -> AST node), which stays the fine-grained
-    per-triangle provenance table used for WYSIWYG ray-cast picking.
+    """One node in the persistent, coarse-grained CSG tree. Complements —
+    does not replace — id_to_node (Manifold originalID -> AST node), which
+    stays the fine-grained per-triangle provenance table used for WYSIWYG
+    ray-cast picking.
+
+    Built in two passes: the AST walk (Evaluator._eval_statement) resolves
+    every node — plain data only, no Manifold calls — and populates `params`
+    and `children`, leaving `bodies` empty; Evaluator.generate_tree() then
+    walks the completed tree bottom-up and populates `bodies` by calling
+    each node's generate_fn. Can be re-run on any (possibly partial) tree at
+    any time — e.g. to render a live partial result at a debugger breakpoint
+    (Phase 3) — since resolve never depends on any node's generated bodies.
 
     kind is a human-readable label (a ModularCall's call name, e.g. "cube",
     "union", "my_bracket"; or "highlight"/"background"/"show_only"/
@@ -1713,13 +1721,14 @@ class Evaluator:
         self.id_to_node: dict[int, ASTNode] = {}
         self.csg_tree: list[CSGNode] = []
         self._tree_stack: list[list[CSGNode]] = [self.csg_tree]
-        # Phase 2 (in progress): builtins migrated to a resolve/generate split
-        # register here, keyed by builtin name (== CSGNode.kind). Migrated
-        # builtins still generate immediately (interim behavior — see
-        # docs/evaluator.md "CSG tree" section) rather than being deferred to
-        # a separate pass; only once every builtin is migrated does that
-        # change. Un-migrated builtins are absent from both dicts and keep
-        # going through the old eager _eval_builtin dispatch.
+        # Every geometry-producing builtin kind (== CSGNode.kind) is
+        # registered here (Phase 2, complete — see docs/evaluator.md "CSG
+        # tree"). resolve_fn parses arguments and recursively resolves
+        # children as plain data (no Manifold calls); generate_fn does the
+        # actual Manifold/CrossSection work, called later by generate_tree()
+        # in a separate bottom-up pass. Kinds with no entry (user-module
+        # calls, unknown module names) fall back to _resolve_fallback_call /
+        # generate_tree()'s default child-concatenation behavior.
         self._RESOLVE_DISPATCH = {
             "cube": self._resolve_cube,
             "sphere": self._resolve_sphere,
@@ -1749,6 +1758,12 @@ class Evaluator:
             "roof": self._resolve_roof,
             "surface": self._resolve_surface,
             "import": self._resolve_import,
+            "render": self._resolve_render,
+            "children": self._resolve_children_call,
+            "breakpoint": self._resolve_breakpoint,
+            "highlight": self._resolve_modifier_child,
+            "background": self._resolve_modifier_child,
+            "show_only": self._resolve_modifier_child,
         }
         self._GENERATE_DISPATCH = {
             "cube": self._generate_cube,
@@ -1779,6 +1794,9 @@ class Evaluator:
             "roof": self._generate_roof,
             "surface": self._generate_surface,
             "import": self._generate_import,
+            "highlight": self._generate_highlight,
+            "background": self._generate_background,
+            "show_only": self._generate_show_only,
         }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -2001,7 +2019,10 @@ class Evaluator:
                     root_scope.define_function(name, decl)
 
     def evaluate(self, nodes: list[ASTNode], root_scope, viewport_params: dict | None = None) -> tuple[list[ColoredBody], dict[int, ASTNode]]:
-        """Walk top-level AST nodes and return (geometry, id_to_node mapping)."""
+        """Walk top-level AST nodes to build self.csg_tree (resolve pass,
+        no Manifold calls), then generate_tree() it once (generate pass,
+        the only place Manifold work happens) to produce the final
+        geometry. Returns (geometry, id_to_node mapping)."""
         self._resolve_use_statements(nodes, root_scope)
         self._call_stack.clear()
         self._frame_ctxs.clear()
@@ -2011,13 +2032,12 @@ class Evaluator:
         if viewport_params:
             ctx.dyn.update(viewport_params)
         self._root_ctx = ctx
-        result = []
         # OpenSCAD executes all assignments before geometry in each scope.
         assignments = [n for n in nodes if isinstance(n, Assignment)]
         others = [n for n in nodes if not isinstance(n, Assignment)]
         for node in assignments + others:
-            bodies = self._eval_statement(node, ctx)
-            result.extend(bodies)
+            self._eval_statement(node, ctx)
+        result = self.generate_tree(self.csg_tree)
         # ! (show_only) modifier: if any body is show_only, display only those + highlights
         show_only = [b for b in result if b.role == "show_only"]
         if show_only:
@@ -2065,48 +2085,71 @@ class Evaluator:
 
     def _eval_statement(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
         """Thin wrapper around _eval_statement_impl that additionally builds
-        self.csg_tree as a side effect, with zero change to the returned
-        bodies. For the five _TREE_NODE_TYPES, pushes a new children
-        accumulator before evaluating, pops it in a finally (so a raised
-        EvalError cleanly discards the in-progress node rather than
-        corrupting a parent's accumulator), then appends the completed
-        CSGNode to whichever accumulator is now on top of the stack. Every
-        recursive call site already calls self._eval_statement(...), so
-        nesting composes automatically with no other call site changes.
+        self.csg_tree as a side effect. For the five _TREE_NODE_TYPES,
+        pushes a new children accumulator before resolving, pops it in a
+        finally (so a raised EvalError cleanly discards the in-progress
+        node rather than corrupting a parent's accumulator), then appends
+        the completed CSGNode to whichever accumulator is now on top of the
+        stack. Every recursive call site already calls
+        self._eval_statement(...), so nesting composes automatically with
+        no other call site changes.
 
-        Migrated builtins (kind in self._RESOLVE_DISPATCH — Phase 2, in
-        progress) take a different branch: resolve_fn produces a plain-data
-        params dict with no Manifold calls, then generate_fn is called
-        immediately (not deferred yet — see docs/evaluator.md) to preserve
-        identical observable behavior while builtins are migrated one group
-        at a time. This ordering matters: computing kind/is_builtin BEFORE
-        dispatching (rather than only after, as in the pre-Phase-2 version)
-        is what lets a migrated node be identified up front instead of only
-        after eagerly evaluating it the old way.
+        Generation is fully deferred (Phase 2 final cutover): this only
+        ever calls a resolve_fn (plain data, no Manifold calls) and always
+        returns []. Real bodies are populated later, in one bottom-up pass,
+        by generate_tree(self.csg_tree) — see that method and evaluate().
+        Every builtin kind has a resolve_fn (registered in
+        _RESOLVE_DISPATCH); anything without one (user-module calls, and
+        genuinely unknown module names) falls back to
+        _resolve_fallback_call, which still builds the tree correctly via
+        the pre-existing _eval_modular_call dispatch.
         """
         if not isinstance(node, self._TREE_NODE_TYPES):
             return self._eval_statement_impl(node, ctx)
         kind, is_builtin = self._tree_node_kind(node, ctx)
-        resolve_fn = self._RESOLVE_DISPATCH.get(kind) if is_builtin else None
+        resolve_fn = (self._RESOLVE_DISPATCH.get(kind) if is_builtin else None) or self._resolve_fallback_call
         self._tree_stack.append([])
-        if resolve_fn is not None:
-            try:
-                params = resolve_fn(node, ctx)
-            finally:
-                children = self._tree_stack.pop()
-            bodies = self._GENERATE_DISPATCH[kind](params, children, node)
-            tree_node = CSGNode(kind=kind, node=node, bodies=bodies,
-                                 is_builtin=is_builtin, children=children, params=params)
-            self._tree_stack[-1].append(tree_node)
-            return bodies
         try:
-            bodies = self._eval_statement_impl(node, ctx)
+            params = resolve_fn(node, ctx)
         finally:
             children = self._tree_stack.pop()
-        tree_node = CSGNode(kind=kind, node=node, bodies=bodies,
-                             is_builtin=is_builtin, children=children)
+        tree_node = CSGNode(kind=kind, node=node, bodies=[],
+                             is_builtin=is_builtin, children=children, params=params)
         self._tree_stack[-1].append(tree_node)
-        return bodies
+        return []
+
+    def _resolve_fallback_call(self, node: ModularCall, ctx: EvalContext) -> dict:
+        """Structural resolve for ModularCall kinds with no _RESOLVE_DISPATCH
+        entry: user-module calls (is_builtin=False) and genuinely unknown
+        module names (is_builtin=True, no matching builtin or user module).
+        Reuses the existing _eval_modular_call dispatch purely for its
+        tree-building side effect — its return value (real bodies) is
+        unused now that generation is deferred to generate_tree(), and its
+        default (no registered generate_fn) is to concatenate children's
+        bodies, which matches a user module body's plain concatenation and
+        an unknown module's empty children list alike."""
+        self._eval_modular_call(node, ctx)
+        return {}
+
+    def generate_tree(self, tree: list[CSGNode]) -> list[ColoredBody]:
+        """Bottom-up second pass over an already-resolved CSG tree: for each
+        node, first generates its children (so any generate_fn reading
+        flatten_csg_tree(children) sees real, populated bodies), then calls
+        the node's own generate_fn (or, for kinds with no registered
+        generate_fn — user-module calls, render()/children()/unknown-module
+        passthroughs — concatenates the children's bodies), storing the
+        result on node.bodies. Always recomputes from scratch (no caching),
+        matching the project's "full Manifold rebuild on every render
+        trigger" convention. Can be called on any (possibly partial) tree
+        at any point — e.g. the debugger calling it on self.csg_tree at a
+        breakpoint to render a live partial result (Phase 3)."""
+        result = []
+        for node in tree:
+            children_bodies = self.generate_tree(node.children)
+            generate_fn = self._GENERATE_DISPATCH.get(node.kind) if node.is_builtin else None
+            node.bodies = generate_fn(node.params, node.children, node.node) if generate_fn is not None else children_bodies
+            result.extend(node.bodies)
+        return result
 
     def _eval_statement_impl(self, node: ASTNode, ctx: EvalContext) -> list[ColoredBody]:
         self._last_ctx = ctx
@@ -2130,8 +2173,6 @@ class Evaluator:
                 ctx.let[name] = self._eval_expr(node.expr, ctx)
                 ctx.dyn_positions[name] = pos
             return []
-        if t is ModularCall:
-            return self._eval_modular_call(node, ctx)
         if t is ModularIf:
             cond = self._eval_expr(node.condition, ctx)
             if cond:
@@ -2167,12 +2208,6 @@ class Evaluator:
             if node.children:
                 return self._eval_children(node.children, ctx)
             return []
-        if isinstance(node, ModularModifierHighlight):  # # — real geometry + highlight overlay
-            return [replace(b, role="highlight") for b in self._eval_statement(node.child, ctx)]
-        if isinstance(node, ModularModifierBackground):  # % — ghost display only, excluded from CSG
-            return [replace(b, role="background") for b in self._eval_statement(node.child, ctx)]
-        if isinstance(node, ModularModifierShowOnly):  # ! — show only this subtree
-            return [replace(b, role="show_only") for b in self._eval_statement(node.child, ctx)]
         if isinstance(node, ModularModifierDisable):  # * — fully excluded
             return []
         if isinstance(node, (ModuleDeclaration, FunctionDeclaration)):
@@ -2328,24 +2363,53 @@ class Evaluator:
     def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         args, ctx = self._resolve_call_args(node, ctx)
 
-        if name == "render":
-            # render() is a display hint; just pass through children
-            return self._eval_children(node.children, ctx)
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return []
         if name == "assert":
             return []
-        if name == "children":
-            return self._builtin_children(args, ctx)
-        if name == "breakpoint":
-            return self._body_list(self._builtin_breakpoint(args, node, ctx))
         # Unknown module — warn with call stack, matching OpenSCAD's WARNING format
         pos = getattr(node, 'position', None)
         warn = f"WARNING: Ignoring unknown module '{name}'{self._loc(pos)}"
         trace = self._trace_lines(node)
         self._echo_fn("\n".join([warn] + trace))
         return []
+
+    def _resolve_render(self, node: ModularCall, ctx: EvalContext) -> dict:
+        # render() is a display hint; just pass through children — no
+        # generate_fn is registered, so generate_tree()'s default
+        # (concatenate children's bodies) reproduces the passthrough.
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
+        return {}
+
+    def _resolve_children_call(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._builtin_children(args, ctx)  # side effect only; return (real bodies) unused now
+        return {}
+
+    def _resolve_breakpoint(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._builtin_breakpoint(args, node, ctx)  # side effect only (debug hook); never had children
+        return {}
+
+    def _resolve_modifier_child(self, node, ctx: EvalContext) -> dict:
+        """Shared resolve for the #/%/! modifiers (ModularModifierHighlight/
+        Background/ShowOnly), which each wrap exactly one child (node.child,
+        not a ModularCall's node.children list). Builds the child into the
+        tree for its side effect only; the actual role tagging happens in
+        the matching _generate_highlight/_generate_background/_generate_show_only."""
+        self._eval_statement(node.child, ctx)
+        return {}
+
+    def _generate_highlight(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        return [replace(b, role="highlight") for b in flatten_csg_tree(children)]
+
+    def _generate_background(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        return [replace(b, role="background") for b in flatten_csg_tree(children)]
+
+    def _generate_show_only(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        return [replace(b, role="show_only") for b in flatten_csg_tree(children)]
 
     def _resolve_args(self, arguments, ctx: EvalContext) -> dict:
         result = {}
@@ -2706,14 +2770,12 @@ class Evaluator:
         # otherwise. Measured as a stack-length delta: pure bookkeeping, no
         # Manifold calls, safe here.
         #
-        # This resolve step also replicates today's eager per-statement
-        # short-circuit exactly: once intersection hits an empty operand, or
-        # difference's would-be-first operand is empty, remaining statements
-        # are never evaluated at all (matching current behavior — their
-        # side effects, if any, don't happen today either). That's safe to
-        # decide here only because children are still generated immediately
-        # (interim design, see docs/evaluator.md) — this will need
-        # rethinking once generation is truly deferred in the final cutover.
+        # Every statement is always resolved (no short-circuiting): with
+        # generation fully deferred (Phase 2 final cutover), resolve can no
+        # longer tell whether a statement's geometry is empty — that's only
+        # knowable once it's actually generated. _generate_csg re-derives
+        # the discard-vs-skip short-circuit semantics itself, from real
+        # generated bodies, using these same group_sizes to re-chunk children.
         op = node.name.name
         args, ctx = self._resolve_call_args(node, ctx)
         assign_nodes = [c for c in node.children if isinstance(c, Assignment)]
@@ -2725,22 +2787,11 @@ class Evaluator:
             self._eval_children(assign_nodes, ctx)
 
         group_sizes: list[int] = []
-        csg_result_established = False
         for geo_node in geo_nodes:
             before = len(self._tree_stack[-1])
             self._eval_children([geo_node], ctx)
             after = len(self._tree_stack[-1])
             group_sizes.append(after - before)
-
-            stmt_bodies = flatten_csg_tree(self._tree_stack[-1][before:after])
-            fg = [c for c in stmt_bodies if c.role != "background"]
-            if not any(c.body is not None or c.section is not None for c in fg):
-                if op == "intersection":
-                    break
-                if op == "difference" and not csg_result_established:
-                    break
-                continue
-            csg_result_established = True
         return {"op": op, "group_sizes": group_sizes}
 
     def _generate_csg(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
