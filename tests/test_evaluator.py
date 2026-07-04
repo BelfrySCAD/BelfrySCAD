@@ -9,7 +9,7 @@ import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
 from belfryscad.engine.evaluator import (
-    Evaluator, EvalError, _resolve_font, CSGNode, flatten_csg_tree,
+    Evaluator, EvalContext, EvalError, _resolve_font, CSGNode, flatten_csg_tree,
 )
 
 
@@ -3035,13 +3035,12 @@ class TestCSGTree:
 # ---------------------------------------------------------------------------
 # CSG tree Phase 2, step 1 — resolve/generate split for leaf primitives
 # (cube, sphere, cylinder, polyhedron, circle, square, polygon, text).
-# Geometry computation is still eager (generated immediately after resolve,
-# not yet deferred to a separate pass — see docs/evaluator.md), so behavior
-# is identical to before the split; these tests cover the new params shape
-# and specifically the "mixed migration" hazard the split's design has to
-# avoid: a migrated leaf's bodies must still show up correctly inside a
-# not-yet-migrated wrapper (union/transform/color/hull), not get silently
-# dropped.
+# Generation is now fully deferred to generate_tree() (Phase 2 step 6, the
+# final cutover), so these tests cover the params shape and the "mixed
+# migration" scenarios exercised while the split was rolled out kind-by-kind
+# — nesting a migrated leaf inside a wrapper migrated in a later step, which
+# during the rollout risked a migrated node's bodies being silently dropped
+# by a not-yet-migrated wrapper. Kept as regression coverage for that nesting.
 # ---------------------------------------------------------------------------
 
 class TestCSGTreeResolveGenerateSplit:
@@ -3151,8 +3150,7 @@ class TestCSGTreeResolveGenerateSplit:
 
 # ---------------------------------------------------------------------------
 # CSG tree Phase 2, step 2 — resolve/generate split for transforms
-# (translate/rotate/scale/mirror/multmatrix/resize) and color. Still
-# interim (generated immediately, not yet deferred — see docs/evaluator.md).
+# (translate/rotate/scale/mirror/multmatrix/resize) and color.
 # ---------------------------------------------------------------------------
 
 class TestCSGTreeStep2Transforms:
@@ -3226,8 +3224,7 @@ class TestCSGTreeStep2Transforms:
 
 # ---------------------------------------------------------------------------
 # CSG tree Phase 2, step 3 — resolve/generate split for topology (hull,
-# minkowski, projection, offset). Still interim (generated immediately, not
-# yet deferred — see docs/evaluator.md).
+# minkowski, projection, offset).
 # ---------------------------------------------------------------------------
 
 class TestCSGTreeStep3Topology:
@@ -3299,8 +3296,7 @@ class TestCSGTreeStep3Topology:
 # transparent in the tree (Phase 1), so a single top-level statement can
 # contribute a variable, unmarked number of tree children — group_sizes
 # bookkeeping (measuring self._tree_stack[-1] length deltas) recovers the
-# grouping without needing to inspect AST structure. Still interim
-# (generated immediately, not yet deferred — see docs/evaluator.md).
+# grouping without needing to inspect AST structure.
 # ---------------------------------------------------------------------------
 
 class TestCSGTreeStep4Booleans:
@@ -3564,6 +3560,128 @@ class TestCSGTreeStep5Extrusion:
             "linear_extrude(height=3) circle(2);",
             "rotate_extrude() translate([3,0]) circle(1);",
             'roof(method="straight") square(6, center=true);',
+        ]:
+            bodies, _, ev = run_tree(src)
+            assert flatten_csg_tree(ev.csg_tree) == bodies
+
+
+# ---------------------------------------------------------------------------
+# CSG tree Phase 2, step 6 — final cutover: evaluate() is now genuinely
+# two-pass. Resolve (the AST walk) builds the whole tree as plain data with
+# no Manifold calls at all; generate_tree() is a separate bottom-up pass
+# that does all the Manifold/CrossSection work. This also required giving
+# the #/%/! tag modifiers and render()/children()/breakpoint() their own
+# resolve_fn (previously handled eagerly inline in _eval_statement_impl),
+# and removing _resolve_csg's resolve-time short-circuit (which relied on
+# already-generated child bodies that no longer exist until generate_tree()
+# runs) in favor of _generate_csg deciding discard-vs-skip purely from real
+# generated bodies.
+# ---------------------------------------------------------------------------
+
+class TestCSGTreeStep6FinalCutover:
+    def _resolve_only(self, src: str):
+        """Run just the resolve pass (build csg_tree) without calling
+        generate_tree(), to inspect the tree before any Manifold work has
+        happened."""
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev._resolve_use_statements(nodes, root_scope)
+        ev.csg_tree = []
+        ev._tree_stack = [ev.csg_tree]
+        ctx = EvalContext(scope=root_scope)
+        ev._root_ctx = ctx
+        for node in nodes:
+            ev._eval_statement(node, ctx)
+        return ev
+
+    def test_resolve_alone_leaves_bodies_empty(self):
+        ev = self._resolve_only("cube(1); sphere(1);")
+        assert [n.bodies for n in ev.csg_tree] == [[], []]
+
+    def test_generate_tree_populates_bodies_after_resolve(self):
+        ev = self._resolve_only("cube(1); sphere(1);")
+        result = ev.generate_tree(ev.csg_tree)
+        assert len(result) == 2
+        assert all(n.bodies for n in ev.csg_tree)
+
+    def test_generate_tree_works_on_partial_tree(self):
+        # Simulates a debugger breakpoint mid-walk (Phase 3): resolve only
+        # the first two of three top-level statements, then generate_tree()
+        # just the partial tree built so far.
+        nodes = getASTfromString(
+            "cube(1); sphere(1); translate([5,0,0]) cube(2);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev._resolve_use_statements(nodes, root_scope)
+        ev.csg_tree = []
+        ev._tree_stack = [ev.csg_tree]
+        ctx = EvalContext(scope=root_scope)
+        ev._root_ctx = ctx
+        ev._eval_statement(nodes[0], ctx)
+        ev._eval_statement(nodes[1], ctx)
+        partial = ev.generate_tree(ev.csg_tree)
+        assert [n.kind for n in ev.csg_tree] == ["cube", "sphere"]
+        assert len(partial) == 2
+
+    def test_modifier_kinds_registered_with_generate_fn(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("highlight", "background", "show_only"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+
+    def test_render_children_breakpoint_use_default_concatenation(self):
+        # These have a resolve_fn (to build the tree correctly) but no
+        # generate_fn — generate_tree()'s default (concatenate children's
+        # bodies) is what reproduces their old passthrough behavior.
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("render", "children", "breakpoint"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind not in ev._GENERATE_DISPATCH
+
+    def test_highlight_background_show_only_tree_and_roles(self):
+        bodies, _, ev = run_tree("#cube(1); %sphere(1); cube(1);")
+        assert [n.kind for n in ev.csg_tree] == ["highlight", "background", "cube"]
+        assert [c.kind for c in ev.csg_tree[0].children] == ["cube"]
+        assert [b.role for b in bodies] == ["highlight", "background", "normal"]
+        assert flatten_csg_tree(ev.csg_tree) == bodies
+
+    def test_user_module_call_tree_uses_fallback_and_concatenates(self):
+        bodies, _, ev = run_tree(
+            "module wrap() { translate([1,0,0]) cube(2); } wrap();")
+        node = ev.csg_tree[0]
+        assert node.kind == "wrap"
+        assert node.is_builtin is False
+        assert [c.kind for c in node.children] == ["translate"]
+        assert flatten_csg_tree(ev.csg_tree) == bodies
+
+    def test_module_shadowing_builtin_name_still_dispatches_to_user_module(self):
+        bodies = run("module render() { cube(3); } render();")[0]
+        assert bodies[0].body.volume() == approx(27)
+
+    def test_unknown_module_warns_and_produces_no_geometry(self):
+        bodies, echo = run("foobar_totally_unknown(1, 2, 3);")
+        assert bodies == []
+        assert any("Ignoring unknown module 'foobar_totally_unknown'" in line for line in echo)
+
+    def test_side_effect_after_would_be_short_circuited_statement_still_fires(self):
+        # Final-cutover behavior change (intentional): since resolve can no
+        # longer tell a statement's geometry will end up empty (that's only
+        # knowable once real bodies exist, in generate_tree()), every
+        # statement is always resolved — so echo() after a *cube(10)
+        # (disabled, contributes no geometry) still fires, even inside an
+        # intersection() whose combined geometry result is discarded to ∅
+        # by the first empty operand.
+        bodies, echo = run('intersection() { *cube(10); echo("fired"); cube(2); }')
+        assert bodies == []
+        assert echo == ['ECHO: "fired"']
+
+    def test_flatten_matches_evaluate_result_with_modifiers_and_modules(self):
+        for src in [
+            "#cube(1); %sphere(1); cube(1);",
+            "module wrap() { translate([1,0,0]) cube(2); } wrap();",
+            "render() cube(2);",
+            "module m() { children(); } m() cube(1);",
         ]:
             bodies, _, ev = run_tree(src)
             assert flatten_csg_tree(ev.csg_tree) == bodies
