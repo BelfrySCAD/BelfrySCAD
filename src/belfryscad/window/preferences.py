@@ -170,6 +170,7 @@ class PreferencesDialog(QDialog):
         vp_form.addRow("Color theme:", self._color_theme)
 
         tabs.addTab(viewport_tab, "Viewport")
+        tabs.tabBar().moveTab(1, 0)  # Viewport first
 
         # --- Close button ---
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
