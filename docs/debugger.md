@@ -80,16 +80,17 @@ The evaluator maintains `_frame_ctxs` (an `EvalContext` list parallel to `_call_
 - **List element expressions** — before each element-producing expression: the `else` branch in `_eval_list_comp` and the fallthrough in `_eval_list_comp_body`
 
 The Variables panel has:
-- A **filter dropdown**: Locals / Globals / CONSTANTS / $Specials
+- A **filter dropdown**: Local / Global / $special / CONST
+- A **search box**: filters the currently-visible rows by case-insensitive substring match on name; re-applied after every repopulate (frame switch, filter/category change, step)
 - A **Hiddens checkbox**: when unchecked, names starting with `_` or `$_` are hidden from all filters
 
 Categorization (after the hidden check):
-- `$`-prefix → $Specials
-- ALL_UPPERCASE with at least one letter → CONSTANTS
-- Name in `local_scope` → Locals
-- Otherwise → Globals
+- `$`-prefix → $special
+- ALL_UPPERCASE with at least one letter → CONST
+- Name in `local_scope` → Local
+- Otherwise → Global
 
-`_filtered_vars(frame_data, category, show_hidden)` computes the display dict. Only vars in `dyn_names` are editable, and only in the Locals filter of the innermost frame. `get_modifications()` skips non-editable rows.
+`_filtered_vars(frame_data, category, show_hidden)` computes the display dict for the selected category; `DebuggerPane._apply_search_filter()` then hides/shows rows in the resulting table by name substring — it does not affect `_filtered_vars` or category membership. Only vars in `dyn_names` are editable, and only in the Local filter of the innermost frame. `get_modifications()` skips non-editable rows.
 
 Right-clicking a variable in the **DebuggerPane** variable table opens a context menu with **Print to Console** and **View as…** options via `build_viewer_menu()` (from `data_viewers.py`): ListViewer for lists/objects, VNFViewer for `[vertices, faces]` structures, GridViewer for lists of lists of points, PathViewer for point sequences. **Print to Console** emits `DebuggerPane.print_value_to_console(name, value)` (not `print_to_console`) — connected to `MainWindow._on_debug_print_value` → `self._console.append_value(name, value, ...)`, so the value is stored for the console right-click viewer menu. Output routes to the window-level `self._console` (a singleton). See `docs/editor.md § Data Viewers` for viewer details.
 

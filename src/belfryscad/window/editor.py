@@ -1179,7 +1179,7 @@ class CodeEditor(QPlainTextEdit):
                 lambda v=value, n=word: self.print_value_to_console.emit(n, v)
             )
             from belfryscad.window.data_viewers import build_viewer_menu
-            view_sub = QMenu(f"View '{word}'…", self)
+            view_sub = QMenu(f"View '{word}' as...", self)
             build_viewer_menu(view_sub, word, value, self)
             if not view_sub.isEmpty():
                 menu.addMenu(view_sub)
