@@ -1744,6 +1744,11 @@ class Evaluator:
             "difference": self._resolve_csg,
             "intersection": self._resolve_csg,
             "intersection_for": self._resolve_intersection_for,
+            "linear_extrude": self._resolve_linear_extrude,
+            "rotate_extrude": self._resolve_rotate_extrude,
+            "roof": self._resolve_roof,
+            "surface": self._resolve_surface,
+            "import": self._resolve_import,
         }
         self._GENERATE_DISPATCH = {
             "cube": self._generate_cube,
@@ -1769,6 +1774,11 @@ class Evaluator:
             "difference": self._generate_csg,
             "intersection": self._generate_csg,
             "intersection_for": self._generate_intersection_for,
+            "linear_extrude": self._generate_linear_extrude,
+            "rotate_extrude": self._generate_rotate_extrude,
+            "roof": self._generate_roof,
+            "surface": self._generate_surface,
+            "import": self._generate_import,
         }
         self._errors: list[str] = []
         self._echo_fn = echo_fn or (lambda msg: print(msg))
@@ -2318,19 +2328,9 @@ class Evaluator:
     def _eval_builtin(self, name: str, node: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         args, ctx = self._resolve_call_args(node, ctx)
 
-        if name == "linear_extrude":
-            return self._body_list(self._builtin_linear_extrude(args, node, ctx))
-        if name == "rotate_extrude":
-            return self._body_list(self._builtin_rotate_extrude(args, node, ctx))
-        if name == "roof":
-            return self._body_list(self._builtin_roof(args, node, ctx))
         if name == "render":
             # render() is a display hint; just pass through children
             return self._eval_children(node.children, ctx)
-        if name == "surface":
-            return self._body_list(self._builtin_surface(args, node, ctx))
-        if name == "import":
-            return self._body_list(self._builtin_import(args, node, ctx))
         if name == "echo":
             self._do_echo(node.arguments, ctx)
             return []
@@ -2382,11 +2382,17 @@ class Evaluator:
         return ColoredBody(body=body, color=color)
 
     def _fn(self, ctx: EvalContext, r: float = 0.0) -> int:
-        fn = ctx.dyn.get("$fn", 0)
+        return self._fn_segments(ctx.dyn.get("$fn", 0), ctx.dyn.get("$fa", 12.0),
+                                  ctx.dyn.get("$fs", 2.0), r)
+
+    @staticmethod
+    def _fn_segments(fn, fa, fs, r: float = 0.0) -> int:
+        """Pure segment-count formula, split out of _fn() so generate-phase
+        code (e.g. rotate_extrude, which needs the merged children's bounds
+        — unavailable until generate — for its radius) can compute segments
+        from cached $fn/$fa/$fs values without a live ctx."""
         if isinstance(fn, (int, float)) and fn > 0:
             return max(3, int(fn))
-        fa = ctx.dyn.get("$fa", 12.0)
-        fs = ctx.dyn.get("$fs", 2.0)
         if not isinstance(fa, (int, float)) or fa <= 0:
             fa = 12.0
         if not isinstance(fs, (int, float)) or fs <= 0:
@@ -2875,14 +2881,16 @@ class Evaluator:
         except Exception as e:
             self.error(f"polyhedron: {e}", node)
 
-    def _builtin_surface(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _resolve_surface(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
         file_arg = self._get_arg(args, 0, "file", None)
         center = bool(self._get_arg(args, None, "center", False))
         invert = bool(self._get_arg(args, None, "invert", False))
+        color = ctx.color
 
         if file_arg is None:
             self.error("surface: 'file' parameter is required", node)
-            return None
+            return {"heights": None, "center": center, "color": color}
 
         # Resolve path relative to the source file
         base_dir = None
@@ -2900,11 +2908,19 @@ class Evaluator:
             heights = self._surface_load(file_path, invert)
         except Exception as e:
             self.error(f"surface: {e}", node)
-            return None
+            return {"heights": None, "center": center, "color": color}
 
         if heights is None or len(heights) == 0 or len(heights[0]) == 0:
             self.error("surface: empty height data", node)
-            return None
+            return {"heights": None, "center": center, "color": color}
+
+        return {"heights": heights, "center": center, "color": color}
+
+    def _generate_surface(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        heights = params["heights"]
+        if heights is None:
+            return []
+        center = params["center"]
 
         rows = len(heights)
         cols = len(heights[0])
@@ -2965,10 +2981,10 @@ class Evaluator:
             tris_arr = np.array(tris, dtype=np.uint32)
             mesh = m3d.Mesh(vert_properties=verts_arr, tri_verts=tris_arr)
             body = m3d.Manifold(mesh)
-            return self._tag(body, node, ctx)
+            return [self._tag_generated(body, node, params["color"])]
         except Exception as e:
             self.error(f"surface: mesh construction failed: {e}", node)
-            return None
+            return []
 
     def _surface_load(self, file_path: str, invert: bool):
         """Load height data from a .dat text file or a PNG image."""
@@ -3021,37 +3037,79 @@ class Evaluator:
             path = _os.path.join(base_dir, path)
         return path
 
-    def _builtin_import(self, args: dict, node, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _resolve_import(self, node: ModularCall, ctx: EvalContext) -> dict:
+        """Loads the file's raw data (verts/tris, or 2D contours) as plain
+        data during resolve — all pure file I/O and numpy math, no Manifold
+        calls — so generate only needs to build the Manifold/CrossSection
+        from already-parsed data, matching the caching approach used for
+        surface(). Mirrors _builtin_import's per-extension dispatch and
+        each removed _import_X_geometry wrapper's own exception handling
+        exactly, so observable errors/warnings are unchanged."""
         import os as _os
+        args, ctx = self._resolve_call_args(node, ctx)
         file_arg = self._get_arg(args, 0, "file", None)
         layer    = self._get_arg(args, None, "layer", None)
+        color = ctx.color
         if file_arg is None:
             self.error("import: 'file' parameter is required", node)
-            return None
+            return {"color": color}
         path = self._resolve_import_path(file_arg, node)
         ext  = _os.path.splitext(path)[1].lower()
         try:
-            if ext == ".stl":
-                return self._import_stl_geometry(path, node, ctx)
-            elif ext == ".obj":
-                return self._import_obj_geometry(path, node, ctx)
-            elif ext == ".off":
-                return self._import_off_geometry(path, node, ctx)
-            elif ext == ".3mf":
-                return self._import_3mf_geometry(path, node, ctx)
+            if ext in (".stl", ".obj", ".off", ".3mf"):
+                loader = {".stl": self._load_stl, ".obj": self._load_obj,
+                          ".off": self._load_off, ".3mf": self._load_3mf}[ext]
+                try:
+                    verts, tris = loader(path)
+                except Exception as e:
+                    self.error(f"import: {e}", node)
+                    return {"color": color}
+                return {"kind": "mesh", "verts": verts, "tris": tris, "color": color}
             elif ext == ".dxf":
-                return self._import_dxf_geometry(path, layer, node, ctx)
+                contours = self._load_dxf_contours(path, layer, node)
+                return {"kind": "dxf", "contours": contours, "color": color}
             elif ext in (".svg", ".pdf"):
-                return self._import_svg_geometry(path, node, ctx)
+                try:
+                    contours = self._load_svg_contours(path)
+                except Exception as e:
+                    self.error(f"import: {e}", node)
+                    return {"color": color}
+                return {"kind": "svg", "contours": contours, "color": color}
             elif ext == ".json":
                 self.error("import: .json returns data, not geometry — use as an expression", node)
-                return None
+                return {"color": color}
             else:
                 self.error(f"import: unsupported file type '{ext}'", node)
-                return None
+                return {"color": color}
         except OSError as e:
             self.error(f"import: {e}", node)
-            return None
+            return {"color": color}
+
+    def _generate_import(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        kind = params.get("kind")
+        color = params["color"]
+        if kind == "mesh":
+            body = self._mesh_to_colored_body_generate(params["verts"], params["tris"], node, color)
+            return self._body_list(body)
+        if kind == "dxf":
+            contours = params["contours"]
+            if contours is None:
+                return []
+            if not contours:
+                self.error("import: no closed contours found in DXF file", node)
+                return []
+            polys = [np.array(c, dtype=np.float64) for c in contours]
+            cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
+            return [ColoredBody(section=cs, color=color)]
+        if kind == "svg":
+            contours = params["contours"]
+            if not contours:
+                self.error("import: no shapes found in SVG file", node)
+                return []
+            polys = [np.array(c, dtype=np.float64) for c in contours]
+            cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
+            return [ColoredBody(section=cs, color=color)]
+        return []
 
     def _import_as_value(self, args: dict, node) -> Any:
         import os as _os
@@ -3131,7 +3189,7 @@ class Evaluator:
             return [self._json_to_osc(x) for x in v]
         return v  # str, int, float, bool, None — all native
 
-    def _mesh_to_colored_body(self, verts: Any, tris: Any, node, ctx: EvalContext) -> Optional[ColoredBody]:
+    def _mesh_to_colored_body_generate(self, verts: Any, tris: Any, node, color) -> Optional[ColoredBody]:
         if len(tris) == 0:
             self.error("import: mesh has no triangles", node)
             return None
@@ -3146,7 +3204,7 @@ class Evaluator:
         if body.status() != m3d.Error.NoError:
             pos = getattr(node, "position", None)
             self._echo_fn(f"WARNING: import: mesh is not manifold ({body.status()}){self._loc(pos)}")
-        return self._tag(body, node, ctx)
+        return self._tag_generated(body, node, color)
 
     def _load_stl(self, path: str):
         """Return (verts, tris) from binary or ASCII STL."""
@@ -3184,13 +3242,6 @@ class Evaluator:
             tris = np.arange(count * 3, dtype=np.uint32).reshape(-1, 3)
             return verts, tris
 
-    def _import_stl_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        try:
-            verts, tris = self._load_stl(path)
-        except Exception as e:
-            self.error(f"import: {e}", node); return None
-        return self._mesh_to_colored_body(verts, tris, node, ctx)
-
     def _load_obj(self, path: str):
         verts: list[list[float]] = []; tris: list[list[int]] = []
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -3204,13 +3255,6 @@ class Evaluator:
                     for i in range(1, len(idx) - 1):
                         tris.append([idx[0], idx[i], idx[i + 1]])
         return verts, tris
-
-    def _import_obj_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        try:
-            verts, tris = self._load_obj(path)
-        except Exception as e:
-            self.error(f"import: {e}", node); return None
-        return self._mesh_to_colored_body(verts, tris, node, ctx)
 
     def _load_off(self, path: str):
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -3229,13 +3273,6 @@ class Evaluator:
             for i in range(1, cnt - 1):
                 tris.append([face_idx[0], face_idx[i], face_idx[i + 1]])
         return verts, tris
-
-    def _import_off_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        try:
-            verts, tris = self._load_off(path)
-        except Exception as e:
-            self.error(f"import: {e}", node); return None
-        return self._mesh_to_colored_body(verts, tris, node, ctx)
 
     def _load_3mf(self, path: str):
         import zipfile as _zf
@@ -3260,13 +3297,6 @@ class Evaluator:
                 tris_all.append([base + int(t.get("v1")), base + int(t.get("v2")), base + int(t.get("v3"))])
         return verts_all, tris_all
 
-    def _import_3mf_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        try:
-            verts, tris = self._load_3mf(path)
-        except Exception as e:
-            self.error(f"import: {e}", node); return None
-        return self._mesh_to_colored_body(verts, tris, node, ctx)
-
     def _load_dxf_contours(self, path: str, layer: Any, node) -> Optional[list]:
         try:
             import ezdxf as _ezdxf
@@ -3289,17 +3319,6 @@ class Evaluator:
                 if pts and entity.is_closed:
                     contours.append(pts)
         return contours
-
-    def _import_dxf_geometry(self, path: str, layer: Any, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        contours = self._load_dxf_contours(path, layer, node)
-        if contours is None:
-            return None
-        if not contours:
-            self.error("import: no closed contours found in DXF file", node)
-            return None
-        polys = [np.array(c, dtype=np.float64) for c in contours]
-        cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
-        return ColoredBody(section=cs, color=ctx.color)
 
     def _load_svg_contours(self, path: str) -> list[list[tuple[float, float]]]:
         import xml.etree.ElementTree as _ET
@@ -3478,17 +3497,6 @@ class Evaluator:
         tree = _ET.parse(path)
         return _walk(tree.getroot(), np.eye(3, dtype=np.float64))
 
-    def _import_svg_geometry(self, path: str, node, ctx: EvalContext) -> Optional[ColoredBody]:
-        try:
-            contours = self._load_svg_contours(path)
-        except Exception as e:
-            self.error(f"import: {e}", node); return None
-        if not contours:
-            self.error("import: no shapes found in SVG file", node); return None
-        polys = [np.array(c, dtype=np.float64) for c in contours]
-        cs = m3d.CrossSection(polys, m3d.FillRule.EvenOdd)
-        return ColoredBody(section=cs, color=ctx.color)
-
     def _resolve_offset(self, node: ModularCall, ctx: EvalContext) -> dict:
         args, ctx = self._resolve_call_args(node, ctx)
         self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
@@ -3636,11 +3644,9 @@ class Evaluator:
         except Exception as e:
             self.error(f"text: {e}", node)
 
-    def _builtin_linear_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        cs = self._to_cross_section(children)
-        if cs is None:
-            return None
+    def _resolve_linear_extrude(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
         height = float(self._get_arg(args, 0, "height", 1.0))
         center = bool(self._get_arg(args, None, "center", False))
         twist = float(self._get_arg(args, None, "twist", 0.0))
@@ -3652,54 +3658,74 @@ class Evaluator:
             scale_top = (float(scale), float(scale))
         else:
             scale_top = (float(scale[0]), float(scale[1]))
+        return {"height": height, "center": center, "twist": twist, "slices": slices,
+                "scale_top": scale_top, "color": ctx.color}
+
+    def _generate_linear_extrude(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        cs = self._to_cross_section(flatten_csg_tree(children))
+        if cs is None:
+            return []
         try:
-            body = m3d.Manifold.extrude(cs, height, slices, -twist, scale_top)
-            if center:
-                body = body.translate([0, 0, -height / 2])
-            return self._tag(body, node, ctx)
+            body = m3d.Manifold.extrude(cs, params["height"], params["slices"],
+                                         -params["twist"], params["scale_top"])
+            if params["center"]:
+                body = body.translate([0, 0, -params["height"] / 2])
+            return [self._tag_generated(body, node, params["color"])]
         except Exception as e:
             self.error(f"linear_extrude: {e}", node)
-            return None
+            return []
 
-    def _builtin_rotate_extrude(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        cs = self._to_cross_section(children)
-        if cs is None:
-            return None
+    def _resolve_rotate_extrude(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
         angle = float(self._get_arg(args, 0, "angle", 360.0))
+        return {"angle": angle, "fn": ctx.dyn.get("$fn", 0), "fa": ctx.dyn.get("$fa", 12.0),
+                "fs": ctx.dyn.get("$fs", 2.0), "color": ctx.color}
+
+    def _generate_rotate_extrude(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        cs = self._to_cross_section(flatten_csg_tree(children))
+        if cs is None:
+            return []
+        # max_x depends on the merged children's bounds, which doesn't exist
+        # until generate — segment count can't be precomputed in resolve the
+        # way e.g. offset's can, so it's derived here from cached $fn/$fa/$fs.
         bounds = cs.bounds()
         max_x = max(abs(bounds[0]), abs(bounds[2])) if bounds else 0.0
-        segs = self._fn(ctx, max_x)
+        segs = self._fn_segments(params["fn"], params["fa"], params["fs"], max_x)
         try:
-            body = cs.revolve(segs, angle)
-            return self._tag(body, node, ctx)
+            body = cs.revolve(segs, params["angle"])
+            return [self._tag_generated(body, node, params["color"])]
         except Exception as e:
             self.error(f"rotate_extrude: {e}", node)
-            return None
+            return []
 
-    def _builtin_roof(self, args: dict, node: ModularCall, ctx: EvalContext) -> Optional[ColoredBody]:
-        children = self._eval_children(node.children, ctx)
-        cs = self._to_cross_section(children)
-        if cs is None:
-            return None
+    def _resolve_roof(self, node: ModularCall, ctx: EvalContext) -> dict:
+        args, ctx = self._resolve_call_args(node, ctx)
+        self._eval_children(node.children, ctx)  # side effect only, see _resolve_transform
         method = self._get_arg(args, None, "method", "voronoi")
         if method not in ("voronoi", "straight"):
             self._echo_fn(f"WARNING: Unknown roof method '{method}'. Using 'voronoi'.")
             method = "voronoi"
+        return {"method": method, "color": ctx.color}
+
+    def _generate_roof(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
+        cs = self._to_cross_section(flatten_csg_tree(children))
+        if cs is None:
+            return []
         try:
             if not cs.to_polygons():
-                return None
+                return []
             body = _skeleton_roof(cs)
             if body is None:
                 body = _skeleton_roof_general(cs)
             if body is None:
                 body = self._roof_sdf_fallback(cs)
             if body is None:
-                return None
-            return self._tag(body, node, ctx)
+                return []
+            return [self._tag_generated(body, node, params["color"])]
         except Exception as e:
             self.error(f"roof: {e}", node)
-            return None
+            return []
 
     def _roof_sdf_fallback(self, cs: m3d.CrossSection) -> Optional[m3d.Manifold]:
         """Signed-distance-field/`level_set` approximation of a roof, used

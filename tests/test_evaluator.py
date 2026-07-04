@@ -3045,17 +3045,16 @@ class TestCSGTree:
 # ---------------------------------------------------------------------------
 
 class TestCSGTreeResolveGenerateSplit:
-    def test_migrated_kinds_registered_unmigrated_kinds_not(self):
+    def test_all_geometry_kinds_registered_in_dispatch(self):
+        # Every geometry-producing builtin is migrated as of Phase 2 step 5.
         _, _, ev = run_tree("cube(1);")
         for kind in ("cube", "sphere", "cylinder", "polyhedron", "circle", "square", "polygon", "text",
                      "translate", "rotate", "scale", "mirror", "resize", "multmatrix", "color",
                      "hull", "minkowski", "offset", "projection",
-                     "union", "difference", "intersection", "intersection_for"):
+                     "union", "difference", "intersection", "intersection_for",
+                     "linear_extrude", "rotate_extrude", "roof", "surface", "import"):
             assert kind in ev._RESOLVE_DISPATCH
             assert kind in ev._GENERATE_DISPATCH
-        for kind in ("linear_extrude", "rotate_extrude", "roof", "surface", "import"):
-            assert kind not in ev._RESOLVE_DISPATCH
-            assert kind not in ev._GENERATE_DISPATCH
 
     def test_cube_params_shape(self):
         _, _, ev = run_tree("cube([2,3,4], center=true);")
@@ -3196,10 +3195,9 @@ class TestCSGTreeStep2Transforms:
         r, g, b = bodies[0].color[:3]
         assert r == approx(0.0, rel=1) and b == approx(1.0)
 
-    def test_migrated_transform_wraps_migrated_offset_wraps_unmigrated_extrude(self):
-        # offset() was migrated in step 3 (was still un-migrated when this
-        # test was first written in step 2) — translate/offset are now both
-        # migrated, wrapping the still-unmigrated linear_extrude (step 5).
+    def test_migrated_transform_wraps_migrated_offset_wraps_migrated_extrude(self):
+        # offset() was migrated in step 3, linear_extrude in step 5 — all
+        # three kinds in this nesting are now migrated.
         bb = bbox(run("linear_extrude(height=1) translate([5,0]) offset(r=1) square(2);")[0])
         assert bb[3] - bb[0] == approx(4)  # 2x2 square offset(r=1) -> 4x4, translate doesn't change extent
         assert bb[0] == approx(4) and bb[3] == approx(8)
@@ -3394,10 +3392,10 @@ class TestCSGTreeStep4Booleans:
         assert len(bodies) == 1
         assert bodies[0].body.volume() == approx(2)
 
-    def test_migrated_union_wraps_still_unmigrated_linear_extrude(self):
-        # linear_extrude() is not migrated yet (step 5) — migrated union
-        # wrapping a not-yet-migrated extrude. If linear_extrude silently
-        # returned no bodies, union's per-statement grouping would drop it.
+    def test_migrated_union_wraps_migrated_linear_extrude(self):
+        # linear_extrude() was migrated in step 5 — migrated union wrapping
+        # a migrated extrude. If linear_extrude silently returned no bodies,
+        # union's per-statement grouping would drop it.
         bodies = run("union() { cube(1); translate([3,0,0]) linear_extrude(height=2) square(1); }")[0]
         assert len(bodies) == 1
         bb = bbox(bodies)
@@ -3410,6 +3408,162 @@ class TestCSGTreeStep4Booleans:
             "intersection() { cube(3, center=true); sphere(2); }",
             "union() { cube(1); for (i=[0:2]) translate([2+i*2,0,0]) sphere(0.5); }",
             "intersection_for(i=[0:2]) rotate([0,0,i*60]) cube([10,2,10], center=true);",
+        ]:
+            bodies, _, ev = run_tree(src)
+            assert flatten_csg_tree(ev.csg_tree) == bodies
+
+
+# ---------------------------------------------------------------------------
+# CSG tree — Phase 2 step 5: extrusion + surface + import
+# ---------------------------------------------------------------------------
+
+_UNIT_CUBE_OBJ = """\
+v 0.0 0.0 0.0
+v 0.0 0.0 1.0
+v 0.0 1.0 0.0
+v 0.0 1.0 1.0
+v 1.0 0.0 0.0
+v 1.0 0.0 1.0
+v 1.0 1.0 0.0
+v 1.0 1.0 1.0
+f 2 1 5
+f 3 5 1
+f 2 4 1
+f 4 2 6
+f 4 3 1
+f 4 8 3
+f 6 5 7
+f 6 2 5
+f 7 5 3
+f 8 7 3
+f 8 4 6
+f 8 6 7
+"""
+
+
+class TestCSGTreeStep5Extrusion:
+    def test_extrusion_kinds_registered(self):
+        _, _, ev = run_tree("cube(1);")
+        for kind in ("linear_extrude", "rotate_extrude", "roof", "surface", "import"):
+            assert kind in ev._RESOLVE_DISPATCH
+            assert kind in ev._GENERATE_DISPATCH
+
+    def test_linear_extrude_params_shape(self):
+        _, _, ev = run_tree(
+            "linear_extrude(height=5, center=true, twist=90, slices=10, scale=2) square(1);")
+        params = ev.csg_tree[0].params
+        assert params["height"] == approx(5)
+        assert params["center"] is True
+        assert params["twist"] == approx(90)
+        assert params["slices"] == 10
+        assert params["scale_top"] == (approx(2), approx(2))
+        assert "color" in params
+
+    def test_linear_extrude_geometry_centered(self):
+        bodies = run("linear_extrude(height=5, center=true) square([2,3]);")[0]
+        bb = bbox(bodies)
+        assert bb[2] == approx(-2.5) and bb[5] == approx(2.5)
+        assert bodies[0].body.volume() == approx(30)
+
+    def test_rotate_extrude_params_shape_caches_fn_fa_fs(self):
+        _, _, ev = run_tree("rotate_extrude($fn=32, $fa=5, $fs=1) translate([5,0]) square([2,3]);")
+        params = ev.csg_tree[0].params
+        assert params["angle"] == approx(360)
+        assert params["fn"] == approx(32)
+        assert params["fa"] == approx(5)
+        assert params["fs"] == approx(1)
+        assert "color" in params
+
+    def test_rotate_extrude_segment_count_depends_on_children_bounds(self):
+        # segs is computed from cs.bounds() at generate time — bounds don't
+        # exist until the 2D children are generated, so this can't be
+        # precomputed in resolve the way e.g. offset's segs can. A regular
+        # 32-gon revolve of a shape spanning x=[5,7] hits exactly +-7 on
+        # both axes (vertices land on the 0/90/180/270 degree marks).
+        bodies = run("rotate_extrude($fn=32) translate([5,0]) square([2,3]);")[0]
+        bb = bbox(bodies)
+        assert bb[0] == approx(-7) and bb[3] == approx(7)
+        assert bb[1] == approx(-7) and bb[4] == approx(7)
+
+    def test_roof_params_shape_and_bad_method_warning(self):
+        _, echo, ev = run_tree('roof(method="bogus") square(10, center=true);')
+        assert ev.csg_tree[0].params["method"] == "voronoi"
+        assert any("Unknown roof method" in line for line in echo)
+
+    def test_roof_straight_skeleton_peak_height(self):
+        bodies = run('roof(method="straight") square([10,10], center=true);')[0]
+        bb = bbox(bodies)
+        assert bb[5] == approx(5, rel=1e-2)  # square roof peaks at half the min side
+
+    def test_surface_params_caches_parsed_heights(self, tmp_path):
+        dat = tmp_path / "heights.dat"
+        dat.write_text("0 0 0\n0 5 0\n0 0 0\n")
+        _, _, ev = run_tree(f'surface(file="{dat}");')
+        params = ev.csg_tree[0].params
+        assert params["heights"] == [[0.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 0.0]]
+        assert params["center"] is False
+
+    def test_surface_geometry_from_dat_file(self, tmp_path):
+        dat = tmp_path / "heights.dat"
+        dat.write_text("0 0 0\n0 5 0\n0 0 0\n")
+        bodies = run(f'surface(file="{dat}");')[0]
+        bb = bbox(bodies)
+        assert bb[3] == approx(2) and bb[4] == approx(2)  # 3x3 grid -> 2x2 footprint
+        assert bb[5] == approx(5)
+
+    def test_surface_missing_file_param_raises(self):
+        with pytest.raises(EvalError):
+            run("surface();")
+
+    def test_import_obj_params_shape_caches_verts_tris(self, tmp_path):
+        obj = tmp_path / "cube.obj"
+        obj.write_text(_UNIT_CUBE_OBJ)
+        _, _, ev = run_tree(f'import("{obj}");')
+        params = ev.csg_tree[0].params
+        assert params["kind"] == "mesh"
+        assert len(params["verts"]) == 8
+        assert len(params["tris"]) == 12
+
+    def test_import_obj_geometry_matches_unit_cube(self, tmp_path):
+        obj = tmp_path / "cube.obj"
+        obj.write_text(_UNIT_CUBE_OBJ)
+        bodies = run(f'import("{obj}");')[0]
+        assert bodies[0].body.volume() == approx(1)
+        bb = bbox(bodies)
+        assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
+
+    def test_import_svg_geometry_rect(self, tmp_path):
+        svg = tmp_path / "rect.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<rect x="0" y="0" width="10" height="20"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        assert bodies[0].section.area() == approx(200)
+
+    def test_import_unsupported_extension_raises(self):
+        with pytest.raises(EvalError):
+            run('import("nonexistent.xyz");')
+
+    def test_migrated_transform_wraps_migrated_rotate_extrude(self):
+        bodies = run("translate([1,0,0]) rotate_extrude($fn=16) translate([5,0]) circle(1);")[0]
+        assert len(bodies) == 1
+        bb = bbox(bodies)
+        assert bb == (approx(-5), approx(-6), approx(-1), approx(7), approx(6), approx(1))
+
+    def test_migrated_union_wraps_migrated_roof(self):
+        # migrated union wrapping a migrated roof (and a migrated cube). If
+        # roof silently returned no bodies, union's per-statement grouping
+        # would drop it and the combined bbox would only cover the cube.
+        bodies = run(
+            "union() { cube([1,1,1]); translate([20,0,0]) roof() square(4, center=true); }")[0]
+        assert len(bodies) == 1
+        bb = bbox(bodies)
+        assert bb[3] == approx(22)  # 20 + half of the 4-wide roof footprint
+
+    def test_flatten_matches_evaluate_result_with_extrusion(self):
+        for src in [
+            "linear_extrude(height=3) circle(2);",
+            "rotate_extrude() translate([3,0]) circle(1);",
+            'roof(method="straight") square(6, center=true);',
         ]:
             bodies, _, ev = run_tree(src)
             assert flatten_csg_tree(ev.csg_tree) == bodies
