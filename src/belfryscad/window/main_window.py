@@ -218,7 +218,9 @@ class FileTab(QWidget):
             name = os.path.basename(self.file_path)
         else:
             name = "Untitled"
-        return name + ("*" if self.is_modified else "")
+        name += "*" if self.is_modified else ""
+        name += " (ro)" if self.editor.isReadOnly() else ""
+        return name
 
 
 class _RenderCallback(QObject):
@@ -833,6 +835,10 @@ class MainWindow(QMainWindow):
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
         edit_menu.addAction(self._act_word_wrap)
         edit_menu.addSeparator()
+        self._act_read_only = QAction("Read Only", self, checkable=True)
+        self._act_read_only.triggered.connect(self._toggle_read_only)
+        edit_menu.addAction(self._act_read_only)
+        edit_menu.addSeparator()
         prefs_act = self._add_action(edit_menu, "Preferences…", self._open_preferences, QKeySequence("Ctrl+,"))
         prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
 
@@ -1039,6 +1045,15 @@ class MainWindow(QMainWindow):
         tab = self._tabs.widget(index)
         if tab:
             self._customizer_pane.set_source(tab.editor.toPlainText())
+            self._act_read_only.setChecked(tab.editor.isReadOnly())
+
+    def _toggle_read_only(self, enabled: bool):
+        tab = self._current_tab()
+        if not tab:
+            return
+        tab.editor.setReadOnly(enabled)
+        idx = self._tabs.indexOf(tab)
+        self._tabs.setTabText(idx, tab.display_name())
 
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
@@ -1135,8 +1150,11 @@ class MainWindow(QMainWindow):
 
     def _create_and_add_tab(self, path: str, text: str) -> FileTab:
         """Create a fully-connected FileTab for an existing file and add it to the UI."""
+        from belfryscad.window.library_manager import _library_dir
+
         tab = FileTab()
         tab.file_path = path
+        tab.editor.setReadOnly(Path(path).resolve().is_relative_to(_library_dir().resolve()))
         tab._last_text = text
         tab._last_cursor = 0
         tab._suppress_text_undo = False
