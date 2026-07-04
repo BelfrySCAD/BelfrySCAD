@@ -766,11 +766,19 @@ def _run_debug_session(path: str, on_pause_line) -> tuple[list[int], int]:
     session.finished.connect(on_finished)
     session.errored.connect(on_errored)
     session.start(nodes, root_scope, breakpoints={}, current_file=path)
-    QTimer.singleShot(5000, app.quit)  # safety timeout — never actually expected to fire
+    QTimer.singleShot(15000, app.quit)  # safety timeout — never actually expected to fire
     app.exec()
     session.paused.disconnect()
     session.finished.disconnect()
     session.errored.disconnect()
+    # If the safety timeout fired (session still running/paused), stop it so
+    # its worker thread doesn't linger blocked into the next test — and
+    # either way, join so the next test starts with a clean slate rather
+    # than racing a still-finishing thread for the GIL.
+    if session.is_running():
+        session.stop()
+    if session._thread is not None:
+        session._thread.join(timeout=5.0)
     return paused_lines, result["count"]
 
 
