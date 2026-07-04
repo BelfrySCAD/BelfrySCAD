@@ -510,7 +510,7 @@ class DebuggerPane(QWidget):
         _style_table_headers(self._vars_table)
         self._vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._vars_table.horizontalHeader().setStretchLastSection(True)
-        self._vars_table.horizontalHeader().resizeSection(0, 120)
+        self._vars_table.horizontalHeader().resizeSection(0, 78)
         self._vars_table.verticalHeader().setVisible(False)
         self._vars_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._vars_table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
