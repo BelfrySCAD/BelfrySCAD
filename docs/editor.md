@@ -76,6 +76,8 @@ The definition node's `.position.origin` gives the source file path, `.position.
 
 `_create_and_add_tab(path, text) -> FileTab` creates a `FileTab` (editor + file metadata) and adds it to `_tabs` in the editor dock. Also registers the editor with `DocumentManager` for cross-window sync. If the only existing tab is an empty, unmodified Untitled tab, it is replaced rather than kept alongside. Used by `_open_file`, `_open_recent`, `_go_to_definition`, `_find_or_open_tab`; not by `_new_document` (different setup path for blank tabs).
 
+**Read-only library files**: `_create_and_add_tab` also sets `tab.editor.setReadOnly(True)` when the opened path resolves under the OpenSCAD library directory (`library_manager._library_dir()` — e.g. installed BOSL2 files), so files opened via "Use Library" or "Go to Definition" into a library aren't edited by accident. `FileTab.display_name()` appends `" (ro)"` to the tab label whenever `editor.isReadOnly()` is true (alongside the `"*"` modified marker). The Edit ▸ Read Only checkable action reflects and toggles the current tab's state (synced in `_tab_changed`), letting library developers make any tab editable again.
+
 ## Code Completion
 
 `QCompleter` with a `QStringListModel` provides prefix-based autocomplete. The popup appears after 2+ identifier characters are typed and hides when there are no matches or an exact match.
@@ -357,7 +359,7 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable)
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
 **Design**: Render / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
 
