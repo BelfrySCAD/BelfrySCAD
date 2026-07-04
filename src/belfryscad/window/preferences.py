@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtCore import QSettings, Qt
 
+from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
+
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
     "editor/fontSize": 13,
@@ -14,6 +16,7 @@ _DEFAULTS = {
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
+    "viewport/colorTheme": DEFAULT_COLOR_THEME,
 }
 
 
@@ -142,6 +145,13 @@ class PreferencesDialog(QDialog):
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
 
+        current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
+        self._color_theme = QComboBox()
+        self._color_theme.addItems(sorted(COLOR_THEMES))
+        idx = self._color_theme.findText(current_theme)
+        self._color_theme.setCurrentIndex(idx if idx >= 0 else 0)
+        vp_form.addRow("Color theme:", self._color_theme)
+
         outer.addLayout(vp_form)
 
         # --- Buttons ---
@@ -162,4 +172,5 @@ class PreferencesDialog(QDialog):
             "viewport/viewerIPD": self._viewer_ipd.value(),
             "viewport/viewerScreenDist": self._viewer_screen_dist.value(),
             "viewport/stereoDepthScale": self._stereo_scale.value() / 100.0,
+            "viewport/colorTheme": self._color_theme.currentText(),
         }

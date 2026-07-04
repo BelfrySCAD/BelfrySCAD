@@ -318,7 +318,7 @@ class SceneRenderer:
         self._label_prog: Optional[mgl.Program] = None
         self._label_quad_vbo: Optional[mgl.Buffer] = None
         self._label_quad_vao: Optional[mgl.VertexArray] = None
-        self._label_tex_cache: dict[str, tuple[mgl.Texture, int, int]] = {}
+        self._label_tex_cache: dict[tuple[str, tuple], tuple[mgl.Texture, int, int]] = {}
         self._label_texture_scale = 4
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
@@ -331,6 +331,8 @@ class SceneRenderer:
         self.camera = Camera()
         self._viewport: tuple[int, int] = (800, 600)
         self._default_color = (0.9, 0.85, 0.1, 1.0)
+        self.bg_color = (0.82, 0.82, 0.82, 1.0)
+        self.axes_color = (0.2, 0.2, 0.2, 1.0)
         self.selected_id: Optional[int] = None
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
@@ -465,8 +467,10 @@ class SceneRenderer:
             [(edge_vbo, "3f 3f", "in_position", "in_color")],
         )
 
-        color = cb.color if cb.color is not None else self._default_color
-        return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
+        # cb.color may be None (no explicit color() override) — kept as None
+        # here rather than resolved now, so a later color-theme change is
+        # picked up at draw time without needing to re-upload the mesh.
+        return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), cb.color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
                           program=self._prog,
                           tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao,
@@ -585,7 +589,7 @@ class SceneRenderer:
         if not self.depth_test_points:
             self._ctx.enable(mgl.DEPTH_TEST)
 
-    def paint(self, bg_color: tuple = (0.82, 0.82, 0.82, 1.0), qt_fbo_id: int = 0,
+    def paint(self, bg_color: tuple = None, qt_fbo_id: int = 0,
               extra_paint=None):
         if self._ctx is None or self._prog is None:
             return
@@ -593,7 +597,7 @@ class SceneRenderer:
         fbo = self._ctx.detect_framebuffer(qt_fbo_id)
         fbo.use()
 
-        self._ctx.clear(*bg_color[:3])
+        self._ctx.clear(*(bg_color if bg_color is not None else self.bg_color)[:3])
         self._ctx.enable(mgl.DEPTH_TEST)
         self._ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
@@ -690,7 +694,8 @@ class SceneRenderer:
                 continue
 
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
-            color = _highlight_color(buf.color) if is_selected else buf.color
+            base_color = buf.color if buf.color is not None else self._default_color
+            color = _highlight_color(base_color) if is_selected else base_color
 
             if is_selected and has_drag:
                 buf_model = np.eye(4, dtype=np.float32)
@@ -745,7 +750,8 @@ class SceneRenderer:
             self._ctx.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
             for buf in bg_bufs:
-                ghost_color = (*buf.color[:3], 0.2)
+                base_color = buf.color if buf.color is not None else self._default_color
+                ghost_color = (*base_color[:3], 0.2)
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = ghost_color
@@ -833,7 +839,7 @@ class SceneRenderer:
         red   = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         green   = np.array([0.15, 0.65, 0.15], dtype=np.float32)
         blue   = np.array([0.25, 0.35, 0.9], dtype=np.float32)
-        gray    = np.array([0.2, 0.2, 0.2], dtype=np.float32)
+        gray    = np.array(self.axes_color[:3], dtype=np.float32)
         axis_colors = [red, green, blue];
 
         # Tick sizes: minor ~24 px, major exactly 2×; ticks extend in the
@@ -995,8 +1001,10 @@ class SceneRenderer:
         return result
 
     def _get_label_texture(self, text: str) -> tuple[mgl.Texture, int, int]:
-        """Return (texture, pixel_width, pixel_height) for a tick-label string, cached."""
-        cached = self._label_tex_cache.get(text)
+        """Return (texture, pixel_width, pixel_height) for a tick-label string, cached.
+        Cache key includes axes_color so a color-theme change invalidates it."""
+        key = (text, self.axes_color)
+        cached = self._label_tex_cache.get(key)
         if cached is not None:
             return cached
 
@@ -1006,12 +1014,13 @@ class SceneRenderer:
         tw = max(1, fm.horizontalAdvance(text))
         th = max(1, fm.height())
 
+        r, g, b = (round(c * 255) for c in self.axes_color[:3])
         img = QImage(tw, th, QImage.Format.Format_RGBA8888)
         img.fill(Qt.GlobalColor.transparent)
         painter = QPainter(img)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setFont(font)
-        painter.setPen(QColor("#222222"))
+        painter.setPen(QColor(r, g, b))
         painter.drawText(0, fm.ascent(), text)
         painter.end()
 
@@ -1019,7 +1028,7 @@ class SceneRenderer:
         tex.filter = (mgl.LINEAR, mgl.LINEAR)
 
         result = (tex, tw, th)
-        self._label_tex_cache[text] = result
+        self._label_tex_cache[key] = result
         return result
 
     def _render_axis_labels(self, mvp: np.ndarray):
