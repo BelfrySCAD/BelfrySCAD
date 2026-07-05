@@ -593,6 +593,8 @@ class CodeEditor(QPlainTextEdit):
         self._completer.setModel(self._completer_model)
         self._completer.activated.connect(self._insert_completion)
         self._user_names: list[str] = []
+        self._user_callables: set[str] = set()
+        self._user_variables: set[str] = set()
         self._update_completer_words()
 
         self._debug_locals: dict | None = None
@@ -849,7 +851,11 @@ class CodeEditor(QPlainTextEdit):
                                     cursor.MoveMode.KeepAnchor, n)
                 cursor.removeSelectedText()
         super().keyPressEvent(event)
-        self._update_completer_popup()
+        text = event.text()
+        if text and (text.isalnum() or text == '_'):
+            self._update_completer_popup()
+        elif self._completer.popup().isVisible():
+            self._completer.popup().hide()
 
     def _indent_lines(self):
         cursor = self.textCursor()
@@ -904,34 +910,40 @@ class CodeEditor(QPlainTextEdit):
     # Code completion
     # ------------------------------------------------------------------
 
-    _BUILTIN_WORDS = sorted(set(
-        # keywords
-        ["module", "function", "if", "else", "for", "let",
-         "each", "true", "false", "undef", "include", "use"]
-        # built-in modules
-        + ["cube", "sphere", "cylinder", "cone", "polyhedron",
-           "translate", "rotate", "scale", "mirror", "multmatrix",
-           "color", "hull", "minkowski", "resize", "offset",
-           "union", "difference", "intersection",
-           "echo", "assert", "children", "render",
-           "circle", "square", "polygon", "text",
-           "linear_extrude", "rotate_extrude", "roof", "surface",
-           "projection", "import"]
-        # built-in functions
-        + ["abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
-           "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-           "max", "min", "pow", "norm", "cross", "rands",
-           "concat", "len", "str", "chr", "ord",
-           "is_undef", "is_bool", "is_num", "is_string", "is_list", "is_function",
-           "is_object", "search", "lookup",
-           "version", "version_num", "parent_module",
-           "object", "textmetrics", "fontmetrics"]
-        # constants
-        + ["PI"]
-        # built-in $-variables
-        + ["$fn", "$fa", "$fs", "$t", "$children", "$parent_modules",
-           "$vpt", "$vpr", "$vpd"]
-    ))
+    _BUILTIN_KEYWORDS = {
+        "module", "function", "if", "else", "for", "let",
+        "each", "true", "false", "undef", "include", "use",
+    }
+    _BUILTIN_MODULES = {
+        "cube", "sphere", "cylinder", "cone", "polyhedron",
+        "translate", "rotate", "scale", "mirror", "multmatrix",
+        "color", "hull", "minkowski", "resize", "offset",
+        "union", "difference", "intersection",
+        "echo", "assert", "children", "render",
+        "circle", "square", "polygon", "text",
+        "linear_extrude", "rotate_extrude", "roof", "surface",
+        "projection", "import",
+    }
+    _BUILTIN_FUNCTIONS = {
+        "abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+        "max", "min", "pow", "norm", "cross", "rands",
+        "concat", "len", "str", "chr", "ord",
+        "is_undef", "is_bool", "is_num", "is_string", "is_list", "is_function",
+        "is_object", "search", "lookup",
+        "version", "version_num", "parent_module",
+        "object", "textmetrics", "fontmetrics",
+    }
+    _BUILTIN_CONSTANTS = {"PI"}
+    _BUILTIN_DOLLAR_VARS = {
+        "$fn", "$fa", "$fs", "$t", "$children", "$parent_modules",
+        "$vpt", "$vpr", "$vpd",
+    }
+    _BUILTIN_WORDS = sorted(
+        _BUILTIN_KEYWORDS | _BUILTIN_MODULES | _BUILTIN_FUNCTIONS
+        | _BUILTIN_CONSTANTS | _BUILTIN_DOLLAR_VARS
+    )
+    _BUILTIN_CALLABLES = _BUILTIN_MODULES | _BUILTIN_FUNCTIONS
 
     def _update_completer_words(self):
         words = sorted(set(self._BUILTIN_WORDS + self._user_names))
@@ -941,15 +953,26 @@ class CodeEditor(QPlainTextEdit):
         """Extract user-defined names from a root scope and refresh the completer."""
         if scope is None:
             self._user_names = []
+            self._user_callables = set()
+            self._user_variables = set()
             self._update_completer_words()
             return
-        names = set()
+        by_attr = {}
         for attr in ('variables', 'functions', 'modules'):
             table = getattr(scope, attr, None)
-            if isinstance(table, dict):
-                names.update(table.keys())
+            by_attr[attr] = set(table.keys()) if isinstance(table, dict) else set()
+        names = by_attr['variables'] | by_attr['functions'] | by_attr['modules']
         self._user_names = [n for n in names if n not in self._BUILTIN_WORDS]
+        self._user_callables = by_attr['functions'] | by_attr['modules']
+        self._user_variables = by_attr['variables']
         self._update_completer_words()
+
+    def _is_callable_completion(self, name: str) -> bool:
+        """True if `name` is only known as a function/module — i.e. calling
+        it with a trailing '(' isn't ambiguous with a same-named variable."""
+        is_callable = name in self._BUILTIN_CALLABLES or name in self._user_callables
+        is_variable = name in self._user_variables
+        return is_callable and not is_variable
 
     def _text_under_cursor(self) -> str:
         cursor = self.textCursor()
@@ -966,6 +989,8 @@ class CodeEditor(QPlainTextEdit):
         prefix = self._text_under_cursor()
         cursor = self.textCursor()
         cursor.movePosition(cursor.MoveOperation.Left, cursor.MoveMode.KeepAnchor, len(prefix))
+        if self._is_callable_completion(completion):
+            completion += "("
         cursor.insertText(completion)
         self.setTextCursor(cursor)
 
