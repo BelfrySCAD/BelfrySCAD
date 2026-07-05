@@ -1448,7 +1448,7 @@ def _nice_spacings(L: float) -> tuple[float, float, float]:
     major_spacing is the largest round subdivision below the label interval,
     so e.g. when labels are every 2 there is a major tick at every 1.
     """
-    raw = max(L, 1e-9) / 14
+    raw = max(L, 1e-9) / 28
     mag = 10 ** math.floor(math.log10(raw))
     for f in (1, 2, 5, 10):
         if f * mag >= raw:
