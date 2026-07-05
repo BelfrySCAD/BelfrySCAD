@@ -499,7 +499,6 @@ class DebuggerPane(QWidget):
         self._var_search = QLineEdit()
         self._var_search.setPlaceholderText("Search…")
         self._var_search.setClearButtonEnabled(True)
-        self._var_search.setStyleSheet("QLineEdit { padding: 0 10px; }")
         vars_header.addWidget(self._var_search, 1)
         vars_header.addSpacing(10)
         self._hidden_check = QCheckBox("Hiddens")
