@@ -18,6 +18,7 @@ from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
     _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix,
     _affine_reference_shape, _affine_shape_edges, _apply_affine,
+    _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
 )
 
 
@@ -299,3 +300,147 @@ class TestApplyAffine:
         out = _apply_affine(identity, cube)
         for p, o in zip(cube, out):
             assert all(abs(a - b) < 1e-9 for a, b in zip(p, o))
+
+
+class TestIterEnclosingLiterals:
+    def test_plain_list_yields_once(self):
+        text = "x = [1, 2, 3];"
+        results = list(_iter_enclosing_literals(text, text.index("2")))
+        assert results == [(4, 13, [1, 2, 3])]
+
+    def test_nested_list_yields_inner_then_outer(self):
+        text = "p = [[0,0],[1,0]];"
+        offset = text.index("0,0") + 1  # inside the inner [0,0]
+        results = list(_iter_enclosing_literals(text, offset))
+        assert results == [(5, 10, [0, 0]), (4, 17, [[0, 0], [1, 0]])]
+
+    def test_identifier_content_is_skipped_but_walk_continues(self):
+        text = "f(x, [a, 1, 2]);"
+        # cursor inside [a, 1, 2] -- fails literal_eval (identifier 'a'), no
+        # enclosing bracket beyond it, so nothing is yielded
+        offset = text.index("1")
+        assert list(_iter_enclosing_literals(text, offset)) == []
+
+    def test_walks_past_unparseable_levels_without_getting_stuck(self):
+        # Both the inner [a, 1] and the outer [[a, 1], [2, 3]] embed the
+        # identifier `a`, so neither parses -- the walk should skip both
+        # and terminate cleanly (no enclosing bracket left), not raise or hang.
+        text = "outer = [[a, 1], [2, 3]];"
+        offset = text.index("[a, 1]") + 2
+        assert list(_iter_enclosing_literals(text, offset)) == []
+
+    def test_unbalanced_open_bracket_returns_nothing(self):
+        text = "x = [1, 2"
+        assert list(_iter_enclosing_literals(text, text.index("2"))) == []
+
+    def test_cursor_between_two_literals_returns_nothing(self):
+        text = "[1,2]) foo([3,4]"
+        offset = text.index(") foo(") + 1
+        assert list(_iter_enclosing_literals(text, offset)) == []
+
+    def test_trailing_comma_parses(self):
+        text = "[1, 2, 3,]"
+        assert list(_iter_enclosing_literals(text, 5)) == [(0, 10, [1, 2, 3])]
+
+    def test_multiline_literal(self):
+        text = "path = [\n  [0, 0],\n  [1, 1]\n];"
+        offset = text.index("1, 1")
+        results = list(_iter_enclosing_literals(text, offset))
+        assert results[0][2] == [1, 1]
+        assert results[1][2] == [[0, 0], [1, 1]]
+
+    def test_max_levels_exhausted(self):
+        # 3 levels of nesting, but max_levels=1 only checks the innermost
+        text = "[[[1,2]]]"
+        offset = text.index("1")
+        results = list(_iter_enclosing_literals(text, offset, max_levels=1))
+        assert results == [(2, 7, [1, 2])]
+
+    def test_openscad_range_syntax_fails_to_parse(self):
+        text = "for (i = [0:5]) x;"
+        offset = text.index("0:5")
+        assert list(_iter_enclosing_literals(text, offset)) == []
+
+
+class TestFindEditableLiterals:
+    def test_matches_path(self):
+        text = "path = [[0,0],[1,0],[2,1]];"
+        offset = text.index("[1,0]") + 2
+        result = find_editable_literals(text, offset)
+        assert result["path"] == (7, 26, [[0, 0], [1, 0], [2, 1]])
+
+    def test_walks_outward_past_inner_point_to_outer_path(self):
+        text = "path = [[0,0],[1,0]];"
+        offset = text.index("0,0") + 1  # cursor on the inner point
+        result = find_editable_literals(text, offset)
+        assert result["path"][2] == [[0, 0], [1, 0]]
+
+    def test_matches_matrix(self):
+        text = "m = [[1,0],[0,1]];"
+        result = find_editable_literals(text, text.index("1,0"))
+        assert result["matrix"][2] == [[1, 0], [0, 1]]
+
+    def test_matches_affine(self):
+        text = "m = [[1,0,0],[0,1,0],[0,0,1]];"
+        result = find_editable_literals(text, text.index("0,1,0"))
+        assert result["affine"][2] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+    def test_flat_scalar_list_does_not_match(self):
+        text = "sizes = [1, 2, 3, 4];"
+        assert find_editable_literals(text, text.index("2")) == {}
+
+    def test_expression_content_does_not_match(self):
+        text = "v = [x, 1, 2];"
+        assert find_editable_literals(text, text.index("1")) == {}
+
+    def test_grid_row_click_still_finds_outer_grid(self):
+        # Regression test: a grid's own row is itself a valid Path (a list
+        # of numeric points), so a single shared "first match wins" walk
+        # (like the old find_editable_literal) would resolve "path" (the
+        # row) before ever reaching "grid" (the whole structure) for any
+        # click inside a row. Each shape must search independently.
+        text = "grid = [[[0,0],[1,0]],[[0,1],[1,1]]];"
+        offset = text.index("1,0")
+        result = find_editable_literals(text, offset)
+        assert result["path"][2] == [[0, 0], [1, 0]]
+        assert result["grid"][2] == [[[0, 0], [1, 0]], [[0, 1], [1, 1]]]
+
+    def test_no_enclosing_bracket_returns_none(self):
+        text = "cube(10);"
+        assert find_editable_literals(text, text.index("10")) == {}
+
+
+class TestFindViewableLiterals:
+    def test_inner_point_click_finds_both_list_and_outer_path(self):
+        # Regression test: `_is_list` is trivially true for any list, so a
+        # single shared "first match wins" walk would get stuck on the inner
+        # point and never reach the enclosing path. Each shape must search
+        # independently so "path" is still found even though "list" resolves
+        # to the inner point.
+        text = "path = [[0,0],[1,0]];"
+        offset = text.index("0,0") + 1
+        result = find_viewable_literals(text, offset)
+        assert result["list"] == (8, 13, [0, 0])
+        assert result["path"] == (7, 20, [[0, 0], [1, 0]])
+        assert "vnf" not in result
+        assert "grid" not in result
+
+    def test_outer_path_when_clicked_between_points(self):
+        text = "path = [[0,0], [1,0]];"
+        offset = text.index("], [") + 1
+        result = find_viewable_literals(text, offset)
+        assert result["list"][2] == [[0, 0], [1, 0]]
+        assert result["path"][2] == [[0, 0], [1, 0]]
+
+    def test_vnf_shape_matches(self):
+        # Click on the top-level comma separating the verts-list from the
+        # faces-list -- the innermost enclosing bracket there is the whole
+        # VNF pair, not either inner sublist.
+        text = "v = [[[0,0,0],[1,0,0],[0,1,0]],[[0,1,2]]];"
+        offset = text.index("],[[0,1,2]") + 1
+        result = find_viewable_literals(text, offset)
+        assert result["vnf"][2] == [[[0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]]
+
+    def test_expression_content_finds_nothing(self):
+        text = "v = [x, 1, 2];"
+        assert find_viewable_literals(text, text.index("1")) == {}

@@ -896,24 +896,38 @@ class MainWindow(QMainWindow):
             ("Isometric", "iso",    "Ctrl+0"),
             ("View All",  "all",    "Shift+Ctrl+V"),
         ):
-            self._add_action(view_menu, label,
+            act = self._add_action(view_menu, label,
                              lambda p=preset: self._set_view(p),
                              QKeySequence(key))
+            # ApplicationShortcut, not the default WindowShortcut: these must
+            # fire while a data-viewer dialog (incl. a modal "Edit as..."
+            # editor) is the active window, not just the main window — Qt's
+            # shortcut dispatch otherwise suppresses WindowShortcut-context
+            # actions owned by a non-active top-level widget whenever any
+            # modal widget is active, regardless of ApplicationModal vs.
+            # WindowModal.
+            act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
+        self._act_spin.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Ctrl+Meta+2"))
+        self._act_perspective.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
+        self._act_stereo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
+        self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
+        self._act_show_edges.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
         self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
         self._act_show_cross.setShortcut(QKeySequence("Ctrl+3"))
+        self._act_show_cross.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
         view_menu.addSeparator()  # isolates macOS-injected "Enter Full Screen" (which has an icon) in its own section
 
@@ -983,6 +997,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
+        tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
                 tab,
@@ -1170,6 +1185,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
+        tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),

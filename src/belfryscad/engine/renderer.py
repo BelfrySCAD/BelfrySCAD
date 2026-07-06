@@ -583,11 +583,22 @@ class SceneRenderer:
             return
         if not self.depth_test_points:
             self._ctx.disable(mgl.DEPTH_TEST)
+        else:
+            # Vertex markers sit exactly on top of the wireframe lines drawn
+            # just before them (same coincident depth) -- pull markers
+            # slightly toward the camera so they win that tie and stay
+            # visible over grid/path lines, while still being properly
+            # occluded by real opaque faces farther in front.
+            self._ctx.polygon_offset = (-1.0, -1.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         for pb in self._point_buffers:
             pb.vao.render(mgl.TRIANGLES)
         if not self.depth_test_points:
             self._ctx.enable(mgl.DEPTH_TEST)
+        else:
+            self._ctx.disable_direct(0x8037)
+            self._ctx.polygon_offset = (0.0, 0.0)
 
     def paint(self, bg_color: tuple = None, qt_fbo_id: int = 0,
               extra_paint=None):

@@ -56,6 +56,7 @@ class Viewport(QOpenGLWidget):
         self._renderer = SceneRenderer()
         self._last_mouse: QPoint | None = None
         self._mouse_button: Qt.MouseButton | None = None
+        self._orbit_enabled: bool = True   # subclasses disable for locked 2D top-down views
         self.setMouseTracking(True)
         self._frame_count: int = 0
         self._pending_load = None
@@ -272,9 +273,19 @@ class Viewport(QOpenGLWidget):
     def set_view_preset(self, preset: str):
         cam = self._renderer.camera
         if preset == "top":
-            cam.azimuth, cam.elevation = 0, 90
+            # Not exactly 90: _look_at's world-up ([0,0,1]) becomes parallel
+            # to the forward vector at precisely elevation=+-90 (gimbal
+            # lock), so it falls back to a hardcoded +X "right" vector —
+            # which doesn't match the azimuth-dependent basis the drag-orbit
+            # math continuously converges to as elevation moves away from
+            # the pole. Starting a drag from exactly elevation=90 therefore
+            # snapped the view to whatever direction that arbitrary +X
+            # fallback happened to imply. Landing just shy of the pole keeps
+            # the view visually identical (sin/cos differ by ~1e-6) while
+            # keeping the basis on the continuous (non-fallback) branch.
+            cam.azimuth, cam.elevation = 270, 89.9999
         elif preset == "bottom":
-            cam.azimuth, cam.elevation = 0, -90
+            cam.azimuth, cam.elevation = 0, -89.9999
         elif preset == "front":
             cam.azimuth, cam.elevation = 270, 0
         elif preset == "back":
@@ -423,6 +434,8 @@ class Viewport(QOpenGLWidget):
                 self._renderer.light_az_offset += dx * 0.5
                 self._renderer.light_el_offset += dy * 0.5
                 self.update()
+                return
+            if not self._orbit_enabled:
                 return
             cam.azimuth -= dx * 0.5
             cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
