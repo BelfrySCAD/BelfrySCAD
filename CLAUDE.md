@@ -63,6 +63,7 @@ No live preview. Full Manifold CSG processing runs when:
 
 - The user selects **Render** (toolbar or Design menu)
 - A **gizmo drag commits** (mouse-up)
+- An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
 - A **file is saved** (`_write_file` triggers `_render` after writing)
 

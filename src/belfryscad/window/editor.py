@@ -559,6 +559,7 @@ class CodeEditor(QPlainTextEdit):
     go_to_definition_requested = Signal(str)   # emits the identifier word
     print_to_console = Signal(str)             # emits formatted assignment string
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
+    source_edited_externally = Signal()        # emits after an "Edit as..." Save writes back to source
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -856,6 +857,17 @@ class CodeEditor(QPlainTextEdit):
             self._update_completer_popup()
         elif self._completer.popup().isVisible():
             self._completer.popup().hide()
+
+    def replace_span(self, start: int, end: int, new_text: str):
+        """Replace document text in [start, end) with new_text. Native Qt
+        undo is disabled on this widget (see __init__); this just fires
+        document().contentsChanged like any other edit, which MainWindow's
+        _on_editor_changed already captures into the app's own undo stack
+        (_TextEditCmd) — no extra undo wiring needed here."""
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(new_text)
 
     def _indent_lines(self):
         cursor = self.textCursor()
@@ -1216,5 +1228,40 @@ class CodeEditor(QPlainTextEdit):
                 lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
             )
             menu.addAction(act)
+
+        # Lexical "View as..."/"Edit as..." for a plain numeric literal under
+        # the cursor — independent of debug session state, so these work even
+        # when not debugging (unlike the debug-locals "View 'word' as..."
+        # block above, which is keyed by identifier name).
+        from belfryscad.window.data_viewers import (
+            find_viewable_literals, find_editable_literals,
+            build_lexical_view_menu, build_editor_menu,
+        )
+        text = self.toPlainText()
+        offset = self.cursorForPosition(event.pos()).position()
+
+        view_literals = find_viewable_literals(text, offset)
+        edit_literals = find_editable_literals(text, offset) if not self.isReadOnly() else {}
+
+        if view_literals or edit_literals:
+            last = menu.actions()[-1] if menu.actions() else None
+            if last is not None and not last.isSeparator():
+                menu.addSeparator()
+
+        if view_literals:
+            view_sub = QMenu("View as...", self)
+            build_lexical_view_menu(view_sub, text, view_literals, self)
+            if not view_sub.isEmpty():
+                menu.addMenu(view_sub)
+
+        if edit_literals:
+            def on_commit(new_text, start, end):
+                self.replace_span(start, end, new_text)
+                self.source_edited_externally.emit()
+
+            edit_sub = QMenu("Edit as...", self)
+            build_editor_menu(edit_sub, text, edit_literals, on_commit, self)
+            if not edit_sub.isEmpty():
+                menu.addMenu(edit_sub)
 
         menu.exec(event.globalPos())
