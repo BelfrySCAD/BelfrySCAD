@@ -568,6 +568,19 @@ class SceneRenderer:
         mvp = self.camera.projection_matrix(aspect) @ self.camera.view_matrix()
         return nearest_point_index(points, mvp, px, py, w, h)
 
+    def pick_nearest_segment(self, points: np.ndarray, segments: list,
+                              px: float, py: float, w: int, h: int):
+        """Like `pick_nearest_point`, but for line segments -- `segments`
+        is a list of `(i, j)` index pairs into `points` (N, 3). Returns
+        `(segment_index, world_point)` for whichever segment's closest
+        point to the pick ray projects nearest `(px, py)` on screen, or
+        `None` if none is within the pick threshold. See
+        `nearest_segment_index` for the pure math."""
+        aspect = w / h if h > 0 else 1.0
+        mvp = self.camera.projection_matrix(aspect) @ self.camera.view_matrix()
+        ray_o, ray_d = self.camera_ray(px, py, w, h)
+        return nearest_segment_index(points, segments, ray_o, ray_d, mvp, px, py, w, h)
+
     def _render_simple_lines(self, mvp: np.ndarray):
         if not self._line_buffers or self._gizmo_prog is None:
             return
@@ -1515,6 +1528,71 @@ def nearest_point_index(points: np.ndarray, mvp: np.ndarray, px: float, py: floa
     d2 = np.where(valid, d2, np.inf)
     best = int(np.argmin(d2))
     return best if d2[best] < threshold_px * threshold_px else -1
+
+
+def _closest_point_on_segment_to_ray(a: np.ndarray, b: np.ndarray,
+                                      ray_origin: np.ndarray, ray_dir: np.ndarray) -> np.ndarray:
+    """Closest point on segment `[a, b]` to the infinite line through
+    `ray_origin` in direction `ray_dir` -- the standard closest-points-
+    between-two-lines solution, with the segment's own parameter clamped
+    to `[0, 1]` (the ray's parameter is left unclamped, since points
+    "behind" the click are still meaningful for a line viewed edge-on)."""
+    d1 = b - a
+    d2 = ray_dir
+    r = a - ray_origin
+    aa = np.dot(d1, d1)
+    ee = np.dot(d2, d2)
+    ff = np.dot(d2, r)
+    cc = np.dot(d1, r)
+    bb = np.dot(d1, d2)
+    denom = aa * ee - bb * bb
+    s = (bb * ff - cc * ee) / denom if abs(denom) > 1e-9 else 0.0
+    s = max(0.0, min(1.0, s))
+    return a + d1 * s
+
+
+def _project_to_screen(point: np.ndarray, mvp: np.ndarray, w: int, h: int) -> tuple[float, float] | None:
+    """Project a single world-space point to screen space via `mvp`, or
+    `None` if it's behind the camera (`w_clip <= 0`)."""
+    clip = mvp.astype(np.float64) @ np.array([point[0], point[1], point[2], 1.0], dtype=np.float64)
+    if clip[3] <= 1e-12:
+        return None
+    ndc = clip[:2] / clip[3]
+    sx = (ndc[0] * 0.5 + 0.5) * w
+    sy = (1.0 - (ndc[1] * 0.5 + 0.5)) * h
+    return sx, sy
+
+
+def nearest_segment_index(points: np.ndarray, segments: list, ray_origin: np.ndarray, ray_dir: np.ndarray,
+                           mvp: np.ndarray, px: float, py: float, w: int, h: int,
+                           threshold_px: float = 8.0):
+    """For each `(i, j)` in `segments` (indices into `points`, shape
+    (N, 3)), find the closest point on that segment to the pick ray
+    (`_closest_point_on_segment_to_ray`), project it to screen space via
+    `mvp`, and return `(segment_index, world_point)` for whichever
+    segment's projected closest point is nearest `(px, py)` -- or `None`
+    if none is within `threshold_px` (or `segments`/`w`/`h` are
+    degenerate). Pure math, no GL/Qt dependency -- shared by
+    `SceneRenderer.pick_nearest_segment` and directly unit-testable."""
+    if not segments or w <= 0 or h <= 0:
+        return None
+    best_idx = -1
+    best_d2 = threshold_px * threshold_px
+    best_point = None
+    for seg_i, (i, j) in enumerate(segments):
+        point = _closest_point_on_segment_to_ray(points[i], points[j], ray_origin, ray_dir)
+        screen = _project_to_screen(point, mvp, w, h)
+        if screen is None:
+            continue
+        sx, sy = screen
+        d2 = (sx - px) ** 2 + (sy - py) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            best_idx = seg_i
+            best_point = point
+    if best_idx < 0:
+        return None
+    return best_idx, best_point
 
 
 # ------------------------------------------------------------------
