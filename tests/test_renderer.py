@@ -2,11 +2,16 @@
 Tests for `nearest_point_index` in `belfryscad.engine.renderer` — the pure
 screen-space nearest-point picking helper shared by `SceneRenderer.
 pick_nearest_point` and (once migrated) the data viewers' vertex-click
-handlers. Pure math, no GL/Qt dependency.
+handlers. Pure math, no GL/Qt dependency. Also covers `nearest_segment_index`
+(and its `_closest_point_on_segment_to_ray` building block), the analogous
+line-segment picking helper behind `SceneRenderer.pick_nearest_segment` and
+the Path/Region editors' right-click-on-a-line "Add Vertex" feature.
 """
 import numpy as np
 
-from belfryscad.engine.renderer import nearest_point_index, Camera
+from belfryscad.engine.renderer import (
+    nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
+)
 
 
 class TestNearestPointIndex:
@@ -58,6 +63,62 @@ class TestNearestPointIndex:
         # default threshold (12px) should hit; a very tight threshold should miss
         assert nearest_point_index(points, mvp, 50, 50, 100, 100) != -1
         assert nearest_point_index(points, mvp, 50, 50, 100, 100, threshold_px=0.5) == -1
+
+
+class TestClosestPointOnSegmentToRay:
+    def test_perpendicular_ray_through_midpoint(self):
+        a, b = np.array([0.0, 0.0, 0.0]), np.array([10.0, 0.0, 0.0])
+        ray_o, ray_d = np.array([5.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        pt = _closest_point_on_segment_to_ray(a, b, ray_o, ray_d)
+        assert np.allclose(pt, [5.0, 0.0, 0.0], atol=1e-6)
+
+    def test_clamped_to_segment_endpoint(self):
+        # Ray passes the segment's line well beyond point b -- the closest
+        # point must clamp to b, not extrapolate past it.
+        a, b = np.array([0.0, 0.0, 0.0]), np.array([10.0, 0.0, 0.0])
+        ray_o, ray_d = np.array([25.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        pt = _closest_point_on_segment_to_ray(a, b, ray_o, ray_d)
+        assert np.allclose(pt, [10.0, 0.0, 0.0], atol=1e-6)
+
+    def test_clamped_to_segment_start(self):
+        a, b = np.array([0.0, 0.0, 0.0]), np.array([10.0, 0.0, 0.0])
+        ray_o, ray_d = np.array([-25.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        pt = _closest_point_on_segment_to_ray(a, b, ray_o, ray_d)
+        assert np.allclose(pt, [0.0, 0.0, 0.0], atol=1e-6)
+
+
+class TestNearestSegmentIndex:
+    def test_picks_segment_under_cursor(self):
+        mvp = np.eye(4)
+        points = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0], [0.0, 10.0, 0.0]])
+        segments = [(0, 1), (1, 2), (2, 3), (3, 0)]
+        ray_o, ray_d = np.array([5.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        # world (5,0,0) with identity mvp projects to screen (300, 50) in a 100x100 viewport
+        result = nearest_segment_index(points, segments, ray_o, ray_d, mvp, 300, 50, 100, 100)
+        assert result is not None
+        idx, pt = result
+        assert idx == 0
+        assert np.allclose(pt, [5.0, 0.0, 0.0], atol=1e-6)
+
+    def test_miss_beyond_threshold(self):
+        mvp = np.eye(4)
+        points = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
+        segments = [(0, 1)]
+        ray_o, ray_d = np.array([5.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        assert nearest_segment_index(points, segments, ray_o, ray_d, mvp, 999, 999, 100, 100) is None
+
+    def test_empty_segments_returns_none(self):
+        mvp = np.eye(4)
+        points = np.array([[0.0, 0.0, 0.0]])
+        ray_o, ray_d = np.array([0.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        assert nearest_segment_index(points, [], ray_o, ray_d, mvp, 50, 50, 100, 100) is None
+
+    def test_degenerate_viewport_returns_none(self):
+        mvp = np.eye(4)
+        points = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
+        segments = [(0, 1)]
+        ray_o, ray_d = np.array([5.0, 0.0, 5.0]), np.array([0.0, 0.0, -1.0])
+        assert nearest_segment_index(points, segments, ray_o, ray_d, mvp, 50, 50, 0, 100) is None
 
 
 class TestCameraViewMatrixContinuity:

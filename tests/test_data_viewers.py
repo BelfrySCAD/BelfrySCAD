@@ -4,19 +4,23 @@ Tests for the GridViewer shape-detection and flat-index helpers in
 of points) need not be rectangular: rows may have different lengths (e.g. a
 cone's single-point apex row next to a wider base row). Also covers
 `_is_matrix`/`_is_affine_matrix`, the shape-detection helpers for
-MatrixViewer/AffineMatrixViewer, and the affine-transform math helpers.
+MatrixViewer/AffineMatrixViewer, and the affine-transform math helpers, and
+`_is_region` (RegionViewer's shape detection — a list of >= 1 closed 2D
+polygon paths under even-odd fill semantics, structurally identical to a 2D
+grid whenever there are >= 2 paths, so both interpretations are legitimately
+offered together).
 
 These test the pure-Python helpers only (`_is_grid`, `_grid_row_offsets`,
 `_grid_flat_to_rc`, `_grid_is_triangular`, `_grid_fan_spec`, `_is_matrix`,
 `_is_affine_matrix`, `_affine_reference_shape`, `_affine_shape_edges`,
-`_apply_affine`); the Qt/OpenGL rendering classes (`GridViewer`,
-`_GridViewport`, `MatrixViewer`, `AffineMatrixViewer`, `_AffineViewport`)
-aren't covered here, consistent with the rest of the test suite (no
-existing tests instantiate Qt widgets).
+`_apply_affine`, `_is_region`); the Qt/OpenGL rendering classes (`GridViewer`,
+`_GridViewport`, `MatrixViewer`, `AffineMatrixViewer`, `_AffineViewport`,
+`RegionViewer`, `_RegionViewport`) aren't covered here, consistent with the
+rest of the test suite (no existing tests instantiate Qt widgets).
 """
 from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
-    _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix,
+    _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix, _is_region,
     _affine_reference_shape, _affine_shape_edges, _apply_affine,
     _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
 )
@@ -50,6 +54,46 @@ class TestIsGrid:
     def test_3d_points_ragged_is_grid(self):
         assert _is_grid([[[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
                           [[0, 1, 1], [1, 1, 1]]])
+
+
+class TestIsRegion:
+    def test_single_triangle_path_is_region(self):
+        # A region may have just 1 path (no holes) -- the one case that
+        # doesn't also read as a grid (_is_grid requires >= 2 rows).
+        assert _is_region([[[0, 0], [1, 0], [0, 1]]])
+
+    def test_single_path_is_not_grid(self):
+        assert not _is_grid([[[0, 0], [1, 0], [0, 1]]])
+
+    def test_concentric_paths_is_region(self):
+        # Three concentric triangles -- disc + ring + hole semantics.
+        outer = [[10, 0], [-10, 10], [-10, -10]]
+        middle = [[6, 0], [-6, 6], [-6, -6]]
+        inner = [[3, 0], [-3, 3], [-3, -3]]
+        assert _is_region([outer, middle, inner])
+
+    def test_concentric_paths_also_reads_as_grid(self):
+        # Structurally identical to a 2D grid whenever there are >= 2
+        # paths -- both interpretations are legitimate, so both "Edit as
+        # Grid..."/"Edit as Region..." should be offered; not a bug.
+        outer = [[10, 0], [-10, 10], [-10, -10]]
+        inner = [[3, 0], [-3, 3], [-3, -3]]
+        assert _is_region([outer, inner])
+        assert _is_grid([outer, inner])
+
+    def test_two_point_path_is_not_region(self):
+        # A polygon needs >= 3 points.
+        assert not _is_region([[[0, 0], [1, 1]]])
+
+    def test_3d_points_not_a_region(self):
+        # No 3D regions.
+        assert not _is_region([[[0, 0, 0], [1, 0, 0], [0, 1, 0]]])
+
+    def test_empty_list_is_not_region(self):
+        assert not _is_region([])
+
+    def test_non_numeric_path_is_not_region(self):
+        assert not _is_region([["a", "b", "c"]])
 
 
 class TestGridRowOffsets:
@@ -409,6 +453,24 @@ class TestFindEditableLiterals:
         text = "cube(10);"
         assert find_editable_literals(text, text.index("10")) == {}
 
+    def test_matches_region_alongside_grid(self):
+        # A 2-path 2D literal is both a valid Grid and a valid Region --
+        # both should be offered, same precedent as the row-is-path case.
+        text = "region = [[[10,0],[-10,10],[-10,-10]],[[3,0],[-3,3],[-3,-3]]];"
+        result = find_editable_literals(text, text.index("10,0"))
+        assert result["region"][2] == [[[10, 0], [-10, 10], [-10, -10]], [[3, 0], [-3, 3], [-3, -3]]]
+        assert result["grid"][2] == result["region"][2]
+
+    def test_single_path_region_does_not_match_grid(self):
+        # The bare path (1 level in) matches "path"; the region as a
+        # whole (1 level further out, a list containing that one path)
+        # matches "region" but not "grid" (_is_grid needs >= 2 rows).
+        text = "region = [[[10,0],[-10,10],[-10,-10]]];"
+        result = find_editable_literals(text, text.index("10,0"))
+        assert result["path"][2] == [[10, 0], [-10, 10], [-10, -10]]
+        assert result["region"][2] == [[[10, 0], [-10, 10], [-10, -10]]]
+        assert "grid" not in result
+
 
 class TestFindViewableLiterals:
     def test_inner_point_click_finds_both_list_and_outer_path(self):
@@ -444,3 +506,9 @@ class TestFindViewableLiterals:
     def test_expression_content_finds_nothing(self):
         text = "v = [x, 1, 2];"
         assert find_viewable_literals(text, text.index("1")) == {}
+
+    def test_region_shape_matches_alongside_grid(self):
+        text = "region = [[[10,0],[-10,10],[-10,-10]],[[3,0],[-3,3],[-3,-3]]];"
+        result = find_viewable_literals(text, text.index("10,0"))
+        assert result["region"][2] == [[[10, 0], [-10, 10], [-10, -10]], [[3, 0], [-3, 3], [-3, -3]]]
+        assert result["grid"][2] == result["region"][2]

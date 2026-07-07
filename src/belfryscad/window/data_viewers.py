@@ -8,6 +8,8 @@ Data viewer windows launched from the debugger's variable context menu.
 - MatrixViewer: table view for square 2x2-5x5 lists of lists of numbers
 - AffineMatrixViewer: table + viewport for 3x3/4x4 homogeneous affine
   transform matrices, visualizing their effect on a reference square/cube
+- RegionViewer: 2D viewer for a list of closed polygon paths (a "region"),
+  with even-odd fill semantics -- nested paths alternate solid/hole
 """
 from __future__ import annotations
 import ast
@@ -15,6 +17,7 @@ import bisect
 import math
 import re
 import numpy as np
+import manifold3d as m3d
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -108,6 +111,52 @@ def _is_grid(v) -> bool:
             and len(v) >= 2
             and all(_is_list(row) and len(row) >= 1
                     and all(_is_numeric_point(p) for p in row) for row in v))
+
+
+def _is_region(v) -> bool:
+    """A region is a list of >= 1 closed 2D polygon paths, each with >= 3
+    points, representing non-overlapping perimeters under even-odd fill
+    semantics -- a path nested inside another alternates solid/hole (e.g.
+    three concentric circles = a central disc surrounded by a ring).
+    Points are strictly 2D -- no 3D regions.
+
+    Structurally identical to `_is_grid` whenever there are >= 2 paths (a
+    2D-only grid *is* a list of point-lists too) -- unlike `_is_grid`,
+    which requires >= 2 rows, a region may have just 1 path (no holes),
+    which is the one case that doesn't also read as a grid. For the
+    overlapping case, both "Edit as Grid..." and "Edit as Region..." are
+    offered and the user picks the intended interpretation -- the same
+    precedent as a grid row also being a valid path, or a square matrix
+    also being a valid affine transform, elsewhere in this file."""
+    return (_is_list(v) and len(v) >= 1
+            and all(_is_list(path) and len(path) >= 3
+                    and all(_is_numeric_point(p) and len(p) == 2 for p in path)
+                    for path in v))
+
+
+def _region_fill_mesh(paths: list) -> tuple[np.ndarray, np.ndarray] | None:
+    """Tessellate a region's paths (even-odd fill -- nested paths
+    alternate solid/hole) into a flat triangle mesh for `upload_mesh`, by
+    reusing `manifold3d.CrossSection`'s own fill-rule/triangulation
+    rather than hand-rolling one: build a `CrossSection` from the raw
+    paths under `FillRule.EvenOdd`, extrude a hairline sliver (same
+    `evaluator.to_renderable_bodies` trick used to render a lone 2D shape
+    in the main viewport), and read the resulting `Manifold`'s mesh back
+    as flat (Z=0) triangles. Returns `None` if the paths enclose no area
+    (e.g. degenerate/self-cancelling input)."""
+    section = m3d.CrossSection([np.array(p, dtype=np.float64) for p in paths], m3d.FillRule.EvenOdd)
+    manifold = m3d.Manifold.extrude(section, 1e-3)
+    mesh = manifold.to_mesh()
+    verts = np.array(mesh.vert_properties, dtype=np.float32)[:, :3]
+    tris = np.array(mesh.tri_verts, dtype=np.int32)
+    if len(verts) == 0 or len(tris) == 0:
+        return None
+    v0, v1, v2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    tris_pos = np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3)
+    tris_pos[:, 2] = 0.0
+    tris_norm = np.zeros_like(tris_pos)
+    tris_norm[:, 2] = 1.0
+    return tris_pos, tris_norm
 
 
 def _grid_row_offsets(grid_value: list) -> list[int]:
@@ -346,18 +395,39 @@ def _cube_faces(r: float, is_2d: bool) -> list:
     ]
 
 
-def _viewport_marker_radius(vp: "Viewport") -> float:
-    """Screen-space-constant marker radius (in world units) for `vp`'s
-    current camera distance/FOV/height, so point markers stay ~6px on
-    screen regardless of zoom. Shared by every viewport that rebuilds
-    marker geometry on zoom (`_GridViewport`, `_PathViewport`,
-    `_AffineViewport`, `_VNFViewport`)."""
+def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
+    """Screen-space-constant marker radius (in world units) for a marker
+    positioned AT `world_point`, so it stays ~6px on screen regardless of
+    zoom -- in *both* projection modes and regardless of which vertex is
+    being sized. Shared by every viewport that rebuilds marker geometry
+    on zoom (`_GridViewport`, `_PathViewport`, `_AffineViewport`,
+    `_VNFViewport`, `_RegionViewport`).
+
+    In orthographic mode, apparent size never depends on a point's
+    distance from the eye at all (that's the definition of orthographic),
+    so using the camera's target distance (`cam.distance`) for every
+    marker is exactly correct — and this is also why `Camera.
+    projection_matrix`'s orthographic half-height is itself defined as
+    `distance * tan(fov/2)`, matching perspective's apparent size at the
+    target depth for a seamless toggle between modes.
+
+    In perspective mode, apparent size genuinely *does* scale with each
+    point's own eye-distance, not the target's — a fixed world-space
+    radius computed from `cam.distance` alone renders too big for any
+    vertex closer to the eye than the target, and too small for any
+    vertex farther (most noticeable when a 3D path/grid/mesh is orbited
+    or zoomed toward one end, rather than viewed dead-on from directly
+    above like the always-2D-locked `PathViewer`/`GridViewer` cases,
+    where every vertex is coplanar with — and thus equidistant from —
+    the camera). Using each point's actual distance from `cam.
+    eye_position()` here fixes that."""
     cam = vp._renderer.camera
     vh = vp.height()
+    depth = cam.distance if cam.orthographic else float(np.linalg.norm(np.asarray(world_point) - cam.eye_position()))
     if vh > 0:
-        world_per_px = 2.0 * cam.distance * math.tan(math.radians(cam.fov / 2)) / vh
+        world_per_px = 2.0 * depth * math.tan(math.radians(cam.fov / 2)) / vh
     else:
-        world_per_px = cam.distance * 0.003
+        world_per_px = depth * 0.003
     return world_per_px * 3
 
 
@@ -700,17 +770,17 @@ class _AffineViewport(Viewport):
         self._renderer.clear_points()
         if len(self._corners) == 0 or self._ctx is None:
             return
-        r = _viewport_marker_radius(self)
-        faces = _cube_faces(r, self._is_2d)
+        unit_faces = _cube_faces(1.0, self._is_2d)
         first_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         rest_color = np.array([0.9, 0.45, 0.1], dtype=np.float32)
         marker_tris = []
         for i, pt in enumerate(self._corners):
             color = first_color if i == 0 else rest_color
-            for v0, v1, v2 in faces:
-                marker_tris.append(np.concatenate([pt + v0, color]))
-                marker_tris.append(np.concatenate([pt + v1, color]))
-                marker_tris.append(np.concatenate([pt + v2, color]))
+            r = _marker_radius_for_point(self, pt)
+            for v0, v1, v2 in unit_faces:
+                marker_tris.append(np.concatenate([pt + v0 * r, color]))
+                marker_tris.append(np.concatenate([pt + v1 * r, color]))
+                marker_tris.append(np.concatenate([pt + v2 * r, color]))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
@@ -823,10 +893,13 @@ class AffineMatrixViewer(QDialog):
 
 class _VNFViewport(Viewport):
     face_clicked = Signal(int)
-    def __init__(self, parent=None):
+    vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
+
+    def __init__(self, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False)
         self._renderer.camera.fov = 45.0
         self._renderer.depth_test_points = True
+        self._editable = editable
         self._cpu_positions: np.ndarray = np.zeros((0, 3), dtype=np.float32)
         self._tri_to_face: np.ndarray = np.zeros(0, dtype=np.int32)
         self._highlight_vao = None
@@ -844,6 +917,9 @@ class _VNFViewport(Viewport):
         self._selected_face: int = -1
         self._drag_started = False
         self._press_pos: QPoint | None = None
+        self._drag_vertex_idx = -1
+        self._drag_lock_axis = 2
+        self._drag_plane_point: np.ndarray = np.zeros(3, dtype=np.float32)
 
     def set_face_data(self, cpu_positions: np.ndarray, tri_to_face: np.ndarray,
                       verts_3d: np.ndarray | None = None):
@@ -948,8 +1024,7 @@ class _VNFViewport(Viewport):
         if not self._vert_indices or self._ctx is None:
             return
 
-        r = _viewport_marker_radius(self)
-        cube_faces = _cube_faces(r, False)
+        unit_faces = _cube_faces(1.0, False)
 
         for color_val, vao_attr, vbo_attr in [
             (np.array([1.0, 0.0, 0.0], dtype=np.float32), "_vert_marker_vao_r", "_vert_marker_vbo_r"),
@@ -958,10 +1033,11 @@ class _VNFViewport(Viewport):
             tris = []
             for vi in self._vert_indices:
                 pt = self._verts_3d[vi]
-                for v0, v1, v2 in cube_faces:
-                    tris.append(np.concatenate([pt + v0, color_val]))
-                    tris.append(np.concatenate([pt + v1, color_val]))
-                    tris.append(np.concatenate([pt + v2, color_val]))
+                r = _marker_radius_for_point(self, pt)
+                for v0, v1, v2 in unit_faces:
+                    tris.append(np.concatenate([pt + v0 * r, color_val]))
+                    tris.append(np.concatenate([pt + v1 * r, color_val]))
+                    tris.append(np.concatenate([pt + v2 * r, color_val]))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
@@ -1028,18 +1104,46 @@ class _VNFViewport(Viewport):
         self._highlight_vao.render()
         self._ctx.disable_direct(0x8037)
 
+    def _pick_vertex(self, px: float, py: float) -> int:
+        """Nearest vertex to the cursor among *all* mesh vertices (unlike
+        the tooltip logic below, which is restricted to the currently
+        highlighted set) -- Cmd+drag can grab any vertex regardless of
+        table/face selection, same as `_PathViewport`/`_GridViewport`."""
+        if len(self._verts_3d) == 0:
+            return -1
+        return self._renderer.pick_nearest_point(self._verts_3d, px, py, self.width(), self.height())
+
     def mousePressEvent(self, event: QMouseEvent):
         self._press_pos = event.position().toPoint()
         self._drag_started = False
+        if (self._editable
+                and event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
+                and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
+            vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
+            if vi >= 0:
+                self._drag_vertex_idx = vi
+                self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
+                self._drag_plane_point = self._verts_3d[vi].copy()
+                self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self._press_pos is not None and self._last_mouse is not None:
+        if self._press_pos is not None:
             pos = event.position().toPoint()
             dx = abs(pos.x() - self._press_pos.x())
             dy = abs(pos.y() - self._press_pos.y())
             if dx > 3 or dy > 3:
                 self._drag_started = True
+        if self._drag_vertex_idx >= 0:
+            pos = event.position().toPoint()
+            ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+            hit = _ray_plane_axis_locked(ray_o, ray_d, self._drag_plane_point, self._drag_lock_axis)
+            if hit is not None:
+                self.vertex_moved.emit(self._drag_vertex_idx,
+                                        round(float(hit[0]), 3), round(float(hit[1]), 3), round(float(hit[2]), 3))
+            return
         if self._last_mouse is None and self._vert_indices:
             pos = event.position().toPoint()
             candidates = self._verts_3d[self._vert_indices]
@@ -1056,6 +1160,12 @@ class _VNFViewport(Viewport):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self._drag_vertex_idx >= 0:
+            self._drag_vertex_idx = -1
+            self._press_pos = None
+            self._drag_started = False
+            self._delta_label.hide()
+            return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
                 and self._press_pos is not None):
@@ -1066,6 +1176,24 @@ class _VNFViewport(Viewport):
         self._press_pos = None
         self._drag_started = False
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        """Arrow keys nudge every currently-highlighted vertex by one world
+        unit, confined to the same axis-locked plane Cmd+drag uses -- see
+        `_PathViewport.keyPressEvent`/`_GridViewport.keyPressEvent`. VNF
+        vertices are always 3D (no 2D top-down special case)."""
+        if self._editable and self._vert_indices:
+            lock_axis = _view_locked_axis(self._renderer.camera)
+            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key())
+            if delta is not None:
+                for vi in self._vert_indices:
+                    if 0 <= vi < len(self._verts_3d):
+                        new_pt = self._verts_3d[vi] + delta
+                        self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
+                                                round(float(new_pt[1]), 3), round(float(new_pt[2]), 3))
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def _pick_face(self, px: float, py: float) -> int:
         if len(self._cpu_positions) == 0:
@@ -1090,12 +1218,19 @@ class _VNFViewport(Viewport):
 # ---------------------------------------------------------------------------
 
 class VNFViewer(QDialog):
-    """3D mesh viewer for VNF [vertices, faces] structures with vertex/face tables."""
+    """3D mesh viewer for VNF [vertices, faces] structures with vertex/face
+    tables. Read-only by default; pass `editable=True` for a Save/Cancel
+    editing mode (see `MatrixViewer` for the shared editing convention) --
+    vertex *positions* only, face topology is never edited here."""
 
-    def __init__(self, title: str, vnf_value: list, parent=None):
+    committed = Signal(str)
+
+    def __init__(self, title: str, vnf_value: list, parent=None, editable: bool = False):
         super().__init__(parent)
-        self.setWindowTitle(f"VNF Viewer: {title}" if title else "VNF Viewer")
+        label = "VNF Editor" if editable else "VNF Viewer"
+        self.setWindowTitle(f"{label}: {title}" if title else label)
         self.resize(900, 560)
+        self._editable = editable
         self._vnf = vnf_value
         self._syncing = False
 
@@ -1105,7 +1240,7 @@ class VNFViewer(QDialog):
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
 
         # Viewport — match main window's perspective mode
-        self._vp = _VNFViewport(splitter)
+        self._vp = _VNFViewport(splitter, editable=editable)
         from PySide6.QtWidgets import QApplication
         for w in QApplication.topLevelWidgets():
             if hasattr(w, '_viewport'):
@@ -1117,7 +1252,7 @@ class VNFViewer(QDialog):
         # Tables in a tab widget
         self._tab_widget = QTabWidget(splitter)
 
-        self._vert_table = self._make_vert_table(vnf_value[0])
+        self._vert_table = self._make_vert_table(vnf_value[0], editable)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
         self._tab_widget.addTab(self._vert_table, f"Vertices ({len(vnf_value[0])})")
 
@@ -1140,15 +1275,26 @@ class VNFViewer(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
         btn_row.addStretch()
-        dismiss = QPushButton("Dismiss")
-        dismiss.clicked.connect(self.close)
-        btn_row.addWidget(dismiss)
+        if editable:
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(self.reject)
+            btn_row.addWidget(cancel)
+            save = QPushButton("Save")
+            save.clicked.connect(self._on_save)
+            btn_row.addWidget(save)
+        else:
+            dismiss = QPushButton("Dismiss")
+            dismiss.clicked.connect(self.close)
+            btn_row.addWidget(dismiss)
         layout.addLayout(btn_row)
 
         self._vp.schedule_load(self._load_mesh)
+        if editable:
+            self._vert_table.itemChanged.connect(self._on_item_changed)
+            self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
 
     @staticmethod
-    def _make_vert_table(verts) -> QTableWidget:
+    def _make_vert_table(verts, editable: bool = False) -> QTableWidget:
         t = QTableWidget(len(verts), 3)
         t.setFont(QFont("Menlo", 11))
         t.setHorizontalHeaderLabels(["X", "Y", "Z"])
@@ -1156,11 +1302,16 @@ class VNFViewer(QDialog):
         _style_table_headers(t)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        if editable:
+            t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                               | QAbstractItemView.EditTrigger.EditKeyPressed)
+        else:
+            t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         for i, v in enumerate(verts):
             for j in range(3):
                 item = QTableWidgetItem(f"{v[j]:g}")
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if not editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 t.setItem(i, j, item)
         fm = t.fontMetrics()
         min_w = fm.horizontalAdvance("-00000.0") + 16
@@ -1186,6 +1337,11 @@ class VNFViewer(QDialog):
         return t
 
     def _load_mesh(self):
+        # Clears any mesh buffer from a prior call -- a no-op the first
+        # time (schedule_load's initial-load path, buffers start empty),
+        # but required now that an editable dialog's _rebuild() can call
+        # this repeatedly, or it'd leak/duplicate GPU buffers.
+        self._vp._renderer._clear_buffers()
         verts_raw, faces_raw = self._vnf
         verts = np.array(verts_raw, dtype=np.float32)
         all_positions = []
@@ -1243,6 +1399,58 @@ class VNFViewer(QDialog):
         bb_max = verts.max(axis=0)
         self._vp.frame_scene(bb_min, bb_max)
         self._vp.update()
+
+    def _rebuild(self):
+        """Re-triangulate and re-upload the mesh after a vertex edit --
+        face topology never changes in this dialog, so `_load_mesh` just
+        recomputes from the same faces against updated vertex positions.
+        Unlike the initial `schedule_load` call, this needs its own
+        makeCurrent bracket (a live edit isn't guaranteed to run inside
+        `initializeGL`), and needs to explicitly rebuild the face-highlight
+        overlay too -- `frame_scene` (which `_load_mesh` calls) already
+        rebuilds vertex markers for us but not the highlight VAO, which
+        would otherwise keep showing the *old* vertex positions for
+        whichever face is currently highlighted."""
+        if self._vp._ctx is not None:
+            self._vp.makeCurrent()
+            self._load_mesh()
+            if self._vp._selected_face >= 0:
+                self._vp._rebuild_highlight()
+            self._vp.doneCurrent()
+            self._vp.update()
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        i, j = item.row(), item.column()
+        parsed = _parse_number(item.text())
+        if parsed is None:
+            self._vert_table.blockSignals(True)
+            item.setText(f"{self._vnf[0][i][j]:g}")
+            self._vert_table.blockSignals(False)
+            return
+        self._vnf[0][i][j] = parsed
+        self._vert_table.blockSignals(True)
+        item.setText(f"{parsed:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild()
+
+    def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
+        """Live update while Cmd+dragging a vertex marker in the editable
+        viewport -- mirrors `_on_item_changed`'s self._vnf + table +
+        rebuild update, just driven by the viewport instead of a
+        table-cell edit."""
+        self._vnf[0][vi][0] = x
+        self._vnf[0][vi][1] = y
+        self._vnf[0][vi][2] = z
+        self._vert_table.blockSignals(True)
+        self._vert_table.item(vi, 0).setText(f"{x:g}")
+        self._vert_table.item(vi, 1).setText(f"{y:g}")
+        self._vert_table.item(vi, 2).setText(f"{z:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild()
+
+    def _on_save(self):
+        self.committed.emit(_format_value(self._vnf))
+        self.accept()
 
     def _on_vert_table_selection(self):
         if self._syncing:
@@ -1336,10 +1544,12 @@ class PathViewer(QDialog):
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
         table_container = QWidget()
         tc_layout = QVBoxLayout(table_container)
         tc_layout.setContentsMargins(0, 0, 0, 0)
-        tc_layout.addWidget(QLabel(f"Path Points ({len(path_value)})"))
+        self._pts_label = QLabel(f"Path Points ({len(path_value)})")
+        tc_layout.addWidget(self._pts_label)
         tc_layout.addWidget(self._vert_table, 1)
         splitter.addWidget(table_container)
         t = self._vert_table
@@ -1364,6 +1574,13 @@ class PathViewer(QDialog):
         self._bezier_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._bezier_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._bezier_cb)
+        if editable:
+            add_vertex = QPushButton("Add Vertex")
+            add_vertex.clicked.connect(self._add_vertex)
+            btn_row.addWidget(add_vertex)
+            del_vertex = QPushButton("Delete Vertex")
+            del_vertex.clicked.connect(self._delete_vertex)
+            btn_row.addWidget(del_vertex)
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1407,6 +1624,65 @@ class PathViewer(QDialog):
         for j in range(cols):
             t.setColumnWidth(j, min_w)
         return t
+
+    def _populate_vert_table(self):
+        """Rebuild the vertex table from `self._path` after a row-count
+        change (add/delete vertex) -- unlike `_on_item_changed`/
+        `_on_viewport_vertex_moved`, which only ever touch existing cells'
+        text in place, adding/removing a vertex changes the row count, so
+        the whole table needs repopulating (mirrors `GridViewer.
+        _populate_table`'s same row-count-change situation)."""
+        cols = 2 if self._is_2d else 3
+        self._vert_table.blockSignals(True)
+        self._vert_table.setRowCount(len(self._path))
+        self._vert_table.setVerticalHeaderLabels([str(i) for i in range(len(self._path))])
+        for i, p in enumerate(self._path):
+            for j in range(cols):
+                item = QTableWidgetItem(f"{p[j]:g}")
+                if not self._editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._vert_table.setItem(i, j, item)
+        self._vert_table.blockSignals(False)
+        self._pts_label.setText(f"Path Points ({len(self._path)})")
+
+    def _add_vertex(self):
+        """Insert a new vertex after the last selected row (or at the end
+        if nothing is selected). Its position is the midpoint of the two
+        points it's inserted between (wrapping to point 0 if inserted
+        after the last point of a closed path), or an offset duplicate of
+        the last point if there's no "next" point to average with (open
+        path, inserting past the end)."""
+        rows = sorted(r.row() for r in self._vert_table.selectionModel().selectedRows())
+        insert_after = rows[-1] if rows else len(self._path) - 1
+        cur = self._path[insert_after]
+        next_idx = insert_after + 1
+        if next_idx >= len(self._path):
+            next_idx = 0 if self._closed_cb.isChecked() else None
+        if next_idx is not None:
+            nxt = self._path[next_idx]
+            new_pt = [(a + b) / 2.0 for a, b in zip(cur, nxt)]
+        else:
+            new_pt = list(cur)
+            new_pt[0] += 1.0
+            new_pt[1] += 1.0
+        self._path.insert(insert_after + 1, new_pt)
+        self._populate_vert_table()
+        self._vert_table.selectRow(insert_after + 1)
+        self._rebuild()
+
+    def _delete_vertex(self):
+        """Remove the selected vertices, refusing if that would leave
+        fewer than the 2 points a path requires (`_is_path`'s minimum) --
+        silently, matching the no-popup convention used for invalid cell
+        edits elsewhere in this dialog."""
+        rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
+        if not rows or len(self._path) - len(rows) < 2:
+            return
+        for r in rows:
+            del self._path[r]
+        self._populate_vert_table()
+        self._vert_table.clearSelection()
+        self._rebuild()
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -1454,6 +1730,18 @@ class PathViewer(QDialog):
         self._vert_table.blockSignals(False)
         self._rebuild()
 
+    def _on_viewport_add_vertex_requested(self, insert_after: int, x: float, y: float, z: float):
+        """Right-click "Add Vertex" on a path line (`_PathViewport.
+        contextMenuEvent`) -- inserts exactly at the clicked point on
+        that segment, unlike `_add_vertex` (always a midpoint). Row-count
+        change, so repopulates the whole table like `_add_vertex`/
+        `_delete_vertex` do, rather than an in-place cell update."""
+        new_pt = [x, y] if self._is_2d else [x, y, z]
+        self._path.insert(insert_after + 1, new_pt)
+        self._populate_vert_table()
+        self._vert_table.selectRow(insert_after + 1)
+        self._rebuild()
+
     def _do_initial_load(self):
         self._vp.load_path(self._path, self._closed_cb.isChecked(),
                            self._bezier_cb.isChecked())
@@ -1469,6 +1757,7 @@ class _PathViewport(Viewport):
     """Viewport subclass with selectable vertex markers and hover tooltips."""
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    add_vertex_requested = Signal(int, float, float, float)  # (insert_after_idx, x, y, z) -- right-click on a line, editable only
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False)
@@ -1481,7 +1770,9 @@ class _PathViewport(Viewport):
         self._drag_vertex_idx = -1
         self._drag_lock_axis = 2
         self._drag_plane_point: np.ndarray = np.zeros(3, dtype=np.float32)
+        self._context_menu_suppressed = False   # set from mouseReleaseEvent -- a real drag shouldn't also pop a menu
         self._path_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        self._closed = False
         self._is_2d = is_2d
         self._selected_indices: list[int] = []
         self._blink_red = True
@@ -1567,6 +1858,7 @@ class _PathViewport(Viewport):
                 pts_3d.append([p[0], p[1], p[2]])
         pts = np.array(pts_3d, dtype=np.float32)
         self._path_pts = pts
+        self._closed = closed
 
         bb_min = pts.min(axis=0)
         bb_max = pts.max(axis=0)
@@ -1625,9 +1917,6 @@ class _PathViewport(Viewport):
     def _cube_faces(self, r):
         return _cube_faces(r, self._is_2d)
 
-    def _world_per_px_radius(self):
-        return _viewport_marker_radius(self)
-
     def _build_point_markers(self):
         self._renderer.clear_points()
 
@@ -1635,8 +1924,7 @@ class _PathViewport(Viewport):
         if len(pts) == 0 or self._ctx is None:
             return
 
-        r = self._world_per_px_radius()
-        faces = self._cube_faces(r)
+        unit_faces = self._cube_faces(1.0)
         green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
         selected = set(self._selected_indices)
 
@@ -1644,10 +1932,11 @@ class _PathViewport(Viewport):
         for i, pt in enumerate(pts):
             if i in selected:
                 continue
-            for v0, v1, v2 in faces:
-                marker_tris.append(np.concatenate([pt + v0, green]))
-                marker_tris.append(np.concatenate([pt + v1, green]))
-                marker_tris.append(np.concatenate([pt + v2, green]))
+            r = _marker_radius_for_point(self, pt)
+            for v0, v1, v2 in unit_faces:
+                marker_tris.append(np.concatenate([pt + v0 * r, green]))
+                marker_tris.append(np.concatenate([pt + v1 * r, green]))
+                marker_tris.append(np.concatenate([pt + v2 * r, green]))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -1690,8 +1979,7 @@ class _PathViewport(Viewport):
         if not self._selected_indices or self._ctx is None:
             return
 
-        r = self._world_per_px_radius()
-        faces = self._cube_faces(r)
+        unit_faces = self._cube_faces(1.0)
         pts = self._path_pts
 
         for color_val, vao_attr, vbo_attr in [
@@ -1702,10 +1990,11 @@ class _PathViewport(Viewport):
             for vi in self._selected_indices:
                 if 0 <= vi < len(pts):
                     pt = pts[vi]
-                    for v0, v1, v2 in faces:
-                        tris.append(np.concatenate([pt + v0, color_val]))
-                        tris.append(np.concatenate([pt + v1, color_val]))
-                        tris.append(np.concatenate([pt + v2, color_val]))
+                    r = _marker_radius_for_point(self, pt)
+                    for v0, v1, v2 in unit_faces:
+                        tris.append(np.concatenate([pt + v0 * r, color_val]))
+                        tris.append(np.concatenate([pt + v1 * r, color_val]))
+                        tris.append(np.concatenate([pt + v2 * r, color_val]))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
@@ -1809,6 +2098,7 @@ class _PathViewport(Viewport):
         if self._drag_vertex_idx >= 0:
             vi = self._drag_vertex_idx
             moved = self._drag_started
+            self._context_menu_suppressed = moved
             self._drag_vertex_idx = -1
             self._press_pos = None
             self._drag_started = False
@@ -1822,9 +2112,43 @@ class _PathViewport(Viewport):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
             self.vertex_clicked.emit(vi)
+        # Captured here (a genuine right-button pan drag), not left as a
+        # side effect of the reset below -- contextMenuEvent fires right
+        # after this handler and needs to know whether *this* release
+        # followed a drag, so a pan gesture doesn't also pop up a menu.
+        self._context_menu_suppressed = self._drag_started
         self._press_pos = None
         self._drag_started = False
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Right-clicking a path line (editable only, and only when not
+        over an existing vertex, and not immediately after a drag) offers
+        "Add Vertex", inserting a new point exactly where clicked on that
+        segment. The segment list always includes the closing edge when
+        `Close Path` is checked (`self._closed`) -- the wrap-around
+        segment's "insert after" index is `len(self._path_pts) - 1`, which
+        correctly appends the new point at the end of the list rather
+        than inserting before index 0."""
+        if not self._editable or self._context_menu_suppressed:
+            return
+        pos = event.pos()
+        if self._pick_vertex(pos.x(), pos.y()) >= 0:
+            return
+        n = len(self._path_pts)
+        if n < 2:
+            return
+        seg_count = n if self._closed else n - 1
+        segments = [(i, (i + 1) % n) for i in range(seg_count)]
+        result = self._renderer.pick_nearest_segment(self._path_pts, segments, pos.x(), pos.y(), self.width(), self.height())
+        if result is None:
+            return
+        seg_idx, world_pt = result
+        insert_after, _ = segments[seg_idx]
+        x, y, z = float(world_pt[0]), float(world_pt[1]), float(world_pt[2])
+        menu = QMenu(self)
+        menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(insert_after, x, y, z))
+        menu.exec(event.globalPos())
 
     def keyPressEvent(self, event):
         """Arrow keys nudge every selected vertex by one world unit,
@@ -1896,6 +2220,9 @@ class GridViewer(QDialog):
         self._vert_table = self._make_vert_table(grid_value[0], self._is_2d, editable)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
+        if editable:
+            self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
         tc_layout.addWidget(self._vert_table, 1)
 
         splitter.addWidget(table_container)
@@ -2004,14 +2331,198 @@ class GridViewer(QDialog):
                 self._vert_table.setItem(i, j, item)
         self._vert_table.blockSignals(False)
 
-    def _on_row_changed(self, row_idx: int):
+    def _on_row_changed(self, row_idx: int, select_all: bool = True):
         if row_idx < 0 or row_idx >= self._rows:
             return
         row_pts = self._grid[row_idx]
         self._pts_label.setText(f"Row Points ({len(row_pts)})")
         self._populate_table(row_pts)
-        self._vert_table.selectAll()
-        self._vp.set_selected_row(row_idx)
+        if select_all:
+            self._vert_table.selectAll()
+            self._vp.set_selected_row(row_idx)
+        else:
+            # Delete Row/Column pass select_all=False -- the user should
+            # end up with nothing selected after a delete, not the whole
+            # (possibly renumbered) row re-selected as a side effect of
+            # switching to it. clearSelection() alone isn't enough: if
+            # _populate_table happened to leave no rows selected already,
+            # Qt won't fire itemSelectionChanged (no change to signal),
+            # so _vp.set_selected([]) is called explicitly too rather
+            # than relying on that signal to clear the viewport's own
+            # (still-blinking) selection.
+            self._vert_table.clearSelection()
+            self._vp.set_selected([])
+
+    def _sync_face_mode_combo(self):
+        """Add/remove the "Bezier Patch" option to match whether the grid
+        is still exactly 4x4 after a row/column add/delete (a plain
+        checkbox-style toggle isn't enough here since the option should
+        only exist at all for a 4x4 grid, same as at construction time)."""
+        is_4x4 = len(self._grid) == 4 and all(len(row) == 4 for row in self._grid)
+        has_bezier = self._face_mode_combo.count() == 3
+        if is_4x4 and not has_bezier:
+            self._face_mode_combo.addItem("Bezier Patch")
+        elif not is_4x4 and has_bezier:
+            if self._face_mode_combo.currentIndex() == 2:
+                self._face_mode_combo.setCurrentIndex(1)
+            self._face_mode_combo.removeItem(2)
+        _size_combo_to_widest_item(self._face_mode_combo)
+
+    def _refresh_row_bookkeeping(self):
+        """Recompute self._rows/self._row_offsets from self._grid -- call
+        after any row or column count change, before anything that indexes
+        into the grid via the cached offsets (_on_vert_table_selection,
+        _on_viewport_vertex_clicked/_moved)."""
+        self._rows = len(self._grid)
+        self._row_offsets = _grid_row_offsets(self._grid)
+
+    def _refresh_row_combo_items(self):
+        """Repopulate the row combo's 0..N-1 item labels -- call only when
+        the row *count* itself changed (Add/Delete Row), not for a
+        column-only change (row count is unaffected by those)."""
+        self._row_combo.blockSignals(True)
+        self._row_combo.clear()
+        for i in range(self._rows):
+            self._row_combo.addItem(str(i))
+        self._row_combo.blockSignals(False)
+
+    def _show_vert_table_context_menu(self, pos):
+        """Right-click menu on the vertex table (`editable=True` only),
+        replacing the old Add/Delete Row/Column buttons -- "this row" is
+        always whichever row `_row_combo` currently shows; "this column"
+        is the specific table row (a grid column/point index) under the
+        cursor, so the column-specific actions are hidden when the click
+        lands on empty space below the last point."""
+        col_idx = self._vert_table.rowAt(pos.y())
+        menu = QMenu(self._vert_table)
+        menu.addAction("Add Row Before", lambda: self._add_row(before=True))
+        menu.addAction("Add Row After", lambda: self._add_row(before=False))
+        if col_idx >= 0:
+            menu.addAction("Add Column Before", lambda: self._add_column(before=True, col_idx=col_idx))
+            menu.addAction("Add Column After", lambda: self._add_column(before=False, col_idx=col_idx))
+        menu.addSeparator()
+        menu.addAction("Delete this Row", self._delete_row)
+        if col_idx >= 0:
+            menu.addAction("Delete this Column", lambda: self._delete_column(col_idx))
+        menu.exec(self._vert_table.viewport().mapToGlobal(pos))
+
+    def _add_row(self, before: bool):
+        """Insert a new row before or after the currently displayed row.
+        New points are the midpoint of the corresponding column in this
+        row and its neighbor in that direction (wrapping around if Row
+        Wrap is on), truncated/padded to this row's own length if the
+        neighbor is a different length (ragged grid); or, if there's no
+        such neighbor (row 0's "before", or the last row's "after", with
+        no wrap), this row's own points nudged along their last
+        coordinate so the new row isn't exactly coincident."""
+        row_idx = self._row_combo.currentIndex()
+        cur = self._grid[row_idx]
+        row_wrap = self._wrap_flags()[1]
+        if before:
+            neighbor_idx = row_idx - 1
+            if neighbor_idx < 0:
+                neighbor_idx = self._rows - 1 if row_wrap else None
+            insert_at = row_idx
+        else:
+            neighbor_idx = row_idx + 1
+            if neighbor_idx >= self._rows:
+                neighbor_idx = 0 if row_wrap else None
+            insert_at = row_idx + 1
+        if neighbor_idx is not None:
+            nbr = self._grid[neighbor_idx]
+            shared = min(len(cur), len(nbr))
+            new_row = [[(a + b) / 2.0 for a, b in zip(cur[c], nbr[c])] for c in range(shared)]
+            new_row += [list(cur[c]) for c in range(shared, len(cur))]
+        else:
+            new_row = []
+            for p in cur:
+                pt = list(p)
+                pt[-1] += 1.0
+                new_row.append(pt)
+        self._grid.insert(insert_at, new_row)
+        self._sync_face_mode_combo()
+        self._vp.sync_row_bookkeeping(self._grid)
+        self._rebuild()
+        self._refresh_row_bookkeeping()
+        self._refresh_row_combo_items()
+        self._row_combo.blockSignals(True)
+        self._row_combo.setCurrentIndex(insert_at)
+        self._row_combo.blockSignals(False)
+        self._on_row_changed(insert_at)
+
+    def _delete_row(self):
+        """Remove the currently displayed row, refusing if that would
+        leave fewer than the 2 rows a grid requires (`_is_grid`'s
+        minimum) -- silently, matching the no-popup convention used for
+        invalid cell edits elsewhere in this dialog."""
+        if self._rows <= 2:
+            return
+        row_idx = self._row_combo.currentIndex()
+        del self._grid[row_idx]
+        self._sync_face_mode_combo()
+        self._vp.sync_row_bookkeeping(self._grid)
+        self._rebuild()
+        self._refresh_row_bookkeeping()
+        self._refresh_row_combo_items()
+        select = min(row_idx, self._rows - 1)
+        self._row_combo.blockSignals(True)
+        self._row_combo.setCurrentIndex(select)
+        self._row_combo.blockSignals(False)
+        self._on_row_changed(select, select_all=False)
+
+    def _add_column(self, before: bool, col_idx: int):
+        """Insert a new point before or after `col_idx` in every row that
+        reaches that column -- rows too short for it (a ragged grid) are
+        left unchanged. Each row's neighbor/insert position is computed
+        against its *own* length (not the clicked row's), so a ragged
+        grid's shorter/longer rows each still get a sensible placement.
+        Per-row placement follows the same midpoint/nudge logic as
+        `_add_row`, just along the row instead of across rows."""
+        row_idx = self._row_combo.currentIndex()
+        col_wrap = self._wrap_flags()[0]
+        for row in self._grid:
+            if col_idx >= len(row):
+                continue
+            cur = row[col_idx]
+            if before:
+                neighbor_idx = col_idx - 1
+                if neighbor_idx < 0:
+                    neighbor_idx = len(row) - 1 if col_wrap else None
+                insert_at = col_idx
+            else:
+                neighbor_idx = col_idx + 1
+                if neighbor_idx >= len(row):
+                    neighbor_idx = 0 if col_wrap else None
+                insert_at = col_idx + 1
+            if neighbor_idx is not None:
+                nxt = row[neighbor_idx]
+                new_pt = [(a + b) / 2.0 for a, b in zip(cur, nxt)]
+            else:
+                new_pt = list(cur)
+                new_pt[-1] += 1.0
+            row.insert(insert_at, new_pt)
+        self._sync_face_mode_combo()
+        self._vp.sync_row_bookkeeping(self._grid)
+        self._rebuild()
+        self._refresh_row_bookkeeping()
+        self._on_row_changed(row_idx)
+
+    def _delete_column(self, col_idx: int):
+        """Remove `col_idx` from every row that reaches it, refusing
+        entirely if that would empty any affected row (a grid row needs
+        >= 1 point) -- silently, same convention as `_delete_row`."""
+        row_idx = self._row_combo.currentIndex()
+        for row in self._grid:
+            if col_idx < len(row) and len(row) - 1 < 1:
+                return
+        for row in self._grid:
+            if col_idx < len(row):
+                del row[col_idx]
+        self._sync_face_mode_combo()
+        self._vp.sync_row_bookkeeping(self._grid)
+        self._rebuild()
+        self._refresh_row_bookkeeping()
+        self._on_row_changed(row_idx, select_all=False)
 
     def _on_vert_table_selection(self):
         rows = self._vert_table.selectionModel().selectedRows()
@@ -2023,6 +2534,13 @@ class GridViewer(QDialog):
 
     def _on_viewport_vertex_clicked(self, vi: int):
         if vi < 0:
+            # Plain left-click on blank viewport space -- deselect
+            # everything (matches PathViewer/RegionViewer/VNFViewer),
+            # rather than the previous no-op. Clearing the table
+            # selection is enough: itemSelectionChanged already drives
+            # _on_vert_table_selection -> _vp.set_selected([]), which
+            # stops the blink timer and rebuilds markers as all-green.
+            self._vert_table.clearSelection()
             return
         row_idx, col_idx = _grid_flat_to_rc(vi, self._row_offsets)
         if row_idx != self._row_combo.currentIndex():
@@ -2150,6 +2668,17 @@ class _GridViewport(Viewport):
         self._blink_red = not self._blink_red
         self.update()
 
+    def sync_row_bookkeeping(self, grid_value: list):
+        """Refresh `_grid_rows`/`_row_offsets` from `grid_value` --
+        independent of whether a GL context exists yet, unlike `load_grid`
+        (which is a no-op before `initializeGL` has run, e.g. if called
+        right after construction but before the dialog is first shown).
+        `GridViewer`'s Add/Delete Row/Column handlers call this directly,
+        right after mutating the grid, so `set_selected_row`/`_pick_vertex`
+        never read stale offsets even if the GL-side rebuild is skipped."""
+        self._grid_rows = len(grid_value)
+        self._row_offsets = _grid_row_offsets(grid_value)
+
     def load_grid(self, grid_value: list, col_wrap: bool = False,
                   row_wrap: bool = False, draw_faces: bool = True,
                   bezier_patch: bool = False):
@@ -2167,8 +2696,8 @@ class _GridViewport(Viewport):
                     pts_3d.append([p[0], p[1], p[2]])
         pts = np.array(pts_3d, dtype=np.float32)
         self._all_pts = pts
-        rows = self._grid_rows
-        row_offsets = self._row_offsets
+        self.sync_row_bookkeeping(grid_value)
+        rows, row_offsets = self._grid_rows, self._row_offsets
         row_lens = [len(row) for row in grid_value]
 
         bb_min = pts.min(axis=0)
@@ -2299,9 +2828,6 @@ class _GridViewport(Viewport):
     def _cube_faces(self, r):
         return _cube_faces(r, self._is_2d)
 
-    def _world_per_px_radius(self):
-        return _viewport_marker_radius(self)
-
     def _build_point_markers(self):
         self._renderer.clear_points()
 
@@ -2309,8 +2835,7 @@ class _GridViewport(Viewport):
         if len(pts) == 0 or self._ctx is None:
             return
 
-        r = self._world_per_px_radius()
-        faces = self._cube_faces(r)
+        unit_faces = self._cube_faces(1.0)
         green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
         selected = set(self._selected_indices)
 
@@ -2318,10 +2843,11 @@ class _GridViewport(Viewport):
         for i, pt in enumerate(pts):
             if i in selected:
                 continue
-            for v0, v1, v2 in faces:
-                marker_tris.append(np.concatenate([pt + v0, green]))
-                marker_tris.append(np.concatenate([pt + v1, green]))
-                marker_tris.append(np.concatenate([pt + v2, green]))
+            r = _marker_radius_for_point(self, pt)
+            for v0, v1, v2 in unit_faces:
+                marker_tris.append(np.concatenate([pt + v0 * r, green]))
+                marker_tris.append(np.concatenate([pt + v1 * r, green]))
+                marker_tris.append(np.concatenate([pt + v2 * r, green]))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -2369,8 +2895,7 @@ class _GridViewport(Viewport):
         if not self._selected_indices or self._ctx is None:
             return
 
-        r = self._world_per_px_radius()
-        faces = self._cube_faces(r)
+        unit_faces = self._cube_faces(1.0)
         pts = self._all_pts
 
         for color_val, vao_attr, vbo_attr in [
@@ -2381,10 +2906,11 @@ class _GridViewport(Viewport):
             for vi in self._selected_indices:
                 if 0 <= vi < len(pts):
                     pt = pts[vi]
-                    for v0, v1, v2 in faces:
-                        tris.append(np.concatenate([pt + v0, color_val]))
-                        tris.append(np.concatenate([pt + v1, color_val]))
-                        tris.append(np.concatenate([pt + v2, color_val]))
+                    r = _marker_radius_for_point(self, pt)
+                    for v0, v1, v2 in unit_faces:
+                        tris.append(np.concatenate([pt + v0 * r, color_val]))
+                        tris.append(np.concatenate([pt + v1 * r, color_val]))
+                        tris.append(np.concatenate([pt + v2 * r, color_val]))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
@@ -2532,6 +3058,737 @@ class _GridViewport(Viewport):
 
 
 # ---------------------------------------------------------------------------
+# Region Viewer
+# ---------------------------------------------------------------------------
+
+class RegionViewer(QDialog):
+    """2D viewer for a "region" -- a list of closed polygon paths under
+    even-odd fill semantics (a path nested inside another alternates
+    solid/hole, e.g. three concentric circles = a disc surrounded by a
+    ring). Modeled on `GridViewer`'s "index dropdown selects one sub-list"
+    UI, combined with `PathViewer`'s per-path vertex editing (add/delete
+    vertex, always-closed loop, 2D-only drag/nudge) -- since each path
+    *is* an independently-closed polygon, unlike a grid's rows, which are
+    connected to their neighbors. Read-only by default; pass
+    `editable=True` for a Save/Cancel editing mode (see `MatrixViewer` for
+    the shared editing convention)."""
+
+    committed = Signal(str)
+
+    def __init__(self, title: str, region_value: list, parent=None, editable: bool = False):
+        super().__init__(parent)
+        label = "Region Editor" if editable else "Region Viewer"
+        self.setWindowTitle(f"{label}: {title}" if title else label)
+        self.resize(900, 520)
+
+        self._editable = editable
+        self._region = region_value
+        self._num_paths = len(region_value)
+        self._path_offsets = _grid_row_offsets(region_value)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._vp = _RegionViewport(region_value, self, editable=editable)
+        splitter.addWidget(self._vp)
+
+        table_container = QWidget()
+        tc_layout = QVBoxLayout(table_container)
+        tc_layout.setContentsMargins(0, 0, 0, 0)
+
+        path_bar = QHBoxLayout()
+        path_bar.addWidget(QLabel("Path:"))
+        self._path_combo = QComboBox()
+        for i in range(self._num_paths):
+            self._path_combo.addItem(str(i))
+        self._path_combo.currentIndexChanged.connect(self._on_path_changed)
+        path_bar.addWidget(self._path_combo, 1)
+        tc_layout.addLayout(path_bar)
+
+        self._pts_label = QLabel()
+        tc_layout.addWidget(self._pts_label)
+
+        self._vert_table = self._make_vert_table(region_value[0], editable)
+        self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
+        self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
+        if editable:
+            self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
+        tc_layout.addWidget(self._vert_table, 1)
+
+        splitter.addWidget(table_container)
+        t = self._vert_table
+        fm = t.fontMetrics()
+        max_path_len = max((len(p) for p in region_value), default=0)
+        vh_w = max(fm.horizontalAdvance(str(max(max_path_len - 1, 0))),
+                   fm.horizontalAdvance("0000")) + 20
+        table_w = (vh_w
+                   + sum(t.columnWidth(j) for j in range(t.columnCount()))
+                   + t.frameWidth() * 2 + 2)
+        splitter.setSizes([self.width() - table_w, table_w])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        layout.addWidget(splitter, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        self._fill_combo = QComboBox()
+        self._fill_combo.addItem("Region Only")
+        self._fill_combo.addItem("Region Filled")
+        self._fill_combo.setCurrentIndex(1)
+        self._fill_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        _size_combo_to_widest_item(self._fill_combo)
+        self._fill_combo.currentIndexChanged.connect(self._rebuild)
+        btn_row.addWidget(self._fill_combo)
+        btn_row.addSpacing(20)
+        btn_row.addStretch()
+        if editable:
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(self.reject)
+            btn_row.addWidget(cancel)
+            save = QPushButton("Save")
+            save.clicked.connect(self._on_save)
+            btn_row.addWidget(save)
+        else:
+            dismiss = QPushButton("Dismiss")
+            dismiss.clicked.connect(self.close)
+            btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+        self._on_path_changed(0)
+        self._vp.schedule_load(self._do_initial_load)
+        if editable:
+            self._vert_table.itemChanged.connect(self._on_item_changed)
+            self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.add_path_requested.connect(self._on_viewport_add_path_requested)
+            self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
+
+    @staticmethod
+    def _make_vert_table(path_pts: list, editable: bool = False) -> QTableWidget:
+        t = QTableWidget(len(path_pts), 2)
+        t.setFont(QFont("Menlo", 11))
+        t.setHorizontalHeaderLabels(["X", "Y"])
+        t.setVerticalHeaderLabels([str(i) for i in range(len(path_pts))])
+        _style_table_headers(t)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        if editable:
+            t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                               | QAbstractItemView.EditTrigger.EditKeyPressed)
+        else:
+            t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        for i, p in enumerate(path_pts):
+            for j in range(2):
+                item = QTableWidgetItem(f"{p[j]:g}")
+                if not editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                t.setItem(i, j, item)
+        fm = t.fontMetrics()
+        min_w = fm.horizontalAdvance("-00000.0") + 16
+        for j in range(2):
+            t.setColumnWidth(j, min_w)
+        return t
+
+    def _populate_table(self, path_pts: list):
+        self._vert_table.blockSignals(True)
+        self._vert_table.setRowCount(len(path_pts))
+        self._vert_table.setVerticalHeaderLabels([str(i) for i in range(len(path_pts))])
+        for i, p in enumerate(path_pts):
+            for j in range(2):
+                item = QTableWidgetItem(f"{p[j]:g}")
+                if not self._editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._vert_table.setItem(i, j, item)
+        self._vert_table.blockSignals(False)
+
+    def _on_path_changed(self, path_idx: int):
+        if path_idx < 0 or path_idx >= self._num_paths:
+            return
+        path_pts = self._region[path_idx]
+        self._pts_label.setText(f"Path Points ({len(path_pts)})")
+        self._populate_table(path_pts)
+        self._vert_table.selectAll()
+        self._vp.set_selected_path(path_idx)
+
+    def _refresh_path_bookkeeping(self):
+        """Recompute self._num_paths/self._path_offsets from self._region
+        -- call after any path/vertex-count change, before anything that
+        indexes into the region via the cached offsets."""
+        self._num_paths = len(self._region)
+        self._path_offsets = _grid_row_offsets(self._region)
+
+    def _refresh_path_combo_items(self):
+        """Repopulate the path combo's 0..N-1 item labels -- call only
+        when the path *count* itself changed (Add/Delete Path)."""
+        self._path_combo.blockSignals(True)
+        self._path_combo.clear()
+        for i in range(self._num_paths):
+            self._path_combo.addItem(str(i))
+        self._path_combo.blockSignals(False)
+
+    def _show_vert_table_context_menu(self, pos):
+        """Right-click menu on the vertex table (`editable=True` only) --
+        "this path" is always whichever path `_path_combo` currently
+        shows; "this vertex" is the specific table row (a point index
+        within that path) under the cursor, so the vertex-specific
+        actions are hidden when the click lands on empty space below the
+        last point. Unlike `GridViewer`'s Row/Column menu, there's no
+        "Add Path" here at all -- see `_on_viewport_add_path_requested`
+        for why that lives on the viewport's right-click instead."""
+        vertex_idx = self._vert_table.rowAt(pos.y())
+        menu = QMenu(self._vert_table)
+        if vertex_idx >= 0:
+            menu.addAction("Add Vertex Before", lambda: self._add_vertex(before=True, vertex_idx=vertex_idx))
+            menu.addAction("Add Vertex After", lambda: self._add_vertex(before=False, vertex_idx=vertex_idx))
+            menu.addSeparator()
+        menu.addAction("Delete this Path", self._delete_path)
+        if vertex_idx >= 0:
+            menu.addAction("Delete this Vertex", lambda: self._delete_vertex(vertex_idx))
+        menu.exec(self._vert_table.viewport().mapToGlobal(pos))
+
+    def _on_viewport_add_path_requested(self, x: float, y: float):
+        self._add_path_at(x, y)
+
+    def _add_path_at(self, x: float, y: float):
+        """Insert a new path -- a small rectangle centered at `(x, y)`,
+        sized to look reasonable at the current zoom (reusing the same
+        screen-space-constant scaling as vertex markers) -- at the end of
+        the region. This is the *only* way to add a path: unlike Add Row/
+        Column, a brand new path has no meaningful "before"/"after"
+        position, so the natural place to add one is wherever the user
+        right-clicked in the viewport (see `_RegionViewport.
+        contextMenuEvent`), not a table-context-menu action."""
+        half = _marker_radius_for_point(self._vp, np.array([x, y, 0.0])) * 8
+        new_path = [[x - half, y - half], [x + half, y - half],
+                    [x + half, y + half], [x - half, y + half]]
+        self._region.append(new_path)
+        insert_at = len(self._region) - 1
+        self._vp.sync_path_bookkeeping(self._region)
+        self._rebuild()
+        self._refresh_path_bookkeeping()
+        self._refresh_path_combo_items()
+        self._path_combo.blockSignals(True)
+        self._path_combo.setCurrentIndex(insert_at)
+        self._path_combo.blockSignals(False)
+        self._on_path_changed(insert_at)
+
+    def _on_viewport_add_vertex_requested(self, path_idx: int, insert_after: int, x: float, y: float):
+        """Right-click "Add Vertex" on a path's line (`_RegionViewport.
+        contextMenuEvent`) -- inserts exactly at the clicked point on
+        that segment, unlike `_add_vertex` (always a midpoint). Switches
+        the path dropdown first if the clicked line belongs to a
+        different path than the one currently displayed, same as
+        `_on_viewport_vertex_clicked` does for a clicked vertex."""
+        if path_idx != self._path_combo.currentIndex():
+            self._path_combo.setCurrentIndex(path_idx)
+        path = self._region[path_idx]
+        path.insert(insert_after + 1, [x, y])
+        self._vp.sync_path_bookkeeping(self._region)
+        self._rebuild()
+        self._refresh_path_bookkeeping()
+        self._populate_table(path)
+        self._pts_label.setText(f"Path Points ({len(path)})")
+        self._vert_table.selectRow(insert_after + 1)
+        self._vp.set_selected_path(path_idx)
+
+    def _delete_path(self):
+        """Remove the currently displayed path, refusing if that would
+        leave 0 paths (`_is_region`'s minimum) -- silently, matching the
+        no-popup convention used for invalid cell edits elsewhere."""
+        if self._num_paths <= 1:
+            return
+        path_idx = self._path_combo.currentIndex()
+        del self._region[path_idx]
+        self._vp.sync_path_bookkeeping(self._region)
+        self._rebuild()
+        self._refresh_path_bookkeeping()
+        self._refresh_path_combo_items()
+        select = min(path_idx, self._num_paths - 1)
+        self._path_combo.blockSignals(True)
+        self._path_combo.setCurrentIndex(select)
+        self._path_combo.blockSignals(False)
+        self._on_path_changed(select)
+
+    def _add_vertex(self, before: bool, vertex_idx: int):
+        """Insert a new vertex before or after `vertex_idx` in the
+        currently displayed path -- the midpoint of the two points it
+        lands between. Every region path is an implicitly closed polygon
+        (unlike `PathViewer`'s optional "Close Path"), so the neighbor is
+        always found by wrapping (`% n`) -- no "no neighbor" case to
+        handle, unlike `GridViewer`'s Add Row/Column."""
+        path_idx = self._path_combo.currentIndex()
+        path = self._region[path_idx]
+        n = len(path)
+        cur = path[vertex_idx]
+        if before:
+            neighbor_idx = (vertex_idx - 1) % n
+            insert_at = vertex_idx
+        else:
+            neighbor_idx = (vertex_idx + 1) % n
+            insert_at = vertex_idx + 1
+        nxt = path[neighbor_idx]
+        new_pt = [(a + b) / 2.0 for a, b in zip(cur, nxt)]
+        path.insert(insert_at, new_pt)
+        self._vp.sync_path_bookkeeping(self._region)
+        self._rebuild()
+        self._refresh_path_bookkeeping()
+        self._populate_table(path)
+        self._pts_label.setText(f"Path Points ({len(path)})")
+        self._vert_table.selectRow(insert_at)
+        self._vp.set_selected_path(path_idx)
+
+    def _delete_vertex(self, vertex_idx: int):
+        """Remove `vertex_idx` from the currently displayed path,
+        refusing if that would leave fewer than the 3 points a polygon
+        requires (`_is_region`'s minimum) -- silently, same convention as
+        `_delete_path`."""
+        path_idx = self._path_combo.currentIndex()
+        path = self._region[path_idx]
+        if len(path) - 1 < 3:
+            return
+        del path[vertex_idx]
+        self._vp.sync_path_bookkeeping(self._region)
+        self._rebuild()
+        self._refresh_path_bookkeeping()
+        self._populate_table(path)
+        self._pts_label.setText(f"Path Points ({len(path)})")
+        self._vert_table.clearSelection()
+        self._vp.set_selected_path(path_idx)
+
+    def _on_vert_table_selection(self):
+        rows = self._vert_table.selectionModel().selectedRows()
+        col_indices = sorted(r.row() for r in rows)
+        path_idx = self._path_combo.currentIndex()
+        path_start = self._path_offsets[path_idx]
+        global_indices = [path_start + c for c in col_indices]
+        self._vp.set_selected(global_indices)
+
+    def _on_viewport_vertex_clicked(self, vi: int):
+        if vi < 0:
+            # Plain left-click on blank viewport space -- deselect
+            # everything, rather than the previous no-op. Clearing the
+            # table selection is enough: itemSelectionChanged already
+            # drives _on_vert_table_selection -> _vp.set_selected([]),
+            # which stops the blink timer and rebuilds markers as all-green.
+            self._vert_table.clearSelection()
+            return
+        path_idx, col_idx = _grid_flat_to_rc(vi, self._path_offsets)
+        if path_idx != self._path_combo.currentIndex():
+            self._path_combo.setCurrentIndex(path_idx)
+        self._vert_table.clearSelection()
+        if 0 <= col_idx < self._vert_table.rowCount():
+            self._vert_table.selectRow(col_idx)
+
+    def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
+        """Live update while Cmd+dragging a vertex marker in the editable
+        viewport -- mirrors `_on_item_changed`'s self._region + table +
+        rebuild update, just driven by the viewport instead of a
+        table-cell edit. `z` is always ignored -- regions are 2D-only."""
+        path_idx, col_idx = _grid_flat_to_rc(vi, self._path_offsets)
+        pt = self._region[path_idx][col_idx]
+        pt[0] = x
+        pt[1] = y
+        if path_idx != self._path_combo.currentIndex():
+            self._path_combo.setCurrentIndex(path_idx)
+        else:
+            self._vert_table.blockSignals(True)
+            self._vert_table.item(col_idx, 0).setText(f"{x:g}")
+            self._vert_table.item(col_idx, 1).setText(f"{y:g}")
+            self._vert_table.blockSignals(False)
+        self._rebuild()
+
+    def _do_initial_load(self):
+        self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))
+
+    def _rebuild(self, _=None):
+        if self._vp._ctx is not None:
+            self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        path_idx = self._path_combo.currentIndex()
+        col_idx, j = item.row(), item.column()
+        parsed = _parse_number(item.text())
+        if parsed is None:
+            self._vert_table.blockSignals(True)
+            item.setText(f"{self._region[path_idx][col_idx][j]:g}")
+            self._vert_table.blockSignals(False)
+            return
+        self._region[path_idx][col_idx][j] = parsed
+        self._vert_table.blockSignals(True)
+        item.setText(f"{parsed:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild()
+
+    def _on_save(self):
+        self.committed.emit(_format_value(self._region))
+        self.accept()
+
+
+_REGION_PATH_COLORS = [
+    (0.85, 0.15, 0.15), (0.15, 0.45, 0.85), (0.15, 0.75, 0.25),
+    (0.85, 0.55, 0.1), (0.6, 0.2, 0.8), (0.1, 0.7, 0.7),
+]
+
+
+class _RegionViewport(Viewport):
+    """Viewport for region data -- always 2D/top-down-locked (no 3D mode,
+    per BelfrySCAD's region semantics), each path drawn as its own closed
+    line loop (cycling `_REGION_PATH_COLORS` so overlapping/nested paths
+    stay visually distinguishable while editing), with an optional
+    even-odd filled mesh (`_region_fill_mesh`) underneath."""
+
+    vertex_clicked = Signal(int)
+    vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    add_path_requested = Signal(float, float)  # (x, y) -- right-click blank space, editable only
+    add_vertex_requested = Signal(int, int, float, float)  # (path_idx, insert_after_col_idx, x, y) -- right-click on a line, editable only
+
+    def __init__(self, region_value: list, parent=None, editable: bool = False):
+        super().__init__(parent, selectable=False)
+        cam = self._renderer.camera
+        cam.fov = 45.0
+        cam.azimuth = 270.0
+        cam.elevation = 89.9999   # see _PathViewport's matching comment re: gimbal lock
+        cam.orthographic = True
+        self._orbit_enabled = False   # a region has no "other side" to orbit to -- always top-down
+        self._renderer.line_width = 2.0
+        self._renderer.show_edges = True   # polygon-offsets the fill mesh back so outlines win the depth tie
+        self._editable = editable
+        self._press_pos: QPoint | None = None
+        self._drag_started = False
+        self._drag_vertex_idx = -1
+        self._context_menu_suppressed = False   # set from mouseReleaseEvent -- a real drag shouldn't also pop a menu
+        self._all_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        self._num_paths = len(region_value)
+        self._path_offsets = _grid_row_offsets(region_value)
+        self._selected_indices: list[int] = []
+        self._selected_path: int = -1
+        self._blink_red = True
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(250)
+        self._blink_timer.timeout.connect(self._blink_tick)
+        self._sel_vao_r = None
+        self._sel_vbo_r = None
+        self._sel_vao_w = None
+        self._sel_vbo_w = None
+
+    def sync_path_bookkeeping(self, region_value: list):
+        """Refresh `_num_paths`/`_path_offsets` from `region_value` --
+        independent of whether a GL context exists yet, unlike
+        `load_region` (a no-op before `initializeGL` has run). See
+        `_GridViewport.sync_row_bookkeeping`, the identical fix for the
+        identical staleness gap."""
+        self._num_paths = len(region_value)
+        self._path_offsets = _grid_row_offsets(region_value)
+
+    def load_region(self, region_value: list, draw_fill: bool = True):
+        self.makeCurrent()
+        self._renderer._clear_buffers()
+        self._renderer.clear_simple_buffers()
+        self._release_sel_markers()
+
+        pts_3d = [[p[0], p[1], 0.0] for path in region_value for p in path]
+        pts = np.array(pts_3d, dtype=np.float32)
+        self._all_pts = pts
+        self.sync_path_bookkeeping(region_value)
+
+        bb_min = pts.min(axis=0)
+        bb_max = pts.max(axis=0)
+        self.frame_scene(bb_min, bb_max)
+
+        line_verts = []
+        for pi, path in enumerate(region_value):
+            color = np.array(_REGION_PATH_COLORS[pi % len(_REGION_PATH_COLORS)], dtype=np.float32)
+            n = len(path)
+            base = self._path_offsets[pi]
+            for c in range(n):
+                a = base + c
+                b = base + (c + 1) % n
+                line_verts.append(np.concatenate([pts[a], color]))
+                line_verts.append(np.concatenate([pts[b], color]))
+        if line_verts:
+            self._renderer.upload_lines(np.array(line_verts, dtype=np.float32))
+
+        if draw_fill:
+            fill = _region_fill_mesh(region_value)
+            if fill is not None:
+                tris_pos, tris_norm = fill
+                self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
+
+        self._build_point_markers()
+        if self._selected_indices:
+            self._build_sel_markers()
+        self.doneCurrent()
+        self.update()
+
+    def _cube_faces(self, r):
+        return _cube_faces(r, True)
+
+    def _build_point_markers(self):
+        self._renderer.clear_points()
+
+        pts = self._all_pts
+        if len(pts) == 0 or self._ctx is None:
+            return
+
+        unit_faces = self._cube_faces(1.0)
+        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        selected = set(self._selected_indices)
+
+        marker_tris = []
+        for i, pt in enumerate(pts):
+            if i in selected:
+                continue
+            r = _marker_radius_for_point(self, pt)
+            for v0, v1, v2 in unit_faces:
+                marker_tris.append(np.concatenate([pt + v0 * r, green]))
+                marker_tris.append(np.concatenate([pt + v1 * r, green]))
+                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+
+        if marker_tris:
+            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+
+    def set_selected_path(self, path_idx: int):
+        self._selected_path = path_idx
+        start, end = self._path_offsets[path_idx], self._path_offsets[path_idx + 1]
+        self.set_selected(list(range(start, end)))
+
+    def set_selected(self, indices: list[int]):
+        self.makeCurrent()
+        self._selected_indices = indices
+        self._release_sel_markers()
+        self._build_point_markers()
+
+        if not indices:
+            self._blink_timer.stop()
+            self.doneCurrent()
+            self.update()
+            return
+
+        if 0 <= indices[0] < len(self._all_pts):
+            self.scroll_to_visible(self._all_pts[indices[0]])
+
+        self._blink_red = True
+        self._blink_timer.start()
+        self._build_sel_markers()
+        self.doneCurrent()
+        self.update()
+
+    def _release_sel_markers(self):
+        for attr in ("_sel_vao_r", "_sel_vao_w"):
+            vao = getattr(self, attr)
+            if vao is not None:
+                vao.release()
+                setattr(self, attr, None)
+        for attr in ("_sel_vbo_r", "_sel_vbo_w"):
+            vbo = getattr(self, attr)
+            if vbo is not None:
+                vbo.release()
+                setattr(self, attr, None)
+
+    def _build_sel_markers(self):
+        self._release_sel_markers()
+        if not self._selected_indices or self._ctx is None:
+            return
+
+        unit_faces = self._cube_faces(1.0)
+        pts = self._all_pts
+
+        for color_val, vao_attr, vbo_attr in [
+            (np.array([1.0, 0.0, 0.0], dtype=np.float32), "_sel_vao_r", "_sel_vbo_r"),
+            (np.array([1.0, 1.0, 1.0], dtype=np.float32), "_sel_vao_w", "_sel_vbo_w"),
+        ]:
+            tris = []
+            for vi in self._selected_indices:
+                if 0 <= vi < len(pts):
+                    pt = pts[vi]
+                    r = _marker_radius_for_point(self, pt)
+                    for v0, v1, v2 in unit_faces:
+                        tris.append(np.concatenate([pt + v0 * r, color_val]))
+                        tris.append(np.concatenate([pt + v1 * r, color_val]))
+                        tris.append(np.concatenate([pt + v2 * r, color_val]))
+            if tris:
+                data = np.array(tris, dtype=np.float32)
+                vbo = self._ctx.buffer(data.tobytes())
+                vao = self._ctx.vertex_array(
+                    self._renderer._gizmo_prog,
+                    [(vbo, "3f 3f", "in_position", "in_color")],
+                )
+                setattr(self, vao_attr, vao)
+                setattr(self, vbo_attr, vbo)
+
+    def _paint_extra(self, mvp: np.ndarray):
+        import moderngl as mgl
+        vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
+        if vao is not None:
+            self._renderer._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            self._ctx.disable(mgl.DEPTH_TEST)
+            vao.render(mgl.TRIANGLES)
+            self._ctx.enable(mgl.DEPTH_TEST)
+
+    def frame_scene(self, bb_min, bb_max):
+        # Always called from within an already-makeCurrent'd caller
+        # (load_region's own bracket, or the safe initial schedule_load
+        # path) -- must NOT bracket with its own makeCurrent/doneCurrent.
+        super().frame_scene(bb_min, bb_max)
+        if len(self._all_pts) > 0:
+            self._build_point_markers()
+            if self._selected_indices:
+                self._build_sel_markers()
+
+    def wheelEvent(self, event):
+        # Unlike frame_scene above, this is a genuine external Qt event --
+        # never called from inside another makeCurrent'd block -- so it
+        # does need its own bracket.
+        super().wheelEvent(event)
+        if len(self._all_pts) > 0:
+            self.makeCurrent()
+            self._build_point_markers()
+            if self._selected_indices:
+                self._build_sel_markers()
+            self.doneCurrent()
+            self.update()
+
+    def closeEvent(self, event):
+        self._blink_timer.stop()
+        super().closeEvent(event)
+
+    def _blink_tick(self):
+        self._blink_red = not self._blink_red
+        self.update()
+
+    def _pick_vertex(self, px: float, py: float) -> int:
+        if len(self._all_pts) == 0:
+            return -1
+        return self._renderer.pick_nearest_point(self._all_pts, px, py, self.width(), self.height())
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self._press_pos = event.position().toPoint()
+        self._drag_started = False
+        if (self._editable
+                and event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
+                and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
+            vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
+            if vi >= 0:
+                self._drag_vertex_idx = vi
+                return   # don't arm orbit/pan -- this press starts a vertex drag
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._press_pos is not None:
+            pos = event.position().toPoint()
+            dx = abs(pos.x() - self._press_pos.x())
+            dy = abs(pos.y() - self._press_pos.y())
+            if dx > 3 or dy > 3:
+                self._drag_started = True
+        if self._drag_vertex_idx >= 0:
+            pos = event.position().toPoint()
+            ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+            hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
+            if hit is not None:
+                self.vertex_moved.emit(self._drag_vertex_idx,
+                                        round(float(hit[0]), 3), round(float(hit[1]), 3), 0.0)
+            return
+        if self._last_mouse is None:
+            pos = event.position().toPoint()
+            vi = self._pick_vertex(pos.x(), pos.y())
+            if vi >= 0:
+                pt = self._all_pts[vi]
+                self.setToolTip(f"[{vi}]: ({pt[0]:g}, {pt[1]:g})")
+            else:
+                self.setToolTip("")
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if self._drag_vertex_idx >= 0:
+            vi = self._drag_vertex_idx
+            moved = self._drag_started
+            self._context_menu_suppressed = moved
+            self._drag_vertex_idx = -1
+            self._press_pos = None
+            self._drag_started = False
+            if not moved:
+                self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
+            return
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._drag_started
+                and self._press_pos is not None):
+            pos = event.position().toPoint()
+            vi = self._pick_vertex(pos.x(), pos.y())
+            self.vertex_clicked.emit(vi)
+        # Captured here (a genuine right-button pan drag), not left as a
+        # side effect of the reset below -- contextMenuEvent fires right
+        # after this handler and needs to know whether *this* release
+        # followed a drag, so a pan gesture doesn't also pop up a menu.
+        self._context_menu_suppressed = self._drag_started
+        self._press_pos = None
+        self._drag_started = False
+        super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Right-clicking the viewport (editable only, and only when not
+        over an existing vertex, and only when the right button wasn't
+        just used to pan the camera) offers one of two actions, checked
+        in this order:
+        - On a path's line: "Add Vertex", inserting exactly at the
+          clicked point on that segment (every region path is implicitly
+          closed, so the segment list always includes each path's own
+          wrap-around edge -- see the loop below).
+        - Otherwise, blank space: "Add Path" -- unlike Add Row/Column, a
+          brand new path has no meaningful "before"/"after" position, so
+          this is the only way to add one, placed wherever the user
+          actually clicked rather than duplicating whatever path happens
+          to be selected."""
+        if not self._editable or self._context_menu_suppressed:
+            return
+        pos = event.pos()
+        if self._pick_vertex(pos.x(), pos.y()) >= 0:
+            return
+        segments = []
+        for p in range(self._num_paths):
+            start, end = self._path_offsets[p], self._path_offsets[p + 1]
+            n = end - start
+            for k in range(n):
+                segments.append((start + k, start + (k + 1) % n))
+        seg_result = self._renderer.pick_nearest_segment(self._all_pts, segments, pos.x(), pos.y(), self.width(), self.height())
+        if seg_result is not None:
+            seg_idx, world_pt = seg_result
+            a, _ = segments[seg_idx]
+            path_idx, insert_after = _grid_flat_to_rc(a, self._path_offsets)
+            x, y = float(world_pt[0]), float(world_pt[1])
+            menu = QMenu(self)
+            menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(path_idx, insert_after, x, y))
+            menu.exec(event.globalPos())
+            return
+        ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
+        if hit is None:
+            return
+        x, y = float(hit[0]), float(hit[1])
+        menu = QMenu(self)
+        menu.addAction("Add Path", lambda: self.add_path_requested.emit(x, y))
+        menu.exec(event.globalPos())
+
+    def keyPressEvent(self, event):
+        """Arrow keys nudge every selected vertex by one world unit --
+        always the simple fixed X/Y mapping (regions are always the
+        locked top-down 2D view, never orbited), see
+        `_PathViewport.keyPressEvent`'s matching 2D case."""
+        if self._editable and self._selected_indices:
+            delta = _key_nudge_delta(self._renderer.camera, 2, event.key())
+            if delta is not None:
+                for vi in self._selected_indices:
+                    if 0 <= vi < len(self._all_pts):
+                        new_pt = self._all_pts[vi] + delta
+                        self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
+                                                round(float(new_pt[1]), 3), 0.0)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # Lexical literal detection — for the code editor's "View as..."/"Edit as..."
 # context-menu items, which work on a plain numeric-only bracketed literal
 # under the cursor with no debug session (and no AST/root_scope) involved.
@@ -2602,13 +3859,13 @@ def _iter_enclosing_literals(text: str, offset: int, max_levels: int = 8):
 
 def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
     """Find the innermost enclosing literal matching each of Path/Grid/
-    Matrix/Affine *independently*, as `{shape: (start, end, value)}` for
-    whichever shapes match (mirrors `find_viewable_literals`). A single
-    shared "first match wins" walk doesn't work here either: a grid's own
-    row is itself a valid Path (a list of numeric points), so a shared walk
-    would resolve "path" (the row) before ever reaching "grid" (the whole
-    structure) for *any* click inside a row, not just when clicking exactly
-    between rows."""
+    Matrix/Affine/VNF/Region *independently*, as `{shape: (start, end,
+    value)}` for whichever shapes match (mirrors `find_viewable_literals`).
+    A single shared "first match wins" walk doesn't work here either: a
+    grid's own row is itself a valid Path (a list of numeric points), so a
+    shared walk would resolve "path" (the row) before ever reaching "grid"
+    (the whole structure) for *any* click inside a row, not just when
+    clicking exactly between rows."""
     found: dict = {}
     for start, end, value in _iter_enclosing_literals(text, offset, max_levels):
         if "path" not in found and _is_path(value):
@@ -2619,6 +3876,10 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["matrix"] = (start, end, value)
         if "affine" not in found and _is_affine_matrix(value):
             found["affine"] = (start, end, value)
+        if "vnf" not in found and _is_vnf(value):
+            found["vnf"] = (start, end, value)
+        if "region" not in found and _is_region(value):
+            found["region"] = (start, end, value)
     return found
 
 
@@ -2645,6 +3906,8 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["grid"] = (start, end, value)
         if "path" not in found and _is_path(value):
             found["path"] = (start, end, value)
+        if "region" not in found and _is_region(value):
+            found["region"] = (start, end, value)
     return found
 
 
@@ -2672,6 +3935,11 @@ def _open_grid_viewer(title: str, value, parent=None):
     dlg.show()
 
 
+def _open_region_viewer(title: str, value, parent=None):
+    dlg = RegionViewer(title, value, parent)
+    dlg.show()
+
+
 def _open_matrix_viewer(title: str, value, parent=None):
     dlg = MatrixViewer(title, value, parent)
     dlg.show()
@@ -2692,6 +3960,8 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as Grid...", lambda: _open_grid_viewer(name, value, parent))
     if _is_path(value):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))
+    if _is_region(value):
+        menu.addAction("View as Region...", lambda: _open_region_viewer(name, value, parent))
     if _is_matrix(value):
         menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(name, value, parent))
     if _is_affine_matrix(value):
@@ -2700,12 +3970,13 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
 
 def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None):
     """Like `build_viewer_menu`, but for the per-shape results of
-    `find_viewable_literals` — each shape (List/VNF/Grid/Path) may come from
-    a different span of `text`, since they're found independently. `text` is
-    the full source text the (start, end) spans index into, used to look up
-    each action's variable-name title via `_literal_display_name` (empty if
-    the literal isn't a simple `name = <literal>` assignment). Deliberately
-    excludes Matrix/Affine — those are Edit-only via `build_editor_menu`."""
+    `find_viewable_literals` — each shape (List/VNF/Grid/Path/Region) may
+    come from a different span of `text`, since they're found
+    independently. `text` is the full source text the (start, end) spans
+    index into, used to look up each action's variable-name title via
+    `_literal_display_name` (empty if the literal isn't a simple
+    `name = <literal>` assignment). Deliberately excludes Matrix/Affine —
+    those are Edit-only via `build_editor_menu`."""
     def _preview(start, end):
         return _literal_display_name(text, start)
 
@@ -2725,6 +3996,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
         start, end, value = literals["path"]
         menu.addAction("View as Path...", lambda start=start, end=end, value=value:
                        _open_path_viewer(_preview(start, end), value, parent))
+    if "region" in literals:
+        start, end, value = literals["region"]
+        menu.addAction("View as Region...", lambda start=start, end=end, value=value:
+                       _open_region_viewer(_preview(start, end), value, parent))
 
 
 def _lock_parent_editor_while_open(dlg, parent):
@@ -2772,16 +4047,31 @@ def _open_affine_matrix_editor(title: str, value: list, on_commit, parent=None):
     dlg.show()
 
 
+def _open_vnf_editor(title: str, value: list, on_commit, parent=None):
+    dlg = VNFViewer(title, value, parent, editable=True)
+    dlg.committed.connect(on_commit)
+    _lock_parent_editor_while_open(dlg, parent)
+    dlg.show()
+
+
+def _open_region_editor(title: str, value: list, on_commit, parent=None):
+    dlg = RegionViewer(title, value, parent, editable=True)
+    dlg.committed.connect(on_commit)
+    _lock_parent_editor_while_open(dlg, parent)
+    dlg.show()
+
+
 def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=None):
     """Add editable-viewer actions to a QMenu for the per-shape results of
-    `find_editable_literals` — each shape (Path/Grid/Matrix/Affine) may come
-    from a different span of `text`, since they're found independently.
-    `text` is the full source text the (start, end) spans index into, used
-    to look up each action's variable-name title via `_literal_display_name`
-    (empty if the literal isn't a simple `name = <literal>` assignment).
-    `on_commit(new_text, start, end)` fires once per dialog, only when its
-    Save button is clicked, with the span belonging to *that* shape's
-    match."""
+    `find_editable_literals` — each shape (Path/Grid/Matrix/Affine/VNF/
+    Region) may come from a different span of `text`, since they're found
+    independently. `text` is the full source text the (start, end) spans
+    index into, used to look up each action's variable-name title via
+    `_literal_display_name` (empty if the literal isn't a simple
+    `name = <literal>` assignment). `on_commit(new_text, start, end)` fires
+    once per dialog, only when its Save button is clicked, with the span
+    belonging to *that* shape's match. VNF editing is vertex positions
+    only -- face topology is never edited, see `VNFViewer`."""
     def _preview(start, end):
         return _literal_display_name(text, start)
 
@@ -2805,3 +4095,13 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as Affine Transform...", lambda start=start, end=end, value=value:
                        _open_affine_matrix_editor(_preview(start, end), value,
                                                    lambda t, s=start, e=end: on_commit(t, s, e), parent))
+    if "vnf" in literals:
+        start, end, value = literals["vnf"]
+        menu.addAction("Edit as VNF...", lambda start=start, end=end, value=value:
+                       _open_vnf_editor(_preview(start, end), value,
+                                         lambda t, s=start, e=end: on_commit(t, s, e), parent))
+    if "region" in literals:
+        start, end, value = literals["region"]
+        menu.addAction("Edit as Region...", lambda start=start, end=end, value=value:
+                       _open_region_editor(_preview(start, end), value,
+                                            lambda t, s=start, e=end: on_commit(t, s, e), parent))
