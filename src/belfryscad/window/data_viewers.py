@@ -1545,6 +1545,9 @@ class PathViewer(QDialog):
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
             self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
+            self._vp.delete_vertex_requested.connect(self._delete_vertex)
+            self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
         table_container = QWidget()
         tc_layout = QVBoxLayout(table_container)
         tc_layout.setContentsMargins(0, 0, 0, 0)
@@ -1574,13 +1577,6 @@ class PathViewer(QDialog):
         self._bezier_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._bezier_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._bezier_cb)
-        if editable:
-            add_vertex = QPushButton("Add Vertex")
-            add_vertex.clicked.connect(self._add_vertex)
-            btn_row.addWidget(add_vertex)
-            del_vertex = QPushButton("Delete Vertex")
-            del_vertex.clicked.connect(self._delete_vertex)
-            btn_row.addWidget(del_vertex)
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1645,37 +1641,30 @@ class PathViewer(QDialog):
         self._vert_table.blockSignals(False)
         self._pts_label.setText(f"Path Points ({len(self._path)})")
 
-    def _add_vertex(self):
-        """Insert a new vertex after the last selected row (or at the end
-        if nothing is selected). Its position is the midpoint of the two
-        points it's inserted between (wrapping to point 0 if inserted
-        after the last point of a closed path), or an offset duplicate of
-        the last point if there's no "next" point to average with (open
-        path, inserting past the end)."""
-        rows = sorted(r.row() for r in self._vert_table.selectionModel().selectedRows())
-        insert_after = rows[-1] if rows else len(self._path) - 1
-        cur = self._path[insert_after]
-        next_idx = insert_after + 1
-        if next_idx >= len(self._path):
-            next_idx = 0 if self._closed_cb.isChecked() else None
-        if next_idx is not None:
-            nxt = self._path[next_idx]
-            new_pt = [(a + b) / 2.0 for a, b in zip(cur, nxt)]
-        else:
-            new_pt = list(cur)
-            new_pt[0] += 1.0
-            new_pt[1] += 1.0
-        self._path.insert(insert_after + 1, new_pt)
-        self._populate_vert_table()
-        self._vert_table.selectRow(insert_after + 1)
-        self._rebuild()
+    def _show_vert_table_context_menu(self, pos):
+        """Right-click menu on the vertex table (`editable=True` only) --
+        "this vertex" is the specific table row under the cursor, so the
+        action is hidden when the click lands on empty space below the
+        last point (mirrors `GridViewer`/`RegionViewer`'s table context
+        menu convention)."""
+        vertex_idx = self._vert_table.rowAt(pos.y())
+        if vertex_idx < 0:
+            return
+        menu = QMenu(self._vert_table)
+        menu.addAction("Delete Vertex", lambda: self._delete_vertex(vertex_idx))
+        menu.exec(self._vert_table.viewport().mapToGlobal(pos))
 
-    def _delete_vertex(self):
-        """Remove the selected vertices, refusing if that would leave
-        fewer than the 2 points a path requires (`_is_path`'s minimum) --
-        silently, matching the no-popup convention used for invalid cell
-        edits elsewhere in this dialog."""
-        rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
+    def _delete_vertex(self, vertex_idx: int | None = None):
+        """Remove the given vertex (right-click on it in the viewport or
+        in the vertex table), or -- if none given -- the selected table
+        rows (the Delete/Backspace key -- see `keyPressEvent`), refusing
+        if that would leave fewer than the 2 points a path requires
+        (`_is_path`'s minimum) -- silently, matching the no-popup
+        convention used for invalid cell edits elsewhere in this dialog."""
+        if vertex_idx is not None:
+            rows = [vertex_idx]
+        else:
+            rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
         if not rows or len(self._path) - len(rows) < 2:
             return
         for r in rows:
@@ -1733,9 +1722,8 @@ class PathViewer(QDialog):
     def _on_viewport_add_vertex_requested(self, insert_after: int, x: float, y: float, z: float):
         """Right-click "Add Vertex" on a path line (`_PathViewport.
         contextMenuEvent`) -- inserts exactly at the clicked point on
-        that segment, unlike `_add_vertex` (always a midpoint). Row-count
-        change, so repopulates the whole table like `_add_vertex`/
-        `_delete_vertex` do, rather than an in-place cell update."""
+        that segment. Row-count change, so repopulates the whole table
+        like `_delete_vertex` does, rather than an in-place cell update."""
         new_pt = [x, y] if self._is_2d else [x, y, z]
         self._path.insert(insert_after + 1, new_pt)
         self._populate_vert_table()
@@ -1751,6 +1739,22 @@ class PathViewer(QDialog):
             self._vp.load_path(self._path, self._closed_cb.isChecked(),
                                self._bezier_cb.isChecked())
 
+    def keyPressEvent(self, event):
+        """Delete/Backspace deletes the currently selected vertices
+        (table selection and viewport selection are always kept in sync,
+        so this works the same regardless of whether the selection was
+        made by clicking the table or a viewport marker) -- reuses
+        `_delete_vertex`'s no-arg table-selection path. Catches the key
+        at the dialog level rather than on the table/viewport
+        individually, since neither of those widgets consumes
+        Delete/Backspace itself, so the event otherwise just bubbles up
+        here unhandled anyway."""
+        if self._editable and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._delete_vertex()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 
 
 class _PathViewport(Viewport):
@@ -1758,6 +1762,7 @@ class _PathViewport(Viewport):
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
     add_vertex_requested = Signal(int, float, float, float)  # (insert_after_idx, x, y, z) -- right-click on a line, editable only
+    delete_vertex_requested = Signal(int)  # (vertex_idx) -- right-click directly on a vertex, editable only
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False)
@@ -2129,11 +2134,25 @@ class _PathViewport(Viewport):
         `Close Path` is checked (`self._closed`) -- the wrap-around
         segment's "insert after" index is `len(self._path_pts) - 1`, which
         correctly appends the new point at the end of the list rather
-        than inserting before index 0."""
+        than inserting before index 0. Right-clicking directly on a vertex
+        instead offers "Delete Vertex" for that specific point."""
+        # A right-click reaching here is about to (or considering) show a
+        # QMenu.exec() -- Qt doesn't reliably deliver this widget's own
+        # mouseReleaseEvent first (the popup's own event loop can swallow
+        # it), so without this the base Viewport's orbit/pan tracking
+        # (_last_mouse/_mouse_button) can be left armed as if the right
+        # button were still held, panning the camera on every subsequent
+        # mouse move until another click happens to reset it.
+        self._last_mouse = None
+        self._mouse_button = None
         if not self._editable or self._context_menu_suppressed:
             return
         pos = event.pos()
-        if self._pick_vertex(pos.x(), pos.y()) >= 0:
+        vi = self._pick_vertex(pos.x(), pos.y())
+        if vi >= 0:
+            menu = QMenu(self)
+            menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
+            menu.exec(event.globalPos())
             return
         n = len(self._path_pts)
         if n < 2:
@@ -2282,6 +2301,8 @@ class GridViewer(QDialog):
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.delete_row_requested.connect(self._on_viewport_delete_row_requested)
+            self._vp.delete_column_requested.connect(self._on_viewport_delete_column_requested)
 
     @staticmethod
     def _make_vert_table(row_pts: list, is_2d: bool, editable: bool = False) -> QTableWidget:
@@ -2386,13 +2407,23 @@ class GridViewer(QDialog):
             self._row_combo.addItem(str(i))
         self._row_combo.blockSignals(False)
 
+    def _is_bezier_mode(self) -> bool:
+        """Add/Delete Row/Column would break the exactly-4x4 shape a
+        Bezier Patch's control net requires, so every entry point into
+        those mutations (table context menu, viewport context menu) is
+        disabled while this mode is active."""
+        return self._face_mode_combo.currentText() == "Bezier Patch"
+
     def _show_vert_table_context_menu(self, pos):
         """Right-click menu on the vertex table (`editable=True` only),
         replacing the old Add/Delete Row/Column buttons -- "this row" is
         always whichever row `_row_combo` currently shows; "this column"
         is the specific table row (a grid column/point index) under the
         cursor, so the column-specific actions are hidden when the click
-        lands on empty space below the last point."""
+        lands on empty space below the last point. No menu at all in
+        Bezier Patch mode -- see `_is_bezier_mode`."""
+        if self._is_bezier_mode():
+            return
         col_idx = self._vert_table.rowAt(pos.y())
         menu = QMenu(self._vert_table)
         menu.addAction("Add Row Before", lambda: self._add_row(before=True))
@@ -2414,7 +2445,10 @@ class GridViewer(QDialog):
         neighbor is a different length (ragged grid); or, if there's no
         such neighbor (row 0's "before", or the last row's "after", with
         no wrap), this row's own points nudged along their last
-        coordinate so the new row isn't exactly coincident."""
+        coordinate so the new row isn't exactly coincident. Refuses
+        silently in Bezier Patch mode -- see `_is_bezier_mode`."""
+        if self._is_bezier_mode():
+            return
         row_idx = self._row_combo.currentIndex()
         cur = self._grid[row_idx]
         row_wrap = self._wrap_flags()[1]
@@ -2453,9 +2487,10 @@ class GridViewer(QDialog):
     def _delete_row(self):
         """Remove the currently displayed row, refusing if that would
         leave fewer than the 2 rows a grid requires (`_is_grid`'s
-        minimum) -- silently, matching the no-popup convention used for
-        invalid cell edits elsewhere in this dialog."""
-        if self._rows <= 2:
+        minimum), or in Bezier Patch mode (see `_is_bezier_mode`) --
+        silently, matching the no-popup convention used for invalid cell
+        edits elsewhere in this dialog."""
+        if self._rows <= 2 or self._is_bezier_mode():
             return
         row_idx = self._row_combo.currentIndex()
         del self._grid[row_idx]
@@ -2477,7 +2512,10 @@ class GridViewer(QDialog):
         against its *own* length (not the clicked row's), so a ragged
         grid's shorter/longer rows each still get a sensible placement.
         Per-row placement follows the same midpoint/nudge logic as
-        `_add_row`, just along the row instead of across rows."""
+        `_add_row`, just along the row instead of across rows. Refuses
+        silently in Bezier Patch mode -- see `_is_bezier_mode`."""
+        if self._is_bezier_mode():
+            return
         row_idx = self._row_combo.currentIndex()
         col_wrap = self._wrap_flags()[0]
         for row in self._grid:
@@ -2510,7 +2548,10 @@ class GridViewer(QDialog):
     def _delete_column(self, col_idx: int):
         """Remove `col_idx` from every row that reaches it, refusing
         entirely if that would empty any affected row (a grid row needs
-        >= 1 point) -- silently, same convention as `_delete_row`."""
+        >= 1 point), or in Bezier Patch mode (see `_is_bezier_mode`) --
+        silently, same convention as `_delete_row`."""
+        if self._is_bezier_mode():
+            return
         row_idx = self._row_combo.currentIndex()
         for row in self._grid:
             if col_idx < len(row) and len(row) - 1 < 1:
@@ -2548,6 +2589,24 @@ class GridViewer(QDialog):
         self._vert_table.clearSelection()
         if 0 <= col_idx < self._vert_table.rowCount():
             self._vert_table.selectRow(col_idx)
+
+    def _on_viewport_delete_row_requested(self, vi: int):
+        """Right-click "Delete Row" on a vertex in the viewport
+        (`_GridViewport.contextMenuEvent`) -- `_delete_row` always acts on
+        whichever row `_row_combo` currently shows, so switch to the
+        clicked vertex's row first (matches `_on_viewport_vertex_clicked`)."""
+        row_idx, _ = _grid_flat_to_rc(vi, self._row_offsets)
+        self._row_combo.setCurrentIndex(row_idx)
+        self._delete_row()
+
+    def _on_viewport_delete_column_requested(self, vi: int):
+        """Right-click "Delete Column" on a vertex in the viewport --
+        `_delete_column` removes that column position from every row that
+        reaches it, so the row switch here is only to keep the visible
+        table in sync with the clicked vertex, not required for correctness."""
+        row_idx, col_idx = _grid_flat_to_rc(vi, self._row_offsets)
+        self._row_combo.setCurrentIndex(row_idx)
+        self._delete_column(col_idx)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
         """Live update while Cmd+dragging a vertex marker in the editable
@@ -2621,6 +2680,8 @@ class _GridViewport(Viewport):
     """Viewport for grid data with quad mesh faces and selectable vertex markers."""
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    delete_row_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
+    delete_column_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
 
     def __init__(self, grid_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False)
@@ -2631,10 +2692,12 @@ class _GridViewport(Viewport):
         self._editable = editable
         self._press_pos = None
         self._drag_started = False
+        self._context_menu_suppressed = False   # set from mouseReleaseEvent -- a real drag shouldn't also pop a menu
         self._drag_vertex_idx = -1
         self._drag_lock_axis = 2
         self._drag_plane_point: np.ndarray = np.zeros(3, dtype=np.float32)
         self._all_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        self._bezier_patch_mode = False  # set from load_grid -- disables Add/Delete Row/Column via the viewport context menu
         self._grid_rows = len(grid_value)
         self._row_offsets = _grid_row_offsets(grid_value)
         self._is_2d = is_2d
@@ -2682,6 +2745,7 @@ class _GridViewport(Viewport):
     def load_grid(self, grid_value: list, col_wrap: bool = False,
                   row_wrap: bool = False, draw_faces: bool = True,
                   bezier_patch: bool = False):
+        self._bezier_patch_mode = bezier_patch
         self.makeCurrent()
         self._renderer._clear_buffers()
         self._renderer.clear_simple_buffers()
@@ -3021,6 +3085,7 @@ class _GridViewport(Viewport):
         if self._drag_vertex_idx >= 0:
             vi = self._drag_vertex_idx
             moved = self._drag_started
+            self._context_menu_suppressed = moved
             self._drag_vertex_idx = -1
             self._press_pos = None
             self._drag_started = False
@@ -3034,9 +3099,39 @@ class _GridViewport(Viewport):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
             self.vertex_clicked.emit(vi)
+        # Captured here (a genuine right-button pan drag), not left as a
+        # side effect of the reset below -- contextMenuEvent fires right
+        # after this handler and needs to know whether *this* release
+        # followed a drag, so a pan gesture doesn't also pop up a menu.
+        self._context_menu_suppressed = self._drag_started
         self._press_pos = None
         self._drag_started = False
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Right-clicking directly on a vertex (editable only, and not
+        immediately after a right-button pan drag) offers "Delete Row" and
+        "Delete Column" for that vertex's row/column. No menu at all in
+        Bezier Patch mode (`_bezier_patch_mode`, set from `load_grid`) --
+        deleting a row/column would break the exactly-4x4 shape a Bezier
+        Patch's control net requires."""
+        # See _PathViewport.contextMenuEvent for why this reset is needed
+        # regardless of whether a menu ends up shown: QMenu.exec() isn't
+        # guaranteed to run only after this widget's own mouseReleaseEvent
+        # has fired, so without it the base Viewport's orbit/pan tracking
+        # can be left armed as if the right button were still held.
+        self._last_mouse = None
+        self._mouse_button = None
+        if not self._editable or self._context_menu_suppressed or self._bezier_patch_mode:
+            return
+        pos = event.pos()
+        vi = self._pick_vertex(pos.x(), pos.y())
+        if vi < 0:
+            return
+        menu = QMenu(self)
+        menu.addAction("Delete Row", lambda: self.delete_row_requested.emit(vi))
+        menu.addAction("Delete Column", lambda: self.delete_column_requested.emit(vi))
+        menu.exec(event.globalPos())
 
     def keyPressEvent(self, event):
         """Arrow keys nudge every selected vertex by one world unit,
@@ -3740,6 +3835,12 @@ class _RegionViewport(Viewport):
           this is the only way to add one, placed wherever the user
           actually clicked rather than duplicating whatever path happens
           to be selected."""
+        # See _PathViewport.contextMenuEvent -- defensively clears the
+        # base Viewport's orbit/pan tracking, since a right-click that
+        # opens a QMenu.exec() isn't guaranteed to have delivered this
+        # widget's own mouseReleaseEvent first.
+        self._last_mouse = None
+        self._mouse_button = None
         if not self._editable or self._context_menu_suppressed:
             return
         pos = event.pos()
