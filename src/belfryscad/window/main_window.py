@@ -978,9 +978,6 @@ class MainWindow(QMainWindow):
         shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
         shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
         shortcut("Shift+F6", self._start_debug)
-        shortcut("F10", self._on_debug_step_over)
-        shortcut("F11", self._on_debug_step_into)
-        shortcut("F12", self._on_debug_step_out)
 
     # ------------------------------------------------------------------
     # Tab management

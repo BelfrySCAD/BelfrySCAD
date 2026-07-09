@@ -416,7 +416,7 @@ class DebuggerPane(QWidget):
         self._btn_step_over.setFixedSize(28, 28)
         self._btn_step_into = QPushButton()
         self._btn_step_into.setIcon(_debug_icon("step-into"))
-        self._btn_step_into.setToolTip("Step Into (F11)")
+        self._btn_step_into.setToolTip("Step Into Call (F11)")
         self._btn_step_into.setFixedSize(28, 28)
         self._btn_step_to_child = QPushButton()
         self._btn_step_to_child.setIcon(_debug_icon("step-to-child"))
