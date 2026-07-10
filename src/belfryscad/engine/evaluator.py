@@ -1667,15 +1667,22 @@ _DEFAULT_DOLLAR = {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_module
 
 class EvalContext:
     """Mutable evaluation state threaded through recursive calls."""
-    __slots__ = ('scope', 'dyn', 'let', 'dyn_positions', 'color',
+    __slots__ = ('scope', 'dyn', 'let', 'dyn_positions', 'dyn_explicit', 'color',
                  'children_nodes', 'children_caller_ctx')
 
-    def __init__(self, scope, dyn=None, let=None, dyn_positions=None, color=None,
+    def __init__(self, scope, dyn=None, let=None, dyn_positions=None, dyn_explicit=None, color=None,
                  children_nodes=None, children_caller_ctx=None):
         self.scope = scope
         self.dyn = dyn if dyn is not None else dict(_DEFAULT_DOLLAR)
         self.let = let if let is not None else {}
         self.dyn_positions = dyn_positions if dyn_positions is not None else {}
+        # Names the *script itself* assigned via a `$var = ...;` statement,
+        # as opposed to names merely present in `dyn` because they were
+        # seeded from the current viewport state (see Evaluator.evaluate's
+        # viewport_params) -- lets callers distinguish "the script set
+        # $vpt" from "the evaluator pre-populated $vpt from the current
+        # camera," which look identical in `dyn` alone.
+        self.dyn_explicit = dyn_explicit if dyn_explicit is not None else set()
         self.color = color
         self.children_nodes = children_nodes if children_nodes is not None else []
         self.children_caller_ctx = children_caller_ctx
@@ -1687,6 +1694,7 @@ class EvalContext:
             dyn=dyn if dyn is not None else dict(self.dyn),
             let=let if let is not None else dict(self.let),
             dyn_positions={} if dyn is None else self.dyn_positions,
+            dyn_explicit=set(self.dyn_explicit),
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else [],
             children_caller_ctx=children_caller_ctx,
@@ -1698,6 +1706,7 @@ class EvalContext:
         ctx.dyn = self.dyn
         ctx.let = dict(self.let)
         ctx.dyn_positions = self.dyn_positions
+        ctx.dyn_explicit = self.dyn_explicit
         ctx.color = self.color
         ctx.children_nodes = self.children_nodes
         ctx.children_caller_ctx = self.children_caller_ctx
@@ -1710,6 +1719,7 @@ class EvalContext:
             dyn=dict(self.dyn),
             let={},
             dyn_positions={},
+            dyn_explicit=set(self.dyn_explicit),
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else [],
             children_caller_ctx=children_caller_ctx,
@@ -1871,7 +1881,8 @@ class Evaluator:
                 if k not in local_scope:
                     outer_scope[k] = v
 
-        current_frame = {"local_scope": local_scope, "outer_scope": outer_scope, "dyn_names": dyn_names}
+        current_frame = {"local_scope": local_scope, "outer_scope": outer_scope, "dyn_names": dyn_names,
+                          "dyn_explicit": set(ctx.dyn_explicit)}
         all_frame_locals = [current_frame]
         for frame_ctx in reversed(self._frame_ctxs[:-1]):
             p_local: dict = {}
@@ -1882,13 +1893,15 @@ class Evaluator:
             for k, v in frame_ctx.dyn.items():
                 if k.startswith('$'):
                     p_local[k] = v
-            all_frame_locals.append({"local_scope": p_local, "outer_scope": {}, "dyn_names": p_dyn})
+            all_frame_locals.append({"local_scope": p_local, "outer_scope": {}, "dyn_names": p_dyn,
+                                     "dyn_explicit": set(frame_ctx.dyn_explicit)})
 
         if self._call_stack:
             toplevel_frame = {
                 "local_scope": dict(outer_scope),
                 "outer_scope": {},
                 "dyn_names": set(),
+                "dyn_explicit": set(),
             }
             all_frame_locals.append(toplevel_frame)
 
@@ -2197,6 +2210,7 @@ class Evaluator:
             name = node.name.name
             if name[0] == '$':
                 ctx.dyn[name] = self._eval_expr(node.expr, ctx)
+                ctx.dyn_explicit.add(name)
             else:
                 pos = getattr(node, 'position', None)
                 if name in ctx.dyn_positions:
@@ -2267,6 +2281,7 @@ class Evaluator:
                     dyn=ctx.dyn,
                     let=ctx.let,
                     dyn_positions=ctx.dyn_positions,
+                    dyn_explicit=ctx.dyn_explicit,
                     color=ctx.color,
                     children_nodes=ctx.children_nodes,
                     children_caller_ctx=ctx.children_caller_ctx,

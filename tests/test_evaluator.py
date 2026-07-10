@@ -241,6 +241,49 @@ class TestVariables:
         assert echo_lines == ["ECHO: 0.25"]
 
 
+class TestDynExplicit:
+    """`EvalContext.dyn_explicit` distinguishes "the script itself assigned
+    this $-variable" from "this $-variable is merely present in `dyn`"
+    (e.g. $vp* seeded from the current camera via viewport_params, or
+    $fn/$fa/$fs/$t/$parent_modules seeded from _DEFAULT_DOLLAR) -- used by
+    MainWindow to decide whether a script's $vp* assignment should move
+    the viewport camera, vs. leaving a manually-adjusted camera alone."""
+
+    _VP_SEED = {"$vpt": [0.0, 0.0, 0.0], "$vpr": [55.0, 0.0, 25.0], "$vpd": 140.0, "$vpf": 22.5}
+
+    def test_seeded_value_not_explicit(self):
+        nodes = getASTfromString("cube(10);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev.evaluate(nodes, root_scope, self._VP_SEED)
+        assert "$vpt" in ev._root_ctx.dyn
+        assert ev._root_ctx.dyn_explicit == set()
+
+    def test_script_assignment_is_explicit(self):
+        nodes = getASTfromString("$vpt = [1, 2, 3]; cube(10);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev.evaluate(nodes, root_scope, self._VP_SEED)
+        assert ev._root_ctx.dyn["$vpt"] == [1.0, 2.0, 3.0]
+        assert ev._root_ctx.dyn_explicit == {"$vpt"}
+
+    def test_only_the_assigned_name_is_explicit(self):
+        nodes = getASTfromString("$vpd = 50; cube(10);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev.evaluate(nodes, root_scope, self._VP_SEED)
+        assert ev._root_ctx.dyn_explicit == {"$vpd"}
+        assert "$vpt" not in ev._root_ctx.dyn_explicit
+        assert "$vpt" in ev._root_ctx.dyn  # still present (seeded), just not explicit
+
+    def test_regular_special_var_assignment_also_tracked(self):
+        nodes = getASTfromString("$fn = 64; cube(10);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev.evaluate(nodes, root_scope)
+        assert ev._root_ctx.dyn_explicit == {"$fn"}
+
+
 # ---------------------------------------------------------------------------
 # Built-in functions
 # ---------------------------------------------------------------------------

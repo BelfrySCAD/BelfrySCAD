@@ -18,11 +18,16 @@ These test the pure-Python helpers only (`_is_grid`, `_grid_row_offsets`,
 `RegionViewer`, `_RegionViewport`) aren't covered here, consistent with the
 rest of the test suite (no existing tests instantiate Qt widgets).
 """
+import numpy as np
+from PySide6.QtCore import Qt
+
+from belfryscad.engine.renderer import Camera
 from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
     _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix, _is_region,
     _affine_reference_shape, _affine_shape_edges, _apply_affine,
     _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
+    _key_nudge_magnitude, _key_nudge_delta,
 )
 
 
@@ -512,3 +517,38 @@ class TestFindViewableLiterals:
         result = find_viewable_literals(text, text.index("10,0"))
         assert result["region"][2] == [[[10, 0], [-10, 10], [-10, -10]], [[3, 0], [-3, 3], [-3, -3]]]
         assert result["grid"][2] == result["region"][2]
+
+
+class TestKeyNudgeMagnitude:
+    """Arrow-key vertex nudging's step size, shared by every editable
+    viewport's keyPressEvent: 1 unit by default, 0.1 with Cmd (Control on
+    macOS) held, 10 with Shift held."""
+
+    def test_no_modifier_is_default_unit(self):
+        assert _key_nudge_magnitude(Qt.KeyboardModifier.NoModifier) == 1.0
+
+    def test_control_modifier_is_fine_nudge(self):
+        assert _key_nudge_magnitude(Qt.KeyboardModifier.ControlModifier) == 0.1
+
+    def test_shift_modifier_is_coarse_nudge(self):
+        assert _key_nudge_magnitude(Qt.KeyboardModifier.ShiftModifier) == 10.0
+
+
+class TestKeyNudgeDelta:
+    def test_default_magnitude_is_one_unit(self):
+        cam = Camera()
+        delta = _key_nudge_delta(cam, 2, Qt.Key.Key_Right)
+        assert delta is not None
+        assert np.count_nonzero(delta) == 1
+        assert abs(np.abs(delta).max() - 1.0) < 1e-9
+
+    def test_magnitude_param_scales_delta(self):
+        cam = Camera()
+        fine = _key_nudge_delta(cam, 2, Qt.Key.Key_Right, magnitude=0.1)
+        coarse = _key_nudge_delta(cam, 2, Qt.Key.Key_Right, magnitude=10.0)
+        assert abs(np.abs(fine).max() - 0.1) < 1e-9
+        assert abs(np.abs(coarse).max() - 10.0) < 1e-9
+
+    def test_unrecognized_key_returns_none_regardless_of_magnitude(self):
+        cam = Camera()
+        assert _key_nudge_delta(cam, 2, Qt.Key.Key_A, magnitude=0.1) is None

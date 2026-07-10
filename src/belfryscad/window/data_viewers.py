@@ -470,22 +470,34 @@ def _unlocked_plane_name(lock_axis: int) -> str:
     return "".join("XYZ"[i] for i in range(3) if i != lock_axis)
 
 
-def _key_nudge_delta(camera, lock_axis: int, key) -> np.ndarray | None:
-    """World-space unit delta for arrow-key vertex nudging, confined to the
-    same axis-locked plane Cmd+drag uses (`_view_locked_axis`/
-    `_ray_plane_axis_locked`) rather than a fixed pair of world axes --
-    important once the locked plane isn't the always-top-down XY plane a
-    2D viewport uses, e.g. a 3D grid/path orbited to look along +/-X or
-    +/-Y instead of +/-Z. Unlike a drag (which can move freely to anywhere
-    in that plane), each key press changes exactly one coordinate: of the
-    plane's two free axes, "Right"/"Left" moves along whichever one the
-    camera's actual screen-right direction (`view_matrix()` row 0 -- the
-    same row the gimbal-lock regression tests read) has the larger
-    component in (sign-matched), and "Up"/"Down" does the same using
-    screen-up (row 1) against the *other* free axis -- so a press always
-    reads as a clean single-axis nudge in the table, oriented to match
-    the screen regardless of camera orientation. Returns None for any
-    other key."""
+def _key_nudge_magnitude(modifiers) -> float:
+    """Arrow-key nudge step size for the held modifiers: Cmd (`Control` on
+    macOS) for a fine 0.1-unit nudge, Shift for a coarse 10-unit nudge,
+    neither for the default 1-unit nudge. Shared by every editable
+    viewport's `keyPressEvent`."""
+    if modifiers & Qt.KeyboardModifier.ControlModifier:  # Cmd on macOS
+        return 0.1
+    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        return 10.0
+    return 1.0
+
+
+def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.ndarray | None:
+    """World-space delta (`magnitude` world units, from `_key_nudge_magnitude`)
+    for arrow-key vertex nudging, confined to the same axis-locked plane
+    Cmd+drag uses (`_view_locked_axis`/`_ray_plane_axis_locked`) rather
+    than a fixed pair of world axes -- important once the locked plane
+    isn't the always-top-down XY plane a 2D viewport uses, e.g. a 3D
+    grid/path orbited to look along +/-X or +/-Y instead of +/-Z. Unlike a
+    drag (which can move freely to anywhere in that plane), each key press
+    changes exactly one coordinate: of the plane's two free axes,
+    "Right"/"Left" moves along whichever one the camera's actual
+    screen-right direction (`view_matrix()` row 0 -- the same row the
+    gimbal-lock regression tests read) has the larger component in
+    (sign-matched), and "Up"/"Down" does the same using screen-up (row 1)
+    against the *other* free axis -- so a press always reads as a clean
+    single-axis nudge in the table, oriented to match the screen
+    regardless of camera orientation. Returns None for any other key."""
     free_axes = [a for a in range(3) if a != lock_axis]
     view = camera.view_matrix()
     cam_right = view[0, :3]
@@ -493,7 +505,7 @@ def _key_nudge_delta(camera, lock_axis: int, key) -> np.ndarray | None:
 
     def _snap(v, axis):
         delta = np.zeros(3)
-        delta[axis] = 1.0 if v[axis] >= 0 else -1.0
+        delta[axis] = magnitude if v[axis] >= 0 else -magnitude
         return delta
 
     right_axis = max(free_axes, key=lambda a: abs(cam_right[a]))
@@ -707,7 +719,7 @@ class _AffineViewport(Viewport):
     shape has no other distinguishing features."""
 
     def __init__(self, matrix: list, parent=None):
-        super().__init__(parent, selectable=False)
+        super().__init__(parent, selectable=False, pan_speed=2.0)
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.line_width = 2.0
@@ -896,7 +908,7 @@ class _VNFViewport(Viewport):
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
 
     def __init__(self, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False)
+        super().__init__(parent, selectable=False, pan_speed=2.0)
         self._renderer.camera.fov = 45.0
         self._renderer.depth_test_points = True
         self._editable = editable
@@ -1048,13 +1060,13 @@ class _VNFViewport(Viewport):
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
 
-    def frame_scene(self, bb_min, bb_max):
+    def frame_scene(self, bb_min, bb_max, reframe: bool = True):
         # Always called from within an already-makeCurrent'd caller
         # (load_path/load_grid/load_matrix's own bracket, or the safe
         # initial schedule_load path) -- must NOT bracket with its own
         # makeCurrent/doneCurrent, since doneCurrent() would prematurely
         # release the context out from under that caller's remaining work.
-        super().frame_scene(bb_min, bb_max)
+        super().frame_scene(bb_min, bb_max, reframe=reframe)
         if self._vert_indices:
             self._build_vert_markers()
 
@@ -1178,13 +1190,17 @@ class _VNFViewport(Viewport):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
-        """Arrow keys nudge every currently-highlighted vertex by one world
-        unit, confined to the same axis-locked plane Cmd+drag uses -- see
+        """Arrow keys nudge every currently-highlighted vertex, confined to
+        the same axis-locked plane Cmd+drag uses -- see
         `_PathViewport.keyPressEvent`/`_GridViewport.keyPressEvent`. VNF
-        vertices are always 3D (no 2D top-down special case)."""
+        vertices are always 3D (no 2D top-down special case). Step size
+        (1 unit, or 0.1/10 with Cmd/Shift held) via `_key_nudge_magnitude`
+        -- note Cmd here means the fine-nudge modifier, distinct from its
+        other use starting a vertex *drag* on mouse-press."""
         if self._editable and self._vert_indices:
             lock_axis = _view_locked_axis(self._renderer.camera)
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key())
+            magnitude = _key_nudge_magnitude(event.modifiers())
+            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 for vi in self._vert_indices:
                     if 0 <= vi < len(self._verts_3d):
@@ -1336,7 +1352,7 @@ class VNFViewer(QDialog):
             t.setItem(i, 0, item)
         return t
 
-    def _load_mesh(self):
+    def _load_mesh(self, reframe: bool = True):
         # Clears any mesh buffer from a prior call -- a no-op the first
         # time (schedule_load's initial-load path, buffers start empty),
         # but required now that an editable dialog's _rebuild() can call
@@ -1397,10 +1413,10 @@ class VNFViewer(QDialog):
 
         bb_min = verts.min(axis=0)
         bb_max = verts.max(axis=0)
-        self._vp.frame_scene(bb_min, bb_max)
+        self._vp.frame_scene(bb_min, bb_max, reframe=reframe)
         self._vp.update()
 
-    def _rebuild(self):
+    def _rebuild(self, reframe: bool = True):
         """Re-triangulate and re-upload the mesh after a vertex edit --
         face topology never changes in this dialog, so `_load_mesh` just
         recomputes from the same faces against updated vertex positions.
@@ -1410,10 +1426,12 @@ class VNFViewer(QDialog):
         overlay too -- `frame_scene` (which `_load_mesh` calls) already
         rebuilds vertex markers for us but not the highlight VAO, which
         would otherwise keep showing the *old* vertex positions for
-        whichever face is currently highlighted."""
+        whichever face is currently highlighted. `reframe=False` (used for
+        a live vertex drag/nudge) skips the camera re-fit -- see
+        `_on_viewport_vertex_moved`."""
         if self._vp._ctx is not None:
             self._vp.makeCurrent()
-            self._load_mesh()
+            self._load_mesh(reframe=reframe)
             if self._vp._selected_face >= 0:
                 self._vp._rebuild_highlight()
             self._vp.doneCurrent()
@@ -1434,10 +1452,13 @@ class VNFViewer(QDialog):
         self._rebuild()
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
-        """Live update while Cmd+dragging a vertex marker in the editable
-        viewport -- mirrors `_on_item_changed`'s self._vnf + table +
-        rebuild update, just driven by the viewport instead of a
-        table-cell edit."""
+        """Live update while Cmd+dragging or arrow-key-nudging a vertex
+        marker in the editable viewport -- mirrors `_on_item_changed`'s
+        self._vnf + table + rebuild update, just driven by the viewport
+        instead of a table-cell edit. `reframe=False`: a live move
+        shouldn't re-fit/zoom the camera to the whole mesh on every
+        frame -- `scroll_to_visible` instead just pans (if needed) to
+        keep this one vertex on-screen."""
         self._vnf[0][vi][0] = x
         self._vnf[0][vi][1] = y
         self._vnf[0][vi][2] = z
@@ -1446,7 +1467,8 @@ class VNFViewer(QDialog):
         self._vert_table.item(vi, 1).setText(f"{y:g}")
         self._vert_table.item(vi, 2).setText(f"{z:g}")
         self._vert_table.blockSignals(False)
-        self._rebuild()
+        self._rebuild(reframe=False)
+        self._vp.scroll_to_visible(np.array([x, y, z]))
 
     def _on_save(self):
         self.committed.emit(_format_value(self._vnf))
@@ -1702,10 +1724,13 @@ class PathViewer(QDialog):
             self._vert_table.selectRow(vi)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
-        """Live update while Cmd+dragging a vertex marker in the editable
-        viewport -- mirrors `_on_item_changed`'s self._path + table + rebuild
-        update, just driven by the viewport instead of a table-cell edit.
-        `z` is ignored for 2D data (points are `[x, y]`)."""
+        """Live update while Cmd+dragging or arrow-key-nudging a vertex
+        marker in the editable viewport -- mirrors `_on_item_changed`'s
+        self._path + table + rebuild update, just driven by the viewport
+        instead of a table-cell edit. `z` is ignored for 2D data (points
+        are `[x, y]`). `reframe=False`: a live move shouldn't re-fit/zoom
+        the camera to the whole path on every frame -- `scroll_to_visible`
+        instead just pans (if needed) to keep this one vertex on-screen."""
         self._path[vi][0] = x
         self._path[vi][1] = y
         is_3d = len(self._path[vi]) > 2
@@ -1717,7 +1742,8 @@ class PathViewer(QDialog):
         if is_3d:
             self._vert_table.item(vi, 2).setText(f"{z:g}")
         self._vert_table.blockSignals(False)
-        self._rebuild()
+        self._rebuild(reframe=False)
+        self._vp.scroll_to_visible(np.array([x, y, z if is_3d else 0.0]))
 
     def _on_viewport_add_vertex_requested(self, insert_after: int, x: float, y: float, z: float):
         """Right-click "Add Vertex" on a path line (`_PathViewport.
@@ -1734,10 +1760,10 @@ class PathViewer(QDialog):
         self._vp.load_path(self._path, self._closed_cb.isChecked(),
                            self._bezier_cb.isChecked())
 
-    def _rebuild(self, _=None):
+    def _rebuild(self, _=None, reframe: bool = True):
         if self._vp._ctx is not None:
             self._vp.load_path(self._path, self._closed_cb.isChecked(),
-                               self._bezier_cb.isChecked())
+                               self._bezier_cb.isChecked(), reframe=reframe)
 
     def keyPressEvent(self, event):
         """Delete/Backspace deletes the currently selected vertices
@@ -1765,7 +1791,7 @@ class _PathViewport(Viewport):
     delete_vertex_requested = Signal(int)  # (vertex_idx) -- right-click directly on a vertex, editable only
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False)
+        super().__init__(parent, selectable=False, pan_speed=2.0)
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.line_width = 2.0
@@ -1849,7 +1875,7 @@ class _PathViewport(Viewport):
                 pairs.append(curve[j + 1])
         return pairs
 
-    def load_path(self, path_value: list, closed: bool, bezier: bool = False):
+    def load_path(self, path_value: list, closed: bool, bezier: bool = False, reframe: bool = True):
         self.makeCurrent()
         self._renderer._clear_buffers()
         self._renderer.clear_simple_buffers()
@@ -1867,7 +1893,7 @@ class _PathViewport(Viewport):
 
         bb_min = pts.min(axis=0)
         bb_max = pts.max(axis=0)
-        self.frame_scene(bb_min, bb_max)
+        self.frame_scene(bb_min, bb_max, reframe=reframe)
 
         line_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         if bezier and len(pts) >= 4:
@@ -2019,12 +2045,12 @@ class _PathViewport(Viewport):
             vao.render(mgl.TRIANGLES)
             self._ctx.enable(mgl.DEPTH_TEST)
 
-    def frame_scene(self, bb_min, bb_max):
+    def frame_scene(self, bb_min, bb_max, reframe: bool = True):
         # Always called from within an already-makeCurrent'd caller
         # (load_path's own bracket) -- must NOT bracket with its own
         # makeCurrent/doneCurrent, since doneCurrent() would prematurely
         # release the context out from under load_path's remaining work.
-        super().frame_scene(bb_min, bb_max)
+        super().frame_scene(bb_min, bb_max, reframe=reframe)
         if len(self._path_pts) > 0:
             self._build_point_markers()
             if self._selected_indices:
@@ -2056,6 +2082,14 @@ class _PathViewport(Viewport):
         self._press_pos = event.position().toPoint()
         self._drag_started = False
         self._drag_vertex_idx = -1
+        # A new press always starts a fresh gesture -- clear any leftover
+        # suppression from the *previous* one. Needed because contextMenuEvent
+        # fires on the right-button press on macOS (not after release), so
+        # without this a single right-drag-pan would permanently block every
+        # later right-click's context menu (this new press's own release
+        # hasn't happened yet to update the flag by the time contextMenuEvent
+        # runs for it).
+        self._context_menu_suppressed = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
                 and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
@@ -2136,20 +2170,25 @@ class _PathViewport(Viewport):
         correctly appends the new point at the end of the list rather
         than inserting before index 0. Right-clicking directly on a vertex
         instead offers "Delete Vertex" for that specific point."""
-        # A right-click reaching here is about to (or considering) show a
-        # QMenu.exec() -- Qt doesn't reliably deliver this widget's own
-        # mouseReleaseEvent first (the popup's own event loop can swallow
-        # it), so without this the base Viewport's orbit/pan tracking
-        # (_last_mouse/_mouse_button) can be left armed as if the right
-        # button were still held, panning the camera on every subsequent
-        # mouse move until another click happens to reset it.
-        self._last_mouse = None
-        self._mouse_button = None
         if not self._editable or self._context_menu_suppressed:
             return
         pos = event.pos()
         vi = self._pick_vertex(pos.x(), pos.y())
         if vi >= 0:
+            # On macOS, contextMenuEvent fires on the right-button *press*,
+            # not after release (unlike a plain click) -- so this reset
+            # must happen only once we're sure a menu is actually about to
+            # show, right before QMenu.exec(). Resetting unconditionally at
+            # the top of this method (an earlier version of this fix) reset
+            # _last_mouse/_mouse_button on every right-click including
+            # blank-space ones that show no menu at all, which broke
+            # ordinary right-drag panning outright. Qt still doesn't
+            # reliably deliver this widget's own mouseReleaseEvent for a
+            # click that *does* open a menu (the popup's own event loop can
+            # swallow it), so the reset is still needed here -- just scoped
+            # to only the paths that actually call exec().
+            self._last_mouse = None
+            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
             menu.exec(event.globalPos())
@@ -2165,18 +2204,24 @@ class _PathViewport(Viewport):
         seg_idx, world_pt = result
         insert_after, _ = segments[seg_idx]
         x, y, z = float(world_pt[0]), float(world_pt[1]), float(world_pt[2])
+        self._last_mouse = None
+        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(insert_after, x, y, z))
         menu.exec(event.globalPos())
 
     def keyPressEvent(self, event):
-        """Arrow keys nudge every selected vertex by one world unit,
-        confined to the same axis-locked plane Cmd+drag uses -- Z for 2D
-        data (always top-down locked), whichever axis `_view_locked_axis`
-        picks for the current camera angle otherwise."""
+        """Arrow keys nudge every selected vertex, confined to the same
+        axis-locked plane Cmd+drag uses -- Z for 2D data (always top-down
+        locked), whichever axis `_view_locked_axis` picks for the current
+        camera angle otherwise. Step size (1 unit, or 0.1/10 with
+        Cmd/Shift held) via `_key_nudge_magnitude` -- note Cmd here means
+        the fine-nudge modifier, distinct from its other use starting a
+        vertex *drag* on mouse-press."""
         if self._editable and self._selected_indices:
             lock_axis = 2 if self._is_2d else _view_locked_axis(self._renderer.camera)
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key())
+            magnitude = _key_nudge_magnitude(event.modifiers())
+            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._path_pts):
@@ -2609,12 +2654,16 @@ class GridViewer(QDialog):
         self._delete_column(col_idx)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
-        """Live update while Cmd+dragging a vertex marker in the editable
-        viewport -- mirrors `_on_item_changed`'s self._grid + table + rebuild
-        update, just driven by the viewport instead of a table-cell edit.
-        `z` is ignored for 2D data (points are `[x, y]`). Switching to the
-        dragged vertex's row (if different) repopulates the table from
-        self._grid, which already reflects the new coordinates."""
+        """Live update while Cmd+dragging or arrow-key-nudging a vertex
+        marker in the editable viewport -- mirrors `_on_item_changed`'s
+        self._grid + table + rebuild update, just driven by the viewport
+        instead of a table-cell edit. `z` is ignored for 2D data (points
+        are `[x, y]`). Switching to the dragged vertex's row (if
+        different) repopulates the table from self._grid, which already
+        reflects the new coordinates. `reframe=False`: a live move
+        shouldn't re-fit/zoom the camera to the whole grid on every
+        frame -- `scroll_to_visible` instead just pans (if needed) to
+        keep this one vertex on-screen."""
         row_idx, col_idx = _grid_flat_to_rc(vi, self._row_offsets)
         pt = self._grid[row_idx][col_idx]
         pt[0] = x
@@ -2631,7 +2680,8 @@ class GridViewer(QDialog):
             if is_3d:
                 self._vert_table.item(col_idx, 2).setText(f"{z:g}")
             self._vert_table.blockSignals(False)
-        self._rebuild()
+        self._rebuild(reframe=False)
+        self._vp.scroll_to_visible(np.array([x, y, z if is_3d else 0.0]))
 
     def _wrap_flags(self) -> tuple[bool, bool]:
         wrap = self._wrap_combo.currentText()
@@ -2646,7 +2696,7 @@ class GridViewer(QDialog):
                            draw_faces=(mode == "Grid Faces"),
                            bezier_patch=(mode == "Bezier Patch"))
 
-    def _rebuild(self, _=None):
+    def _rebuild(self, _=None, reframe: bool = True):
         if self._vp._ctx is not None:
             mode = self._face_mode_combo.currentText()
             col_wrap, row_wrap = self._wrap_flags()
@@ -2654,7 +2704,8 @@ class GridViewer(QDialog):
                                col_wrap=col_wrap,
                                row_wrap=row_wrap,
                                draw_faces=(mode == "Grid Faces"),
-                               bezier_patch=(mode == "Bezier Patch"))
+                               bezier_patch=(mode == "Bezier Patch"),
+                               reframe=reframe)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         row_idx = self._row_combo.currentIndex()
@@ -2684,7 +2735,7 @@ class _GridViewport(Viewport):
     delete_column_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
 
     def __init__(self, grid_value: list, is_2d: bool, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False)
+        super().__init__(parent, selectable=False, pan_speed=2.0)
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.depth_test_points = True
@@ -2744,7 +2795,7 @@ class _GridViewport(Viewport):
 
     def load_grid(self, grid_value: list, col_wrap: bool = False,
                   row_wrap: bool = False, draw_faces: bool = True,
-                  bezier_patch: bool = False):
+                  bezier_patch: bool = False, reframe: bool = True):
         self._bezier_patch_mode = bezier_patch
         self.makeCurrent()
         self._renderer._clear_buffers()
@@ -2766,7 +2817,7 @@ class _GridViewport(Viewport):
 
         bb_min = pts.min(axis=0)
         bb_max = pts.max(axis=0)
-        self.frame_scene(bb_min, bb_max)
+        self.frame_scene(bb_min, bb_max, reframe=reframe)
 
         r_range = rows if row_wrap else rows - 1
 
@@ -3000,12 +3051,12 @@ class _GridViewport(Viewport):
             self._ctx.disable_direct(0x8037)
             self._ctx.polygon_offset = (0.0, 0.0)
 
-    def frame_scene(self, bb_min, bb_max):
+    def frame_scene(self, bb_min, bb_max, reframe: bool = True):
         # Always called from within an already-makeCurrent'd caller
         # (load_grid's own bracket) -- must NOT bracket with its own
         # makeCurrent/doneCurrent, since doneCurrent() would prematurely
         # release the context out from under load_grid's remaining work.
-        super().frame_scene(bb_min, bb_max)
+        super().frame_scene(bb_min, bb_max, reframe=reframe)
         if len(self._all_pts) > 0:
             self._build_point_markers()
             if self._selected_indices:
@@ -3037,6 +3088,11 @@ class _GridViewport(Viewport):
         self._press_pos = event.position().toPoint()
         self._drag_started = False
         self._drag_vertex_idx = -1
+        # See _PathViewport.mousePressEvent -- a new press always starts a
+        # fresh gesture, clearing any leftover suppression from the
+        # *previous* one (contextMenuEvent fires on press on macOS, before
+        # this press's own release could otherwise update the flag).
+        self._context_menu_suppressed = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
                 and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
@@ -3115,32 +3171,38 @@ class _GridViewport(Viewport):
         Bezier Patch mode (`_bezier_patch_mode`, set from `load_grid`) --
         deleting a row/column would break the exactly-4x4 shape a Bezier
         Patch's control net requires."""
-        # See _PathViewport.contextMenuEvent for why this reset is needed
-        # regardless of whether a menu ends up shown: QMenu.exec() isn't
-        # guaranteed to run only after this widget's own mouseReleaseEvent
-        # has fired, so without it the base Viewport's orbit/pan tracking
-        # can be left armed as if the right button were still held.
-        self._last_mouse = None
-        self._mouse_button = None
         if not self._editable or self._context_menu_suppressed or self._bezier_patch_mode:
             return
         pos = event.pos()
         vi = self._pick_vertex(pos.x(), pos.y())
         if vi < 0:
             return
+        # See _PathViewport.contextMenuEvent -- must only reset the base
+        # Viewport's orbit/pan tracking once we're sure a menu is about to
+        # show (right before exec()), not unconditionally at the top of
+        # this method: on macOS contextMenuEvent fires on the right-button
+        # *press*, so an unconditional reset here fired on every right
+        # click, including blank-space ones that show no menu, breaking
+        # ordinary right-drag panning.
+        self._last_mouse = None
+        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Delete Row", lambda: self.delete_row_requested.emit(vi))
         menu.addAction("Delete Column", lambda: self.delete_column_requested.emit(vi))
         menu.exec(event.globalPos())
 
     def keyPressEvent(self, event):
-        """Arrow keys nudge every selected vertex by one world unit,
-        confined to the same axis-locked plane Cmd+drag uses -- Z for 2D
-        data (always top-down locked), whichever axis `_view_locked_axis`
-        picks for the current camera angle otherwise."""
+        """Arrow keys nudge every selected vertex, confined to the same
+        axis-locked plane Cmd+drag uses -- Z for 2D data (always top-down
+        locked), whichever axis `_view_locked_axis` picks for the current
+        camera angle otherwise. Step size (1 unit, or 0.1/10 with
+        Cmd/Shift held) via `_key_nudge_magnitude` -- note Cmd here means
+        the fine-nudge modifier, distinct from its other use starting a
+        vertex *drag* on mouse-press."""
         if self._editable and self._selected_indices:
             lock_axis = 2 if self._is_2d else _view_locked_axis(self._renderer.camera)
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key())
+            magnitude = _key_nudge_magnitude(event.modifiers())
+            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._all_pts):
@@ -3476,10 +3538,14 @@ class RegionViewer(QDialog):
             self._vert_table.selectRow(col_idx)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
-        """Live update while Cmd+dragging a vertex marker in the editable
-        viewport -- mirrors `_on_item_changed`'s self._region + table +
-        rebuild update, just driven by the viewport instead of a
-        table-cell edit. `z` is always ignored -- regions are 2D-only."""
+        """Live update while Cmd+dragging or arrow-key-nudging a vertex
+        marker in the editable viewport -- mirrors `_on_item_changed`'s
+        self._region + table + rebuild update, just driven by the
+        viewport instead of a table-cell edit. `z` is always ignored --
+        regions are 2D-only. `reframe=False`: a live move shouldn't
+        re-fit/zoom the camera to the whole region on every frame --
+        `scroll_to_visible` instead just pans (if needed) to keep this
+        one vertex on-screen."""
         path_idx, col_idx = _grid_flat_to_rc(vi, self._path_offsets)
         pt = self._region[path_idx][col_idx]
         pt[0] = x
@@ -3491,14 +3557,16 @@ class RegionViewer(QDialog):
             self._vert_table.item(col_idx, 0).setText(f"{x:g}")
             self._vert_table.item(col_idx, 1).setText(f"{y:g}")
             self._vert_table.blockSignals(False)
-        self._rebuild()
+        self._rebuild(reframe=False)
+        self._vp.scroll_to_visible(np.array([x, y, 0.0]))
 
     def _do_initial_load(self):
         self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))
 
-    def _rebuild(self, _=None):
+    def _rebuild(self, _=None, reframe: bool = True):
         if self._vp._ctx is not None:
-            self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))
+            self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"),
+                                 reframe=reframe)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         path_idx = self._path_combo.currentIndex()
@@ -3539,7 +3607,7 @@ class _RegionViewport(Viewport):
     add_vertex_requested = Signal(int, int, float, float)  # (path_idx, insert_after_col_idx, x, y) -- right-click on a line, editable only
 
     def __init__(self, region_value: list, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False)
+        super().__init__(parent, selectable=False, pan_speed=2.0)
         cam = self._renderer.camera
         cam.fov = 45.0
         cam.azimuth = 270.0
@@ -3576,7 +3644,7 @@ class _RegionViewport(Viewport):
         self._num_paths = len(region_value)
         self._path_offsets = _grid_row_offsets(region_value)
 
-    def load_region(self, region_value: list, draw_fill: bool = True):
+    def load_region(self, region_value: list, draw_fill: bool = True, reframe: bool = True):
         self.makeCurrent()
         self._renderer._clear_buffers()
         self._renderer.clear_simple_buffers()
@@ -3589,7 +3657,7 @@ class _RegionViewport(Viewport):
 
         bb_min = pts.min(axis=0)
         bb_max = pts.max(axis=0)
-        self.frame_scene(bb_min, bb_max)
+        self.frame_scene(bb_min, bb_max, reframe=reframe)
 
         line_verts = []
         for pi, path in enumerate(region_value):
@@ -3721,11 +3789,11 @@ class _RegionViewport(Viewport):
             vao.render(mgl.TRIANGLES)
             self._ctx.enable(mgl.DEPTH_TEST)
 
-    def frame_scene(self, bb_min, bb_max):
+    def frame_scene(self, bb_min, bb_max, reframe: bool = True):
         # Always called from within an already-makeCurrent'd caller
         # (load_region's own bracket, or the safe initial schedule_load
         # path) -- must NOT bracket with its own makeCurrent/doneCurrent.
-        super().frame_scene(bb_min, bb_max)
+        super().frame_scene(bb_min, bb_max, reframe=reframe)
         if len(self._all_pts) > 0:
             self._build_point_markers()
             if self._selected_indices:
@@ -3760,6 +3828,11 @@ class _RegionViewport(Viewport):
     def mousePressEvent(self, event: QMouseEvent):
         self._press_pos = event.position().toPoint()
         self._drag_started = False
+        # See _PathViewport.mousePressEvent -- a new press always starts a
+        # fresh gesture, clearing any leftover suppression from the
+        # *previous* one (contextMenuEvent fires on press on macOS, before
+        # this press's own release could otherwise update the flag).
+        self._context_menu_suppressed = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
                 and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
@@ -3835,12 +3908,6 @@ class _RegionViewport(Viewport):
           this is the only way to add one, placed wherever the user
           actually clicked rather than duplicating whatever path happens
           to be selected."""
-        # See _PathViewport.contextMenuEvent -- defensively clears the
-        # base Viewport's orbit/pan tracking, since a right-click that
-        # opens a QMenu.exec() isn't guaranteed to have delivered this
-        # widget's own mouseReleaseEvent first.
-        self._last_mouse = None
-        self._mouse_button = None
         if not self._editable or self._context_menu_suppressed:
             return
         pos = event.pos()
@@ -3858,6 +3925,16 @@ class _RegionViewport(Viewport):
             a, _ = segments[seg_idx]
             path_idx, insert_after = _grid_flat_to_rc(a, self._path_offsets)
             x, y = float(world_pt[0]), float(world_pt[1])
+            # See _PathViewport.contextMenuEvent -- must only reset the
+            # base Viewport's orbit/pan tracking once we're sure a menu is
+            # about to show (right before exec()), not unconditionally at
+            # the top of this method (an earlier version of this fix did
+            # that, which broke ordinary right-drag panning since
+            # contextMenuEvent fires on the right-button *press* on
+            # macOS -- before this method even knows whether a menu will
+            # end up showing).
+            self._last_mouse = None
+            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(path_idx, insert_after, x, y))
             menu.exec(event.globalPos())
@@ -3867,17 +3944,21 @@ class _RegionViewport(Viewport):
         if hit is None:
             return
         x, y = float(hit[0]), float(hit[1])
+        self._last_mouse = None
+        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Path", lambda: self.add_path_requested.emit(x, y))
         menu.exec(event.globalPos())
 
     def keyPressEvent(self, event):
-        """Arrow keys nudge every selected vertex by one world unit --
-        always the simple fixed X/Y mapping (regions are always the
-        locked top-down 2D view, never orbited), see
-        `_PathViewport.keyPressEvent`'s matching 2D case."""
+        """Arrow keys nudge every selected vertex -- always the simple
+        fixed X/Y mapping (regions are always the locked top-down 2D
+        view, never orbited), see `_PathViewport.keyPressEvent`'s
+        matching 2D case. Step size (1 unit, or 0.1/10 with Cmd/Shift
+        held) via `_key_nudge_magnitude`."""
         if self._editable and self._selected_indices:
-            delta = _key_nudge_delta(self._renderer.camera, 2, event.key())
+            magnitude = _key_nudge_magnitude(event.modifiers())
+            delta = _key_nudge_delta(self._renderer.camera, 2, event.key(), magnitude)
             if delta is not None:
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._all_pts):
