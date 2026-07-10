@@ -48,7 +48,7 @@ class Viewport(QOpenGLWidget):
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
 
-    def __init__(self, parent=None, selectable: bool = True):
+    def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0):
         super().__init__(parent)
         self.setMinimumSize(400, 300)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -57,6 +57,7 @@ class Viewport(QOpenGLWidget):
         self._last_mouse: QPoint | None = None
         self._mouse_button: Qt.MouseButton | None = None
         self._orbit_enabled: bool = True   # subclasses disable for locked 2D top-down views
+        self._pan_speed = pan_speed   # data-viewer dialogs use 2x the main viewport's right-drag pan speed
         self.setMouseTracking(True)
         self._frame_count: int = 0
         self._pending_load = None
@@ -170,7 +171,7 @@ class Viewport(QOpenGLWidget):
         self.doneCurrent()
         self.update()
 
-    def frame_scene(self, bb_min, bb_max):
+    def frame_scene(self, bb_min, bb_max, reframe: bool = True):
         # Cache the bounds so "View All" can reframe from them directly (see
         # _frame_all) instead of only being able to derive bounds by scanning
         # live buffers — needed for data viewers whose geometry lives in
@@ -178,7 +179,14 @@ class Viewport(QOpenGLWidget):
         # arrays the way CSG MeshBuffers do.
         self._last_bb_min = bb_min.copy() if hasattr(bb_min, "copy") else bb_min
         self._last_bb_max = bb_max.copy() if hasattr(bb_max, "copy") else bb_max
-        self._renderer.camera.frame_bounds(bb_min, bb_max)
+        # reframe=False skips the actual camera re-fit (still updates the
+        # cache above, so "View All" stays correct) -- used for a live
+        # vertex drag/nudge rebuild, where re-fitting on every move would
+        # zoom/recenter the view instead of just keeping the edited vertex
+        # on-screen (see Camera.pan_to_keep_visible, called separately by
+        # the vertex-move handlers in data_viewers.py).
+        if reframe:
+            self._renderer.camera.frame_bounds(bb_min, bb_max)
         self.camera_changed.emit()
         self.update()
 
@@ -448,7 +456,7 @@ class Viewport(QOpenGLWidget):
                 -np.sin(el) * np.sin(az),
                 np.cos(el),
             ], dtype=np.float32)
-            scale = cam.distance * 0.001
+            scale = cam.distance * 0.001 * self._pan_speed
             cam.target -= right * dx * scale
             cam.target += up_approx * dy * scale
 

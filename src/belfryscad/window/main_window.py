@@ -374,8 +374,15 @@ class _RenderWorker(QObject):
         final_vp = {}
         if evaluator._root_ctx is not None:
             dyn = evaluator._root_ctx.dyn
+            explicit = evaluator._root_ctx.dyn_explicit
             for k in ("$vpt", "$vpr", "$vpd", "$vpf"):
-                if k in dyn:
+                # Only apply values the script itself assigned -- dyn also
+                # carries $vp* pre-seeded from the *current* camera (see
+                # _viewport_params/viewport_params), which would otherwise
+                # get reapplied as a no-op-that-isn't: if the user manually
+                # orbits/pans/zooms while this render is in flight, that
+                # seeded value is stale by the time it comes back here.
+                if k in explicit:
                     v = dyn[k]
                     final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp)
@@ -474,7 +481,7 @@ class _DetachedTabBar(QWidget):
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
-    _LAYOUT_VERSION = 4
+    _LAYOUT_VERSION = 5
 
     def __init__(self):
         super().__init__()
@@ -2072,7 +2079,15 @@ class MainWindow(QMainWindow):
                                        partial_error=partial_error, main_file=self._debug_tab.file_path or "")
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
-        self._apply_vp_params({k: locals_dict[k] for k in ("$vpt", "$vpr", "$vpd", "$vpf") if k in locals_dict})
+        # Only apply $vp* values the script itself assigned (dyn_explicit) --
+        # local_scope also carries $vp* pre-seeded from the camera position
+        # at render start (see _viewport_params), which would otherwise
+        # "snap back" the camera to that stale position on every single
+        # pause, undoing anything the user manually orbited/panned/zoomed
+        # to while paused between steps.
+        explicit = innermost.get("dyn_explicit", set())
+        self._apply_vp_params({k: locals_dict[k] for k in ("$vpt", "$vpr", "$vpd", "$vpf")
+                                if k in explicit and k in locals_dict})
         self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
 
@@ -2353,13 +2368,13 @@ class MainWindow(QMainWindow):
     def _set_default_layout(self):
         w = self.width()
         h = self.height()
-        bottom_h = max(180, h // 4)
+        bottom_h = max(140, h // 6)
         right_w = max(250, w // 4)
-        # editor dock: left ~40% of window width
-        self.resizeDocks([self._editor_dock], [max(300, w * 2 // 5)], Qt.Orientation.Horizontal)
+        # editor dock: left ~30% of window width
+        self.resizeDocks([self._editor_dock], [max(300, w * 3 // 10)], Qt.Orientation.Horizontal)
         # right dock: ~25% of window width
         self.resizeDocks([self._debugger_dock], [right_w], Qt.Orientation.Horizontal)
-        # bottom dock area: ~25% of window height
+        # bottom dock area: ~17% of window height
         self.resizeDocks([self._console_dock], [bottom_h], Qt.Orientation.Vertical)
         # right dock: debugger top ~60%, customizer/animate bottom ~40%
         self.resizeDocks([self._debugger_dock, self._customizer_dock],
