@@ -47,7 +47,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
 
 - **Code ↔ Geometry mapping**: every geometry-producing AST node owns an `originalID`; the `originalID → AST node` table rebuilds on each render trigger.
 - **Stability under invalid code**: UI must never crash or go blank.
-- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Full Manifold rebuild on every render trigger (incremental evaluation is a future optimization).
+- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Every render trigger walks the whole tree, but unchanged subtrees skip actual Manifold work via a content-hash cache (`ManifoldCache`, see `docs/evaluator.md`) — a fresh AST/CSG tree is still built every render (no incremental *parsing*), but a node whose resolved content matches a previous render/debug pause reuses that prior result instead of recomputing it.
 - **Performance**: <200ms model regeneration for small/medium models; 60 FPS viewport.
 
 ## File Format & Export

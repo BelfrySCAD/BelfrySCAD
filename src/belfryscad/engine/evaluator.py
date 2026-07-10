@@ -5,6 +5,7 @@ Returns (manifold_body, id_to_node, colored_meshes) or raises EvalError.
 from __future__ import annotations
 import math
 import random
+import threading
 from itertools import product as _product
 from pathlib import Path
 from typing import Any, Optional
@@ -1629,6 +1630,13 @@ class CSGNode:
     is_builtin: bool = True
     children: list["CSGNode"] = field(default_factory=list)
     params: dict = field(default_factory=dict)
+    # True if this node's own resolve step (or any descendant's) called
+    # rands() without accounting for global RNG state -- see
+    # Evaluator._rands_call_count. Tainted nodes are never cache-hit by
+    # ManifoldCache, since their resolved params aren't a pure function of
+    # their own content (the actual rands() output also depends on every
+    # earlier rands() call's position in the script's evaluation order).
+    uncacheable: bool = False
 
 
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
@@ -1660,6 +1668,90 @@ def flatten_csg_tree(tree: list[CSGNode]) -> list[ColoredBody]:
     own post-hoc show_only filter is applied once across the whole flat
     result and is not itself represented by any single tree node."""
     return [b for node in tree for b in node.bodies]
+
+
+def _summarize_param(value, max_items: int = 6, max_len: int = 40) -> str:
+    """Compact one-line repr for a CSGNode.params value, used by
+    format_csg_tree — collapses long lists/dicts/arrays (e.g. polyhedron
+    points, imported STL verts, surface() height grids, a resolved
+    sphere/cylinder's tessellated numpy verts/tris) to "<... of N>"
+    instead of dumping them in full, since numpy's own repr can span
+    multiple lines and would otherwise break the one-line-per-node dump."""
+    if isinstance(value, np.ndarray):
+        return f"<ndarray shape={value.shape}>"
+    if isinstance(value, (list, tuple)):
+        if len(value) > max_items or any(isinstance(v, (list, tuple, dict, np.ndarray)) for v in value):
+            kind = "tuple" if isinstance(value, tuple) else "list"
+            return f"<{kind} of {len(value)}>"
+        return "[" + ", ".join(_summarize_param(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return f"<dict of {len(value)}>"
+    text = repr(value)
+    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+
+
+def format_csg_tree(tree: list[CSGNode], indent: int = 0) -> str:
+    """Human-readable recursive dump of a resolved (and, once
+    generate_tree() has run, generated) CSG tree — kind, a "[user]" tag
+    for a non-builtin (user module) call, a compact params summary (see
+    _summarize_param), and the generated body count (0 before generate_tree
+    runs). Used by the Design menu's "Dump CSG Tree to Console" command."""
+    lines = []
+    pad = "  " * indent
+    for node in tree:
+        tag = "" if node.is_builtin else " [user]"
+        params_str = ", ".join(f"{k}={_summarize_param(v)}" for k, v in node.params.items())
+        n = len(node.bodies)
+        lines.append(f"{pad}{node.kind}{tag}({params_str}) -> {n} bod{'y' if n == 1 else 'ies'}")
+        if node.children:
+            lines.append(format_csg_tree(node.children, indent + 1))
+    return "\n".join(lines)
+
+
+def _canon(value):
+    """Recursively convert a CSGNode.params-shaped value (numbers, strings,
+    bools, None, and nested lists/tuples/dicts/numpy arrays — params is
+    documented as plain data, never Manifold objects) into a hashable
+    canonical form, for use in ManifoldCache's cache key. Lists/tuples and
+    numpy arrays become tuples; dict keys are sorted by str(key) (params
+    dicts commonly mix int positional-arg keys with str named-arg keys —
+    e.g. `cube(10, center=true)` — sorting the raw keys directly would
+    raise TypeError comparing int to str)."""
+    if isinstance(value, np.ndarray):
+        return ("__ndarray__", value.shape, tuple(value.flatten().tolist()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canon(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted(((k, _canon(v)) for k, v in value.items()), key=lambda kv: str(kv[0])))
+    return value
+
+
+class ManifoldCache:
+    """Content-hash cache of already-generated CSGNode subtrees, so
+    generate_tree() can skip re-running Manifold work for a subtree whose
+    resolved content (kind/params/children, see Evaluator._cache_key)
+    hasn't changed since a previous render/debugger pause. Lives outside
+    any single Evaluator/evaluate() call's lifetime — owned by MainWindow
+    and passed into each new Evaluator() via its manifold_cache= kwarg, so
+    it survives across the fresh Evaluator/AST/CSGNode objects every
+    render creates. Thread-safe (renders and debug sessions run on
+    background QThreads and can genuinely overlap)."""
+
+    def __init__(self):
+        self._entries: dict[tuple, list[ColoredBody]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple) -> list[ColoredBody] | None:
+        with self._lock:
+            return self._entries.get(key)
+
+    def put(self, key: tuple, bodies: list[ColoredBody]) -> None:
+        with self._lock:
+            self._entries[key] = bodies
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
 
 
 _DEFAULT_DOLLAR = {"$fn": 0, "$fa": 12.0, "$fs": 2.0, "$t": 0.0, "$parent_modules": 0}
@@ -1727,10 +1819,20 @@ class EvalContext:
 
 
 class Evaluator:
-    def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None):
+    def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None,
+                 manifold_cache: "ManifoldCache | None" = None):
         self.id_to_node: dict[int, ASTNode] = {}
         self.csg_tree: list[CSGNode] = []
         self._tree_stack: list[list[CSGNode]] = [self.csg_tree]
+        # Opt-in (None by default, so every existing bare Evaluator(...)
+        # call site/test is unaffected) content-hash cache shared across
+        # renders/debugger pauses -- see ManifoldCache and generate_tree().
+        self._manifold_cache = manifold_cache
+        # Incremented by _builtin_rands -- lets _eval_statement detect
+        # whether rands() was called anywhere while resolving a given
+        # CSGNode, to taint it (and its ancestors) as uncacheable. See
+        # CSGNode.uncacheable.
+        self._rands_call_count = 0
         # Every geometry-producing builtin kind (== CSGNode.kind) is
         # registered here (Phase 2, complete — see docs/evaluator.md "CSG
         # tree"). resolve_fn parses arguments and recursively resolves
@@ -2158,12 +2260,19 @@ class Evaluator:
         kind, is_builtin = self._tree_node_kind(node, ctx)
         resolve_fn = (self._RESOLVE_DISPATCH.get(kind) if is_builtin else None) or self._resolve_fallback_call
         self._tree_stack.append([])
+        rands_before = self._rands_call_count
         try:
             params = resolve_fn(node, ctx)
         finally:
             children = self._tree_stack.pop()
+        # Taint this node (and thus every ancestor, since uncacheable
+        # propagates via the `any(...)` below at each enclosing level) if
+        # rands() was called anywhere while resolving it -- see CSGNode's
+        # uncacheable docstring.
+        uncacheable = (self._rands_call_count != rands_before) or any(c.uncacheable for c in children)
         tree_node = CSGNode(kind=kind, node=node, bodies=[],
-                             is_builtin=is_builtin, children=children, params=params)
+                             is_builtin=is_builtin, children=children, params=params,
+                             uncacheable=uncacheable)
         self._tree_stack[-1].append(tree_node)
         return []
 
@@ -2180,6 +2289,18 @@ class Evaluator:
         self._eval_modular_call(node, ctx)
         return {}
 
+    def _cache_key(self, node: CSGNode) -> tuple:
+        """Structural content-hash key for `node`, used by generate_tree()'s
+        ManifoldCache lookup: (kind, is_builtin, canonicalized params,
+        recursively-hashed children). Deliberately excludes node.node (the
+        AST object) — every render builds a brand-new AST via
+        getASTfromFile, so keying on AST identity would defeat cross-render
+        caching entirely. Pure function of already-resolved data, never
+        touches .bodies, so it's always cheap/safe to compute speculatively
+        even on a cache miss."""
+        return (node.kind, node.is_builtin, _canon(node.params),
+                tuple(self._cache_key(c) for c in node.children))
+
     def generate_tree(self, tree: list[CSGNode]) -> list[ColoredBody]:
         """Bottom-up second pass over an already-resolved CSG tree: for each
         node, first generates its children (so any generate_fn reading
@@ -2187,16 +2308,30 @@ class Evaluator:
         the node's own generate_fn (or, for kinds with no registered
         generate_fn — user-module calls, render()/children()/unknown-module
         passthroughs — concatenates the children's bodies), storing the
-        result on node.bodies. Always recomputes from scratch (no caching),
-        matching the project's "full Manifold rebuild on every render
-        trigger" convention. Can be called on any (possibly partial) tree
+        result on node.bodies. Can be called on any (possibly partial) tree
         at any point — e.g. the debugger calling it on self.csg_tree at a
-        breakpoint to render a live partial result (Phase 3)."""
+        breakpoint to render a live partial result (Phase 3).
+
+        If self._manifold_cache is set (opt-in — None by default, so
+        existing bare Evaluator() construction/tests are unaffected), each
+        node's content hash is checked before doing any Manifold work: a
+        cache hit reuses the previous .bodies and skips recursing into
+        node.children entirely (no wasted Manifold work re-deriving
+        children that would just be discarded); a miss generates normally
+        and stores the result. node.uncacheable (rands() taint) always
+        forces a miss, never a hit, and never gets stored either."""
         result = []
         for node in tree:
-            children_bodies = self.generate_tree(node.children)
-            generate_fn = self._GENERATE_DISPATCH.get(node.kind) if node.is_builtin else None
-            node.bodies = generate_fn(node.params, node.children, node.node) if generate_fn is not None else children_bodies
+            key = None if (self._manifold_cache is None or node.uncacheable) else self._cache_key(node)
+            cached = self._manifold_cache.get(key) if key is not None else None
+            if cached is not None:
+                node.bodies = cached
+            else:
+                children_bodies = self.generate_tree(node.children)
+                generate_fn = self._GENERATE_DISPATCH.get(node.kind) if node.is_builtin else None
+                node.bodies = generate_fn(node.params, node.children, node.node) if generate_fn is not None else children_bodies
+                if key is not None:
+                    self._manifold_cache.put(key, node.bodies)
             result.extend(node.bodies)
         return result
 
@@ -4764,6 +4899,7 @@ class Evaluator:
         return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
 
     def _builtin_rands(self, minval, maxval, n, seed=None):
+        self._rands_call_count += 1
         if seed is not None:
             random.seed(int(seed))
         return [random.uniform(float(minval), float(maxval)) for _ in range(int(n))]

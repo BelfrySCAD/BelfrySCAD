@@ -426,7 +426,11 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
-**Design**: Render / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
+**Design**: Render / Dump CSG Tree to Console / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
+
+**Dump CSG Tree to Console** (`MainWindow._dump_csg_tree`): prints the resolved+generated `CSGNode` tree from the last successful render (`self._last_csg_tree`, set in `_on_render_done` from `_RenderWorker.finished`'s new `csg_tree` payload — `evaluator.csg_tree`, threaded through the worker's `finished` signal alongside `bodies`/`id_to_node`/`elapsed_ms`/`final_vp`) via `evaluator.format_csg_tree()` (`engine/evaluator.py`, next to `flatten_csg_tree`). One line per node — `kind`, a `[user]` tag for a non-builtin (user module) call, a compact params summary (`_summarize_param`: long lists/dicts/numpy arrays collapse to `<list of N>`/`<dict of N>`/`<ndarray shape=...>` rather than dumping raw content — needed since e.g. a resolved sphere/cylinder's tessellated verts/tris are numpy arrays whose default `repr()` spans multiple lines, which would otherwise break the one-line-per-node indentation), and the generated body count — indented two spaces per tree depth. "No CSG tree available — render first." if nothing has rendered yet.
+
+**Flush Caches** (`MainWindow._flush_caches`) also clears `self._csg_cache` (the `ManifoldCache` backing incremental Manifold rebuilds — see `docs/evaluator.md`), alongside the existing AST scope/node table and parser AST cache resets.
 
 **View**:
 - Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console / Show Debugger / Show Animate

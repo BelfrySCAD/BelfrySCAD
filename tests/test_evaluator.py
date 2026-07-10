@@ -10,6 +10,7 @@ from openscad_lalr_parser import getASTfromString, build_scopes
 
 from belfryscad.engine.evaluator import (
     Evaluator, EvalContext, EvalError, _resolve_font, CSGNode, flatten_csg_tree,
+    format_csg_tree, _summarize_param, ManifoldCache,
 )
 
 
@@ -282,6 +283,164 @@ class TestDynExplicit:
         ev = Evaluator()
         ev.evaluate(nodes, root_scope)
         assert ev._root_ctx.dyn_explicit == {"$fn"}
+
+
+class TestFormatCsgTree:
+    """format_csg_tree/_summarize_param back the Design menu's "Dump CSG
+    Tree to Console" command."""
+
+    def test_summarize_param_short_list_shown_in_full(self):
+        assert _summarize_param([1, 2, 3]) == "[1, 2, 3]"
+
+    def test_summarize_param_long_list_collapsed(self):
+        assert _summarize_param(list(range(20))) == "<list of 20>"
+
+    def test_summarize_param_nested_list_collapsed(self):
+        # A list of lists (e.g. polyhedron points) collapses even if short,
+        # since the whole point is avoiding a multi-line/huge single-line dump.
+        assert _summarize_param([[0, 0], [1, 0], [1, 1]]) == "<list of 3>"
+
+    def test_summarize_param_dict_collapsed(self):
+        assert _summarize_param({"a": 1, "b": 2}) == "<dict of 2>"
+
+    def test_summarize_param_ndarray_collapsed(self):
+        import numpy as np
+        arr = np.zeros((50, 3))
+        assert _summarize_param(arr) == "<ndarray shape=(50, 3)>"
+
+    def test_summarize_param_long_string_truncated(self):
+        result = _summarize_param("x" * 100)
+        assert len(result) <= 40
+
+    def test_format_csg_tree_is_one_line_per_node(self):
+        # Regression: sphere/cylinder's resolved params embed numpy verts/
+        # tris arrays whose default repr() spans multiple lines -- without
+        # _summarize_param's ndarray handling, a single node's dump line
+        # would itself contain embedded newlines, breaking the "one line
+        # per node" indentation the dump relies on for readability.
+        _, _, ev = run_tree("difference() { cube(10); sphere(3); }")
+        dump = format_csg_tree(ev.csg_tree)
+        lines = dump.split("\n")
+        assert len(lines) == 3  # difference, cube, sphere
+        assert lines[0].startswith("difference(")
+        assert lines[1].startswith("  cube(")
+        assert lines[2].startswith("  sphere(")
+        for line in lines:
+            assert "\n" not in line
+
+    def test_format_csg_tree_marks_user_modules(self):
+        _, _, ev = run_tree("module foo() { cube(1); } foo();")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "foo [user](" in dump
+
+    def test_format_csg_tree_shows_body_count(self):
+        _, _, ev = run_tree("cube(1);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert dump.strip().endswith("-> 1 body")
+
+    def test_format_csg_tree_empty_tree(self):
+        assert format_csg_tree([]) == ""
+
+
+class TestManifoldCache:
+    """Correctness safety net for the incremental-rebuild ManifoldCache:
+    proves a cache hit produces output equivalent to (a) the original
+    cache-populating run and (b) an entirely separate run with caching
+    disabled — so caching is provably a pure optimization, never a
+    behavior change. A silently-wrong cache would be worse than the
+    "slow but correct" status quo it replaces."""
+
+    @staticmethod
+    def _run_with_cache(src: str, cache):
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(manifold_cache=cache)
+        bodies, _ = ev.evaluate(nodes, root_scope)
+        return bodies
+
+    @staticmethod
+    def _bodies_equivalent(a, b) -> bool:
+        if len(a) != len(b):
+            return False
+        for x, y in zip(a, b):
+            if x.role != y.role or x.color != y.color:
+                return False
+            if (x.body is None) != (y.body is None):
+                return False
+            if x.body is not None and x.body.bounding_box() != y.body.bounding_box():
+                return False
+        return True
+
+    # Covers: plain primitive, union/difference/intersection, hull,
+    # minkowski, a for loop (transparent in the tree -- no wrapping node),
+    # if/else, a user module called multiple times with different args
+    # (same kind, different params -- must NOT collide in the cache), and
+    # children() (whose actual tree-children come from the call site, not
+    # the children() call's own AST position -- see CSGNode/_cache_key's
+    # documented children() hazard).
+    _SCRIPTS = [
+        "cube(10);",
+        "union() { cube(10); translate([5,0,0]) sphere(3); }",
+        "difference() { cube(10); translate([2,2,-1]) cylinder(h=12, r=2); }",
+        "intersection() { cube(10); sphere(8); }",
+        "hull() { cube(2); translate([10,0,0]) sphere(3); }",
+        "minkowski() { cube(2); sphere(1); }",
+        "for (i=[0:2]) translate([i*3,0,0]) cube(1);",
+        "x = 5; if (x > 3) { cube(x); } else { sphere(1); }",
+        "module foo(n) { cube(n); } foo(4); foo(6);",
+        "module bar() { children(); } bar() { sphere(2); }",
+        "$fn=16; sphere(5);",
+    ]
+
+    @pytest.mark.parametrize("src", _SCRIPTS)
+    def test_cold_warm_and_disabled_are_equivalent(self, src):
+        cache = ManifoldCache()
+        cold = self._run_with_cache(src, cache)
+        warm = self._run_with_cache(src, cache)       # same cache -> should hit
+        disabled = self._run_with_cache(src, None)     # caching off entirely
+        assert self._bodies_equivalent(cold, warm)
+        assert self._bodies_equivalent(cold, disabled)
+
+    def test_unseeded_rands_never_served_from_cache(self):
+        # The one case where "identical output" would be the WRONG
+        # assertion -- an unseeded rands() must never be reused, so two
+        # independent runs sharing a cache should (overwhelmingly likely)
+        # still differ.
+        src = "cube([rands(1,10,1)[0], 5, 5]);"
+        cache = ManifoldCache()
+        first = self._run_with_cache(src, cache)
+        second = self._run_with_cache(src, cache)
+        assert first[0].body.bounding_box() != second[0].body.bounding_box()
+
+    def test_seeded_rands_is_still_correct_across_cache_states(self):
+        # A seeded rands() call is deterministic in isolation, so cold/
+        # warm/disabled should agree here even though the node is still
+        # (conservatively) tainted uncacheable either way.
+        src = "cube([rands(1,10,1,42)[0], 5, 5]);"
+        cache = ManifoldCache()
+        cold = self._run_with_cache(src, cache)
+        warm = self._run_with_cache(src, cache)
+        disabled = self._run_with_cache(src, None)
+        assert self._bodies_equivalent(cold, warm)
+        assert self._bodies_equivalent(cold, disabled)
+
+    def test_repeated_generate_tree_is_a_full_cache_hit(self):
+        # Models the debugger's repeated-pause pattern: the SAME Evaluator/
+        # csg_tree, generate_tree() called again with the same cache.
+        cache = ManifoldCache()
+        nodes = getASTfromString("union() { cube(10); sphere(3); }", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(manifold_cache=cache)
+        first, _ = ev.evaluate(nodes, root_scope)
+        second = ev.generate_tree(ev.csg_tree)
+        assert self._bodies_equivalent(first, second)
+
+    def test_flush_clears_cache(self):
+        cache = ManifoldCache()
+        self._run_with_cache("cube(10);", cache)
+        assert cache._entries
+        cache.clear()
+        assert not cache._entries
 
 
 # ---------------------------------------------------------------------------

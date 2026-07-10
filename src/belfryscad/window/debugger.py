@@ -174,8 +174,9 @@ class DebugSession(QObject):
     logged = Signal(str)
     logged_value = Signal(str, object)  # (name, value) for viewer-aware console logging
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, manifold_cache=None):
         super().__init__(parent)
+        self._manifold_cache = manifold_cache  # shared ManifoldCache (see evaluator.py) -- passed through to the Evaluator() built in _run()
         self._pause_event = threading.Event()
         self._resume_command = "continue"
         self._pending_mods: dict = {}
@@ -334,7 +335,8 @@ class DebugSession(QObject):
 
     def _run(self, nodes, root_scope, viewport_params: dict):
         from belfryscad.engine.evaluator import Evaluator, EvalError
-        ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break, return_hook=self._on_function_return)
+        ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
+                      return_hook=self._on_function_return, manifold_cache=self._manifold_cache)
         self._ev = ev  # hook()/_error_break() read this to call generate_tree() on ev.csg_tree
         try:
             bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
