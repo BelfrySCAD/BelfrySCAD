@@ -254,9 +254,9 @@ class _RenderCallback(QObject):
             self._file_tab.root_scope = root_scope
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float, object)
-    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict):
-        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp)
+    @Slot(object, object, float, object, object)
+    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list):
+        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree)
 
     @Slot()
     def on_done(self):
@@ -270,15 +270,17 @@ class _RenderWorker(QObject):
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     ast_ready = Signal(object, object)   # (nodes, root_scope) — emitted after successful parse
-    finished = Signal(object, object, float, object)  # (bodies, id_to_node, elapsed_ms, final_vp)
+    finished = Signal(object, object, float, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
-    def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None):
+    def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
+                 manifold_cache=None):
         super().__init__()
         self._source = source
         self._file_path = file_path
         self._cancel = cancel
         self._viewport_params = viewport_params or {}
+        self._manifold_cache = manifold_cache
 
     @Slot()
     def run(self):
@@ -345,7 +347,7 @@ class _RenderWorker(QObject):
             return
 
         # --- Evaluate ---
-        evaluator = Evaluator(echo_fn=self.logged.emit)
+        evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache)
         try:
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
         except RecursionError:
@@ -385,7 +387,7 @@ class _RenderWorker(QObject):
                 if k in explicit:
                     v = dyn[k]
                     final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
-        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp)
+        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree)
 
 
 class _DetachedTabBar(QWidget):
@@ -496,6 +498,9 @@ class MainWindow(QMainWindow):
         # Window-level render results (shared by viewport, export, gizmo, selection)
         self.id_to_node: dict = {}
         self._bodies = None
+        self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
+        from belfryscad.engine.evaluator import ManifoldCache
+        self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
         self._dump_frame: int = 0
@@ -853,6 +858,7 @@ class MainWindow(QMainWindow):
         # Design
         design_menu = mb.addMenu("Design")
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
+        self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
         self._add_action(design_menu, "Flush Caches", self._flush_caches)
         design_menu.addSeparator()
@@ -1579,7 +1585,7 @@ class MainWindow(QMainWindow):
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params())
+        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache)
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -1633,12 +1639,14 @@ class MainWindow(QMainWindow):
         else:
             QApplication.restoreOverrideCursor()
 
-    def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int, final_vp: dict | None = None):
+    def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
+                        final_vp: dict | None = None, csg_tree: list | None = None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
+        self._last_csg_tree = csg_tree
         try:
             self._viewport.load_geometry(bodies)
         except Exception as e:
@@ -1692,14 +1700,26 @@ class MainWindow(QMainWindow):
                 self.log(f"Frame dump error: {e}")
             self._animate_pane.advance_frame()
 
+    def _dump_csg_tree(self):
+        """Print the resolved+generated CSG tree from the last successful
+        render to the console — a debugging aid for inspecting the tree
+        structure (kind/params/body counts) without a debug session."""
+        if not self._last_csg_tree:
+            self.log("No CSG tree available — render first.")
+            return
+        from belfryscad.engine.evaluator import format_csg_tree
+        self.log(format_csg_tree(self._last_csg_tree))
+
     def _flush_caches(self):
-        """Discard each tab's pre-calculated AST scope/node table and the parser's AST cache."""
+        """Discard each tab's pre-calculated AST scope/node table, the
+        parser's AST cache, and the incremental Manifold rebuild cache."""
         from openscad_lalr_parser import clear_ast_cache
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 tab.root_scope = None
         self.id_to_node = {}
+        self._csg_cache.clear()
         clear_ast_cache()
         self.log("Flushed AST caches — render or debug to rebuild.")
 
@@ -2001,7 +2021,7 @@ class MainWindow(QMainWindow):
         self._debugger_dock.raise_()
 
         self._debug_tab = tab
-        self._debug_session = DebugSession(self)
+        self._debug_session = DebugSession(self, manifold_cache=self._csg_cache)
         self._debug_session.paused.connect(
             lambda origin, line, frames, stk, pbodies, perr: self._on_debug_paused(
                 origin, line, frames, stk, pbodies, perr)
