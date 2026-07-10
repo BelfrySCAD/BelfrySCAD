@@ -814,6 +814,41 @@ class TestModifiers:
         assert len(bodies) == 1
         assert bodies[0].role == "show_only"
 
+    def test_showonly_inside_union_keeps_role(self):
+        # Regression: _split_by_role used to fold show_only bodies into
+        # the ordinary "foreground" group, so union() (like any CSG op)
+        # unioned the !-tagged child together with its siblings and the
+        # combined result lost the show_only role entirely -- ! silently
+        # stopped isolating its subtree the moment it was nested inside a
+        # boolean op instead of sitting at the top level.
+        bodies, _ = run("union() { !cube(5); translate([10,0,0]) sphere(3); }")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+        bb = bbox(bodies)
+        assert bb[3] - bb[0] == approx(5)
+
+    def test_showonly_inside_difference_keeps_role(self):
+        bodies, _ = run(
+            "difference() { cube(10); !translate([2,2,-1]) cylinder(h=12, r=2); }"
+        )
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+
+    def test_showonly_inside_intersection_keeps_role(self):
+        bodies, _ = run("intersection() { cube(10); !sphere(8); }")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+
+    def test_showonly_inside_hull_keeps_role(self):
+        bodies, _ = run("hull() { !cube(5); translate([10,0,0]) sphere(3); }")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+
+    def test_showonly_inside_minkowski_keeps_role(self):
+        bodies, _ = run("minkowski() { !cube(5); sphere(1); }")
+        assert len(bodies) == 1
+        assert bodies[0].role == "show_only"
+
     def test_background_role(self):
         # % (background) produces a ghost body tagged role="background"
         bodies, _ = run("%cube(1);")
