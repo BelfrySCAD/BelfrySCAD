@@ -2849,6 +2849,7 @@ class Evaluator:
         op = params["op"]
         all_bg: list[ColoredBody] = []
         all_hi: list[ColoredBody] = []
+        all_so: list[ColoredBody] = []
         csg_result: Optional[ColoredBody] = None
         idx = 0
 
@@ -2857,9 +2858,10 @@ class Evaluator:
             idx += size
             stmt_bodies = flatten_csg_tree(group_nodes)
 
-            bg, fg, hi = self._split_by_role(stmt_bodies)
+            bg, fg, hi, so = self._split_by_role(stmt_bodies)
             all_bg.extend(bg)
             all_hi.extend(hi)
+            all_so.extend(so)
 
             bodies_3d = [c for c in fg if c.body is not None]
             sections_2d = [c for c in fg if c.section is not None]
@@ -2905,19 +2907,28 @@ class Evaluator:
                 elif op == "intersection":
                     csg_result = replace(csg_result, section=csg_result.section ^ grp)
 
-        # Return: CSG result + background ghosts + highlight overlays (separate from CSG result)
-        return ([csg_result] if csg_result is not None else []) + all_bg + all_hi
+        # Return: CSG result + background ghosts + highlight overlays + show_only bodies (all separate from CSG result)
+        return ([csg_result] if csg_result is not None else []) + all_bg + all_hi + all_so
 
     @staticmethod
-    def _split_by_role(bodies: list[ColoredBody]) -> tuple[list[ColoredBody], list[ColoredBody], list[ColoredBody]]:
+    def _split_by_role(bodies: list[ColoredBody]) -> tuple[list[ColoredBody], list[ColoredBody], list[ColoredBody], list[ColoredBody]]:
         """Split a flat body list into (background, foreground,
-        highlight_ghost) per the %/# modifier convention — shared by
-        hull/minkowski's generate steps (previously duplicated identically
-        in both, plus a per-statement-group variant in _builtin_csg)."""
+        highlight_ghost, show_only) per the %/#/! modifier convention —
+        shared by hull/minkowski's generate steps (previously duplicated
+        identically in both, plus a per-statement-group variant in
+        _generate_csg). show_only (!) bodies must come out of `fg` just
+        like background/highlight do: they were being unioned/hulled/
+        minkowski-summed together with ordinary bodies, which silently
+        strips their role (the operation's result has no role at all),
+        so ! stopped isolating its subtree the moment it was nested inside
+        any boolean op/hull/minkowski rather than sitting at the top
+        level — evaluate()'s "any show_only body anywhere -> show only
+        those + highlights" check at the very end never saw one."""
         bg = [c for c in bodies if c.role == "background"]
-        fg = [c for c in bodies if c.role != "background"]
+        fg = [c for c in bodies if c.role not in ("background", "show_only")]
         hi = [replace(c, role="highlight_ghost") for c in fg if c.role == "highlight"]
-        return bg, fg, hi
+        so = [c for c in bodies if c.role == "show_only"]
+        return bg, fg, hi, so
 
     def _resolve_hull(self, node: ModularCall, ctx: EvalContext) -> dict:
         args, ctx = self._resolve_call_args(node, ctx)
@@ -2928,7 +2939,7 @@ class Evaluator:
         bodies = flatten_csg_tree(children)
         if not bodies:
             return []
-        bg, fg, hi = self._split_by_role(bodies)
+        bg, fg, hi, so = self._split_by_role(bodies)
         hull_result: Optional[ColoredBody] = None
         if fg:
             bodies_3d = [c.body for c in fg if c.body is not None]
@@ -2938,7 +2949,7 @@ class Evaluator:
                 sections = [c.section for c in fg if c.section is not None]
                 if sections:
                     hull_result = ColoredBody(section=m3d.CrossSection.batch_hull(sections), color=fg[0].color)
-        return ([hull_result] if hull_result is not None else []) + bg + hi
+        return ([hull_result] if hull_result is not None else []) + bg + hi + so
 
     def _resolve_polyhedron(self, node: ModularCall, ctx: EvalContext) -> dict:
         args, ctx = self._resolve_call_args(node, ctx)
@@ -3895,20 +3906,20 @@ class Evaluator:
 
     def _generate_minkowski(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
         bodies = flatten_csg_tree(children)
-        bg, fg, hi = self._split_by_role(bodies)
+        bg, fg, hi, so = self._split_by_role(bodies)
         bodies_3d = [c for c in fg if c.body is not None]
         if not bodies_3d:
-            return bg + hi
+            return bg + hi + so
         if len(bodies_3d) == 1:
-            return bodies_3d + bg + hi
+            return bodies_3d + bg + hi + so
         try:
             result = bodies_3d[0].body
             for c in bodies_3d[1:]:
                 result = result.minkowski_sum(c.body)
-            return [ColoredBody(body=result, color=bodies_3d[0].color)] + bg + hi
+            return [ColoredBody(body=result, color=bodies_3d[0].color)] + bg + hi + so
         except Exception as e:
             self.error(f"minkowski: {e}", node)
-            return bg + hi
+            return bg + hi + so
 
     @staticmethod
     def _copy_body(b: ColoredBody) -> ColoredBody:
