@@ -2366,8 +2366,26 @@ class Evaluator:
             # its body runs. Splice the resolved subtree directly into the
             # enclosing node's children instead of wrapping it in its own
             # node, so the CSG tree represents the geometry being
-            # combined, not the code structure that produced it.
-            self._tree_stack[-1].extend(children)
+            # combined, not the code structure that produced it. But if
+            # that subtree is more than one sibling, group them under a
+            # "union" label for display purposes (is_builtin=False so
+            # generate_tree still takes the default-concatenation path,
+            # not the real _generate_csg boolean merge -- juxtaposed
+            # statements with no explicit combinator keep their bodies
+            # separate, same as any other module body/top-level script,
+            # preserving each body's own color/provenance rather than
+            # collapsing them into one Manifold the way an *explicit*
+            # union() call does) so the dump reads as one shape at this
+            # call site instead of N unrelated-looking siblings.
+            if len(children) > 1:
+                union_node = CSGNode(
+                    kind="union", node=node, bodies=[], is_builtin=False,
+                    children=children, params={},
+                    uncacheable=any(c.uncacheable for c in children),
+                )
+                self._tree_stack[-1].append(union_node)
+            else:
+                self._tree_stack[-1].extend(children)
             return []
         # Taint this node (and thus every ancestor, since uncacheable
         # propagates via the `any(...)` below at each enclosing level) if
