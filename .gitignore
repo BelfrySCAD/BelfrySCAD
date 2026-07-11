@@ -45,6 +45,8 @@ htmlcov/
 # Scratch files
 test*.scad
 ntest*.scad
+test30_mesh.off
+test30_surface.dat
 profile_eval.py
 
 # graphify
