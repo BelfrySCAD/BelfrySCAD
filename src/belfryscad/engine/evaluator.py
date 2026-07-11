@@ -1619,10 +1619,12 @@ class CSGNode:
     (Phase 3) — since resolve never depends on any node's generated bodies.
 
     kind is a human-readable label (a ModularCall's call name, e.g. "cube",
-    "union", "my_bracket"; or "highlight"/"background"/"show_only"/
-    "intersection_for" for the four non-ModularCall wrapper kinds) — not a
-    guaranteed-unique discriminator, since a user module may shadow a builtin
-    name. Consumers needing certainty should check type(node) / is_builtin.
+    "union"; or "highlight"/"background"/"show_only"/"intersection_for" for
+    the four non-ModularCall wrapper kinds). User-module calls never get a
+    CSGNode of their own (Evaluator._eval_statement splices their resolved
+    body directly into the enclosing node's children instead), so kind is
+    always a builtin's own name or an unrecognized module name -- never a
+    user module's, shadowed or not.
     """
     kind: str
     node: ASTNode
@@ -1673,36 +1675,125 @@ def flatten_csg_tree(tree: list[CSGNode]) -> list[ColoredBody]:
 def _summarize_param(value, max_items: int = 6, max_len: int = 40) -> str:
     """Compact one-line repr for a CSGNode.params value, used by
     format_csg_tree — collapses long lists/dicts/arrays (e.g. polyhedron
-    points, imported STL verts, surface() height grids, a resolved
-    sphere/cylinder's tessellated numpy verts/tris) to "<... of N>"
+    points, imported STL verts, surface() height grids) to "<... of N>"
     instead of dumping them in full, since numpy's own repr can span
-    multiple lines and would otherwise break the one-line-per-node dump."""
+    multiple lines and would otherwise break the one-line-per-node dump.
+    Collapsing is purely size-based (item count), not "contains a nested
+    container" or "is a numpy array" — a small list/dict/array is shown
+    in full with each element/value itself recursively summarized, so
+    e.g. translate's args={0: [1.0,2.0,3.0]} (one entry whose value is a
+    short flat list) displays completely instead of collapsing to an
+    opaque "<dict of 1>" just because that one entry happens to be a
+    list, and a small polyhedron's own points/faces (its actual
+    user-authored content, unlike sphere/cylinder's auto-generated
+    tessellation — see _DUMP_TESSELLATION_KEYS, which excludes the
+    latter from the dump entirely by key) are visible rather than
+    reduced to a bare shape."""
     if isinstance(value, np.ndarray):
-        return f"<ndarray shape={value.shape}>"
+        value = value.tolist()
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, (list, tuple)):
-        if len(value) > max_items or any(isinstance(v, (list, tuple, dict, np.ndarray)) for v in value):
+        if len(value) > max_items:
             kind = "tuple" if isinstance(value, tuple) else "list"
             return f"<{kind} of {len(value)}>"
         return "[" + ", ".join(_summarize_param(v) for v in value) + "]"
     if isinstance(value, dict):
-        return f"<dict of {len(value)}>"
+        if len(value) > max_items:
+            return f"<dict of {len(value)}>"
+        return "{" + ", ".join(f"{k!r}: {_summarize_param(v)}" for k, v in value.items()) + "}"
     text = repr(value)
     return text if len(text) <= max_len else text[:max_len - 1] + "…"
 
 
+# Params keys never shown in format_csg_tree's per-node summary, regardless
+# of kind -- pure internal bookkeeping (op/name duplicate the node's own
+# kind; group_sizes is _generate_csg's private re-chunking data) or already
+# represented structurally elsewhere in the tree (color() gets its own
+# wrapping CSGNode, same as translate/rotate, so every descendant leaf
+# additionally carrying its own inherited "color" param -- needed at
+# generate time, not a display bug -- would otherwise be shown twice).
+_DUMP_HIDDEN_PARAM_KEYS = frozenset({"color", "op", "name", "group_sizes"})
+
+# Params keys holding auto-generated tessellation data (not user-authored
+# content) for every kind except polyhedron, where the equivalent data
+# *is* the user's own points/faces input and is worth seeing (still
+# collapsed to <... of N> by _summarize_param if it's large, same as any
+# other param -- this only controls whether the key is shown at all).
+_DUMP_TESSELLATION_KEYS = frozenset({"verts", "tris", "tri_arr"})
+
+# Params keys renamed for display only (the underlying dict key stays
+# "segs" everywhere it's actually used -- _generate_cylinder/_generate_2d/
+# etc. all read params["segs"]) -- "segs" is every _resolve_X's own name
+# for the circular-segment count it resolved from $fn/$fa/$fs (via _fn()),
+# shared by cylinder/circle/offset/text; "$fn=" reads as what it actually
+# represents to someone looking at the dump, rather than exposing the
+# resolve step's internal variable name.
+_DUMP_KEY_RENAMES = {"segs": "$fn"}
+
+
+def _format_call_args(args: dict) -> str:
+    """Render a _resolve_args()-shaped dict ({0: v0, 1: v1, 'name': v, ...}
+    -- positional args keyed by index, named args keyed by name) as
+    OpenSCAD call-argument syntax ("v0, v1, name=v") instead of Python
+    dict syntax. Used by format_csg_tree for a transform's "args" param,
+    so e.g. translate([2,2,-1])'s dump reads translate([2.0, 2.0, -1.0])
+    the way the user actually wrote it, not translate(args={0: [2.0,
+    2.0, -1.0]})."""
+    parts = []
+    for k, v in args.items():
+        if isinstance(k, int):
+            parts.append(_summarize_param(v))
+        else:
+            parts.append(f"{k}={_summarize_param(v)}")
+    return ", ".join(parts)
+
+
 def format_csg_tree(tree: list[CSGNode], indent: int = 0) -> str:
-    """Human-readable recursive dump of a resolved (and, once
-    generate_tree() has run, generated) CSG tree — kind, a "[user]" tag
-    for a non-builtin (user module) call, a compact params summary (see
-    _summarize_param), and the generated body count (0 before generate_tree
-    runs). Used by the Design menu's "Dump CSG Tree to Console" command."""
+    """Human-readable recursive dump of a resolved CSG tree — kind and a
+    compact params summary (see _summarize_param and the _DUMP_*_KEYS
+    filters above). Used by the Design menu's "Dump CSG Tree to Console"
+    command.
+
+    Represents geometry, not the code that produced it: neither
+    children() calls nor user-module calls get a node of their own (see
+    _eval_statement) -- their resolved subtree is spliced directly into
+    the enclosing node's children, so e.g. a user module wrapping a cube
+    shows up as just "cube(...)", not "mymodule(...) > cube(...)".
+
+    Deliberately omits a generated-body count: once Evaluator's
+    ManifoldCache (see evaluate()/generate_tree()) reuses a cached
+    ancestor's result, it skips recursing into that ancestor's children
+    entirely, leaving their own .bodies at the empty default from
+    construction -- not because they produced no geometry, but simply
+    because generate_tree never visited them on that pass. A count that
+    reads "0" in that case would be actively misleading, not just
+    uninformative, so this only ever describes resolved structure
+    (which is always complete/reliable regardless of caching), never
+    generated output.
+
+    Indent is +1 unit for every non-root line (i.e. depth 1 gets two
+    indent units, not one): the console (ConsoleWidget._append_foldable)
+    displays multi-line output with a "<arrow> " prefix on the first
+    line only (2 display columns) and no prefix on the rest -- without
+    this compensating offset, a depth-1 child's own indent would land in
+    the same column the root's text starts at (right after the arrow),
+    making it look like a sibling of the root rather than its child."""
     lines = []
-    pad = "  " * indent
+    pad = "  " * (indent + 1) if indent > 0 else ""
     for node in tree:
-        tag = "" if node.is_builtin else " [user]"
-        params_str = ", ".join(f"{k}={_summarize_param(v)}" for k, v in node.params.items())
-        n = len(node.bodies)
-        lines.append(f"{pad}{node.kind}{tag}({params_str}) -> {n} bod{'y' if n == 1 else 'ies'}")
+        shown = {
+            k: v for k, v in node.params.items()
+            if k not in _DUMP_HIDDEN_PARAM_KEYS
+            and not (k in _DUMP_TESSELLATION_KEYS and node.kind != "polyhedron")
+        }
+        parts = [
+            _format_call_args(v) if k == "args" and isinstance(v, dict)
+            else f"{_DUMP_KEY_RENAMES.get(k, k)}={_summarize_param(v)}"
+            for k, v in shown.items()
+        ]
+        params_str = ", ".join(parts)
+        lines.append(f"{pad}{node.kind}({params_str})")
         if node.children:
             lines.append(format_csg_tree(node.children, indent + 1))
     return "\n".join(lines)
@@ -2228,11 +2319,14 @@ class Evaluator:
         self.csg_tree as a side effect. For the five _TREE_NODE_TYPES,
         pushes a new children accumulator before resolving, pops it in a
         finally (so a raised EvalError cleanly discards the in-progress
-        node rather than corrupting a parent's accumulator), then appends
-        the completed CSGNode to whichever accumulator is now on top of the
-        stack. Every recursive call site already calls
-        self._eval_statement(...), so nesting composes automatically with
-        no other call site changes.
+        node rather than corrupting a parent's accumulator), then either
+        appends the completed CSGNode to whichever accumulator is now on
+        top of the stack, or -- for children() calls and user-module calls,
+        neither of which is itself geometry -- splices the resolved
+        children directly into that accumulator with no wrapping node (see
+        the kind == "children"/is_builtin check below). Every recursive
+        call site already calls self._eval_statement(...), so nesting
+        composes automatically with no other call site changes.
 
         Generation is fully deferred (Phase 2 final cutover): this only
         ever calls a resolve_fn (plain data, no Manifold calls) and always
@@ -2265,6 +2359,16 @@ class Evaluator:
             params = resolve_fn(node, ctx)
         finally:
             children = self._tree_stack.pop()
+        if (kind == "children" and is_builtin) or not is_builtin:
+            # Neither children() nor a user-module call is itself geometry
+            # -- children() is a call-site substitution, and a user module
+            # is just a named wrapper around whatever geometry statements
+            # its body runs. Splice the resolved subtree directly into the
+            # enclosing node's children instead of wrapping it in its own
+            # node, so the CSG tree represents the geometry being
+            # combined, not the code structure that produced it.
+            self._tree_stack[-1].extend(children)
+            return []
         # Taint this node (and thus every ancestor, since uncacheable
         # propagates via the `any(...)` below at each enclosing level) if
         # rands() was called anywhere while resolving it -- see CSGNode's
@@ -2719,7 +2823,7 @@ class Evaluator:
 
         verts_arr = np.array(verts, dtype=np.float32)
         tris_arr = np.array(tris, dtype=np.uint32)
-        return {"verts": verts_arr, "tris": tris_arr, "color": ctx.color}
+        return {"r": r, "segs": n, "verts": verts_arr, "tris": tris_arr, "color": ctx.color}
 
     def _generate_sphere(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
         mesh = m3d.Mesh(vert_properties=params["verts"], tri_verts=params["tris"])

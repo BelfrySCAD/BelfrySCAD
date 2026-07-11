@@ -295,51 +295,191 @@ class TestFormatCsgTree:
     def test_summarize_param_long_list_collapsed(self):
         assert _summarize_param(list(range(20))) == "<list of 20>"
 
-    def test_summarize_param_nested_list_collapsed(self):
-        # A list of lists (e.g. polyhedron points) collapses even if short,
-        # since the whole point is avoiding a multi-line/huge single-line dump.
-        assert _summarize_param([[0, 0], [1, 0], [1, 1]]) == "<list of 3>"
+    def test_summarize_param_small_nested_list_shown_in_full(self):
+        # A small list of lists (e.g. a handful of polyhedron points) is
+        # shown in full, not collapsed just for containing sub-lists --
+        # collapsing is purely size-based (item count), so users can
+        # actually see e.g. a translate's vector or a small polyhedron's
+        # own points instead of an opaque placeholder.
+        assert _summarize_param([[0, 0], [1, 0], [1, 1]]) == "[[0, 0], [1, 0], [1, 1]]"
 
-    def test_summarize_param_dict_collapsed(self):
-        assert _summarize_param({"a": 1, "b": 2}) == "<dict of 2>"
+    def test_summarize_param_long_nested_list_collapsed(self):
+        assert _summarize_param([[i, i] for i in range(20)]) == "<list of 20>"
 
-    def test_summarize_param_ndarray_collapsed(self):
+    def test_summarize_param_small_dict_shown_in_full(self):
+        assert _summarize_param({"a": 1, "b": 2}) == "{'a': 1, 'b': 2}"
+
+    def test_summarize_param_long_dict_collapsed(self):
+        assert _summarize_param({str(i): i for i in range(10)}) == "<dict of 10>"
+
+    def test_summarize_param_small_ndarray_shown_in_full(self):
+        import numpy as np
+        arr = np.array([[1.0, 2.0, 3.0]])
+        assert _summarize_param(arr) == "[[1.0, 2.0, 3.0]]"
+
+    def test_summarize_param_large_ndarray_collapsed(self):
+        # A large array (e.g. a resolved sphere/imported STL's tessellated
+        # verts) collapses by item count like any other list -- also
+        # regression coverage for the original bug this was written for:
+        # numpy's own repr() can span multiple lines and would otherwise
+        # break the one-line-per-node dump format.
         import numpy as np
         arr = np.zeros((50, 3))
-        assert _summarize_param(arr) == "<ndarray shape=(50, 3)>"
+        result = _summarize_param(arr)
+        assert result == "<list of 50>"
+        assert "\n" not in result
 
     def test_summarize_param_long_string_truncated(self):
         result = _summarize_param("x" * 100)
         assert len(result) <= 40
 
     def test_format_csg_tree_is_one_line_per_node(self):
-        # Regression: sphere/cylinder's resolved params embed numpy verts/
-        # tris arrays whose default repr() spans multiple lines -- without
-        # _summarize_param's ndarray handling, a single node's dump line
-        # would itself contain embedded newlines, breaking the "one line
-        # per node" indentation the dump relies on for readability.
         _, _, ev = run_tree("difference() { cube(10); sphere(3); }")
         dump = format_csg_tree(ev.csg_tree)
         lines = dump.split("\n")
         assert len(lines) == 3  # difference, cube, sphere
-        assert lines[0].startswith("difference(")
-        assert lines[1].startswith("  cube(")
-        assert lines[2].startswith("  sphere(")
         for line in lines:
             assert "\n" not in line
 
-    def test_format_csg_tree_marks_user_modules(self):
+    def test_format_csg_tree_indent_offset_for_console_fold_display(self):
+        # Regression: the console displays multi-line output with a
+        # "<arrow> " prefix (2 display columns) on the first line only,
+        # and no prefix on the rest. Without a compensating +1 indent
+        # unit for every non-root line, a depth-1 child's own "  " padding
+        # would land in the exact same column the root's text starts at
+        # (right after the arrow), making it look like a sibling of the
+        # root rather than its child. Depth 0 gets no padding (it's the
+        # header text handed to the console as-is); depth 1 must start
+        # further right than where the root's own text starts.
+        _, _, ev = run_tree("union() { cube(10); sphere(3); }")
+        dump = format_csg_tree(ev.csg_tree)
+        lines = dump.split("\n")
+        assert lines[0].startswith("union(")            # depth 0: no padding
+        assert lines[1].startswith("    cube(")          # depth 1: 4 spaces
+        assert not lines[1].startswith("  cube(")
+
+    def test_format_csg_tree_splices_user_module_call_not_wrapped(self):
+        # A user-module call isn't itself geometry -- only the geometry
+        # its body produces should appear in the tree, spliced in at the
+        # call site, not wrapped in a node named after the module.
         _, _, ev = run_tree("module foo() { cube(1); } foo();")
         dump = format_csg_tree(ev.csg_tree)
-        assert "foo [user](" in dump
+        assert "foo" not in dump
+        assert dump == "cube(size=[1.0, 1.0, 1.0], center=false)"
 
-    def test_format_csg_tree_shows_body_count(self):
+    def test_format_csg_tree_omits_body_count(self):
+        # A cache-hit ancestor makes generate_tree() skip visiting its
+        # descendants entirely (see ManifoldCache), leaving their .bodies
+        # at the empty default -- not because they produced no geometry,
+        # just because nothing ever populated them on that pass. A body
+        # count would be actively misleading in that case, so the dump
+        # never shows one at all (structure only, always reliable).
         _, _, ev = run_tree("cube(1);")
         dump = format_csg_tree(ev.csg_tree)
-        assert dump.strip().endswith("-> 1 body")
+        assert "body" not in dump
+        assert "->" not in dump
+
+    def test_format_csg_tree_hides_redundant_bookkeeping_params(self):
+        # op/name duplicate the node's own kind; group_sizes is
+        # _generate_csg's private re-chunking bookkeeping; color is
+        # already represented structurally by color()'s own wrapping
+        # CSGNode (same as translate/rotate) when relevant, and just
+        # noise (color=None) otherwise.
+        _, _, ev = run_tree("difference() { cube(10); translate([1,0,0]) sphere(3); }")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "op=" not in dump
+        assert "name=" not in dump
+        assert "group_sizes" not in dump
+        assert "color" not in dump
+
+    def test_format_csg_tree_shows_transform_args(self):
+        # A transform's resolved "args" param is a _resolve_args()-shaped
+        # dict ({0: [1.0, 2.0, 3.0]} for a single positional arg) --
+        # rendered as OpenSCAD call syntax directly in the parens
+        # (translate([1.0, 2.0, 3.0])), not as a Python dict literal
+        # behind an "args=" key (translate(args={0: [1.0, 2.0, 3.0]})),
+        # which hid the actual argument value behind a collapsed dict.
+        _, _, ev = run_tree("translate([1,2,3]) cube(1);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "translate([1.0, 2.0, 3.0])" in dump
+        assert "args=" not in dump
+
+    def test_format_csg_tree_hides_sphere_tessellation(self):
+        _, _, ev = run_tree("sphere(3);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "verts" not in dump
+        assert "tris" not in dump
+
+    def test_format_csg_tree_shows_sphere_radius(self):
+        # _resolve_sphere computes its radius (normalizing r/d to r, same
+        # convention as _resolve_cylinder's r1/r2) but originally never
+        # stored it in params -- only the tessellated verts/tris, which
+        # the dump hides. Without "r" in params, sphere(...) showed
+        # completely empty in the dump.
+        _, _, ev = run_tree("sphere(5);")
+        assert "r=5.0" in format_csg_tree(ev.csg_tree)
+        _, _, ev = run_tree("sphere(d=10);")
+        assert "r=5.0" in format_csg_tree(ev.csg_tree)
+
+    def test_format_csg_tree_shows_sphere_fn(self):
+        # Same "segs" key/convention as cylinder/circle/offset/text --
+        # renamed to "$fn" for display via _DUMP_KEY_RENAMES.
+        _, _, ev = run_tree("sphere(r=5, $fn=24);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "$fn=24" in dump
+        assert "segs" not in dump
+
+    def test_format_csg_tree_renames_segs_to_fn(self):
+        # "segs" is every _resolve_X's own internal variable name for the
+        # circular-segment count resolved from $fn/$fa/$fs (via _fn()) --
+        # shared by cylinder/circle/offset/text. "$fn=" in the dump reads
+        # as what it actually represents, not the resolve step's private
+        # variable name; the underlying params key stays "segs" (that's
+        # what _generate_cylinder etc. actually read).
+        _, _, ev = run_tree("cylinder(h=5, r=2);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "$fn=" in dump
+        assert "segs" not in dump
+
+    def test_summarize_param_bool_is_lowercase(self):
+        # OpenSCAD source spells booleans lowercase (true/false); Python's
+        # own repr() (True/False) would read as foreign syntax in a dump
+        # meant to mirror what the user typed.
+        assert _summarize_param(True) == "true"
+        assert _summarize_param(False) == "false"
+
+    def test_format_csg_tree_shows_lowercase_booleans(self):
+        _, _, ev = run_tree("cube(10, center=true);")
+        dump = format_csg_tree(ev.csg_tree)
+        assert "center=true" in dump
+        assert "True" not in dump
+
+    def test_format_csg_tree_shows_polyhedron_verts(self):
+        # Unlike sphere/cylinder's auto-generated tessellation, a
+        # polyhedron's verts/faces are the user's own authored content
+        # and are worth showing (still subject to the normal size-based
+        # collapse for a large polyhedron).
+        _, _, ev = run_tree(
+            "polyhedron(points=[[0,0,0],[1,0,0],[0,1,0]], faces=[[0,1,2]]);"
+        )
+        dump = format_csg_tree(ev.csg_tree)
+        assert "verts=" in dump
+        assert "0.0, 0.0, 0.0" in dump
 
     def test_format_csg_tree_empty_tree(self):
         assert format_csg_tree([]) == ""
+
+    def test_format_csg_tree_splices_children_call_not_wrapped(self):
+        # children() is a call-site substitution, not geometry -- the tree
+        # should show the substituted subtree directly under its caller,
+        # not a "children()" node wrapping it.
+        _, _, ev = run_tree(
+            "module m() { translate([1,0,0]) children(); }\n"
+            "m() sphere(1);"
+        )
+        dump = format_csg_tree(ev.csg_tree)
+        assert "children" not in dump
+        assert "r=1.0" in dump
 
 
 class TestManifoldCache:
@@ -3195,14 +3335,14 @@ class TestCSGTree:
         assert node.bodies == bodies             # the combined (post-^) result, not the 3 pre-intersection bodies
         assert len(node.bodies) == 1
 
-    def test_user_module_call_is_not_builtin(self):
+    def test_user_module_call_splices_body_geometry_directly(self):
+        # A user-module call isn't geometry -- it's just a named wrapper
+        # around whatever its body runs, so it gets no CSGNode of its own;
+        # the body's own geometry (cube) lands directly in the tree.
         _, _, ev = run_tree("module foo() { cube(1); } foo();")
         assert len(ev.csg_tree) == 1
         node = ev.csg_tree[0]
-        assert node.kind == "foo"
-        assert node.is_builtin is False
-        assert len(node.children) == 1
-        assert node.children[0].kind == "cube"
+        assert node.kind == "cube"
 
     def test_disable_produces_no_tree_node(self):
         _, _, ev = run_tree("*cube(1);")
@@ -3223,7 +3363,9 @@ class TestCSGTree:
         assert len(union_node.children) == 2
         hl, tr = union_node.children
         assert hl.kind == "highlight"
-        assert hl.children[0].kind == "box" and hl.children[0].is_builtin is False
+        # box(2)'s call boundary is spliced away -- its body's cube lands
+        # directly under the highlight modifier.
+        assert hl.children[0].kind == "cube"
         assert tr.kind == "translate"
         assert tr.children[0].kind == "background"
         assert tr.children[0].children[0].kind == "sphere"
@@ -3883,13 +4025,11 @@ class TestCSGTreeStep6FinalCutover:
         assert [b.role for b in bodies] == ["highlight", "background", "normal"]
         assert flatten_csg_tree(ev.csg_tree) == bodies
 
-    def test_user_module_call_tree_uses_fallback_and_concatenates(self):
+    def test_user_module_call_tree_splices_body_and_concatenates(self):
         bodies, _, ev = run_tree(
             "module wrap() { translate([1,0,0]) cube(2); } wrap();")
         node = ev.csg_tree[0]
-        assert node.kind == "wrap"
-        assert node.is_builtin is False
-        assert [c.kind for c in node.children] == ["translate"]
+        assert node.kind == "translate"
         assert flatten_csg_tree(ev.csg_tree) == bodies
 
     def test_module_shadowing_builtin_name_still_dispatches_to_user_module(self):
