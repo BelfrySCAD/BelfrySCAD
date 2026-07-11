@@ -481,6 +481,36 @@ class TestFormatCsgTree:
         assert "children" not in dump
         assert "r=1.0" in dump
 
+    def test_format_csg_tree_groups_multiple_spliced_children_under_union(self):
+        # A single children()/user-module call site producing more than one
+        # sibling is implicitly one shape there -- group them under a
+        # "union()" label in the dump instead of showing N independent-
+        # looking flat siblings. (A single sibling still splices flat, with
+        # no union wrapper -- see test_format_csg_tree_splices_*_not_wrapped.)
+        _, _, ev = run_tree(
+            "module m() { translate([1,0,0]) children(); }\n"
+            "m() { cube(1); sphere(1); }"
+        )
+        dump = format_csg_tree(ev.csg_tree)
+        assert "union()" in dump
+        lines = dump.split("\n")
+        union_line = next(l for l in lines if "union(" in l)
+        cube_line = next(l for l in lines if "cube(" in l)
+        assert len(cube_line) - len(cube_line.lstrip()) > len(union_line) - len(union_line.lstrip())
+
+    def test_multiple_spliced_children_keep_separate_bodies_not_merged(self):
+        # The union() grouping in the dump is display-only (is_builtin=False
+        # so generate_tree takes the default-concatenation path, not the
+        # real _generate_csg boolean merge) -- juxtaposed statements with no
+        # explicit combinator must keep separate ColoredBody entries, same
+        # as any module body or top-level script, not collapse into one
+        # Manifold the way an *explicit* union() call does.
+        bodies, _, ev = run_tree(
+            "module donut2() { cube(1); sphere(1); }\n"
+            "donut2();"
+        )
+        assert len(bodies) == 2
+
 
 class TestManifoldCache:
     """Correctness safety net for the incremental-rebuild ManifoldCache:
