@@ -1672,10 +1672,11 @@ class MainWindow(QMainWindow):
                 # or if animation playback is active.
                 if not script_moved_camera and not self._animate_pane.is_playing():
                     self._viewport.frame_scene(bb_min, bb_max)
+                self.log(f"Rendered successfully in {elapsed_ms / 1000:.3f} seconds.")
                 self.log(
-                    f"Render OK — bounds [{bb[0]:.2f},{bb[1]:.2f},{bb[2]:.2f}] to "
-                    f"[{bb[3]:.2f},{bb[4]:.2f},{bb[5]:.2f}]  "
-                    f"{_fmt_elapsed(elapsed_ms)}"
+                    "Bounds:\n"
+                    f"      [{bb[0]:.2f}, {bb[1]:.2f}, {bb[2]:.2f}]\n"
+                    f"      [{bb[3]:.2f}, {bb[4]:.2f}, {bb[5]:.2f}]"
                 )
         except Exception as e:
             import traceback

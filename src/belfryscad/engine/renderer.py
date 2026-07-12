@@ -217,6 +217,47 @@ class Camera:
             math.sin(el),
         ], dtype=np.float32)
 
+    def zoom_to_point(self, ray_origin: np.ndarray, ray_dir: np.ndarray,
+                       factor: float, min_distance: float = 0.1) -> None:
+        """Dolly by `factor`, keeping the world point under (ray_origin,
+        ray_dir) -- typically a cursor's camera_ray() -- fixed on screen
+        (standard scroll-to-cursor zoom) instead of dollying toward target.
+
+        Finds that point via ray/plane intersection against the current
+        focal plane (through target, perpendicular to the view direction)
+        rather than raycasting actual geometry, so it works the same over
+        empty space as over a model. Must take the ray's own per-pixel
+        origin, not a single eye_position() point: that's only valid for
+        perspective, where rays diverge from one eye point -- in
+        orthographic mode rays are parallel (all share one direction) but
+        originate from different points across the frustum, so a
+        single-origin assumption silently collapses every pixel's hit
+        point onto the same spot (target, in fact -- verified by a prior
+        buggy version of this method).
+
+        Once `hit` is found, scale the vector from it to both eye and
+        target by the same factor -- the standard "zoom toward a fixed
+        point" identity for an orbit camera (eye = target -
+        forward*distance): scaling (target - hit) and distance by the
+        same factor reproduces scaling (eye - hit) by that factor too, so
+        the ray from the new eye through the cursor still passes through
+        hit."""
+        new_distance = max(min_distance, self.distance * factor)
+        az, el = math.radians(self.azimuth), math.radians(self.elevation)
+        forward = -np.array([
+            math.cos(el) * math.cos(az),
+            math.cos(el) * math.sin(az),
+            math.sin(el),
+        ], dtype=np.float32)
+        denom = float(np.dot(ray_dir, forward))
+        if abs(denom) < 1e-6:
+            self.distance = new_distance
+            return
+        t = float(np.dot(self.target - ray_origin, forward)) / denom
+        hit = ray_origin + ray_dir * t
+        self.target = hit + (self.target - hit) * (new_distance / self.distance)
+        self.distance = new_distance
+
     def stereo_view_matrices(
         self, half_vp_w: int, vp_h: int
     ) -> tuple[np.ndarray, np.ndarray]:
