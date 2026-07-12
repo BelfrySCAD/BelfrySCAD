@@ -9,7 +9,7 @@ Detailed design for viewport interaction, selection, and gizmo-driven AST edits.
 | Left-button drag | Orbit |
 | Option+left-button drag | Rotate lighting |
 | Right-button drag | Pan |
-| Scroll wheel | Zoom (adjusts `$vpd` distance) |
+| Scroll wheel | Zoom centered on the cursor (adjusts `$vpd` distance and, since the zoomed-toward point generally isn't `$vpt`, `$vpt` too — see `Viewport._zoom_to_cursor`/`Camera.zoom_to_point`) |
 | Shift+scroll wheel | Adjust FOV (adjusts `$vpf`; clamped 1°–120°) |
 | Trackpad click+drag | Orbit |
 | Trackpad two-finger scroll | Pan |

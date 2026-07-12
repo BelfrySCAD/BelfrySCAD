@@ -7,7 +7,9 @@ handlers. Pure math, no GL/Qt dependency. Also covers `nearest_segment_index`
 line-segment picking helper behind `SceneRenderer.pick_nearest_segment` and
 the Path/Region editors' right-click-on-a-line "Add Vertex" feature.
 """
+import math
 import numpy as np
+from pytest import approx
 
 from belfryscad.engine.renderer import (
     nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
@@ -167,3 +169,102 @@ class TestCameraViewMatrixContinuity:
             cam.elevation = 89.0
             after_drag = cam.view_matrix()[0, :3]
             assert np.linalg.norm(near_pole - after_drag) < 0.02, f"discontinuity at azimuth={az}"
+
+
+def _forward(cam: Camera) -> np.ndarray:
+    az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
+    return -np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)],
+                      dtype=np.float32)
+
+
+def _hit_on_focal_plane(cam: Camera, ray_origin: np.ndarray, ray_dir: np.ndarray) -> np.ndarray:
+    """Reproduces zoom_to_point's own ray/focal-plane intersection, for
+    assertions independent of its internal state changes."""
+    forward = _forward(cam)
+    t = float(np.dot(cam.target - ray_origin, forward)) / float(np.dot(ray_dir, forward))
+    return ray_origin + ray_dir * t
+
+
+class TestCameraZoomToPoint:
+    """Scroll-wheel zoom should keep the world point under the cursor fixed
+    on screen (dolly toward/away from that point) rather than always
+    dollying toward cam.target."""
+
+    def test_center_ray_hit_stays_on_target(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 295.0, 35.0, 50.0
+        cam.target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        ray_origin = cam.eye_position()
+        ray_dir = (cam.target - ray_origin)
+        ray_dir /= np.linalg.norm(ray_dir)
+        cam.zoom_to_point(ray_origin, ray_dir, 0.5)
+        assert cam.distance == approx(25.0)
+        assert cam.target == approx(np.array([1.0, 2.0, 3.0]), abs=1e-4)
+
+    def test_off_center_perspective_ray_hit_point_is_preserved(self):
+        # A ray from the eye, perturbed off dead-center (as a perspective
+        # camera_ray() for an off-center pixel would be) -- the point it
+        # hits on the focal plane must land in the same place before and
+        # after zooming, not drift toward cam.target.
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 295.0, 35.0, 50.0
+        cam.target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        eye = cam.eye_position()
+        ray_dir = (cam.target - eye) + np.array([3.0, -2.0, 1.0], dtype=np.float32)
+        ray_dir /= np.linalg.norm(ray_dir)
+
+        before = _hit_on_focal_plane(cam, eye, ray_dir)
+        cam.zoom_to_point(eye, ray_dir, 0.5)
+        after = _hit_on_focal_plane(cam, eye, ray_dir)
+
+        assert after == approx(before, abs=1e-3)
+
+    def test_orthographic_style_parallel_ray_hit_point_is_preserved(self):
+        # Orthographic rays are parallel (same direction for every pixel)
+        # but originate from different points across the frustum, not a
+        # single eye. A version of this method that assumed a single
+        # eye_position() origin collapsed every such ray's hit point onto
+        # cam.target regardless of the ray's actual lateral offset -- this
+        # is the regression this test guards against.
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 295.0, 35.0, 50.0
+        cam.target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        forward = _forward(cam)
+        # a "right"-ish vector, not parallel to forward
+        lateral = np.cross(forward, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        lateral /= np.linalg.norm(lateral)
+        ray_origin = cam.eye_position() + lateral * 7.0  # off to the side, like an ortho ray
+        ray_dir = forward.copy()
+
+        before = _hit_on_focal_plane(cam, ray_origin, ray_dir)
+        assert not np.allclose(before, cam.target, atol=1e-3)  # sanity: genuinely off-target
+
+        cam.zoom_to_point(ray_origin, ray_dir, 0.5)
+        after = _hit_on_focal_plane(cam, ray_origin, ray_dir)
+
+        assert after == approx(before, abs=1e-3)
+
+    def test_zoom_out_factor_greater_than_one_also_preserves_hit(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 295.0, 35.0, 50.0
+        cam.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        eye = cam.eye_position()
+        ray_dir = (cam.target - eye) + np.array([-2.0, 4.0, -1.0], dtype=np.float32)
+        ray_dir /= np.linalg.norm(ray_dir)
+
+        before = _hit_on_focal_plane(cam, eye, ray_dir)
+        cam.zoom_to_point(eye, ray_dir, 1.5)
+        after = _hit_on_focal_plane(cam, eye, ray_dir)
+
+        assert cam.distance == approx(75.0)
+        assert after == approx(before, abs=1e-3)
+
+    def test_respects_min_distance_clamp(self):
+        cam = Camera()
+        cam.distance = 0.15
+        cam.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        eye = cam.eye_position()
+        ray_dir = (cam.target - eye)
+        ray_dir /= np.linalg.norm(ray_dir)
+        cam.zoom_to_point(eye, ray_dir, 0.5, min_distance=0.1)
+        assert cam.distance == approx(0.1)

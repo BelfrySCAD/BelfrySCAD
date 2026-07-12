@@ -471,9 +471,22 @@ class Viewport(QOpenGLWidget):
         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             cam.fov = max(1.0, min(120.0, cam.fov * factor))
         else:
-            cam.distance = max(0.1, cam.distance * factor)
+            self._zoom_to_cursor(factor, event.position().toPoint())
         self.camera_changed.emit()
         self.update()
+
+    def _zoom_to_cursor(self, factor: float, pos: QPoint):
+        """Dolly by `factor` centered on the cursor rather than cam.target
+        -- see Camera.zoom_to_point for the actual math (pure, unit-tested
+        in test_renderer.py; this is just the Qt-side (w, h, camera_ray)
+        plumbing)."""
+        cam = self._renderer.camera
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            cam.distance = max(0.1, cam.distance * factor)
+            return
+        origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
+        cam.zoom_to_point(origin, ray_dir, factor)
 
     # ------------------------------------------------------------------
     # Selection
