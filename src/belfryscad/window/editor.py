@@ -82,6 +82,24 @@ def _compute_fold_regions(doc) -> dict[int, int]:
     return regions
 
 
+def _draw_vline_avoiding_cursor(painter: QPainter, x: int, y_top: float, y_bottom: float,
+                                 cursor_rect: QRect):
+    """Draw a vertical guide line from y_top to y_bottom at column x, minus
+    whatever vertical span cursor_rect covers at that x -- both
+    _IndentGuides and _ColumnGuide are raised child widgets of the
+    viewport, so their solid guide-line pixels paint *over* the text
+    cursor (a child can't be told to render behind its own parent's
+    content, only reordered among siblings), otherwise fully hiding the
+    blinking caret whenever a guide happens to land on top of it."""
+    if not (cursor_rect.left() <= x <= cursor_rect.right()):
+        painter.drawLine(x, round(y_top), x, round(y_bottom))
+        return
+    if y_top < cursor_rect.top():
+        painter.drawLine(x, round(y_top), x, cursor_rect.top())
+    if cursor_rect.bottom() < y_bottom:
+        painter.drawLine(x, cursor_rect.bottom(), x, round(y_bottom))
+
+
 class _IndentGuides(QWidget):
     """Transparent overlay that draws faint vertical lines at each indent level."""
 
@@ -97,6 +115,7 @@ class _IndentGuides(QWidget):
     def update_geometry(self):
         self.setGeometry(self._editor.viewport().rect())
         self.raise_()
+        self.update()
 
     def paintEvent(self, event):
         editor = self._editor
@@ -115,6 +134,7 @@ class _IndentGuides(QWidget):
 
         painter = QPainter(self)
         painter.setPen(QColor("#E0E0E0"))
+        cursor_rect = editor.cursorRect()
 
         r_top = event.rect().top()
         r_bottom = event.rect().bottom()
@@ -136,7 +156,7 @@ class _IndentGuides(QWidget):
                     while col < n:
                         x = round(x0 + col * char_w)
                         if r_left <= x <= r_right + 1:
-                            painter.drawLine(x, round(top), x, round(bot) - 1)
+                            _draw_vline_avoiding_cursor(painter, x, top, bot - 1, cursor_rect)
                         col += indent_size
 
             block = block.next()
@@ -162,6 +182,7 @@ class _ColumnGuide(QWidget):
     def update_geometry(self):
         self.setGeometry(self._editor.viewport().rect())
         self.raise_()
+        self.update()
 
     def set_column(self, column: int):
         self._column = column
@@ -177,7 +198,8 @@ class _ColumnGuide(QWidget):
             return
         painter = QPainter(self)
         painter.setPen(QColor("#DDDDDD"))
-        painter.drawLine(x, event.rect().top(), x, event.rect().bottom())
+        _draw_vline_avoiding_cursor(painter, x, event.rect().top(), event.rect().bottom(),
+                                     self._editor.cursorRect())
         painter.end()
 
 
@@ -608,6 +630,8 @@ class CodeEditor(QPlainTextEdit):
 
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
+        self.horizontalScrollBar().valueChanged.connect(self._reposition_scroll_overlays)
+        self.verticalScrollBar().valueChanged.connect(self._reposition_scroll_overlays)
         self.document().contentsChanged.connect(self._on_doc_changed)
         self.cursorPositionChanged.connect(self._update_bracket_match)
         self._update_line_number_area_width()
@@ -1164,6 +1188,20 @@ class CodeEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
         self._reposition_find_bar()
+        self._reposition_scroll_overlays()
+
+    def _reposition_scroll_overlays(self):
+        """QPlainTextEdit's internal scroll optimization can shift the
+        viewport's child widgets by the scroll delta as a side effect
+        (Qt's QWidget::scroll() repositions children to keep them visually
+        anchored) -- since _column_guide/_indent_guides each recompute
+        their drawn line's x position fresh every paintEvent from
+        cursorRect() (already scroll-adjusted), a widget whose own origin
+        also drifted from that same scroll would double-apply the offset,
+        drawing further from the true column each time you scroll. Forcing
+        geometry back to (0, 0)-relative-to-viewport on every scroll (not
+        just on resize) keeps both overlays anchored to the viewport
+        itself rather than accumulating drift with it."""
         self._indent_guides.update_geometry()
         self._column_guide.update_geometry()
 
