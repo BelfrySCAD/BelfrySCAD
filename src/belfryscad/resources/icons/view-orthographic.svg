@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Isometric wireframe cube: parallel edges, equal faces, no foreshortening -->
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <polygon points="16,3 4,10 4,22 16,29 28,22 28,10"/>
+    <line x1="16" y1="16" x2="16" y2="29"/>
+    <line x1="4" y1="10" x2="16" y2="16"/>
+    <line x1="28" y1="10" x2="16" y2="16"/>
+  </g>
+</svg>

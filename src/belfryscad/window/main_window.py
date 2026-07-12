@@ -545,6 +545,7 @@ class MainWindow(QMainWindow):
         self._viewport.scale_committed.connect(self._on_scale_committed)
         self._viewport.camera_changed.connect(self._update_camera_label)
         self._viewport.size_changed.connect(self._update_size_label)
+        self._viewport.perspective_toggled.connect(self._on_viewport_perspective_toggled)
         self.setCentralWidget(self._viewport)
 
         # Corner ownership and nesting must be set before any addDockWidget calls
@@ -898,6 +899,8 @@ class MainWindow(QMainWindow):
         self._act_show_customizer.setText("Show Customizer")
         view_menu.addAction(self._act_show_customizer)
 
+        self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
+
         view_menu.addSeparator()
         for label, preset, key in (
             ("Top",       "top",    "Ctrl+4"),
@@ -924,24 +927,23 @@ class MainWindow(QMainWindow):
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
         self._act_spin.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        view_menu.addSeparator()
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Ctrl+Meta+2"))
         self._act_perspective.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
         self._act_stereo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
-        self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
-        self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        view_menu.addSeparator()
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
         self._act_show_edges.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
+        self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
+        self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
         self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
         self._act_show_cross.setShortcut(QKeySequence("Ctrl+3"))
         self._act_show_cross.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
         view_menu.addSeparator()  # isolates macOS-injected "Enter Full Screen" (which has an icon) in its own section
 
         # Window
@@ -2534,7 +2536,18 @@ class MainWindow(QMainWindow):
     def _toggle_perspective(self, perspective: bool):
         vp = self._target_viewport()
         vp._renderer.camera.orthographic = not perspective
+        vp.refresh_perspective_icon()
         vp.update()
+
+    def _on_viewport_perspective_toggled(self, perspective: bool):
+        """The viewport's own upper-left toggle button was clicked --
+        mirror the new state into the View menu's "Perspective" checkbox
+        without re-triggering _toggle_perspective (which would just
+        redundantly reassign camera.orthographic to the value the button
+        already set)."""
+        self._act_perspective.blockSignals(True)
+        self._act_perspective.setChecked(perspective)
+        self._act_perspective.blockSignals(False)
 
     def _toggle_stereo(self, enabled: bool):
         vp = self._target_viewport()

@@ -302,6 +302,63 @@ class Camera:
         self.distance = max(radius / math.tan(math.radians(self.fov / 2)) * 1.1, 1.0)
 
 
+def _axis_density(camera: Camera) -> tuple[list[bool], list[int]]:
+    """Per-axis (end_on, stride), shared by SceneRenderer's tick-mark and
+    label rendering (`_render_axes`/`_axis_tick_world_points`). end_on[ai]
+    is the hard cutoff: axis within 5 degrees of pointing straight at/away
+    from the camera, ticks/labels fully suppressed. stride[ai] is how many
+    ticks to skip between each rendered one (1 = show all), growing as the
+    axis's foreshortening (its apparent on-screen length per world unit)
+    shrinks approaching that cutoff -- otherwise evenly-spaced-in-world
+    ticks/labels crowd into an ever-smaller on-screen span and start
+    overlapping well before the hard cutoff kicks in.
+
+    view_dir[ai] is the cosine of the angle between the view direction and
+    world axis ai (since that axis's unit vector has a single 1 in
+    position ai, the dot product is just that component). Foreshortening
+    -- the fraction of the axis's world-length that's visible on screen --
+    is sin of that same angle, i.e. sqrt(1 - view_dir[ai]**2): 1 when the
+    axis lies broadside in the view plane (no thinning), 0 as it swings
+    end-on. stride is snapped to a power of two so the visible subset
+    nests as the camera rotates (every 4th-tick set is a subset of
+    every-2nd, a subset of every tick) instead of jumping to an unrelated
+    set of ticks each frame."""
+    eye = camera.eye_position().astype(np.float64)
+    view_dir = eye - np.asarray(camera.target, dtype=np.float64)
+    view_norm = np.linalg.norm(view_dir)
+    end_on = [False, False, False]
+    stride = [1, 1, 1]
+    if view_norm > 1e-9:
+        view_dir /= view_norm
+        for ai in range(3):
+            c = abs(view_dir[ai])
+            if c > math.cos(math.radians(5.0)):
+                end_on[ai] = True
+                continue
+            foreshorten = math.sqrt(max(0.0, 1.0 - c * c))
+            raw = 0.5 / foreshorten  # halved -- doubles density vs. a plain 1/foreshorten stride
+            if raw > 1.0:
+                stride[ai] = 2 ** max(0, round(math.log2(raw)))
+    return end_on, stride
+
+
+def _tick_is_drawn(k: int, major_steps: int, end_on: bool, stride: int) -> bool:
+    """Whether _render_axes draws the tick at minor-spacing index k (1, 2,
+    3, ...). At the hard end-on cutoff, only major ticks draw (unchanged
+    long-standing behavior: majors always show, even dead-on end-on).
+    Below that cutoff, the stride filter applies uniformly to major AND
+    minor ticks alike -- exempting majors there (as the hard cutoff does)
+    would let an every-major-step tick land arbitrarily close to a kept
+    minor tick, since major_steps and stride aren't related, producing
+    visibly inconsistent gaps between consecutive drawn ticks. Requiring
+    just k % stride == 0 keeps the drawn set a strict, evenly-spaced
+    arithmetic subsequence regardless of where major_steps falls."""
+    is_major = (k % major_steps == 0)
+    if end_on:
+        return is_major
+    return k % stride == 0
+
+
 class MeshBuffer:
     def __init__(self, ctx: mgl.Context, vbo: mgl.Buffer, ibo: Optional[mgl.Buffer],
                  vao: mgl.VertexArray, num_indices: int, color: tuple,
@@ -934,17 +991,10 @@ class SceneRenderer:
             rows.append(np.concatenate([p0, gray]))
             rows.append(np.concatenate([p1, gray]))
 
-        # Suppress minor ticks for axes nearly end-on to the camera (same
-        # threshold used by _axis_tick_world_points to suppress labels).
-        eye = self.camera.eye_position().astype(np.float64)
-        view_dir = eye - np.asarray(self.camera.target, dtype=np.float64)
-        view_norm = np.linalg.norm(view_dir)
-        end_on_axis = [False, False, False]
-        if view_norm > 1e-9:
-            view_dir /= view_norm
-            for ai in range(3):
-                if abs(view_dir[ai]) > math.cos(math.radians(5.0)):
-                    end_on_axis[ai] = True
+        # Suppress (and, before that, thin) minor ticks for axes nearing
+        # end-on to the camera -- same helper _axis_tick_world_points uses
+        # to do the same for labels.
+        end_on_axis, tick_stride = _axis_density(self.camera)
 
         # Tick marks:
         #   X-axis → perpendicular in Y
@@ -968,7 +1018,7 @@ class SceneRenderer:
             for sign in (1.0, -1.0):
                 pos = sign * t
                 for ai in range(3):
-                    if not is_major and end_on_axis[ai]:
+                    if not _tick_is_drawn(k, major_steps, end_on_axis[ai], tick_stride[ai]):
                         continue
                     pi = perp_axis[ai]
                     p0 = np.zeros(3, dtype=np.float32)
@@ -1012,13 +1062,13 @@ class SceneRenderer:
             np.array([ s, -s,  s], dtype=np.float32),
         ]
         c = self.camera.target
-        white = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        color = np.array(self.axes_color[:3], dtype=np.float32)
         rows = []
         for d in dirs:
             p0 = c - d * half
             p1 = c + d * half
-            rows.append(np.concatenate([p0, white]))
-            rows.append(np.concatenate([p1, white]))
+            rows.append(np.concatenate([p0, color]))
+            rows.append(np.concatenate([p1, color]))
 
         geo = np.array(rows, dtype=np.float32)
         vbo = self._ctx.buffer(geo.tobytes())
@@ -1039,30 +1089,23 @@ class SceneRenderer:
         """Return (world_position, text, axis_index) for every tick that should be labeled."""
         L = self.camera.distance * 2.5
         spacing, _, _ = _nice_spacings(L)
-        eye = self.camera.eye_position().astype(np.float64)
-
-        view_dir = eye - np.asarray(self.camera.target, dtype=np.float64)
-        view_norm = np.linalg.norm(view_dir)
-        end_on_axis = [False, False, False]
-        if view_norm > 1e-9:
-            view_dir /= view_norm
-            for ai in range(3):
-                if abs(view_dir[ai]) > math.cos(math.radians(5.0)):
-                    end_on_axis[ai] = True
+        end_on_axis, stride = _axis_density(self.camera)
 
         result = []
+        n = 1
         t = spacing
         while t <= L + 1e-9:
             for sign in (1.0, -1.0):
                 pos = sign * t
                 lbl = _fmt_tick(pos, spacing)
                 for ai in range(3):
-                    if end_on_axis[ai]:
+                    if end_on_axis[ai] or n % stride[ai] != 0:
                         continue
                     world = np.zeros(3, dtype=np.float64)
                     world[ai] = pos
                     result.append((world, lbl, ai))
             t += spacing
+            n += 1
         return result
 
     def _get_label_texture(self, text: str) -> tuple[mgl.Texture, int, int]:
