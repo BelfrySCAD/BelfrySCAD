@@ -75,6 +75,10 @@ The viewport always shows the last render's result; it stays static while the us
 
 **Explicitly out of scope for v1**: Constraint solver, collaborative editing, cloud modeling, incremental/tolerant parsing, node-based visual programming, plugin system.
 
+## Versioning
+
+Every PR bumps the version (`version` in both `[project]` and `[tool.briefcase]` in `pyproject.toml`, kept identical — then run `uv lock` to sync `uv.lock`'s pinned self-version). Patch bump at minimum; use judgment for minor/major on larger changes. Do this as part of preparing the PR, alongside the commit.
+
 ## Further Documentation
 
 Detailed implementation notes live in `docs/`:
