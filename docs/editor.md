@@ -24,13 +24,17 @@ Parse errors get a squiggly underline at the error location via `QTextCharFormat
 
 Faint vertical lines drawn inside each indented line's leading whitespace, every `_indent_size` columns, except at the column of the first non-whitespace character. Implemented as `_IndentGuides(QWidget)`, a transparent overlay on `CodeEditor.viewport()`, created before `_ColumnGuide` so the column guide renders on top. Repainted on `document().contentsChanged` and `set_indent_size()`.
 
+Both this and the Column Guide overlay are viewport-child widgets whose own geometry has to stay pinned to `(0, 0, viewport.width(), viewport.height())` — `CodeEditor._reposition_scroll_overlays()`, connected to both `horizontalScrollBar().valueChanged` and `verticalScrollBar().valueChanged` (not just `resizeEvent`, which was the only place `update_geometry()` was called before this was added), re-asserts that on every scroll. Without it, `QPlainTextEdit`'s internal scroll optimization moves the viewport's own child widgets by the scroll delta as a side effect (confirmed empirically: scrolling to hbar value 100 left `_column_guide.geometry()` at `x=-100`) — since each overlay's `paintEvent` already recomputes its line's position fresh from `cursorRect()` (itself already scroll-adjusted), a widget origin that *also* drifted by the same delta doubles the effective on-screen movement per scroll step, so the guide moved twice as fast as the actual text and never stayed aligned with its column.
+
 Paint logic: for each visible block, count leading spaces `n`; draw guides at `indent_size, 2*indent_size, …` while `col < n` (strictly less, so the column at `n` is never drawn). Empty/unindented lines skipped. Uses `QFontMetricsF` for sub-pixel accuracy.
+
+Both this and the Column Guide draw their line(s) via the module-level `_draw_vline_avoiding_cursor(painter, x, y_top, y_bottom, cursor_rect)` rather than a plain `painter.drawLine()`: since both overlays are raised viewport-child widgets, their solid guide pixels paint *over* the text edit's own cursor (a child can't be told to render behind its own parent's content, only reordered among siblings) — a guide line landing on the caret's column would otherwise hide it completely. The helper splits the line into up to two segments stopping exactly at `editor.cursorRect()`'s top/bottom edges when `x` falls within the cursor rect's horizontal span, leaving its full interior undrawn; when `x` doesn't overlap the cursor at all, it's a single unmodified `drawLine()`.
 
 ## Column Guide
 
 A faint vertical line at column 80, implemented as `_ColumnGuide(QWidget)`, a transparent overlay on `CodeEditor.viewport()`:
 - `WA_TransparentForMouseEvents` + `WA_TranslucentBackground` so only the line pixel shows and mouse events pass through
-- `update_geometry()` keeps the overlay sized to the full viewport rect; called from `CodeEditor.resizeEvent()`
+- `update_geometry()` keeps the overlay sized to the full viewport rect; called from `CodeEditor.resizeEvent()` and `_reposition_scroll_overlays()` (see Indent Guides above for why the latter is needed)
 - x position = `cursorRect(cursor_at_pos_0).x() + QFontMetricsF(font).horizontalAdvance('0' * 80)`. `QFontMetricsF` (not `QFontMetrics`) is required — the integer version rounds character width up by ~0.2px, accumulating to ~2 columns of error over 80 characters.
 
 ## Code Folding
