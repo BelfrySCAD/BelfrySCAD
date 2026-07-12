@@ -1,23 +1,31 @@
 from __future__ import annotations
 import math
 import time
+from pathlib import Path
 import numpy as np
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QLabel
-from PySide6.QtCore import Qt, QPoint, Signal, QTimer
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QPixmap
+from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtCore import Qt, QPoint, QSize, Signal, QTimer
+from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QPixmap, QIcon
 
 from belfryscad.engine.renderer import SceneRenderer
 from belfryscad.window.debugger import _debug_icon
 
+_ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
-def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor) -> QPixmap:
-    """Render a debug-*.svg icon at `size`x`size`, recolored solid `color`
-    (keeping the original alpha/shape) — the debugger buttons need the
-    icon's normal dark-gray color, but the viewport's dark translucent
-    overlay needs it in white for contrast."""
-    pixmap = _debug_icon(name).pixmap(size, size)
+
+def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor, prefix: str = "debug") -> QPixmap:
+    """Render a `{prefix}-{name}.svg` icon at `size`x`size`, recolored solid
+    `color` (keeping the original alpha/shape) — most of these icons are
+    a normal dark-gray for menus/toolbars, but the viewport's dark
+    translucent overlays need them in white for contrast."""
+    if prefix == "debug":
+        icon = _debug_icon(name)
+    else:
+        path = _ICONS_DIR / f"{prefix}-{name}.svg"
+        icon = QIcon(str(path)) if path.exists() else QIcon()
+    pixmap = icon.pixmap(size, size)
     recolored = QPixmap(pixmap.size())
     recolored.fill(Qt.GlobalColor.transparent)
     painter = QPainter(recolored)
@@ -47,6 +55,7 @@ class Viewport(QOpenGLWidget):
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
+    perspective_toggled = Signal(bool)                    # emitted on click, new perspective state
 
     def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0):
         super().__init__(parent)
@@ -90,6 +99,7 @@ class Viewport(QOpenGLWidget):
         # Busy overlay (render or debug)
         self._render_busy: bool = False
         self._debug_busy: bool = False
+        self._debug_paused: bool = False
         self._busy_start: float = 0.0
         self._spinner_frames = ["   ", ".  ", ".. ", "..."]
         self._busy_label = QLabel("", self)
@@ -106,6 +116,20 @@ class Viewport(QOpenGLWidget):
         self._spin_timer = QTimer(self)
         self._spin_timer.setInterval(33)
         self._spin_timer.timeout.connect(self._spin_tick)
+
+        # Perspective/orthographic toggle (upper-left corner)
+        self._persp_btn = QPushButton(self)
+        self._persp_btn.setFlat(True)
+        self._persp_btn.setFixedSize(40, 40)
+        self._persp_btn.setIconSize(QSize(24, 24))
+        self._persp_btn.setStyleSheet(
+            "QPushButton { background: rgba(0,0,0,160); border: none; border-radius: 8px; }"
+            "QPushButton:hover { background: rgba(0,0,0,200); }"
+        )
+        self._persp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._persp_btn.move(12, 12)
+        self._persp_btn.clicked.connect(self._on_perspective_button_clicked)
+        self.refresh_perspective_icon()
 
     # ------------------------------------------------------------------
     # GL lifecycle
@@ -134,6 +158,8 @@ class Viewport(QOpenGLWidget):
         if self._ctx:
             self._ctx.viewport = (0, 0, w, h)
             self._renderer.set_viewport(w, h)
+        if self._debug_paused:
+            self._position_pause_label()
         self.size_changed.emit(w, h)
 
     def paintGL(self):
@@ -235,16 +261,47 @@ class Viewport(QOpenGLWidget):
     def set_debug_paused(self, paused: bool):
         self._debug_busy = False
         self._render_busy = False
+        self._debug_paused = paused
         self._busy_timer.stop()
         if paused:
-            self._busy_label.setPixmap(_recolored_icon_pixmap("pause", 48, Qt.GlobalColor.white))
+            self._busy_label.setPixmap(_recolored_icon_pixmap("pause", 24, Qt.GlobalColor.white))
             self._busy_label.adjustSize()
-            x = (self.width() - self._busy_label.width()) // 2
-            y = (self.height() - self._busy_label.height()) // 2
-            self._busy_label.move(x, y)
+            self._position_pause_label()
             self._busy_label.show()
         else:
             self._busy_label.hide()
+
+    def _position_pause_label(self):
+        """Upper-right corner, same margin as the perspective button's
+        upper-left placement. Re-called from resizeGL (in addition to the
+        one-off call from set_debug_paused) so the indicator stays inside
+        the viewport -- its position is computed from self.width(), which
+        is stale the moment the viewport is resized while paused; nothing
+        else re-triggers set_debug_paused mid-pause to recompute it."""
+        margin = 12
+        x = self.width() - self._busy_label.width() - margin
+        y = margin
+        self._busy_label.move(x, y)
+
+    def _on_perspective_button_clicked(self):
+        cam = self._renderer.camera
+        cam.orthographic = not cam.orthographic
+        self.refresh_perspective_icon()
+        self.camera_changed.emit()
+        self.perspective_toggled.emit(not cam.orthographic)
+        self.update()
+
+    def refresh_perspective_icon(self):
+        """Sync the upper-left toggle button's icon/tooltip to the camera's
+        current projection mode. Public so MainWindow can call it after
+        changing camera.orthographic from elsewhere (the View menu's
+        "Perspective" checkbox, or restoring a saved preference) -- the
+        button's own click handler already keeps itself in sync."""
+        orthographic = self._renderer.camera.orthographic
+        name = "orthographic" if orthographic else "perspective"
+        self._persp_btn.setIcon(QIcon(_recolored_icon_pixmap(name, 24, Qt.GlobalColor.white, prefix="view")))
+        self._persp_btn.setToolTip("Orthographic (click for Perspective)" if orthographic
+                                    else "Perspective (click for Orthographic)")
 
     def _update_busy_overlay(self):
         elapsed = time.monotonic() - self._busy_start

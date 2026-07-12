@@ -13,6 +13,7 @@ from pytest import approx
 
 from belfryscad.engine.renderer import (
     nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
+    _axis_density, _tick_is_drawn,
 )
 
 
@@ -268,3 +269,86 @@ class TestCameraZoomToPoint:
         ray_dir /= np.linalg.norm(ray_dir)
         cam.zoom_to_point(eye, ray_dir, 0.5, min_distance=0.1)
         assert cam.distance == approx(0.1)
+
+
+class TestAxisDensity:
+    """Axis tick/label thinning: as an axis swings toward end-on (pointing
+    at/away from the camera), evenly-spaced-in-world ticks crowd into an
+    ever-smaller on-screen span. _axis_density should grow stride
+    (skip-N-between-each) smoothly before the existing hard cutoff (5
+    degrees from end-on) fully suppresses that axis -- see the screenshot
+    in the PR/commit this covers, where labels overlapped illegibly well
+    before the cutoff kicked in."""
+
+    def test_broadside_axes_are_full_density(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation = 45.0, 45.0  # no axis anywhere near end-on
+        end_on, stride = _axis_density(cam)
+        assert end_on == [False, False, False]
+        assert stride == [1, 1, 1]
+
+    def test_stride_grows_as_axis_approaches_end_on(self):
+        cam = Camera()
+        cam.azimuth = 85.0  # keeps Y axis increasingly end-on as elevation -> 0
+        strides = []
+        for el in (60.0, 30.0, 10.0, 2.0):
+            cam.elevation = el
+            end_on, stride = _axis_density(cam)
+            assert not end_on[1], f"elevation={el} should not hit the hard cutoff yet"
+            strides.append(stride[1])
+        # non-decreasing as the axis gets closer to end-on
+        assert strides == sorted(strides)
+        assert strides[-1] > strides[0]
+
+    def test_stride_is_a_power_of_two(self):
+        cam = Camera()
+        cam.azimuth = 85.0
+        for el in (60.0, 30.0, 10.0, 6.0):
+            cam.elevation = el
+            _, stride = _axis_density(cam)
+            s = stride[1]
+            assert s & (s - 1) == 0, f"stride {s} at elevation={el} is not a power of two"
+
+    def test_hard_cutoff_still_applies_within_five_degrees(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation = 0.0, 0.0  # X axis dead-on
+        end_on, _ = _axis_density(cam)
+        assert end_on == [True, False, False]
+
+    def test_other_axes_unaffected_by_one_axis_going_end_on(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation = 0.0, 0.0
+        end_on, stride = _axis_density(cam)
+        assert end_on[1] is False and end_on[2] is False
+        assert stride[1] == 1 and stride[2] == 1
+
+
+class TestTickIsDrawn:
+    """Regression: thinning by stride used to exempt major ticks (always
+    shown, matching the pre-existing hard-cutoff behavior), but major_steps
+    and stride aren't related, so a kept major tick could land right next
+    to a kept minor tick while a stride-length gap opened up elsewhere --
+    visibly inconsistent spacing. Below the hard cutoff, stride must apply
+    uniformly to every tick so the drawn set is a strict arithmetic
+    subsequence (constant gap)."""
+
+    def test_drawn_ticks_form_a_constant_gap_sequence(self):
+        for major_steps, stride in [(5, 4), (5, 8), (10, 4), (4, 2), (3, 4), (7, 3)]:
+            drawn = [k for k in range(1, 60)
+                     if _tick_is_drawn(k, major_steps, False, stride)]
+            gaps = {b - a for a, b in zip(drawn, drawn[1:])}
+            assert gaps == {stride}, f"major_steps={major_steps} stride={stride}: gaps={gaps}"
+
+    def test_stride_one_draws_every_tick(self):
+        drawn = [k for k in range(1, 10) if _tick_is_drawn(k, 5, False, 1)]
+        assert drawn == list(range(1, 10))
+
+    def test_hard_cutoff_only_draws_majors(self):
+        drawn_major = [k for k in range(1, 21) if _tick_is_drawn(k, 5, True, 4)]
+        assert drawn_major == [5, 10, 15, 20]
+
+    def test_hard_cutoff_ignores_stride(self):
+        # Majors always show at the hard cutoff regardless of stride.
+        for stride in (1, 2, 4, 8):
+            drawn = [k for k in range(1, 21) if _tick_is_drawn(k, 5, True, stride)]
+            assert drawn == [5, 10, 15, 20]
