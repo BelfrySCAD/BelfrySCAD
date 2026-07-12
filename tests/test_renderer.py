@@ -352,3 +352,53 @@ class TestTickIsDrawn:
         for stride in (1, 2, 4, 8):
             drawn = [k for k in range(1, 21) if _tick_is_drawn(k, 5, True, stride)]
             assert drawn == [5, 10, 15, 20]
+
+
+class TestCameraClipPlanes:
+    """Regression: near/far used to be fixed constants (0.1, 10000), so
+    frame_bounds() auto-positioning the camera far enough away to fit a
+    large or elongated object (e.g. cylinder(h=3500, d=1000), which needs
+    distance~10438 to fit at the default fov=22.5) silently clipped
+    whichever end of the object was farther from the eye -- and varied
+    with zoom, since that changes distance."""
+
+    def test_small_scene_unaffected(self):
+        # Floors at the original constants, so typical/small scenes see no
+        # behavior change at all.
+        cam = Camera()
+        cam.distance = 50.0
+        near, far = cam.clip_planes()
+        assert near == approx(0.1)
+        assert far == approx(10000.0)
+
+    def test_far_grows_with_distance(self):
+        cam = Camera()
+        cam.distance = 10438.0
+        near, far = cam.clip_planes()
+        assert far > cam.distance
+        assert far == approx(cam.distance * 3.0)
+
+    def test_near_far_ratio_matches_original_constants(self):
+        # near must grow proportionally with far -- holding it fixed while
+        # far grows would only worsen depth-buffer precision for large
+        # scenes on top of the clipping bug.
+        cam = Camera()
+        cam.distance = 50000.0
+        near, far = cam.clip_planes()
+        assert far / near == approx(10000.0 / 0.1)
+
+    def test_reported_cylinder_case_fits_within_far(self):
+        # The exact repro: cylinder(h=3500, d=1000), auto-framed.
+        cam = Camera()
+        bb_min = np.array([-500.0, -500.0, 0.0])
+        bb_max = np.array([500.0, 500.0, 3500.0])
+        cam.frame_bounds(bb_min, bb_max)
+        near, far = cam.clip_planes()
+
+        eye = cam.eye_position()
+        view_dir = (cam.target - eye)
+        view_dir /= np.linalg.norm(view_dir)
+        for z in (0.0, 3500.0):
+            point = np.array([0.0, 0.0, z])
+            depth = float(np.dot(point - eye, view_dir))
+            assert near < depth < far, f"z={z} at depth={depth} falls outside [{near}, {far}]"

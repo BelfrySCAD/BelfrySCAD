@@ -202,11 +202,34 @@ class Camera:
         ], dtype=np.float32)
         return _look_at(eye, self.target, np.array([0, 0, 1], dtype=np.float32))
 
+    def clip_planes(self) -> tuple[float, float]:
+        """(near, far), scaled to self.distance rather than fixed constants.
+
+        frame_bounds() sets distance proportional to the framed object's
+        radius (same heuristic _render_axes uses for tick/axis extent via
+        `distance * 2.5`) -- a fixed far=10000 clipped large or elongated
+        models once that pushed the camera far enough away to fit them at
+        the default FOV: cylinder(h=3500, d=1000) needs distance~10438 to
+        fit at fov=22.5, already past far=10000, silently clipping
+        whichever end of the cylinder was farther from the eye (and
+        varying with zoom, since that changes distance).
+
+        far grows with distance so the whole framed object stays in view;
+        near grows proportionally (same far/near ratio as the original
+        10000/0.1 = 100000) rather than staying fixed, since holding it
+        fixed while far grows would only worsen depth-buffer precision for
+        large scenes on top of the clipping bug. Floors at the original
+        constants, so typical/small scenes are completely unaffected."""
+        far = max(10000.0, self.distance * 3.0)
+        near = max(0.1, far / 100000.0)
+        return near, far
+
     def projection_matrix(self, aspect: float) -> np.ndarray:
+        near, far = self.clip_planes()
         if self.orthographic:
             half_h = self.distance * math.tan(math.radians(self.fov / 2))
-            return _ortho(half_h * aspect, half_h, -10000.0, 10000.0)
-        return _perspective(math.radians(self.fov), aspect, 0.1, 10000.0)
+            return _ortho(half_h * aspect, half_h, -far, far)
+        return _perspective(math.radians(self.fov), aspect, near, far)
 
     def eye_position(self) -> np.ndarray:
         az = math.radians(self.azimuth)
