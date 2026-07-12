@@ -56,6 +56,8 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 
 ## Viewport visuals
 
+**Clip planes**: `Camera.clip_planes()` returns `(near, far)`, scaled to `camera.distance` rather than fixed constants (floors at the original `0.1`/`10000.0`, so typical/small scenes are unaffected). `frame_bounds()` sets `distance` proportional to the framed object's radius (same heuristic `_render_axes` uses for tick/axis extent via `distance * 2.5`) — a fixed `far=10000` clipped large or elongated models once that pushed the camera far enough away to fit them at the default FOV: `cylinder(h=3500, d=1000)` needs `distance≈10438` to fit at `fov=22.5`, already past a fixed `far=10000`, silently clipping whichever end of the cylinder was farther from the eye (and varying with zoom, since that changes `distance`). `far = max(10000.0, distance * 3.0)`; `near = max(0.1, far / 100000.0)` — grown proportionally rather than held fixed, preserving the original `far/near` ratio (holding `near` fixed while `far` grows would only worsen depth-buffer precision for large scenes on top of the clipping bug). `projection_matrix()` uses these for both perspective (`_perspective`'s own near/far) and orthographic (`_ortho`'s symmetric `±far` depth range) modes. Pure math, unit-tested in `test_renderer.py::TestCameraClipPlanes` — no GL/Qt dependency.
+
 **Object colors**: default geometry is yellow `(0.9, 0.85, 0.1)`. Selection applies `_highlight_color`, which tints toward green `(r*0.35, g*0.35+0.65, b*0.35)`.
 
 **Modifier render passes** — `_paint_scene()` runs the following sequence per eye:

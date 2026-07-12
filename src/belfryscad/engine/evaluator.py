@@ -1872,6 +1872,21 @@ class EvalContext:
 
     def child_ctx(self, scope=None, dyn=None, let=None, color=None,
                   children_nodes=None, children_caller_ctx=None):
+        """Like every other field here, an unspecified children_nodes/
+        children_caller_ctx means "inherit from self" -- NOT "this call has
+        no deferred children," which is what defaulting to []/None would
+        mean. child_ctx() is for tweaking ambient state (color, a $-var
+        override) without leaving the current statement's evaluation, so a
+        children() call evaluated under the result must still be able to
+        forward to *this* context's caller. (Entering an actual new module
+        body, where children_nodes legitimately changes to that call's own
+        children, goes through call_ctx() instead, whose callers always
+        pass real values explicitly.) Forgetting to thread these through
+        previously broke any user module of the form `color(c) children();`
+        (silently swallowing the children() call's own forwarded geometry)
+        the moment _resolve_color's `ctx.child_ctx(color=rgba)` reset them —
+        _resolve_transform never hit this, since it evaluates children
+        against the original ctx directly rather than deriving a new one."""
         return EvalContext(
             scope=scope if scope is not None else self.scope,
             dyn=dyn if dyn is not None else dict(self.dyn),
@@ -1879,8 +1894,8 @@ class EvalContext:
             dyn_positions={} if dyn is None else self.dyn_positions,
             dyn_explicit=set(self.dyn_explicit),
             color=color if color is not None else self.color,
-            children_nodes=children_nodes if children_nodes is not None else [],
-            children_caller_ctx=children_caller_ctx,
+            children_nodes=children_nodes if children_nodes is not None else self.children_nodes,
+            children_caller_ctx=children_caller_ctx if children_caller_ctx is not None else self.children_caller_ctx,
         )
 
     def let_child_ctx(self):

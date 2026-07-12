@@ -1498,6 +1498,30 @@ class TestColorEdgeCases:
         bodies, _ = run('color("red");')
         assert bodies == []
 
+    def test_color_wrapping_children_call_inside_user_module(self):
+        # Regression: _resolve_color built its descendant context via
+        # ctx.child_ctx(color=rgba) without re-threading children_nodes/
+        # children_caller_ctx, silently severing the deferred children()
+        # forwarding chain -- so `color(c) children();` as a user module's
+        # body (BOSL2's attachable() does exactly this, e.g. `_color($color)
+        # children();`) swallowed the call-site geometry entirely, leaving
+        # a colored node with no children and zero output bodies.
+        # _resolve_transform never hit this since it evaluates children
+        # against the original ctx directly, never deriving a new one.
+        src = 'module m(c) { color(c) children(); } m("blue") cube(5);'
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+        assert bodies[0].color == approx((0.0, 0.0, 1.0, 1.0))
+
+    def test_dollar_var_override_wrapping_children_call_inside_user_module(self):
+        # Same root cause, different trigger: _resolve_call_args's
+        # dyn_overrides branch (any call with a $-prefixed named arg, e.g.
+        # $fn=8) also derives a new context via ctx.child_ctx(dyn=...)
+        # without re-threading children_nodes/children_caller_ctx.
+        src = 'module m() { translate([0,0,0], $fn=8) children(); } m() cube(5);'
+        bodies, _ = run(src)
+        assert len(bodies) == 1
+
 
 # ---------------------------------------------------------------------------
 # CSG edge cases
