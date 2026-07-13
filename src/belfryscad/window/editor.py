@@ -263,7 +263,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         builtin_format = QTextCharFormat()
         builtin_format.setForeground(QColor("#4EC9B0"))
         builtins = [
-            "cube", "sphere", "cylinder", "cone", "polyhedron",
+            "cube", "sphere", "cylinder", "polyhedron",
             "translate", "rotate", "scale", "mirror", "multmatrix",
             "color", "hull", "minkowski", "resize", "offset",
             "union", "difference", "intersection",
@@ -951,7 +951,7 @@ class CodeEditor(QPlainTextEdit):
         "each", "true", "false", "undef", "include", "use",
     }
     _BUILTIN_MODULES = {
-        "cube", "sphere", "cylinder", "cone", "polyhedron",
+        "cube", "sphere", "cylinder", "polyhedron",
         "translate", "rotate", "scale", "mirror", "multmatrix",
         "color", "hull", "minkowski", "resize", "offset",
         "union", "difference", "intersection",
