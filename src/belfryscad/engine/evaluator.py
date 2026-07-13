@@ -3615,7 +3615,6 @@ class Evaluator:
                         verts.extend(tri_verts)
                         tris.append([base, base + 1, base + 2])
                         tri_verts = []
-            return verts, tris
         else:
             count = _struct.unpack_from("<I", rest, 0)[0]
             dtype = np.dtype([("normal", np.float32, (3,)),
@@ -3625,7 +3624,26 @@ class Evaluator:
             verts = np.empty((count * 3, 3), dtype=np.float64)
             verts[0::3] = data["v0"]; verts[1::3] = data["v1"]; verts[2::3] = data["v2"]
             tris = np.arange(count * 3, dtype=np.uint32).reshape(-1, 3)
-            return verts, tris
+        return self._weld_stl_vertices(verts, tris)
+
+    def _weld_stl_vertices(self, verts, tris):
+        """STL has no vertex-index concept -- each triangle carries its own
+        private copy of its 3 corner positions -- so a naive load produces a
+        "vertex soup" with no shared indices at shared edges. manifold3d
+        requires welded/shared indices to recognize a mesh as a closed
+        manifold: confirmed empirically that the exact same cube topology
+        already validated via _UNIT_CUBE_OBJ (volume 1, Error.NoError) comes
+        back as Error.NotManifold / volume 0 once expanded into a vertex
+        soup, even though it's a perfectly valid closed solid. Merging
+        coincident vertices (exact-match, which is what matters for STL's
+        own repeated-corner floats) and remapping triangle indices through
+        the merge fixes this for every STL, not just malformed ones."""
+        verts_arr = np.asarray(verts, dtype=np.float64)
+        if len(verts_arr) == 0:
+            return verts_arr, np.asarray(tris, dtype=np.uint32)
+        unique_verts, inverse = np.unique(verts_arr, axis=0, return_inverse=True)
+        welded_tris = np.asarray(inverse, dtype=np.uint32).reshape(-1)[np.asarray(tris, dtype=np.int64)]
+        return unique_verts, welded_tris
 
     def _load_obj(self, path: str):
         verts: list[list[float]] = []; tris: list[list[int]] = []

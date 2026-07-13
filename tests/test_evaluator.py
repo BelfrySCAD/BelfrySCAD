@@ -3869,6 +3869,76 @@ f 8 4 6
 f 8 6 7
 """
 
+# Same unit-cube topology as _UNIT_CUBE_OBJ (0-indexed, already validated
+# there: volume 1, bbox [0,1]^3) -- reused to build STL/OFF/3MF fixtures for
+# the other import() loaders so all four formats are tested against one
+# known-good mesh instead of separately hand-transcribed (and separately
+# possibly-wrong) coordinates.
+_UNIT_CUBE_VERTS = [
+    (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 1.0, 1.0),
+    (1.0, 0.0, 0.0), (1.0, 0.0, 1.0), (1.0, 1.0, 0.0), (1.0, 1.0, 1.0),
+]
+_UNIT_CUBE_TRIS = [
+    (1, 0, 4), (2, 4, 0), (1, 3, 0), (3, 1, 5), (3, 2, 0), (3, 7, 2),
+    (5, 4, 6), (5, 1, 4), (6, 4, 2), (7, 6, 2), (7, 3, 5), (7, 5, 6),
+]
+
+
+def _unit_cube_stl_ascii() -> str:
+    lines = ["solid cube"]
+    for a, b, c in _UNIT_CUBE_TRIS:
+        lines.append("facet normal 0 0 0")
+        lines.append("outer loop")
+        for i in (a, b, c):
+            x, y, z = _UNIT_CUBE_VERTS[i]
+            lines.append(f"vertex {x} {y} {z}")
+        lines.append("endloop")
+        lines.append("endfacet")
+    lines.append("endsolid cube")
+    return "\n".join(lines) + "\n"
+
+
+def _unit_cube_stl_binary() -> bytes:
+    import struct
+
+    buf = bytearray(80)  # header (no "facet normal" text -> binary detection)
+    buf += struct.pack("<I", len(_UNIT_CUBE_TRIS))
+    for a, b, c in _UNIT_CUBE_TRIS:
+        buf += struct.pack("<3f", 0.0, 0.0, 0.0)  # normal (unused by the loader)
+        for i in (a, b, c):
+            buf += struct.pack("<3f", *_UNIT_CUBE_VERTS[i])
+        buf += struct.pack("<H", 0)  # attribute byte count
+    return bytes(buf)
+
+
+def _unit_cube_off() -> str:
+    lines = ["OFF", f"{len(_UNIT_CUBE_VERTS)} {len(_UNIT_CUBE_TRIS)} 0"]
+    lines += [f"{x} {y} {z}" for x, y, z in _UNIT_CUBE_VERTS]
+    lines += [f"3 {a} {b} {c}" for a, b, c in _UNIT_CUBE_TRIS]
+    return "\n".join(lines) + "\n"
+
+
+def _unit_cube_3mf_bytes() -> bytes:
+    import io
+    import zipfile
+
+    NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+    verts_xml = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in _UNIT_CUBE_VERTS)
+    tris_xml = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in _UNIT_CUBE_TRIS)
+    model = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<model xmlns="{NS}"><resources>'
+        f'<object id="1" type="model"><mesh>'
+        f'<vertices>{verts_xml}</vertices>'
+        f'<triangles>{tris_xml}</triangles>'
+        f'</mesh></object></resources>'
+        f'<build><item objectid="1"/></build></model>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("3D/3dmodel.model", model)
+    return buf.getvalue()
+
 
 class TestCSGTreeStep5Extrusion:
     def test_extrusion_kinds_registered(self):
@@ -3957,6 +4027,73 @@ class TestCSGTreeStep5Extrusion:
         obj = tmp_path / "cube.obj"
         obj.write_text(_UNIT_CUBE_OBJ)
         bodies = run(f'import("{obj}");')[0]
+        assert bodies[0].body.volume() == approx(1)
+        bb = bbox(bodies)
+        assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
+
+    def test_import_stl_params_shape_caches_verts_tris(self, tmp_path):
+        stl = tmp_path / "cube.stl"
+        stl.write_text(_unit_cube_stl_ascii())
+        _, _, ev = run_tree(f'import("{stl}");')
+        params = ev.csg_tree[0].params
+        assert params["kind"] == "mesh"
+        # STL has no vertex-index concept -- each triangle carries its own
+        # private copy of its 3 corner positions -- so a naive load would
+        # produce 36 (12 tris * 3) unwelded verts. _weld_stl_vertices merges
+        # coincident positions back down to the cube's actual 8 corners;
+        # without that, manifold3d rejects the mesh as NotManifold (see
+        # test_import_stl_geometry_matches_unit_cube).
+        assert len(params["verts"]) == 8
+        assert len(params["tris"]) == 12
+
+    def test_import_stl_geometry_matches_unit_cube(self, tmp_path):
+        stl = tmp_path / "cube.stl"
+        stl.write_text(_unit_cube_stl_ascii())
+        bodies = run(f'import("{stl}");')[0]
+        assert bodies[0].body.volume() == approx(1)
+        bb = bbox(bodies)
+        assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
+
+    def test_import_stl_binary_geometry_matches_unit_cube(self, tmp_path):
+        # Binary STL is a separate code path in _load_stl from ASCII (no
+        # shared vertex indices there either -- same welding fix applies).
+        stl = tmp_path / "cube_bin.stl"
+        stl.write_bytes(_unit_cube_stl_binary())
+        bodies = run(f'import("{stl}");')[0]
+        assert bodies[0].body.volume() == approx(1)
+        bb = bbox(bodies)
+        assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
+
+    def test_import_off_params_shape_caches_verts_tris(self, tmp_path):
+        off = tmp_path / "cube.off"
+        off.write_text(_unit_cube_off())
+        _, _, ev = run_tree(f'import("{off}");')
+        params = ev.csg_tree[0].params
+        assert params["kind"] == "mesh"
+        assert len(params["verts"]) == 8
+        assert len(params["tris"]) == 12
+
+    def test_import_off_geometry_matches_unit_cube(self, tmp_path):
+        off = tmp_path / "cube.off"
+        off.write_text(_unit_cube_off())
+        bodies = run(f'import("{off}");')[0]
+        assert bodies[0].body.volume() == approx(1)
+        bb = bbox(bodies)
+        assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
+
+    def test_import_3mf_params_shape_caches_verts_tris(self, tmp_path):
+        threemf = tmp_path / "cube.3mf"
+        threemf.write_bytes(_unit_cube_3mf_bytes())
+        _, _, ev = run_tree(f'import("{threemf}");')
+        params = ev.csg_tree[0].params
+        assert params["kind"] == "mesh"
+        assert len(params["verts"]) == 8
+        assert len(params["tris"]) == 12
+
+    def test_import_3mf_geometry_matches_unit_cube(self, tmp_path):
+        threemf = tmp_path / "cube.3mf"
+        threemf.write_bytes(_unit_cube_3mf_bytes())
+        bodies = run(f'import("{threemf}");')[0]
         assert bodies[0].body.volume() == approx(1)
         bb = bbox(bodies)
         assert bb == (approx(0), approx(0), approx(0), approx(1), approx(1), approx(1))
