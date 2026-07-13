@@ -4097,7 +4097,7 @@ class Evaluator:
 
     def _generate_linear_extrude(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
         cs = self._to_cross_section(flatten_csg_tree(children))
-        if cs is None:
+        if cs is None or cs.is_empty():
             return []
         try:
             body = m3d.Manifold.extrude(cs, params["height"], params["slices"],
@@ -4118,7 +4118,7 @@ class Evaluator:
 
     def _generate_rotate_extrude(self, params: dict, children: list[CSGNode], node: ASTNode) -> list[ColoredBody]:
         cs = self._to_cross_section(flatten_csg_tree(children))
-        if cs is None:
+        if cs is None or cs.is_empty():
             return []
         # max_x depends on the merged children's bounds, which doesn't exist
         # until generate — segment count can't be precomputed in resolve the
