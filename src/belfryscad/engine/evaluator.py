@@ -2405,6 +2405,17 @@ class Evaluator:
             # collapsing them into one Manifold the way an *explicit*
             # union() call does) so the dump reads as one shape at this
             # call site instead of N unrelated-looking siblings.
+            if self._rands_call_count != rands_before:
+                # rands() was called directly during *this* call's own
+                # resolve -- e.g. an assignment before any geometry
+                # statement in a user module's body, or within children()'s
+                # own arguments -- rather than inside one of the spliced
+                # children's own resolve (which already taints itself via
+                # the branch below). Propagate onto every spliced child so
+                # the taint isn't silently dropped by splicing away the
+                # node it would otherwise have landed on.
+                for c in children:
+                    c.uncacheable = True
             if len(children) > 1:
                 union_node = CSGNode(
                     kind="union", node=node, bodies=[], is_builtin=False,
