@@ -994,6 +994,76 @@ class TestMathBuiltinsNanInfUndef:
 
 
 # ---------------------------------------------------------------------------
+# Math builtins given non-numeric arguments (list / bool / object() / string)
+#
+# list/object()/string all raise inside the underlying lambda (e.g.
+# abs([1,2]), abs(object(a=1)), abs("hi")) and are caught by
+# _eval_function_call's generic try/except -> undef, same safety net
+# covered by TestMathBuiltinsNanInfUndef.
+#
+# bool is the interesting case: Python's bool is a subclass of int, so
+# every one of these functions would otherwise silently treat true/false
+# as 1/0 (abs(true) -> 1, max(true, 1) -> true, norm([true, 0]) -> 1)
+# instead of raising -- confirmed against real OpenSCAD 2022.08.22 that
+# every one of these must reject a bool argument as a type error (undef),
+# same as list/object()/string. _NUMERIC_ONLY_MATH_FNS (evaluator.py)
+# explicitly checks for and rejects a bool positional argument (including
+# inside a list argument, for max/min/norm/cross) before ever calling the
+# underlying function.
+# ---------------------------------------------------------------------------
+
+class TestMathBuiltinsNonNumericArgs:
+    def test_unary_functions_reject_list_object_string(self):
+        fns = ["abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
+               "sin", "cos", "tan", "asin", "acos", "atan"]
+        for fn in fns:
+            for arg in ("[1,2,3]", 'object(a=1)', '"hi"'):
+                _, lines = run(f"echo({fn}({arg}));")
+                assert lines == ["ECHO: undef"], f"{fn}({arg})"
+
+    def test_unary_functions_reject_bool(self):
+        # Confirmed against real OpenSCAD: abs(true), sign(true),
+        # ceil(true), sqrt(true), sin(true), etc. are all undef there,
+        # not the Python-bool-is-int-coerced numeric result.
+        fns = ["abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
+               "sin", "cos", "tan", "asin", "acos", "atan"]
+        for fn in fns:
+            _, lines = run(f"echo({fn}(true), {fn}(false));")
+            assert lines == ["ECHO: undef, undef"], fn
+
+    def test_atan2_rejects_bool(self):
+        _, lines = run("echo(atan2(true, false), atan2(1, true), atan2(true, 1));")
+        assert lines == ["ECHO: undef, undef, undef"]
+
+    def test_pow_rejects_bool_in_either_position(self):
+        _, lines = run("echo(pow(true, 2), pow(2, true), pow(false, 2));")
+        assert lines == ["ECHO: undef, undef, undef"]
+
+    def test_max_min_reject_bool_multi_arg_and_list_forms(self):
+        _, lines = run(
+            "echo(max(true, 1), max(1, true), min(true, 1));"
+            "echo(max([true, 1, 2]));"
+        )
+        assert lines == ["ECHO: undef, undef, undef", "ECHO: undef"]
+
+    def test_norm_cross_reject_bool_vector_component(self):
+        _, lines = run(
+            "echo(norm([true, 0]));"
+            "echo(cross([true,0,0],[0,1,0]));"
+        )
+        assert lines == ["ECHO: undef", "ECHO: undef"]
+
+    def test_numeric_only_fns_still_work_normally(self):
+        # Sanity check the guard doesn't over-reject legitimate numeric
+        # (int/float) arguments.
+        _, lines = run(
+            "echo(abs(5), sqrt(4), pow(2,3), atan2(1,1));"
+            "echo(max(1,2), min(1,2), norm([3,4]), cross([1,0,0],[0,1,0]));"
+        )
+        assert lines == ["ECHO: 5, 2, 8, 45", "ECHO: 2, 1, 5, [0, 0, 1]"]
+
+
+# ---------------------------------------------------------------------------
 # User-defined functions
 # ---------------------------------------------------------------------------
 

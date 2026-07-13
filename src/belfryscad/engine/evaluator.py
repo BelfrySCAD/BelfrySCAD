@@ -2072,6 +2072,19 @@ class Evaluator:
             "parent_module": self._builtin_parent_module,
         }
         self._BUILTIN_FN_NAMES = frozenset(self._math_fns) | {"object", "textmetrics", "fontmetrics"}
+        # Functions that require an actual number (or a vector of numbers)
+        # and must reject a bool argument as a type error (-> undef),
+        # confirmed against real OpenSCAD 2022.08.22 -- e.g. abs(true),
+        # max(true, 1), norm([true, 0]) are all undef there. Needed
+        # because Python's bool is a subclass of int, so every one of
+        # these functions would otherwise silently treat true/false as
+        # 1/0 (abs(true) -> 1, max(true, 1) -> true, norm([true, 0]) -> 1)
+        # rather than raising and hitting the generic try/except below.
+        self._NUMERIC_ONLY_MATH_FNS = frozenset({
+            "abs", "sign", "ceil", "floor", "round", "sqrt", "ln", "log", "exp",
+            "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "pow",
+            "max", "min", "norm", "cross",
+        })
 
     def _build_frame_locals(self, ctx: EvalContext):
         local_scope: dict = {}
@@ -4963,6 +4976,12 @@ class Evaluator:
                     positional = [args[i] for i in range(len(args)) if i in args]
                     if not positional:
                         positional = [args[k] for k in args if type(k) is str]
+                    if name in self._NUMERIC_ONLY_MATH_FNS:
+                        for a in positional:
+                            if isinstance(a, bool) or (
+                                isinstance(a, list) and any(isinstance(x, bool) for x in a)
+                            ):
+                                return None
                     try:
                         return fn(*positional)
                     except Exception:
