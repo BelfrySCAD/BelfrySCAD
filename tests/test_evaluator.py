@@ -807,6 +807,193 @@ class TestBuiltinFunctions:
 
 
 # ---------------------------------------------------------------------------
+# Math builtins: nan / inf / -inf / undef inputs
+#
+# _eval_function_call wraps every _math_fns call in a bare
+# try/except Exception: return None (evaluator.py, _eval_function_call) --
+# so passing undef (Python None) into a lambda that doesn't itself guard
+# against it (e.g. abs(None), math.isnan(None)) raises TypeError internally
+# and safely degrades to undef output, rather than crashing evaluation.
+# Several functions (ceil/floor/round/sqrt/ln/log/sin/cos/tan/asin/acos)
+# additionally have explicit nan/inf guards of their own, to avoid Python's
+# math.ceil/floor raising OverflowError/ValueError on inf/nan.
+# ---------------------------------------------------------------------------
+
+class TestMathBuiltinsNanInfUndef:
+    def test_abs(self):
+        _, lines = run("echo(abs(1/0), abs(-1/0), abs(0/0), abs(undef));")
+        assert lines == ["ECHO: inf, inf, nan, undef"]
+
+    def test_sign(self):
+        _, lines = run("echo(sign(1/0), sign(-1/0), sign(0/0), sign(undef));")
+        assert lines == ["ECHO: 1, -1, 0, undef"]
+
+    def test_ceil(self):
+        _, lines = run("echo(ceil(1/0), ceil(-1/0), ceil(0/0), ceil(undef));")
+        assert lines == ["ECHO: inf, -inf, nan, undef"]
+
+    def test_floor(self):
+        _, lines = run("echo(floor(1/0), floor(-1/0), floor(0/0), floor(undef));")
+        assert lines == ["ECHO: inf, -inf, nan, undef"]
+
+    def test_round(self):
+        _, lines = run("echo(round(1/0), round(-1/0), round(0/0), round(undef));")
+        assert lines == ["ECHO: inf, -inf, nan, undef"]
+
+    def test_sqrt(self):
+        # sqrt of a negative (including -inf) is nan, not a crash.
+        _, lines = run("echo(sqrt(1/0), sqrt(-1/0), sqrt(0/0), sqrt(undef));")
+        assert lines == ["ECHO: inf, nan, nan, undef"]
+
+    def test_ln(self):
+        _, lines = run("echo(ln(1/0), ln(-1/0), ln(0/0), ln(undef));")
+        assert lines == ["ECHO: inf, nan, nan, undef"]
+
+    def test_log(self):
+        _, lines = run("echo(log(1/0), log(-1/0), log(0/0), log(undef));")
+        assert lines == ["ECHO: inf, nan, nan, undef"]
+
+    def test_exp(self):
+        # exp(-inf) underflows to 0, not nan.
+        _, lines = run("echo(exp(1/0), exp(-1/0), exp(0/0), exp(undef));")
+        assert lines == ["ECHO: inf, 0, nan, undef"]
+
+    def test_sin_cos_tan(self):
+        # _deg_trig explicitly returns nan for any nan/inf input (its
+        # multiple-of-90-degrees table lookup has no meaningful entry
+        # for an unbounded angle) rather than falling through to
+        # math.sin/cos/tan(radians(inf)), which would raise.
+        _, lines = run(
+            "echo(sin(1/0), sin(-1/0), sin(0/0), sin(undef));"
+            "echo(cos(1/0), cos(-1/0), cos(0/0), cos(undef));"
+            "echo(tan(1/0), tan(-1/0), tan(0/0), tan(undef));"
+        )
+        assert lines == [
+            "ECHO: nan, nan, nan, undef",
+            "ECHO: nan, nan, nan, undef",
+            "ECHO: nan, nan, nan, undef",
+        ]
+
+    def test_asin_acos(self):
+        # |x| > 1 (true for +-inf) is nan, matching real OpenSCAD's
+        # domain check rather than raising ValueError like math.asin/acos.
+        _, lines = run(
+            "echo(asin(1/0), asin(-1/0), asin(0/0), asin(undef));"
+            "echo(acos(1/0), acos(-1/0), acos(0/0), acos(undef));"
+        )
+        assert lines == [
+            "ECHO: nan, nan, nan, undef",
+            "ECHO: nan, nan, nan, undef",
+        ]
+
+    def test_atan(self):
+        # atan has no domain restriction -- +-inf -> +-90 degrees exactly,
+        # only nan input produces nan output.
+        _, lines = run("echo(atan(1/0), atan(-1/0), atan(0/0), atan(undef));")
+        assert lines == ["ECHO: 90, -90, nan, undef"]
+
+    def test_atan2(self):
+        _, lines = run(
+            "echo(atan2(1/0, 1), atan2(1, 1/0), atan2(0/0, 1), atan2(undef, 1));"
+        )
+        assert lines == ["ECHO: 90, 0, nan, undef"]
+
+    def test_pow(self):
+        _, lines = run(
+            "echo(pow(1/0, 2), pow(2, 1/0), pow(0/0, 2), pow(0, -1/0), "
+            "pow(-2, 0.5), pow(undef, 2));"
+        )
+        assert lines == ["ECHO: inf, inf, nan, inf, nan, undef"]
+
+    def test_max_min_nan_position_dependent(self):
+        # Regression/documentation: max/min dispatch to Python's own
+        # max()/min() (_builtin_minmax), whose nan handling is
+        # position-dependent, not propagating-or-ignoring consistently --
+        # nan as the *first* candidate is never displaced (every later
+        # `x > nan`/`x < nan` comparison is False), but nan appearing
+        # *later* is itself skipped over the same way. A change to
+        # _builtin_minmax (e.g. switching to numpy) could easily flip
+        # this silently, so it's pinned here rather than just assumed.
+        _, lines = run(
+            "echo(max(0/0, 1), max(1, 0/0));"
+            "echo(min(0/0, 1), min(1, 0/0));"
+            "echo(max([0/0, 1, 3]), max([1, 3, 0/0]));"
+        )
+        assert lines == [
+            "ECHO: nan, 1",
+            "ECHO: nan, 1",
+            "ECHO: nan, 3",
+        ]
+
+    def test_max_min_inf(self):
+        _, lines = run(
+            "echo(max(1, 1/0), min(1, -1/0));"
+            "echo(max([1, 1/0, 3]));"
+        )
+        assert lines == ["ECHO: inf, -inf", "ECHO: inf"]
+
+    def test_max_min_undef_in_multi_arg_form_is_undef(self):
+        # Mixing undef into the multi-scalar-argument form of max/min
+        # isn't a list, so it doesn't hit the "mixing in a vector is
+        # undef" guard -- it instead lands in Python's own max()/min(),
+        # which raises TypeError comparing None to a number, caught by
+        # the outer try/except and surfaced as undef.
+        _, lines = run("echo(max(1, undef), min(1, undef));")
+        assert lines == ["ECHO: undef, undef"]
+
+    def test_norm(self):
+        _, lines = run(
+            "echo(norm([1/0, 0]), norm([0/0, 0]), norm([undef, 0]));"
+        )
+        assert lines == ["ECHO: inf, nan, undef"]
+
+    def test_cross_rejects_non_finite_components(self):
+        # Confirmed against real OpenSCAD 2022.08.22: cross() validates
+        # every component up front and returns undef (with a WARNING
+        # naming the offending value) rather than computing through --
+        # inf*0 is nan, not 0, so a naive computation would otherwise
+        # produce a mixed finite/nan/inf result instead of a clean undef.
+        _, lines = run(
+            "echo(cross([1/0,0,0],[0,1,0]));"
+            "echo(cross([0/0,0,0],[0,1,0]));"
+            "echo(cross([1,0,0],[0,1,0]));"
+        )
+        assert lines == ["ECHO: undef", "ECHO: undef", "ECHO: [0, 0, 1]"]
+
+    def test_is_num_excludes_nan_but_not_inf(self):
+        # is_num(nan) is explicitly false (evaluator.py's is_num lambda
+        # has its own `not math.isnan(x)` check) -- but +-inf still counts
+        # as "a number" by this predicate, only nan is excluded.
+        _, lines = run(
+            "echo(is_num(1/0), is_num(-1/0), is_num(0/0), is_num(undef));"
+        )
+        assert lines == ["ECHO: true, true, false, false"]
+
+    def test_str_formatting(self):
+        _, lines = run("echo(str(1/0), str(-1/0), str(0/0), str(undef));")
+        assert lines == ['ECHO: "inf", "-inf", "nan", "undef"']
+
+    def test_chr_non_finite_or_undef_returns_empty_string(self):
+        # Confirmed against real OpenSCAD 2022.08.22: chr() returns ""
+        # (not undef) for a non-finite/undef scalar argument, and silently
+        # skips non-finite/undef elements within a list argument rather
+        # than failing the whole call.
+        _, lines = run(
+            "echo(chr(1/0), chr(0/0), chr(undef));"
+            "echo(chr([65, 1/0, 66]));"
+        )
+        assert lines == ['ECHO: "", "", ""', 'ECHO: "AB"']
+
+    def test_ord_undef_is_undef(self):
+        # ord() indexes into a string, which raises on None -- caught by
+        # the outer try/except, same safety net as every other math
+        # builtin here (unlike chr(), ord()'s real-OpenSCAD behavior for
+        # undef input is undef, not "").
+        _, lines = run("echo(ord(undef));")
+        assert lines == ["ECHO: undef"]
+
+
+# ---------------------------------------------------------------------------
 # User-defined functions
 # ---------------------------------------------------------------------------
 
@@ -2947,6 +3134,20 @@ class TestObject:
     def test_len(self):
         _, echoes = run("echo(len(object(a=1, b=2, c=3)));")
         assert echoes == ["ECHO: 3"]
+
+    def test_has_key_present_and_absent(self):
+        src = 'o = object(a=1, b=2); echo(has_key(o, "a"), has_key(o, "nope"));'
+        _, echoes = run(src)
+        assert echoes == ["ECHO: true, false"]
+
+    def test_has_key_non_object_is_undef(self):
+        src = 'echo(has_key(5, "a"), has_key([1,2], "a"), has_key("str", "a"), has_key(undef, "a"));'
+        _, echoes = run(src)
+        assert echoes == ["ECHO: undef, undef, undef, undef"]
+
+    def test_has_key_on_empty_object(self):
+        _, echoes = run('echo(has_key(object(), "a"));')
+        assert echoes == ["ECHO: false"]
 
     def test_equality_is_deep_and_order_sensitive(self):
         src = (

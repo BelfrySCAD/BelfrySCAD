@@ -2055,7 +2055,7 @@ class Evaluator:
             "concat": lambda *args: sum((list(a) if isinstance(a, list) else [a] for a in args), []),
             "len": lambda x: len(x) if isinstance(x, (list, str, OscObject)) else None,
             "str": lambda *a: "".join(x if isinstance(x, str) else self._fmt_val(x) for x in a),
-            "chr": lambda x: "".join(chr(int(c)) for c in x) if isinstance(x, list) else chr(int(x)),
+            "chr": self._builtin_chr,
             "ord": lambda s: ord(s[0]) if isinstance(s, str) and len(s) >= 1 else None,
             "is_undef": lambda x: x is None,
             "is_num": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and not math.isnan(x),
@@ -5056,9 +5056,31 @@ class Evaluator:
         return self._deg_trig(x, self._TAN_90, math.tan)
 
     def _builtin_cross(self, a, b):
+        # Real OpenSCAD validates every component up front and returns
+        # undef (with a WARNING naming the offending value) rather than
+        # computing through: nan/inf components would otherwise propagate
+        # unevenly (inf*0 is nan, not 0), producing a mixed
+        # finite/nan/inf result instead of a clean undef -- confirmed
+        # against real OpenSCAD 2022.08.22.
+        for v in (a, b):
+            for c in v:
+                if isinstance(c, float) and not math.isfinite(c):
+                    return None
         if len(a) == 2 and len(b) == 2:
             return a[0]*b[1] - a[1]*b[0]
         return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+
+    def _builtin_chr(self, x):
+        # Real OpenSCAD silently skips non-finite/non-numeric code points
+        # (in a list) and returns "" (rather than undef) for a scalar
+        # non-finite/undef argument -- confirmed against real OpenSCAD
+        # 2022.08.22 (chr(1/0), chr(0/0), chr(undef) all -> "";
+        # chr([65, 1/0, 66]) -> "AB", skipping the invalid element).
+        def valid(c):
+            return isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c)
+        if isinstance(x, list):
+            return "".join(chr(int(c)) for c in x if valid(c))
+        return chr(int(x)) if valid(x) else ""
 
     def _builtin_rands(self, minval, maxval, n, seed=None):
         self._rands_call_count += 1
