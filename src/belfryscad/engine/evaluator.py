@@ -3866,9 +3866,16 @@ class Evaluator:
             if tag == "path":
                 return _parse_d(el.get("d", ""), mat)
             if tag in ("polygon", "polyline"):
+                # Both treated as closed fill contours here (this import
+                # path only ever produces closed CrossSection polygons,
+                # same as the DXF loader) -- <polyline> is nominally an
+                # open SVG shape, but there's no "open path" concept
+                # downstream to preserve, so closing it is the only useful
+                # interpretation. Previously restricted to tag ==
+                # "polygon", which made every <polyline> a silent no-op.
                 nums = [float(x) for x in _re.split(r'[,\s]+', el.get("points", "").strip()) if x]
                 pts = list(zip(nums[::2], nums[1::2]))
-                return [[_apply(p, mat) for p in pts]] if tag == "polygon" and pts else []
+                return [[_apply(p, mat) for p in pts]] if pts else []
             if tag == "rect":
                 x = float(el.get("x", 0)); y = float(el.get("y", 0))
                 w = float(el.get("width", 0)); h = float(el.get("height", 0))
