@@ -4105,9 +4105,182 @@ class TestCSGTreeStep5Extrusion:
         bodies = run(f'import("{svg}");')[0]
         assert bodies[0].section.area() == approx(200)
 
+    def test_import_svg_geometry_polygon(self, tmp_path):
+        svg = tmp_path / "poly.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<polygon points="0,0 10,0 10,10 0,10"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_svg_geometry_polyline(self, tmp_path):
+        # Regression: _shape_contours' polygon/polyline branch used to
+        # gate its return on `tag == "polygon"`, so <polyline> always
+        # returned [] regardless of its own points -- a silent no-op
+        # despite being documented as supported (docs/evaluator.md).
+        svg = tmp_path / "polyline.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<polyline points="0,0 10,0 10,10 0,10"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_svg_geometry_circle(self, tmp_path):
+        svg = tmp_path / "circle.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<circle cx="0" cy="0" r="10"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        # 32-segment polygon approximation of a r=10 circle, not pi*r^2 exactly
+        import math
+        assert bodies[0].section.area() == approx(math.pi * 100, rel=0.01)
+
+    def test_import_svg_geometry_path_rect_via_line_commands(self, tmp_path):
+        svg = tmp_path / "path.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<path d="M0,0 L10,0 L10,10 L0,10 Z"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_svg_geometry_path_cubic_bezier(self, tmp_path):
+        # A cubic Bezier whose control points all coincide with the
+        # endpoints degenerates to a straight line -- flattening a
+        # "curved" rectangle edge this way should reproduce the same
+        # rectangle as the plain-line-command version above.
+        svg = tmp_path / "path_bezier.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<path d="M0,0 C0,0 10,0 10,0 L10,10 L0,10 Z"/></svg>')
+        bodies = run(f'import("{svg}");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_svg_y_axis_flipped(self, tmp_path):
+        # SVG's y-axis points down; OpenSCAD's points up -- _apply flips it.
+        svg = tmp_path / "flip.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<polygon points="0,0 10,0 10,5 0,5"/></svg>')
+        _, _, ev = run_tree(f'import("{svg}");')
+        contour = ev.csg_tree[0].params["contours"][0]
+        ys = [pt[1] for pt in contour]
+        assert min(ys) == approx(-5) and max(ys) == approx(0)
+
+    def test_import_svg_transform_translate_applied(self, tmp_path):
+        svg = tmp_path / "translated.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<rect x="0" y="0" width="10" height="10" transform="translate(5,5)"/></svg>')
+        _, _, ev = run_tree(f'import("{svg}");')
+        contour = ev.csg_tree[0].params["contours"][0]
+        xs = [pt[0] for pt in contour]
+        assert min(xs) == approx(5) and max(xs) == approx(15)
+
+    def test_import_svg_defs_contents_skipped(self, tmp_path):
+        svg = tmp_path / "defs.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg">'
+                        '<defs><rect x="0" y="0" width="10" height="10"/></defs>'
+                        '<circle cx="0" cy="0" r="1"/></svg>')
+        _, _, ev = run_tree(f'import("{svg}");')
+        # Only the circle's contour should appear -- the rect inside <defs>
+        # must not be traversed into geometry.
+        assert len(ev.csg_tree[0].params["contours"]) == 1
+
+    def test_import_svg_no_shapes_raises(self, tmp_path):
+        svg = tmp_path / "empty.svg"
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+        with pytest.raises(EvalError):
+            run(f'import("{svg}");')
+
+    def test_import_dxf_geometry_closed_lwpolyline(self, tmp_path):
+        import ezdxf
+        doc = ezdxf.new()
+        msp = doc.modelspace()
+        msp.add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True)
+        dxf = tmp_path / "square.dxf"
+        doc.saveas(dxf)
+        bodies = run(f'import("{dxf}");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_dxf_geometry_closed_polyline_legacy_entity(self, tmp_path):
+        import ezdxf
+        doc = ezdxf.new()
+        msp = doc.modelspace()
+        msp.add_polyline2d([(0, 0), (3, 0), (3, 3), (0, 3)], close=True)
+        dxf = tmp_path / "legacy.dxf"
+        doc.saveas(dxf)
+        bodies = run(f'import("{dxf}");')[0]
+        assert bodies[0].section.area() == approx(9)
+
+    def test_import_dxf_open_polyline_excluded(self, tmp_path):
+        # Only closed polylines become fill contours -- an open one
+        # can't bound an area.
+        import ezdxf
+        doc = ezdxf.new()
+        msp = doc.modelspace()
+        msp.add_lwpolyline([(0, 0), (5, 0), (5, 5)], close=False)
+        dxf = tmp_path / "open.dxf"
+        doc.saveas(dxf)
+        with pytest.raises(EvalError):
+            run(f'import("{dxf}");')
+
+    def test_import_dxf_layer_filter(self, tmp_path):
+        import ezdxf
+        doc = ezdxf.new()
+        doc.layers.add("SHAPES")
+        msp = doc.modelspace()
+        msp.add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True,
+                            dxfattribs={"layer": "SHAPES"})
+        msp.add_lwpolyline([(0, 0), (2, 0), (2, 2), (0, 2)], close=True,
+                            dxfattribs={"layer": "OTHER"})
+        dxf = tmp_path / "layers.dxf"
+        doc.saveas(dxf)
+        bodies = run(f'import(file="{dxf}", layer="SHAPES");')[0]
+        assert bodies[0].section.area() == approx(100)
+
+    def test_import_dxf_missing_ezdxf_gives_clear_error(self, tmp_path, monkeypatch):
+        import sys
+        import builtins
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "ezdxf":
+                raise ImportError("simulated missing ezdxf")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.delitem(sys.modules, "ezdxf", raising=False)
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+        dxf = tmp_path / "whatever.dxf"
+        dxf.write_text("0\nEOF\n")
+        with pytest.raises(EvalError, match="ezdxf"):
+            run(f'import("{dxf}");')
+
     def test_import_unsupported_extension_raises(self):
         with pytest.raises(EvalError):
             run('import("nonexistent.xyz");')
+
+    def test_import_json_as_geometry_statement_raises(self, tmp_path):
+        # import() as a geometry statement (ModularCall) dispatches by
+        # extension like every other format -- .json is data, not
+        # geometry, and errors rather than silently producing nothing.
+        j = tmp_path / "data.json"
+        j.write_text('{"a": 1}')
+        with pytest.raises(EvalError, match="use as an expression"):
+            run(f'import("{j}");')
+
+    def test_import_json_as_expression_converts_to_osc_values(self, tmp_path):
+        # import() used as an expression (PrimaryCall, not ModularCall)
+        # routes through a separate code path (_import_as_value ->
+        # _json_to_osc): JSON objects -> OscObject, arrays -> lists
+        # (recursively converted), scalars/null pass through natively
+        # (null -> Python None -> OpenSCAD undef, same sentinel used
+        # everywhere else in the evaluator).
+        import json
+        data = {
+            "name": "widget", "count": 3, "size": 2.5, "active": True,
+            "note": None, "tags": ["a", "b"], "nested": {"x": 1, "y": 2},
+        }
+        j = tmp_path / "data.json"
+        j.write_text(json.dumps(data))
+        src = (
+            f'o = import("{j}");'
+            'echo(o.name, o.count, o.size, o.active, o.note, o.tags, o.nested.x, o.nested);'
+        )
+        _, echoes = run(src)
+        assert echoes == ['ECHO: "widget", 3, 2.5, true, undef, ["a", "b"], 1, object(x = 1, y = 2)']
 
     def test_migrated_transform_wraps_migrated_rotate_extrude(self):
         bodies = run("translate([1,0,0]) rotate_extrude($fn=16) translate([5,0]) circle(1);")[0]
