@@ -505,6 +505,12 @@ class MainWindow(QMainWindow):
         self._dump_dir: Optional[str] = None
         self._dump_frame: int = 0
         self._first_show = True
+        # Testing-only escape hatch: set True to make _confirm_unsaved()
+        # treat every tab as if it had no unsaved changes, so a script
+        # constructing a MainWindow directly can close tabs/the window
+        # without blocking on the "Save changes?" QMessageBox modal (which
+        # can't be driven programmatically the way a real user would).
+        self.skip_unsaved_prompts = False
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -1083,22 +1089,33 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         self._tabs.setTabText(idx, tab.display_name())
 
+    def _confirm_unsaved(self, tab) -> bool:
+        """True if it's OK to proceed past `tab`'s unsaved changes (there
+        were none, they were discarded, or they were saved successfully);
+        False if the caller should abort (user cancelled, or save
+        failed). Shared by _close_tab and closeEvent, the two places that
+        need to prompt before discarding a modified tab."""
+        if not tab.is_modified or self.skip_unsaved_prompts:
+            return True
+        reply = QMessageBox.question(
+            self, "Unsaved Changes",
+            f"Save changes to {tab.display_name()}?",
+            QMessageBox.StandardButton.Save |
+            QMessageBox.StandardButton.Discard |
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return False
+        if reply == QMessageBox.StandardButton.Save:
+            self._tabs.setCurrentIndex(self._tabs.indexOf(tab))
+            if not self._save_file():
+                return False
+        return True
+
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
-        if tab and tab.is_modified:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                f"Save changes to {tab.display_name()}?",
-                QMessageBox.StandardButton.Save |
-                QMessageBox.StandardButton.Discard |
-                QMessageBox.StandardButton.Cancel,
-            )
-            if reply == QMessageBox.StandardButton.Cancel:
-                return
-            if reply == QMessageBox.StandardButton.Save:
-                self._tabs.setCurrentIndex(index)
-                if not self._save_file():
-                    return
+        if tab and not self._confirm_unsaved(tab):
+            return
         if tab:
             if self._debug_tab is tab:
                 self._on_debug_stop()
@@ -2417,22 +2434,9 @@ class MainWindow(QMainWindow):
         # Prompt to save any modified tabs before quitting
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
-            if tab and tab.is_modified:
-                reply = QMessageBox.question(
-                    self, "Unsaved Changes",
-                    f"Save changes to {tab.display_name()}?",
-                    QMessageBox.StandardButton.Save |
-                    QMessageBox.StandardButton.Discard |
-                    QMessageBox.StandardButton.Cancel,
-                )
-                if reply == QMessageBox.StandardButton.Cancel:
-                    event.ignore()
-                    return
-                if reply == QMessageBox.StandardButton.Save:
-                    self._tabs.setCurrentIndex(i)
-                    if not self._save_file():
-                        event.ignore()
-                        return
+            if tab and not self._confirm_unsaved(tab):
+                event.ignore()
+                return
         # Stop animation playback (no more renders get queued) and let any
         # in-flight render thread finish — Qt aborts if a QThread is
         # destroyed while still running.

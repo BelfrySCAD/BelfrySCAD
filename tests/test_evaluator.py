@@ -612,6 +612,62 @@ class TestManifoldCache:
         cache.clear()
         assert not cache._entries
 
+    def test_rands_taint_survives_splicing_single_child(self):
+        # Regression: children()/user-module calls splice their resolved
+        # subtree directly into the tree instead of getting a wrapping
+        # node of their own (_eval_statement). A rands() call in a
+        # non-geometry statement (an assignment) during that call's own
+        # resolve -- rather than inside the spliced child's own resolve --
+        # used to have its taint silently dropped: only the spliced
+        # children's *own* uncacheable flags were checked, never whether
+        # rands() was called during the splicing call's own resolve.
+        # Checking the flag directly (not just end-to-end body output) is
+        # necessary here, since jitter also happens to feed into the
+        # cube's size, which would already force a cache-key mismatch
+        # regardless of whether the flag itself is correct.
+        src = """
+        module m() {
+            jitter = rands(1, 10, 1)[0];
+            translate([jitter, 0, 0]) cube(1);
+        }
+        m();
+        """
+        _, _, ev = run_tree(src)
+        assert len(ev.csg_tree) == 1
+        assert ev.csg_tree[0].uncacheable is True
+
+    def test_rands_taint_survives_splicing_union_wrapped(self):
+        # Same regression, but with >1 spliced sibling (the union-wrapper
+        # branch) -- the wrapper and every spliced child must all end up
+        # tainted.
+        src = """
+        module m() {
+            jitter = rands(1, 10, 1)[0];
+            translate([jitter, 0, 0]) cube(1);
+            sphere(1);
+        }
+        m();
+        """
+        _, _, ev = run_tree(src)
+        assert len(ev.csg_tree) == 1
+        assert ev.csg_tree[0].kind == "union"
+        assert ev.csg_tree[0].uncacheable is True
+        assert all(c.uncacheable for c in ev.csg_tree[0].children)
+
+    def test_no_rands_call_leaves_spliced_nodes_cacheable(self):
+        # Sanity check the fix doesn't over-taint: no rands() anywhere ->
+        # every spliced/wrapped node stays cacheable.
+        src = """
+        module m() {
+            translate([1, 0, 0]) cube(1);
+            sphere(1);
+        }
+        m();
+        """
+        _, _, ev = run_tree(src)
+        assert ev.csg_tree[0].uncacheable is False
+        assert all(not c.uncacheable for c in ev.csg_tree[0].children)
+
 
 # ---------------------------------------------------------------------------
 # Built-in functions
