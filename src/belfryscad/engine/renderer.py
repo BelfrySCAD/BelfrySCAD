@@ -433,6 +433,7 @@ class PointBuffer:
 class SceneRenderer:
     def __init__(self):
         self._ctx: Optional[mgl.Context] = None
+        self._active_fbo: Optional[mgl.Framebuffer] = None
         self._prog: Optional[mgl.Program] = None
         self._gizmo_prog: Optional[mgl.Program] = None
         self._edge_prog: Optional[mgl.Program] = None
@@ -741,6 +742,9 @@ class SceneRenderer:
 
         fbo = self._ctx.detect_framebuffer(qt_fbo_id)
         fbo.use()
+        # depth_mask lives on Framebuffer, not Context -- _paint_scene's
+        # translucent passes need it to disable depth writes while blending.
+        self._active_fbo = fbo
 
         self._ctx.clear(*(bg_color if bg_color is not None else self.bg_color)[:3])
         self._ctx.enable(mgl.DEPTH_TEST)
@@ -881,14 +885,22 @@ class SceneRenderer:
             translucent.sort(key=_centroid_dist)
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
-            self._ctx.depth_mask = False
+            self._active_fbo.depth_mask = False
+            # With depth write off, a body's own far/hidden faces are drawn
+            # in raw mesh-triangle order rather than depth-sorted -- for a
+            # thin/coplanar body (e.g. a top-level 2D shape's near-zero-height
+            # extrusion) the hidden face can land after the visible one and
+            # wrongly overwrite it. Culling removes the hidden face outright
+            # so only the camera-facing side of each body is ever drawn.
+            self._ctx.enable(mgl.CULL_FACE)
             for buf, buf_model, color in translucent:
                 self._prog["model"].write(buf_model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = color
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
-            self._ctx.depth_mask = True
+            self._ctx.disable(mgl.CULL_FACE)
+            self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
         if self.show_edges:
@@ -923,7 +935,7 @@ class SceneRenderer:
         if bg_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
-            self._ctx.depth_mask = False
+            self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
             for buf in bg_bufs:
                 base_color = buf.color if buf.color is not None else self._default_color
@@ -934,7 +946,7 @@ class SceneRenderer:
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
-            self._ctx.depth_mask = True
+            self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
         # --- Pass 3: highlight overlay (#) — pink transparent overlay ---
@@ -947,7 +959,7 @@ class SceneRenderer:
         if hi_solid_pairs or hi_ghost_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
-            self._ctx.depth_mask = False
+            self._active_fbo.depth_mask = False
             if hi_solid_pairs:
                 self._ctx.polygon_offset = (-1.0, -1.0)
                 self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
@@ -968,7 +980,7 @@ class SceneRenderer:
                     self._prog["flat_preview"].value = buf.flat_preview
                     buf.vao.render()
                 self._ctx.disable(mgl.CULL_FACE)
-            self._ctx.depth_mask = True
+            self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
         if self.show_crosshairs and self._gizmo_prog is not None:
