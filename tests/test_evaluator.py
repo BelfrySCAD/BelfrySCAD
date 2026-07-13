@@ -2661,6 +2661,39 @@ class TestRemainingBuiltins:
         _, lines = run("echo(lookup(5, []));")
         assert lines == ["ECHO: undef"]
 
+    def test_lookup_exact_key_match_no_interpolation(self):
+        # Landing exactly on a table key (first, last, or a middle one in
+        # a 3+ point table) must return that key's value exactly, not an
+        # interpolated approximation from floating-point t=0/t=1.
+        _, lines = run(
+            "echo(lookup(0, [[0,0],[1,10]]));"
+            "echo(lookup(1, [[0,0],[1,10]]));"
+            "echo(lookup(1, [[0,0],[1,10],[2,50]]));"
+        )
+        assert lines == ["ECHO: 0", "ECHO: 10", "ECHO: 10"]
+
+    def test_lookup_multi_segment_picks_correct_bracket(self):
+        # A 3-point table must interpolate within whichever segment the
+        # key actually falls in, not always the first or last pair.
+        _, lines = run(
+            "echo(lookup(0.5, [[0,0],[1,10],[2,50]]));"
+            "echo(lookup(1.5, [[0,0],[1,10],[2,50]]));"
+        )
+        assert lines == ["ECHO: 5", "ECHO: 30"]
+
+    def test_lookup_single_entry_table_always_returns_its_value(self):
+        # With only one point, key <= pairs[0][0] and key >= pairs[-1][0]
+        # are simultaneously true for any query -- both clamp branches
+        # agree, so every query returns the sole entry's value.
+        _, lines = run("echo(lookup(5, [[5, 99]]), lookup(-5, [[5, 99]]));")
+        assert lines == ["ECHO: 99, 99"]
+
+    def test_lookup_unsorted_table_is_sorted_internally(self):
+        # _builtin_lookup sorts the table by key before searching, so an
+        # out-of-order table still works correctly.
+        _, lines = run("echo(lookup(5, [[1,10],[0,0]]));")
+        assert lines == ["ECHO: 10"]
+
     def test_children_count(self):
         src = "module m() { echo($children); } m() { cube(1); sphere(1); }"
         _, lines = run(src)
