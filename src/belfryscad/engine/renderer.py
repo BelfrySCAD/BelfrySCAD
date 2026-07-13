@@ -824,6 +824,7 @@ class SceneRenderer:
         # highlight_ghost bodies are only shown in the overlay pass, not opaquely.
         opaque_bufs = [buf for buf in self._buffers if buf.role not in ("background", "highlight_ghost")]
         buf_models: list[np.ndarray] = []
+        translucent: list[tuple] = []  # (buf, buf_model, color) deferred to Pass 1b
         for buf in opaque_bufs:
             if buf.program is not self._prog:
                 # Generic (data-viewer) mesh uploaded via upload_mesh: no CSG
@@ -853,12 +854,42 @@ class SceneRenderer:
             else:
                 buf_model = model
 
+            buf_models.append(buf_model)
+            if color[3] < 1.0:
+                # color()'s alpha is only honored via blending in Pass 1b below
+                # -- drawing it here would depth-write it fully opaque.
+                translucent.append((buf, buf_model, color))
+                continue
+
             self._prog["model"].write(buf_model.T.tobytes())
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
             self._prog["flat_preview"].value = buf.flat_preview
             buf.vao.render()
-            buf_models.append(buf_model)
+
+        # --- Pass 1b: translucent normal/show_only/highlight bodies (color()'s
+        # alpha<1) -- blended, no depth write, back-to-front by centroid distance
+        # so overlapping translucent bodies composite reasonably (not exact
+        # per-triangle order, but avoids the worst near/far swaps).
+        if translucent:
+            def _centroid_dist(item):
+                buf, buf_model, _ = item
+                centroid = buf.cpu_v0.mean(axis=0) if len(buf.cpu_v0) else np.zeros(3, dtype=np.float32)
+                world = (buf_model[:3, :3] @ centroid) + buf_model[:3, 3]
+                return -float(np.linalg.norm(world - eye_pos))
+
+            translucent.sort(key=_centroid_dist)
+            self._ctx.enable(mgl.BLEND)
+            self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+            self._ctx.depth_mask = False
+            for buf, buf_model, color in translucent:
+                self._prog["model"].write(buf_model.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
+                self._prog["object_color"].value = color
+                self._prog["flat_preview"].value = buf.flat_preview
+                buf.vao.render()
+            self._ctx.depth_mask = True
+            self._ctx.disable(mgl.BLEND)
 
         if self.show_edges:
             self._ctx.disable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
