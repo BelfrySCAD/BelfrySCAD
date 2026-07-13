@@ -3511,9 +3511,20 @@ class TestText:
         assert bb[4] == approx(5.09983, rel=1e-3)
 
     def test_empty_text_produces_empty_geometry(self):
+        # Previously this returned a zero-volume body whose Manifold status
+        # was Error.InvalidConstruction (not a clean empty manifold) --
+        # unioning that into other geometry silently zeroed out the whole
+        # result. It must produce no body at all instead.
         bodies, _ = run('linear_extrude(height=1) text("");')
-        assert bodies
-        assert bodies[0].body.volume() == 0
+        assert bodies == []
+
+    def test_empty_extrude_does_not_poison_sibling_union(self):
+        bodies, _ = run(
+            'union() { cube(5); linear_extrude(height=1) text(""); }'
+        )
+        assert len(bodies) == 1
+        assert bodies[0].body.status().name == "NoError"
+        assert bodies[0].body.volume() == pytest.approx(125.0)
 
     def test_composite_glyph_renders(self):
         bb = bbox(run('linear_extrude(height=1) text("é", size=10);')[0])

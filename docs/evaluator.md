@@ -163,6 +163,8 @@ Since resolve never depends on any node's generated bodies, `union`/`difference`
 
 **Top-level 2D results** (e.g. `circle();` with no enclosing `linear_extrude`/`rotate_extrude`) are returned from `evaluate()` as `section`-only `ColoredBody`s, per the above — `evaluate()` itself stays pure. The renderer/exporter only handle Manifold meshes, so `to_renderable_bodies()` (called by `main_window.py` right after `evaluate()`, for both normal renders and debug-finish) converts any `section`-only entry into a thin `Manifold.extrude(section, _TOP_LEVEL_2D_HEIGHT)` (`1e-3`) — giving a flat-looking preview/export, similar to real OpenSCAD's flat 2D view.
 
+`_generate_linear_extrude`/`_generate_rotate_extrude` must treat a zero-area `CrossSection` (e.g. `text("")` — an empty glyph run) as `[]`, same as `cs is None`. `manifold3d`'s `Manifold.extrude`/`CrossSection.revolve` on an empty cross-section don't return a clean empty manifold — they return one with `status() == Error.InvalidConstruction`. Left unguarded, that body still gets tagged and returned, and a later boolean union (`_generate_csg`, real Manifold `+`) that includes it as one operand comes out `InvalidConstruction` too, silently discarding the *entire* merged result with no exception or visible error. Guarded via `cs.is_empty()` alongside the existing `cs is None` check.
+
 ## Color propagation
 
 `color()` sets the current color in the evaluation context, cascading to all child geometry. The evaluator passes per-body color to the renderer alongside the mesh. `color()` affects viewport display, passed through to ModernGL.
