@@ -5,12 +5,13 @@ Each test calls run(src) which parses, scopes, and evaluates OpenSCAD source,
 returning (bodies, echo_lines). Geometry tests inspect bounding boxes;
 expression tests capture echo output.
 """
+import numpy as np
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
 from belfryscad.engine.evaluator import (
     Evaluator, EvalContext, EvalError, _resolve_font, CSGNode, flatten_csg_tree,
-    format_csg_tree, _summarize_param, ManifoldCache,
+    format_csg_tree, _summarize_param, ManifoldCache, _DEFAULT_GEOMETRY_COLOR,
 )
 
 
@@ -4309,6 +4310,90 @@ def _unit_cube_3mf_bytes() -> bytes:
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("3D/3dmodel.model", model)
     return buf.getvalue()
+
+
+class TestMultiColorCSGMerge:
+    """A real boolean CSG merge (_generate_csg) used to collapse every
+    child's color into just the first child's -- e.g. union()-ing an
+    opaque cube with a translucent sphere dropped the sphere's color and
+    alpha entirely, rendering the whole result fully opaque. Real OpenSCAD
+    preserves each part's own color/alpha through the merge (verified
+    against real OpenSCAD 2022.08.22's interactive 3D view for this exact
+    scenario). Evaluator._attach_tri_colors recovers this via manifold3d's
+    per-triangle run_original_id/run_index provenance (already used for
+    id_to_node/WYSIWYG ray-cast picking) plus a parallel Evaluator.id_to_color
+    map populated by _tag/_tag_generated."""
+
+    def test_union_mixed_colors_sets_tri_colors(self):
+        src = """
+        union() {
+            color("lightgreen") cube(10);
+            color([0,1,1,0.5]) translate([5,5,10]) sphere(d=10);
+        }
+        """
+        bodies, _, ev = run_tree(src)
+        assert len(bodies) == 1
+        tc = bodies[0].tri_colors
+        assert tc is not None
+        distinct = np.unique(tc, axis=0)
+        assert len(distinct) == 2
+        assert any(np.allclose(row, (0.0, 1.0, 1.0, 0.5)) for row in distinct)  # sphere
+        assert any(row[3] == 1.0 and not np.allclose(row, (0.0, 1.0, 1.0, 0.5))
+                   for row in distinct)  # lightgreen cube, opaque
+
+    def test_difference_cut_face_gets_default_color(self):
+        # The cylinder tool has no explicit color() -- its newly-exposed cut
+        # face (a fresh run_original_id contributed by the subtraction tool)
+        # must fall back to the default geometry color, matching what real
+        # OpenSCAD shows for an uncolored modifier used only as a cutter.
+        src = """
+        difference() {
+            union() {
+                color("lightgreen") cube(10);
+                color([0,1,1,0.5]) translate([5,5,10]) sphere(d=10);
+            }
+            translate([5,5,-0.01]) cylinder(h=10.02, d=8);
+        }
+        """
+        bodies, _, ev = run_tree(src)
+        assert len(bodies) == 1
+        tc = bodies[0].tri_colors
+        assert tc is not None
+        distinct = np.unique(tc, axis=0)
+        assert len(distinct) == 3
+        assert any(np.allclose(row, (0.0, 1.0, 1.0, 0.5)) for row in distinct)
+        assert any(np.allclose(row, _DEFAULT_GEOMETRY_COLOR) for row in distinct)
+
+    def test_union_same_explicit_color_leaves_tri_colors_none(self):
+        # Cheap-path guarantee: if every contributing color resolves to the
+        # same value, tri_colors must stay None (same single-buffer,
+        # live-theme-following upload path as before this feature existed).
+        src = """
+        union() {
+            color("red") cube(10);
+            color("red") translate([5,5,10]) sphere(d=10);
+        }
+        """
+        bodies, _, ev = run_tree(src)
+        assert bodies[0].tri_colors is None
+
+    def test_union_no_explicit_color_leaves_tri_colors_none(self):
+        src = "union() { cube(10); translate([5,5,10]) sphere(d=10); }"
+        bodies, _, ev = run_tree(src)
+        assert bodies[0].tri_colors is None
+
+    def test_id_to_color_populated_per_primitive(self):
+        src = 'color("red") cube(1); color([0,0,1,0.4]) translate([3,0,0]) sphere(1);'
+        _, _, ev = run_tree(src)
+        colors = list(ev.id_to_color.values())
+        assert any(c is not None and c[3] == 0.4 for c in colors)
+
+    def test_single_child_union_no_merge_leaves_tri_colors_none(self):
+        # No real boolean merge (union of ONE child) -- _generate_csg never
+        # even reaches the multi-child branch, so tri_colors must stay
+        # unset regardless of color.
+        bodies, _, ev = run_tree('union() { color([1,0,0,0.5]) cube(1); }')
+        assert bodies[0].tri_colors is None
 
 
 class TestCSGTreeStep5Extrusion:

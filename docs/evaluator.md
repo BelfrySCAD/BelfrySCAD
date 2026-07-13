@@ -297,6 +297,8 @@ Manifold tracks provenance through CSG ops via the `Mesh` output (Python binding
 
 Each Manifold body built from scratch gets a unique auto-incremented `originalID`. After a boolean (e.g. `body1 - body2`), output triangles form **runs** tagged with the `originalID` of their contributing input body.
 
+**`run_index` counts flattened vertex corners (3 per triangle), not triangles** — e.g. a 302-triangle mesh's `run_index` might read `[0, 138, 906]`, where `906` (`> 302`) only makes sense as `3 * 302`. Both `renderer.py`'s `_upload_body` (building `tri_ids` for ray-cast picking) and `evaluator.py`'s `_attach_tri_colors` (below) must divide every `run_index` value by 3 before using it to slice a per-triangle array — a real bug (missing `// 3`) that misattributed triangles near a run boundary to the wrong `originalID` existed in `_upload_body` until this was caught while adding multi-color CSG merge support, and would have subtly corrupted WYSIWYG ray-cast picking for any merged body with more than one contributing `originalID`.
+
 ### AST ↔ Geometry ID Mapping Pattern
 
 Manifold has no concept of AST nodes — the application maintains the mapping:
@@ -331,3 +333,17 @@ body = cs.revolve(segs, angle)          # revolve around Y axis (→ Z in output
 cs = body.project()                     # 3D → 2D outline
 cs = body.slice(z)                      # cross-section at height z
 ```
+
+### Multi-color CSG merges (`ColoredBody.tri_colors`)
+
+`_generate_csg` performs a real boolean merge (`+`/`-`/`^`) into a single `Manifold`, and historically kept only one `color` for the whole result — `bodies_3d[0].color`, the first child's — silently discarding every other child's color and alpha. `union() { color("lightgreen") cube(10); color([0,1,1,0.5]) translate([5,5,10]) sphere(d=10); }` rendered fully opaque lightgreen, losing the sphere's cyan and its transparency entirely. Real OpenSCAD (verified against 2022.08.22's interactive 3D view, both live preview *and* a full render) preserves each part's own color/alpha through the merge — this was a real gap, not a case where BelfrySCAD's "no live preview" architecture (`CLAUDE.md`) legitimately differs from OpenSCAD's.
+
+Fixed by reusing the exact same provenance mechanism `id_to_node` already relies on for WYSIWYG picking:
+
+- `Evaluator.id_to_color: dict[int, Optional[tuple]]` — populated alongside `id_to_node` in `_tag`/`_tag_generated`, recording each geometry-producing node's *own* resolved color (which may be `None`, meaning "no explicit `color()`, follow the live theme") against every `originalID` it contributes.
+- `Evaluator._attach_tri_colors(cb)` — called once, on `_generate_csg`'s final merged result only (not on intermediate per-statement merges). Walks the merged mesh's `run_original_id`/`run_index` (`// 3`, see above), looks up each run's color via `id_to_color` (falling back to `cb.color` — the old first-child behavior — for any `originalID` not found), and builds a `(T, 4)` float32 array, one RGBA row per triangle. **If every triangle resolves to the same color, `tri_colors` stays `None`** — the common single-material case pays no extra cost and keeps following live theme changes for uncolored geometry, exactly as before this existed. A `None`-colored contributor (no explicit `color()`) resolves to `_DEFAULT_GEOMETRY_COLOR` (matching `SceneRenderer._default_color`) once baked into `tri_colors`, since per-triangle data can't defer to the live theme the way a single `None` `ColoredBody.color` can.
+- `ColoredBody.tri_colors: Optional[np.ndarray]` — the new field carrying this, `None` for the overwhelming majority of bodies (anything not a multi-color CSG merge).
+
+**Renderer side** (`renderer.py`, see `docs/rendering.md`): `_upload_body` uploads `tri_colors` as a per-vertex `in_vcolor` attribute (white `(1,1,1,1)` for ordinary bodies — a shader no-op multiplied against the real `object_color` uniform) and, when a body's triangles span more than one alpha bucket, splits it into a separate opaque and translucent `MeshBuffer` at upload time so the existing opaque/translucent render passes still apply correctly to each half.
+
+Not implemented for `hull()`/`minkowski()` — both compute genuinely new topology (not a simple retained subset of each input's own triangles), so `run_original_id` provenance may not carry through meaningfully the same way; real OpenSCAD likely collapses to one color there too. Only `_generate_csg` (`union`/`difference`/`intersection`) is covered.
