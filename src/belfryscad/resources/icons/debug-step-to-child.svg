@@ -67,7 +67,7 @@
        id="tspan1"
        x="-1.7646673"
        y="27.008663"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Courier;-inkscape-font-specification:Courier">{</tspan></text>
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Menlo;-inkscape-font-specification:Menlo">{</tspan></text>
   <text
      xml:space="preserve"
      style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:Menlo;-inkscape-font-specification:Menlo;writing-mode:lr-tb;direction:ltr;fill:#444444;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"
@@ -78,5 +78,5 @@
        id="tspan2"
        x="20.962605"
        y="27.008663"
-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Courier;-inkscape-font-specification:Courier">}</tspan></text>
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Menlo;-inkscape-font-specification:Menlo">}</tspan></text>
 </svg>
