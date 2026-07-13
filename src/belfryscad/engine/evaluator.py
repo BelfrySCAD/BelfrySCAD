@@ -1601,6 +1601,13 @@ class ColoredBody:
     section: Optional[m3d.CrossSection] = None  # set for 2D primitives
     flat_preview: bool = False  # thin extrusion standing in for a 2D shape (see to_renderable_bodies)
     role: str = "normal"  # "normal" | "highlight" (#, real geom) | "highlight_ghost" (#, inside CSG) | "background" (%) | "show_only" (!)
+    # Per-triangle RGBA override (shape (T, 4), aligned with body.to_mesh()'s
+    # own tri_verts order), set only when a real boolean CSG merge (see
+    # _generate_csg) combined children whose colors resolve to more than one
+    # distinct value -- e.g. union()-ing an opaque cube with a translucent
+    # sphere. None (the common case: a single-colored body) means `color`
+    # alone is authoritative, same as before this field existed.
+    tri_colors: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -1645,6 +1652,14 @@ class CSGNode:
 # in the 3D viewport — the renderer/exporter only know how to handle Manifold
 # meshes, and real OpenSCAD's flat 2D preview has no Manifold equivalent.
 _TOP_LEVEL_2D_HEIGHT = 1e-3
+
+# Matches SceneRenderer._default_color (renderer.py) -- the color shown for
+# geometry with no explicit color() override. ColoredBody.color normally
+# stays None for uncolored geometry so the renderer can resolve it live
+# against the current color theme, but a per-triangle tri_colors array (see
+# Evaluator._attach_tri_colors) bakes colors in at generate time, so an
+# uncolored *part* of a multi-color CSG merge needs a concrete fallback here.
+_DEFAULT_GEOMETRY_COLOR = (0.9, 0.85, 0.1, 1.0)
 
 
 def to_renderable_bodies(bodies: list[ColoredBody]) -> list[ColoredBody]:
@@ -1928,6 +1943,7 @@ class Evaluator:
     def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None,
                  manifold_cache: "ManifoldCache | None" = None):
         self.id_to_node: dict[int, ASTNode] = {}
+        self.id_to_color: dict[int, Optional[tuple]] = {}
         self.csg_tree: list[CSGNode] = []
         self._tree_stack: list[list[CSGNode]] = [self.csg_tree]
         # Opt-in (None by default, so every existing bare Evaluator(...)
@@ -2782,6 +2798,7 @@ class Evaluator:
     def _tag(self, body: m3d.Manifold, node: ASTNode, ctx: EvalContext) -> ColoredBody:
         for orig_id in body.to_mesh().run_original_id:
             self.id_to_node[int(orig_id)] = node
+            self.id_to_color[int(orig_id)] = ctx.color
         return ColoredBody(body=body, color=ctx.color)
 
     def _tag_generated(self, body: m3d.Manifold, node: ASTNode, color) -> ColoredBody:
@@ -2790,6 +2807,7 @@ class Evaluator:
         been migrated to the resolve/generate split (Phase 2)."""
         for orig_id in body.to_mesh().run_original_id:
             self.id_to_node[int(orig_id)] = node
+            self.id_to_color[int(orig_id)] = color
         return ColoredBody(body=body, color=color)
 
     def _fn(self, ctx: EvalContext, r: float = 0.0) -> int:
@@ -3204,7 +3222,41 @@ class Evaluator:
                     csg_result = replace(csg_result, section=csg_result.section ^ grp)
 
         # Return: CSG result + background ghosts + highlight overlays + show_only bodies (all separate from CSG result)
+        if csg_result is not None and csg_result.body is not None:
+            csg_result = self._attach_tri_colors(csg_result)
         return ([csg_result] if csg_result is not None else []) + all_bg + all_hi + all_so
+
+    def _attach_tri_colors(self, cb: ColoredBody) -> ColoredBody:
+        """After a real boolean merge, per-input color is otherwise lost --
+        `cb.color` is just one arbitrary child's color (see _generate_csg).
+        manifold3d preserves per-triangle provenance through boolean ops via
+        each merged mesh's run_original_id/run_index (already relied on for
+        WYSIWYG ray-cast picking, self.id_to_node); reuse the same mechanism
+        here to recover each triangle's real originating color from
+        self.id_to_color (populated by _tag/_tag_generated when each child
+        was itself first generated, before being merged away). If every
+        triangle resolves to the same color, this is a no-op (leaves
+        tri_colors None) -- the common single-material case pays no extra
+        cost and keeps following live color-theme changes for uncolored
+        geometry, same as before this existed."""
+        mesh = cb.body.to_mesh()
+        run_ids = mesh.run_original_id
+        # run_index counts flattened vertex corners (3 per triangle), not
+        # triangles -- e.g. a 302-triangle mesh's run_index might read
+        # [0, 138, 906], where 906 (> 302) only makes sense as 3*302.
+        run_idx = [i // 3 for i in mesh.run_index]
+        T = len(mesh.tri_verts)
+        if T == 0 or len(run_ids) <= 1:
+            return cb
+        per_run_color = [self.id_to_color.get(int(rid), cb.color) for rid in run_ids]
+        if len(set(per_run_color)) <= 1:
+            return cb
+        tri_colors = np.empty((T, 4), dtype=np.float32)
+        for i in range(len(run_idx) - 1):
+            s, e = int(run_idx[i]), min(int(run_idx[i + 1]), T)
+            if s < T:
+                tri_colors[s:e] = per_run_color[i] if per_run_color[i] is not None else _DEFAULT_GEOMETRY_COLOR
+        return replace(cb, tri_colors=tri_colors)
 
     @staticmethod
     def _split_by_role(bodies: list[ColoredBody]) -> tuple[list[ColoredBody], list[ColoredBody], list[ColoredBody], list[ColoredBody]]:

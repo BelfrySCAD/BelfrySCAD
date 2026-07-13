@@ -16,14 +16,17 @@ _VERT = """
 #version 330 core
 in vec3 in_position;
 in vec3 in_normal;
+in vec4 in_vcolor;
 uniform mat4 mvp;
 uniform mat4 model;
 out vec3 v_normal;
 out vec3 v_world_pos;
+out vec4 v_vcolor;
 void main() {
     vec4 world = model * vec4(in_position, 1.0);
     v_world_pos = world.xyz;
     v_normal = mat3(model) * in_normal;
+    v_vcolor = in_vcolor;
     gl_Position = mvp * vec4(in_position, 1.0);
 }
 """
@@ -32,6 +35,7 @@ _FRAG = """
 #version 330 core
 in vec3 v_normal;
 in vec3 v_world_pos;
+in vec4 v_vcolor;
 uniform vec4 object_color;
 uniform vec3 light_dir;
 uniform vec3 eye_pos;
@@ -49,7 +53,11 @@ void main() {
     vec3 L = normalize(light_dir);
     float diff_key  = max(dot(n, L), 0.0);
     float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
-    vec3 col = object_color.rgb;
+    // in_vcolor defaults to (1,1,1,1) for ordinary single-color bodies, so
+    // this multiply is a no-op there; multi-color CSG-merge bodies (see
+    // ColoredBody.tri_colors) bake their real per-triangle color into
+    // in_vcolor and use a neutral (1,1,1,1) object_color instead.
+    vec3 col = object_color.rgb * v_vcolor.rgb;
     vec3 lit = 0.35 * col
              + 0.50 * diff_key  * col
              + 0.20 * diff_fill * col;
@@ -59,7 +67,7 @@ void main() {
     float spec = pow(max(dot(n, H), 0.0), 64.0) * 0.5;
     lit += vec3(spec);
 
-    fragColor = vec4(lit, object_color.a);
+    fragColor = vec4(lit, object_color.a * v_vcolor.a);
 }
 """
 
@@ -392,7 +400,8 @@ class MeshBuffer:
                  edge_vbo: Optional[mgl.Buffer] = None,
                  edge_vao: Optional[mgl.VertexArray] = None,
                  flat_preview: bool = False,
-                 role: str = "normal"):
+                 role: str = "normal",
+                 uses_vertex_color: bool = False):
         self.ctx = ctx
         self.vbo = vbo
         self.ibo = ibo
@@ -413,6 +422,13 @@ class MeshBuffer:
         self.edge_vao = edge_vao
         self.flat_preview = flat_preview
         self.role = role
+        # True for a buffer built from ColoredBody.tri_colors (a multi-color
+        # CSG merge) -- its per-vertex color already carries the real,
+        # resolved RGBA, so paint() must force the object_color uniform's
+        # alpha to 1.0 (a pure multiplicative identity) rather than letting
+        # the buf.color bucketing value (a dummy opaque/translucent marker,
+        # see _upload_body) leak into the actual blend.
+        self.uses_vertex_color = uses_vertex_color
 
 
 class LineBuffer:
@@ -518,9 +534,7 @@ class SceneRenderer:
         for cb in bodies:
             if cb.body.is_empty():
                 continue
-            buf = self._upload_body(cb)
-            if buf:
-                self._buffers.append(buf)
+            self._buffers.extend(self._upload_body(cb))
 
     def _clear_buffers(self):
         for buf in self._buffers:
@@ -534,18 +548,22 @@ class SceneRenderer:
                 buf.edge_vbo.release()
         self._buffers.clear()
 
-    def _upload_body(self, cb: ColoredBody) -> Optional[MeshBuffer]:
+    def _upload_body(self, cb: ColoredBody) -> list[MeshBuffer]:
         mesh = cb.body.to_mesh()
         verts = np.array(mesh.vert_properties, dtype=np.float32)[:, :3]
         tris = np.array(mesh.tri_verts, dtype=np.int32)
 
         if len(verts) == 0 or len(tris) == 0:
-            return None
+            return []
 
         T = len(tris)
 
         run_ids = np.array(mesh.run_original_id, dtype=np.int32)
-        run_idx = np.array(mesh.run_index, dtype=np.int32)
+        # run_index counts flattened vertex corners (3 per triangle), not
+        # triangles -- dividing by 3 was missing here, which misattributed
+        # triangles near a CSG-merge run boundary to the wrong original ID
+        # (and therefore the wrong AST node for ray-cast picking).
+        run_idx = np.array(mesh.run_index, dtype=np.int32) // 3
         tri_ids = np.zeros(T, dtype=np.int32)
         for i in range(len(run_idx) - 1):
             s, e = int(run_idx[i]), min(int(run_idx[i + 1]), T)
@@ -556,6 +574,57 @@ class SceneRenderer:
         v1 = verts[tris[:, 1]]
         v2 = verts[tris[:, 2]]
 
+        # cb.tri_colors (see Evaluator._attach_tri_colors) is set only when a
+        # real boolean CSG merge combined children resolving to more than one
+        # distinct color -- e.g. union()-ing an opaque cube with a
+        # translucent sphere. That single ColoredBody's triangles can now
+        # span both an opaque and a translucent alpha, which the renderer's
+        # opaque/translucent passes need as two separate buffers; ordinary
+        # (single-color) bodies skip all of this and upload exactly as
+        # before, one buffer, real color resolved live off buf.color at
+        # draw time.
+        if cb.tri_colors is None:
+            return [self._make_mesh_buffer(v0, v1, v2, tri_ids, None, cb.color,
+                                           cb.flat_preview, cb.role, uses_vertex_color=False)]
+
+        alpha = cb.tri_colors[:, 3]
+        opaque_mask = alpha >= 1.0
+        buffers = []
+        if opaque_mask.any():
+            m = opaque_mask
+            buffers.append(self._make_mesh_buffer(
+                v0[m], v1[m], v2[m], tri_ids[m], cb.tri_colors[m],
+                (1.0, 1.0, 1.0, 1.0), cb.flat_preview, cb.role, uses_vertex_color=True))
+        if (~opaque_mask).any():
+            m = ~opaque_mask
+            buffers.append(self._make_mesh_buffer(
+                v0[m], v1[m], v2[m], tri_ids[m], cb.tri_colors[m],
+                (1.0, 1.0, 1.0, 0.5), cb.flat_preview, cb.role, uses_vertex_color=True))
+        # Selection/drag-highlight (is_selected, in paint()) and ray_cast()'s
+        # returned ID both key off MeshBuffer.original_ids -- splitting one
+        # merged body into two buffers must not let selecting/dragging one
+        # half (e.g. the opaque cube part of a union) leave the other half
+        # (the translucent dome part) behind. Both buffers share the full,
+        # unsplit ID set so either one being "selected" moves/highlights the
+        # whole original body together, matching pre-split behavior.
+        if len(buffers) > 1:
+            full_ids = set(int(x) for x in tri_ids)
+            for buf in buffers:
+                buf.original_ids = full_ids
+        return buffers
+
+    def _make_mesh_buffer(self, v0: np.ndarray, v1: np.ndarray, v2: np.ndarray,
+                          tri_ids: np.ndarray, tri_colors: Optional[np.ndarray],
+                          color: Optional[tuple], flat_preview: bool, role: str,
+                          uses_vertex_color: bool) -> MeshBuffer:
+        """Builds one MeshBuffer from an already-selected subset of a body's
+        triangles (v0/v1/v2/tri_ids all the same length, one row per
+        triangle). `color` is the uniform passed at draw time -- either the
+        body's real (possibly None, resolved live) color, or, when
+        `uses_vertex_color`, a dummy opaque(1.0)/translucent(<1.0) alpha
+        marker only used to route this buffer into the right render pass
+        (see SceneRenderer._paint_scene's Pass 1/1b bucketing)."""
+        T = len(v0)
         face_normals = np.cross(v1 - v0, v2 - v0)
         lengths = np.linalg.norm(face_normals, axis=1, keepdims=True)
         lengths = np.where(lengths == 0, 1, lengths)
@@ -563,19 +632,22 @@ class SceneRenderer:
 
         normals_per_corner = np.repeat(face_normals, 3, axis=0)
         positions_per_corner = np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3)
+        if tri_colors is None:
+            vcolor_per_corner = np.ones((3 * T, 4), dtype=np.float32)
+        else:
+            vcolor_per_corner = np.repeat(tri_colors.astype(np.float32), 3, axis=0)
 
         interleaved = np.concatenate(
-            [positions_per_corner, normals_per_corner], axis=1
+            [positions_per_corner, normals_per_corner, vcolor_per_corner], axis=1
         ).astype(np.float32)
 
         vbo = self._ctx.buffer(interleaved.tobytes())
         vao = self._ctx.vertex_array(
             self._prog,
-            [(vbo, "3f 3f", "in_position", "in_normal")],
+            [(vbo, "3f 3f 4f", "in_position", "in_normal", "in_vcolor")],
         )
 
         # Build edge line geometry: all 3 edges per triangle (full triangulation wireframe)
-        T = len(tris)
         ec = np.array([0.15, 0.15, 0.15], dtype=np.float32)
         starts = np.concatenate([v0, v1, v2], axis=0)   # (3T, 3)
         ends   = np.concatenate([v1, v2, v0], axis=0)   # (3T, 3)
@@ -589,14 +661,15 @@ class SceneRenderer:
             [(edge_vbo, "3f 3f", "in_position", "in_color")],
         )
 
-        # cb.color may be None (no explicit color() override) — kept as None
+        # color may be None (no explicit color() override) — kept as None
         # here rather than resolved now, so a later color-theme change is
         # picked up at draw time without needing to re-upload the mesh.
-        return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), cb.color,
+        return MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,
                           cpu_v0=v0.copy(), cpu_v1=v1.copy(), cpu_v2=v2.copy(),
                           program=self._prog,
                           tri_ids=tri_ids, edge_vbo=edge_vbo, edge_vao=edge_vao,
-                          flat_preview=cb.flat_preview, role=cb.role)
+                          flat_preview=flat_preview, role=role,
+                          uses_vertex_color=uses_vertex_color)
 
     # ------------------------------------------------------------------
     # Generic raw-buffer upload API — for data viewers displaying arbitrary
@@ -896,7 +969,12 @@ class SceneRenderer:
             for buf, buf_model, color in translucent:
                 self._prog["model"].write(buf_model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
-                self._prog["object_color"].value = color
+                # uses_vertex_color buffers carry their real per-triangle
+                # alpha in in_vcolor.a already -- color[3] here is just a
+                # dummy <1.0 marker used to route the buffer into this pass,
+                # and must not also multiply into the real alpha.
+                uniform_color = (*color[:3], 1.0) if buf.uses_vertex_color else color
+                self._prog["object_color"].value = uniform_color
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
@@ -1245,15 +1323,19 @@ class SceneRenderer:
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
         if self.selected_id is None:
             return None
-        for buf in self._buffers:
-            if self.selected_id in buf.original_ids:
-                all_v = np.vstack([buf.cpu_v0, buf.cpu_v1, buf.cpu_v2])
-                bb_min = all_v.min(axis=0)
-                bb_max = all_v.max(axis=0)
-                center = ((bb_min + bb_max) / 2).astype(np.float32)
-                extent = float(np.linalg.norm(bb_max - bb_min))
-                return center, extent
-        return None
+        # A multi-color CSG merge (see _upload_body) can split one body
+        # across two buffers sharing the same original_ids -- aggregate
+        # every matching buffer's vertices, not just the first, or the
+        # rotate/scale center would be computed from only part of the body.
+        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        if not matches:
+            return None
+        all_v = np.vstack([v for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
+        bb_min = all_v.min(axis=0)
+        bb_max = all_v.max(axis=0)
+        center = ((bb_min + bb_max) / 2).astype(np.float32)
+        extent = float(np.linalg.norm(bb_max - bb_min))
+        return center, extent
 
     def pick_gizmo_axis(self, px: float, py: float, w: int, h: int) -> int:
         """Return which gizmo axis (0=X,1=Y,2=Z) is under the pixel, or -1."""
