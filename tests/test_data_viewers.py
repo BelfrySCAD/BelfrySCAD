@@ -28,6 +28,9 @@ from belfryscad.window.data_viewers import (
     _affine_reference_shape, _affine_shape_edges, _apply_affine,
     _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
     _key_nudge_magnitude, _key_nudge_delta,
+    _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
+    _v0_handle_indices, _snap_handles_to_node_type, _fit_merged_segment,
+    _owning_v0_index,
 )
 
 
@@ -552,3 +555,334 @@ class TestKeyNudgeDelta:
     def test_unrecognized_key_returns_none_regardless_of_magnitude(self):
         cam = Camera()
         assert _key_nudge_delta(cam, 2, Qt.Key.Key_A, magnitude=0.1) is None
+
+
+class TestClassifyNodeType:
+    """PathViewer's bezier node-type auto-detect classifier: "symmetric" if
+    both handles are opposite-direction and equidistant from v0, "same_angle"
+    if opposite-direction but different distance, else "disjointed"."""
+
+    def test_symmetric_equidistant_opposite(self):
+        v0 = np.array([0.0, 0.0, 0.0])
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array([-1.0, 0.0, 0.0])
+        assert _classify_node_type(v0, a, b) == "symmetric"
+
+    def test_same_angle_opposite_different_distance(self):
+        v0 = np.array([0.0, 0.0, 0.0])
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array([-2.0, 0.0, 0.0])
+        assert _classify_node_type(v0, a, b) == "same_angle"
+
+    def test_disjointed_not_opposite_direction(self):
+        v0 = np.array([0.0, 0.0, 0.0])
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array([0.0, 1.0, 0.0])
+        assert _classify_node_type(v0, a, b) == "disjointed"
+
+    def test_disjointed_missing_handle(self):
+        v0 = np.array([0.0, 0.0, 0.0])
+        a = np.array([1.0, 0.0, 0.0])
+        assert _classify_node_type(v0, None, a) == "disjointed"
+        assert _classify_node_type(v0, a, None) == "disjointed"
+        assert _classify_node_type(v0, None, None) == "disjointed"
+
+    def test_disjointed_zero_length_handle(self):
+        v0 = np.array([0.0, 0.0, 0.0])
+        a = np.array([0.0, 0.0, 0.0])  # coincident with v0
+        b = np.array([-1.0, 0.0, 0.0])
+        assert _classify_node_type(v0, a, b) == "disjointed"
+
+
+class TestRemapNodeTypes:
+    def test_shifts_surviving_indices(self):
+        result = _remap_node_types({0: "a", 3: "b", 6: "c"}, {0: 0, 6: 3})
+        assert result == {0: "a", 3: "c"}
+
+    def test_empty_map_drops_everything(self):
+        assert _remap_node_types({0: "a", 3: "b"}, {}) == {}
+
+    def test_empty_types_stays_empty(self):
+        assert _remap_node_types({}, {0: 0}) == {}
+
+
+class TestBezierLinkedMoves:
+    """Unified drag+nudge linking: dragging/nudging a v0 always
+    rigid-translates its adjacent handles; dragging/nudging a v1/v2 links
+    its opposite-side handle sibling per the owning v0's node type."""
+
+    # Open path, 2 segments: v0=0, C1=1, C2=2, v0=3, C1=4, C2=5, v0=6
+    OPEN_PTS = np.array([
+        [0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [2.0, -1.0, 0.0],
+        [3.0, 0.0, 0.0], [4.0, 1.0, 0.0], [5.0, -1.0, 0.0], [6.0, 0.0, 0.0],
+    ])
+
+    def test_v0_drag_rigidly_moves_both_neighbors(self):
+        new_pos = self.OPEN_PTS[3] + np.array([0.5, 0.5, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 3, new_pos, "disjointed")
+        moved = dict(moves)
+        assert set(moved) == {2, 3, 4}
+        delta = new_pos - self.OPEN_PTS[3]
+        assert np.allclose(moved[2], self.OPEN_PTS[2] + delta)
+        assert np.allclose(moved[4], self.OPEN_PTS[4] + delta)
+
+    def test_v0_at_open_path_start_has_only_forward_neighbor(self):
+        new_pos = self.OPEN_PTS[0] + np.array([1.0, 0.0, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 0, new_pos, "disjointed")
+        assert set(dict(moves)) == {0, 1}
+
+    def test_v0_at_open_path_end_has_only_preceding_neighbor(self):
+        new_pos = self.OPEN_PTS[6] + np.array([1.0, 0.0, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 6, new_pos, "disjointed")
+        assert set(dict(moves)) == {5, 6}
+
+    def test_v0_rigid_link_wraps_on_closed_path(self):
+        # Closed, 1 segment: v0=0, C1=1, C2=2 (wraps back to v0=0)
+        pts = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]])
+        new_pos = pts[0] + np.array([0.0, 1.0, 0.0])
+        moves = _bezier_linked_moves(pts, True, 0, new_pos, "disjointed")
+        assert set(dict(moves)) == {0, 1, 2}
+
+    def test_v1_symmetric_mirrors_new_distance(self):
+        new_v1 = np.array([4.5, 2.0, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 4, new_v1, "symmetric")
+        moved = dict(moves)
+        v0 = self.OPEN_PTS[3]
+        assert np.allclose(moved[2], v0 + (v0 - new_v1))
+
+    def test_v1_same_angle_preserves_partners_own_distance(self):
+        new_v1 = np.array([4.5, 2.0, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 4, new_v1, "same_angle")
+        moved = dict(moves)
+        v0 = self.OPEN_PTS[3]
+        partner_old = self.OPEN_PTS[2]
+        expected_dist = np.linalg.norm(partner_old - v0)
+        assert np.isclose(np.linalg.norm(moved[2] - v0), expected_dist)
+        # mirrored direction: (moved[2] - v0) should point opposite to (new_v1 - v0)
+        assert np.dot(moved[2] - v0, new_v1 - v0) < 0
+
+    def test_v1_disjointed_moves_only_itself(self):
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 4, np.array([4.5, 2.0, 0.0]), "disjointed")
+        assert set(dict(moves)) == {4}
+
+    def test_v1_at_open_path_start_has_no_partner(self):
+        # index 1 is the first segment's C1; its "p2" partner (index -1) doesn't exist
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 1, np.array([1.1, 1.1, 0.0]), "symmetric")
+        assert set(dict(moves)) == {1}
+
+    def test_v2_at_open_path_end_has_no_partner(self):
+        # index 5 is the last segment's C2; its "n1" partner (index 7) doesn't exist
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 5, np.array([5.1, -1.1, 0.0]), "symmetric")
+        assert set(dict(moves)) == {5}
+
+    def test_v2_symmetric_mirrors_through_next_v0(self):
+        new_v2 = np.array([2.5, -2.0, 0.0])
+        moves = _bezier_linked_moves(self.OPEN_PTS, False, 2, new_v2, "symmetric")
+        moved = dict(moves)
+        n0 = self.OPEN_PTS[3]  # v2's owning "next v0"
+        assert np.allclose(moved[4], n0 + (n0 - new_v2))
+
+    def test_partner_wraps_on_closed_path(self):
+        # Closed, 1 segment: v0=0, C1=1, C2=2 -- v1(idx1)'s partner is idx2.
+        pts = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]])
+        new_v1 = np.array([1.5, 1.5, 0.0])
+        moves = _bezier_linked_moves(pts, True, 1, new_v1, "symmetric")
+        assert set(dict(moves)) == {1, 2}
+
+
+class TestDecasteljauSplit:
+    """De Casteljau curve-preserving split, used by bezier-mode Add Vertex
+    -- the new on-curve vertex f must land exactly on the original curve,
+    and both resulting half-segments must retrace it exactly."""
+
+    P0 = np.array([0.0, 0.0, 0.0])
+    C1 = np.array([1.0, 2.0, 0.0])
+    C2 = np.array([3.0, 2.0, 0.0])
+    P3 = np.array([4.0, 0.0, 0.0])
+
+    @staticmethod
+    def _bernstein(p0, c1, c2, p3, t):
+        omt = 1 - t
+        return omt**3 * p0 + 3 * omt**2 * t * c1 + 3 * omt * t**2 * c2 + t**3 * p3
+
+    def test_f_lands_exactly_on_original_curve(self):
+        for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+            _, _, f, _, _ = _decasteljau_split(self.P0, self.C1, self.C2, self.P3, t)
+            assert np.allclose(f, self._bernstein(self.P0, self.C1, self.C2, self.P3, t))
+
+    def test_first_half_retraces_original_curve(self):
+        t_split = 0.5
+        a, d, f, e, c = _decasteljau_split(self.P0, self.C1, self.C2, self.P3, t_split)
+        for s in np.linspace(0.0, 1.0, 11):
+            got = self._bernstein(self.P0, a, d, f, s)
+            expected = self._bernstein(self.P0, self.C1, self.C2, self.P3, s * t_split)
+            assert np.allclose(got, expected, atol=1e-9)
+
+    def test_second_half_retraces_original_curve(self):
+        t_split = 0.5
+        a, d, f, e, c = _decasteljau_split(self.P0, self.C1, self.C2, self.P3, t_split)
+        for s in np.linspace(0.0, 1.0, 11):
+            got = self._bernstein(f, e, c, self.P3, s)
+            expected = self._bernstein(self.P0, self.C1, self.C2, self.P3, t_split + s * (1 - t_split))
+            assert np.allclose(got, expected, atol=1e-9)
+
+    def test_t_zero_degenerates_to_p0(self):
+        a, d, f, e, c = _decasteljau_split(self.P0, self.C1, self.C2, self.P3, 0.0)
+        assert np.allclose(a, self.P0)
+        assert np.allclose(d, self.P0)
+        assert np.allclose(f, self.P0)
+
+    def test_t_one_degenerates_to_p3(self):
+        a, d, f, e, c = _decasteljau_split(self.P0, self.C1, self.C2, self.P3, 1.0)
+        assert np.allclose(f, self.P3)
+        assert np.allclose(e, self.P3)
+        assert np.allclose(c, self.P3)
+
+
+class TestV0HandleIndices:
+    def test_open_path_interior_has_both(self):
+        assert _v0_handle_indices(3, 7, False) == (2, 4)
+
+    def test_open_path_start_has_no_preceding(self):
+        assert _v0_handle_indices(0, 7, False) == (None, 1)
+
+    def test_open_path_end_has_no_following(self):
+        assert _v0_handle_indices(6, 7, False) == (5, None)
+
+    def test_closed_path_wraps(self):
+        assert _v0_handle_indices(0, 6, True) == (5, 1)
+
+
+class TestSnapHandlesToNodeType:
+    """Setting a node type via the context menu immediately brings both
+    handles into line with it, rather than waiting for the next drag."""
+
+    V0 = np.array([0.0, 0.0, 0.0])
+    HANDLE_A = np.array([2.0, 1.0, 0.0])    # len ~2.236
+    HANDLE_B = np.array([-3.0, -0.5, 0.0])  # len ~3.041
+
+    def test_disjointed_returns_none(self):
+        assert _snap_handles_to_node_type(self.V0, self.HANDLE_A, self.HANDLE_B, "disjointed") is None
+
+    def test_missing_handle_returns_none(self):
+        assert _snap_handles_to_node_type(self.V0, self.HANDLE_A, None, "symmetric") is None
+        assert _snap_handles_to_node_type(self.V0, None, self.HANDLE_B, "symmetric") is None
+
+    def test_symmetric_averages_angle_and_distance(self):
+        new_a, new_b = _snap_handles_to_node_type(self.V0, self.HANDLE_A, self.HANDLE_B, "symmetric")
+        len_a, len_b = np.linalg.norm(new_a - self.V0), np.linalg.norm(new_b - self.V0)
+        assert np.isclose(len_a, len_b)
+        assert np.allclose((new_a - self.V0) + (new_b - self.V0), 0.0)
+
+    def test_same_angle_averages_angle_only_preserves_distances(self):
+        new_a, new_b = _snap_handles_to_node_type(self.V0, self.HANDLE_A, self.HANDLE_B, "same_angle")
+        assert np.isclose(np.linalg.norm(new_a - self.V0), np.linalg.norm(self.HANDLE_A - self.V0))
+        assert np.isclose(np.linalg.norm(new_b - self.V0), np.linalg.norm(self.HANDLE_B - self.V0))
+        dir_a = (new_a - self.V0) / np.linalg.norm(new_a - self.V0)
+        dir_b = (new_b - self.V0) / np.linalg.norm(new_b - self.V0)
+        assert np.allclose(dir_a + dir_b, 0.0)
+
+    def test_already_opposite_pair_is_idempotent(self):
+        new_a, new_b = _snap_handles_to_node_type(self.V0, self.HANDLE_A, self.HANDLE_B, "symmetric")
+        new_a2, new_b2 = _snap_handles_to_node_type(self.V0, new_a, new_b, "symmetric")
+        assert np.allclose(new_a2, new_a)
+        assert np.allclose(new_b2, new_b)
+
+    def test_zero_length_handle_returns_none(self):
+        assert _snap_handles_to_node_type(self.V0, self.V0.copy(), self.HANDLE_B, "symmetric") is None
+
+    def test_same_direction_handles_returns_none(self):
+        # Both handles on the same side of v0 -- opposing average is
+        # ill-defined (degenerate), so this must no-op rather than guess.
+        same_dir_b = np.array([4.0, 2.0, 0.0])  # same direction as HANDLE_A, different length
+        assert _snap_handles_to_node_type(self.V0, self.HANDLE_A, same_dir_b, "symmetric") is None
+
+
+class TestFitMergedSegment:
+    """Deleting an on-curve bezier vertex merges its two adjacent segments
+    into one, least-squares fit to approximate the shape of both."""
+
+    @staticmethod
+    def _bernstein(p0, c1, c2, p3, t):
+        omt = 1 - t
+        return omt**3 * p0 + 3 * omt**2 * t * c1 + 3 * omt * t**2 * c2 + t**3 * p3
+
+    def test_exact_recovery_when_segments_came_from_one_cubic(self):
+        # Split a single cubic in two (De Casteljau), then fit a merged
+        # segment back from the two halves -- since an exact single-cubic
+        # representation exists, least-squares must recover it exactly.
+        p0 = np.array([0.0, 0.0, 0.0])
+        orig_c1 = np.array([1.0, 3.0, 0.0])
+        orig_c2 = np.array([4.0, 3.0, 0.0])
+        p3 = np.array([5.0, 0.0, 0.0])
+        a, d, f, e, c = _decasteljau_split(p0, orig_c1, orig_c2, p3, 0.5)
+        new_c1, new_c2 = _fit_merged_segment(p0, a, d, f, e, c, p3, samples=64)
+        assert np.allclose(new_c1, orig_c1, atol=1e-6)
+        assert np.allclose(new_c2, orig_c2, atol=1e-6)
+
+    def test_fit_beats_naive_outer_handle_fallback(self):
+        # Two segments that DON'T come from one cubic -- the least-squares
+        # fit should still approximate the combined curve much better than
+        # just keeping the two outer (unrelated) handles unchanged.
+        p0 = np.array([0.0, 0.0, 0.0])
+        c1 = np.array([1.0, 2.0, 0.0])
+        c2 = np.array([2.0, 2.0, 0.0])
+        v0 = np.array([3.0, 0.0, 0.0])
+        c3 = np.array([4.0, -2.0, 0.0])
+        c4 = np.array([5.0, -2.0, 0.0])
+        p3 = np.array([6.0, 0.0, 0.0])
+        new_c1, new_c2 = _fit_merged_segment(p0, c1, c2, v0, c3, c4, p3)
+
+        def orig_curve(t):
+            return (self._bernstein(p0, c1, c2, v0, t * 2) if t <= 0.5
+                    else self._bernstein(v0, c3, c4, p3, (t - 0.5) * 2))
+
+        ts = np.linspace(0.0, 1.0, 50)
+        fit_resid = sum(np.linalg.norm(self._bernstein(p0, new_c1, new_c2, p3, t) - orig_curve(t)) ** 2 for t in ts)
+        naive_resid = sum(np.linalg.norm(self._bernstein(p0, c1, c4, p3, t) - orig_curve(t)) ** 2 for t in ts)
+        assert fit_resid < naive_resid
+
+    def test_endpoints_unchanged(self):
+        p0 = np.array([0.0, 0.0, 0.0])
+        c1 = np.array([1.0, 2.0, 0.0])
+        c2 = np.array([2.0, 2.0, 0.0])
+        v0 = np.array([3.0, 0.0, 0.0])
+        c3 = np.array([4.0, -2.0, 0.0])
+        c4 = np.array([5.0, -2.0, 0.0])
+        p3 = np.array([6.0, 0.0, 0.0])
+        new_c1, new_c2 = _fit_merged_segment(p0, c1, c2, v0, c3, c4, p3)
+        # The fitted segment must still start at p0 and end at p3 exactly
+        # (endpoints are never solved for, only C1/C2).
+        assert np.allclose(self._bernstein(p0, new_c1, new_c2, p3, 0.0), p0)
+        assert np.allclose(self._bernstein(p0, new_c1, new_c2, p3, 1.0), p3)
+
+
+class TestOwningV0Index:
+    """Regression coverage for a real bug: the control point *before* an
+    on-curve vertex (v2, idx % 3 == 2) belongs to the *following* v0 for
+    node-type/linking purposes, not the v0 its own segment starts from --
+    a caller computing this via a uniform `idx - idx % 3` formula (correct
+    for v0 and v1, wrong for v2) silently looked up the wrong v0's type,
+    making a v2 drag always behave as "disjointed" regardless of its
+    actual owning v0's type."""
+
+    # Open path, 2 segments: v0=0, C1=1, C2=2, v0=3, C1=4, C2=5, v0=6
+    N = 7
+
+    def test_v0_owns_itself(self):
+        assert _owning_v0_index(0, self.N, False) == 0
+        assert _owning_v0_index(3, self.N, False) == 3
+
+    def test_v1_owned_by_preceding_v0(self):
+        assert _owning_v0_index(1, self.N, False) == 0
+        assert _owning_v0_index(4, self.N, False) == 3
+
+    def test_v2_owned_by_following_v0_not_preceding(self):
+        # This is the exact case that was broken: idx=2's naive
+        # `idx - idx % 3` would give 0 (wrong); the correct owner is 3.
+        assert _owning_v0_index(2, self.N, False) == 3
+        assert _owning_v0_index(5, self.N, False) == 6
+
+    def test_v2_wraps_on_closed_path(self):
+        # Closed, 2 segments: v0=0, C1=1, C2=2, v0=3, C1=4, C2=5 (wraps to v0=0)
+        assert _owning_v0_index(5, 6, True) == 0
