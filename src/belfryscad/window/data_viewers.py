@@ -871,6 +871,140 @@ class ListViewer(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Profile Viewer
+# ---------------------------------------------------------------------------
+
+class _NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts by a numeric value instead of its
+    displayed text -- setSortingEnabled's default comparison is
+    lexical/string-based, which would sort "100.0" before "20.0". No
+    sortable-column precedent exists elsewhere in this file; this is the
+    minimal fix (one method), not a new dependency."""
+
+    def __init__(self, value: float, text: str):
+        super().__init__(text)
+        self._value = value
+        self.setFlags(self.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+    def __lt__(self, other):
+        if isinstance(other, _NumericTableWidgetItem):
+            return self._value < other._value
+        return super().__lt__(other)
+
+
+class ProfileViewer(QDialog):
+    """Sortable per-call-site profiling report from a "Render with
+    Profiling" run (see Evaluator's profile=True instrumentation).
+
+    Self time is the primary, always-correct metric (a frame's own code,
+    excluding children -- disjoint wall-clock slices, never overlapping).
+    Cumulative time is secondary and recursion-guarded: a call site that
+    recurses through itself only counts its outermost invocation's
+    elapsed time, since that already includes every nested invocation's
+    time -- see CallSiteProfile's docstring. Double-click or right-click
+    a row to jump to its call site or declaration in the editor."""
+
+    navigate_requested = Signal(str, int)  # (file_path, line)
+
+    _SELF_MS_COL = 5
+
+    def __init__(self, result: "ProfileResult", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Profile Report")
+        self.resize(900, 500)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._result = result
+        self._entries: list = []  # CallSiteProfile per row, parallel to table rows
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        resolve_ms = result.resolve_time * 1000
+        unattributed_pct = 100 * result.unattributed_time / result.resolve_time if result.resolve_time > 0 else 0.0
+        summary = QLabel(
+            f"Total: {result.total_time * 1000:.1f} ms   "
+            f"Resolve: {resolve_ms:.1f} ms   "
+            f"Generate: {result.generate_time * 1000:.1f} ms   "
+            f"Unattributed: {result.unattributed_time * 1000:.1f} ms ({unattributed_pct:.1f}% of resolve)"
+        )
+        layout.addWidget(summary)
+
+        self._table = QTableWidget()
+        self._table.setFont(QFont("Menlo", 11))
+        cols = ["Name", "Kind", "File", "Line", "Calls",
+                "Self (ms)", "Self %", "Cumulative (ms)", "Cumulative %"]
+        self._table.setColumnCount(len(cols))
+        self._table.setHorizontalHeaderLabels(cols)
+        self._table.verticalHeader().setVisible(False)
+        _style_table_headers(self._table)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._context_menu)
+        self._table.cellDoubleClicked.connect(self._goto_call_site)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._table)
+
+        self._populate(result)
+        self._table.setSortingEnabled(True)
+        self._table.sortItems(self._SELF_MS_COL, Qt.SortOrder.DescendingOrder)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.addStretch()
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self.close)
+        btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+    def _populate(self, result: "ProfileResult"):
+        resolve_time = result.resolve_time
+        self._entries = list(result.call_sites)
+        self._table.setRowCount(len(self._entries))
+        for row, site in enumerate(self._entries):
+            self_ms = site.self_time * 1000
+            cum_ms = site.cumulative_time * 1000
+            self_pct = 100 * site.self_time / resolve_time if resolve_time > 0 else 0.0
+            cum_pct = 100 * site.cumulative_time / resolve_time if resolve_time > 0 else 0.0
+            values = [
+                QTableWidgetItem(site.name),
+                QTableWidgetItem(site.kind),
+                QTableWidgetItem(site.call_origin),
+                _NumericTableWidgetItem(site.call_line, str(site.call_line)),
+                _NumericTableWidgetItem(site.call_count, str(site.call_count)),
+                _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
+                _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
+                _NumericTableWidgetItem(cum_ms, f"{cum_ms:.2f}"),
+                _NumericTableWidgetItem(cum_pct, f"{cum_pct:.1f}"),
+            ]
+            for col, item in enumerate(values):
+                if col < 3:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(row, col, item)
+
+    def _goto_call_site(self, row: int, _col: int):
+        if 0 <= row < len(self._entries):
+            site = self._entries[row]
+            self.navigate_requested.emit(site.call_origin, site.call_line)
+
+    def _context_menu(self, pos):
+        item = self._table.itemAt(pos)
+        if item is None:
+            return
+        row = item.row()
+        if not (0 <= row < len(self._entries)):
+            return
+        site = self._entries[row]
+
+        menu = QMenu(self)
+        menu.addAction("Go to Call Site", lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
+        menu.addAction("Go to Declaration", lambda: self.navigate_requested.emit(site.decl_origin, site.decl_line))
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+# ---------------------------------------------------------------------------
 # Matrix Viewer
 # ---------------------------------------------------------------------------
 

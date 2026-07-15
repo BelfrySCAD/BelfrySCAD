@@ -155,6 +155,33 @@ Since resolve never depends on any node's generated bodies, `union`/`difference`
 
 `flatten_csg_tree(tree)` concatenates each **top-level** node's `.bodies` (not recursing into `.children` — a parent's `.bodies` already is the fully-combined result). It reproduces `evaluate()`'s returned body list exactly for any script without a top-level `!`; `evaluate()`'s own show_only filter (see above) runs once, after `generate_tree()` returns, and is not itself represented by any tree node — so for scripts using top-level `!`, `evaluate()`'s result is `[b for b in flatten_csg_tree(tree) if b.role in ("show_only", "highlight")]`.
 
+## Profiling
+
+`Evaluator(..., profile=True)` turns on an opt-in, per-call-site timing profiler exposed as `evaluator.profile_result` (a `ProfileResult`, `None` unless `profile=True`) after `evaluate()` returns. Triggered from the UI via Design → "Render with Profiling" (no keyboard shortcut — F6/Shift+F6 are already Render/Debug), viewed via Design → "Show Profile Report…" (`ProfileViewer`, `src/belfryscad/window/data_viewers.py`) — see `docs/editor.md`.
+
+**Why not `cProfile`**: an earlier performance investigation on this evaluator measured that `cProfile`'s per-call tracing overhead inflates real wall-clock time by roughly 3x on a BOSL2-heavy script (tens of millions of `_eval_expr` calls). Wrapping `cProfile.Profile()` around `evaluate()` and showing its numbers to a script author would both mislead (a real 17.5s render reporting ~60s) and misdirect (`cProfile`'s breakdown is by Python function — `_eval_user_function`, `_expr_add` — not by the OpenSCAD-level call site a script author actually wrote). Instead, the profiler is custom, lightweight instrumentation (`time.perf_counter()` around the existing `self._call_stack` push/pop pairs — see "Assignment execution order" above) with negligible overhead and numbers that track real wall-clock time closely.
+
+**Aggregation is per call site, not per declaration**: one `CallSiteProfile` per unique `(kind, name, call_origin, call_line)` — the exact source location that made the call — not per function/module *definition*. A script author can act on "this call at line 116 of my script cost 15s"; they generally can't edit a BOSL2 internal's own code. Repeated invocations of the same call expression (a loop body, recursion) aggregate into one entry (`call_count > 1`) for free, since the AST node — and thus its `Position` — is identical across those invocations.
+
+**Self time vs. cumulative time**: self time (a call's own code, excluding children) is always correct — computed via a small parallel "child time" accumulator stack (`Evaluator._profile_child_time`) that each frame's parent inherits on pop, so self-time slices are disjoint wall-clock spans that can never overlap or double-count. Cumulative time (elapsed including children, summed across a site's invocations) has one real hazard: a call site that recurses through itself would otherwise have its elapsed time re-added at every recursion depth, ballooning past total wall time. `Evaluator._profile_active` (a `set` of currently-live site keys) guards this: a recursive re-entry into an already-active site skips adding to that site's running `cumulative_time` — the outermost invocation's own `elapsed` already includes every nested invocation's time via the child-time propagation. Verified in `tests/test_evaluator.py::TestProfiling::test_recursive_function_not_double_counted`.
+
+**Scope**: only user-declared modules/functions get their own `CallSiteProfile` row. Native builtins (`cube`, `translate`, `hull`, …) aren't broken out individually — their argument-expression cost is already attributed to whichever user call site is currently executing when `_eval_expr` evaluates it, since builtins never get their own `_call_stack` frame. `ProfileResult.generate_time` is a single wall-clock bracket around the one `generate_tree()` call (all actual Manifold work). `ProfileResult.unattributed_time` (`resolve_time - sum(self_time for every call site)`) covers top-level script code and anything else not inside a user call, so a UI can show percentages that always add to 100% — proven by `test_self_times_plus_unattributed_equal_resolve_time` as an exact arithmetic identity, not a timing-dependent assertion.
+
+Real example — profiling `~/Documents/OpenSCAD/Anklet.scad` (the same BOSL2-heavy script used throughout the performance-investigation work referenced elsewhere in this doc):
+```
+real wall time: 18.719s
+resolve_time:   18.686s   (99.8% of total)
+generate_time:   0.031s   (0.2% of total)
+unattributed_time: 0.001s (0.0% of resolve)
+distinct call sites: 869
+
+  function _point_dist       regions.scad:815      calls=4032    self=8821.4ms  cum=12066.5ms
+  function select            regions.scad:828      calls=504008  self=3245.1ms  cum=3245.1ms
+  function is_finite         vectors.scad:51       calls=127019  self= 548.5ms  cum= 631.3ms
+  function offset            skin.scad:2532        calls=16      self= 334.8ms  cum=16803.6ms
+```
+Confirms the original motivating observation (TODO.md) almost exactly: essentially all time is in `resolve` (expression evaluation), not `generate` (Manifold). `offset()` is the clearest example of why cumulative time matters alongside self time: its own self-time (334.8ms) looks unremarkable, but its cumulative time (16.8s) accounts for nearly the entire render — the report correctly flags it as the call to reconsider, even though its *own* code is cheap.
+
 ## 2D geometry
 
 `ColoredBody` carries either a 3D `body: Manifold` or a 2D `section: CrossSection` (not both). 2D primitives (`circle`, `square`, `polygon`) return only `section`. `linear_extrude`/`rotate_extrude` consume 2D children via `_to_cross_section()` (unions all child sections) and return a 3D body. Booleans dispatch on whether children carry 3D bodies or 2D sections; `_combine()` handles mixed children — uses 3D bodies if any present, else unions sections.

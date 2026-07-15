@@ -671,6 +671,129 @@ class TestManifoldCache:
 
 
 # ---------------------------------------------------------------------------
+# Profiling (Evaluator(profile=True))
+# ---------------------------------------------------------------------------
+
+class TestProfiling:
+    """Correctness safety net for the opt-in per-call-site profiler (see
+    CallSiteProfile/ProfileResult and Evaluator._profile_enter/_profile_exit).
+    Timing-based assertions (everywhere except test_self_times_plus_
+    unattributed_equal_resolve_time, which is a pure arithmetic identity)
+    use large workloads and loose, order-of-magnitude bounds rather than
+    tight tolerances, since wall-clock measurements are inherently noisier
+    than the rest of this suite -- the goal is to catch a broken self/
+    cumulative-time *relationship*, not to pin down exact numbers."""
+
+    @staticmethod
+    def _profile(src: str):
+        nodes = getASTfromString(src, include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator(profile=True)
+        ev.evaluate(nodes, root_scope)
+        return ev.profile_result
+
+    @staticmethod
+    def _site(result, name: str, call_count: int | None = None):
+        """The one CallSiteProfile matching `name` (optionally also
+        call_count, to disambiguate a function's outer vs. recursive
+        call site when both share a name)."""
+        matches = [s for s in result.call_sites if s.name == name
+                   and (call_count is None or s.call_count == call_count)]
+        assert len(matches) == 1, f"expected exactly one match for {name!r}/{call_count!r}, got {matches}"
+        return matches[0]
+
+    def test_profiling_off_by_default(self):
+        # Plain Evaluator() (no profile=) must leave profile_result unset --
+        # the single most important regression guard for "zero overhead
+        # when off" (every profiling code path is behind `if self._profiling`).
+        nodes = getASTfromString("cube(1);", include_comments=False)
+        root_scope = build_scopes(nodes)
+        ev = Evaluator()
+        ev.evaluate(nodes, root_scope)
+        assert ev.profile_result is None
+
+    def test_single_call_site_self_time(self):
+        src = """
+        function busy(n) = len([for (i=[0:n]) i*i]);
+        x = busy(20000);
+        echo(x);
+        """
+        result = self._profile(src)
+        site = self._site(result, "busy")
+        assert site.call_count == 1
+        assert site.self_time > 0
+        # No nested user calls inside busy() -- cumulative ~= self.
+        assert site.cumulative_time == pytest.approx(site.self_time, rel=0.2)
+
+    def test_same_site_looped_aggregates(self):
+        src = """
+        function busy(n) = len([for (i=[0:n]) i*i]);
+        for (i=[0:9]) echo(busy(2000));
+        """
+        result = self._profile(src)
+        site = self._site(result, "busy")
+        assert site.call_count == 10
+        assert site.self_time > 0
+
+    def test_nested_distinct_call_sites_self_vs_cumulative(self):
+        src = """
+        function inner(n) = len([for (i=[0:n]) i*i]);
+        function outer() = inner(20000);
+        echo(outer());
+        """
+        result = self._profile(src)
+        outer = self._site(result, "outer")
+        inner = self._site(result, "inner")
+        assert outer.self_time < outer.cumulative_time
+        assert outer.cumulative_time >= inner.cumulative_time
+
+    def test_recursive_function_not_double_counted(self):
+        src = """
+        function rec(n) = n <= 0 ? len([for (i=[0:300]) i*i]) : len([for (i=[0:300]) i*i]) + rec(n-1);
+        x = rec(30);
+        echo(x);
+        """
+        result = self._profile(src)
+        # The recursive call site (rec(n-1), inside rec's own body) --
+        # disambiguate from the one-off top-level `x = rec(30)` call site,
+        # which shares the name "rec" but has call_count == 1.
+        recursive_site = self._site(result, "rec", call_count=30)
+        # Without the recursion guard, summing every nested invocation's
+        # elapsed time would make cumulative_time balloon to roughly a
+        # triangular-number multiple of the real wall time -- this bounds
+        # it to (approximately) the real resolve time instead.
+        assert recursive_site.cumulative_time <= result.resolve_time * 1.05
+
+    def test_dominant_children_low_self_time(self):
+        src = """
+        function inner(n) = len([for (i=[0:n]) i*i]);
+        function outer() = inner(150000);
+        echo(outer());
+        """
+        result = self._profile(src)
+        outer = self._site(result, "outer")
+        inner = self._site(result, "inner")
+        # outer's own work is a single call dispatch; inner's is a large
+        # loop -- a big size gap gives headroom against transient
+        # scheduling noise on a fast machine (a genuine self/cumulative
+        # accounting bug would show outer near 50%+, not a small fraction).
+        assert outer.self_time < 0.3 * inner.self_time
+        assert outer.cumulative_time > 0.8 * result.resolve_time
+
+    def test_self_times_plus_unattributed_equal_resolve_time(self):
+        src = """
+        function inner(n) = len([for (i=[0:n]) i*i]);
+        function outer() = inner(5000);
+        module box(s) { cube(s); }
+        box(3);
+        echo(outer());
+        """
+        result = self._profile(src)
+        self_sum = sum(s.self_time for s in result.call_sites)
+        assert result.resolve_time == pytest.approx(self_sum + result.unattributed_time, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # Built-in functions
 # ---------------------------------------------------------------------------
 

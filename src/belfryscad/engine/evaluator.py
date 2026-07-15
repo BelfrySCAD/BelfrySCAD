@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import random
 import threading
+import time
 from itertools import product as _product
 from pathlib import Path
 from typing import Any, Optional
@@ -1648,6 +1649,43 @@ class CSGNode:
     uncacheable: bool = False
 
 
+@dataclass
+class CallSiteProfile:
+    """Aggregated profiling data for one *call site* -- a specific source
+    location that calls a specific user module/function -- not one
+    declaration. Two different calls to the same function get separate
+    entries; the same call expression re-executed many times (a loop body,
+    recursion) aggregates into one entry with call_count > 1, since the
+    AST node (and thus its Position) is identical across those
+    invocations. See Evaluator's profile=True instrumentation and
+    docs/evaluator.md's "Profiling" section for the self/cumulative-time
+    accounting rules."""
+    kind: str            # "module" | "function"
+    name: str
+    call_origin: str     # call_pos.origin ('' for the main file)
+    call_line: int
+    decl_origin: str
+    decl_line: int
+    call_count: int = 0
+    self_time: float = 0.0        # seconds, own code only, never double-counted
+    cumulative_time: float = 0.0  # seconds, includes children; recursion-guarded
+
+
+@dataclass
+class ProfileResult:
+    """Whole-render profiling summary, built by Evaluator.evaluate() when
+    constructed with profile=True. unattributed_time covers top-level
+    script code and anything else not inside a user module/function call
+    (native builtins' own resolve work, mostly) -- resolve_time always
+    equals sum(s.self_time for s in call_sites) + unattributed_time, so a
+    UI can show percentages that honestly add to 100%."""
+    call_sites: list[CallSiteProfile]
+    resolve_time: float
+    generate_time: float
+    total_time: float
+    unattributed_time: float
+
+
 # Thin extrusion height used to display top-level 2D results (e.g. `circle();`)
 # in the 3D viewport — the renderer/exporter only know how to handle Manifold
 # meshes, and real OpenSCAD's flat 2D preview has no Manifold equivalent.
@@ -1959,7 +1997,7 @@ class EvalContext:
 
 class Evaluator:
     def __init__(self, echo_fn=None, debug_hook=None, error_break_fn=None, return_hook=None,
-                 manifold_cache: "ManifoldCache | None" = None):
+                 manifold_cache: "ManifoldCache | None" = None, profile: bool = False):
         self.id_to_node: dict[int, ASTNode] = {}
         self.id_to_color: dict[int, Optional[tuple]] = {}
         self.csg_tree: list[CSGNode] = []
@@ -1978,6 +2016,15 @@ class Evaluator:
         # declaration (never of a particular call) -- see
         # _has_dollar_param's docstring.
         self._decl_dollar_param: dict[int, bool] = {}
+        # Opt-in (False by default -- zero overhead, gated behind
+        # `if self._profiling:` at every call site) per-call-site timing.
+        # See CallSiteProfile/ProfileResult and _eval_user_module/
+        # _eval_user_function/_eval_function_literal's instrumentation.
+        self._profiling = profile
+        self._profile_sites: dict[tuple, CallSiteProfile] = {}
+        self._profile_active: set[tuple] = set()    # site_keys live on _call_stack (recursion guard)
+        self._profile_child_time: list[float] = []  # parallel aux stack to _call_stack
+        self.profile_result: "ProfileResult | None" = None
         # Every geometry-producing builtin kind (== CSGNode.kind) is
         # registered here (Phase 2, complete — see docs/evaluator.md "CSG
         # tree"). resolve_fn parses arguments and recursively resolves
@@ -2326,6 +2373,10 @@ class Evaluator:
         self._frame_ctxs.clear()
         self.csg_tree = []
         self._tree_stack = [self.csg_tree]
+        self._profile_sites = {}
+        self._profile_active = set()
+        self._profile_child_time = []
+        self.profile_result = None
         ctx = EvalContext(scope=root_scope)
         if viewport_params:
             ctx.dyn.update(viewport_params)
@@ -2333,9 +2384,23 @@ class Evaluator:
         # OpenSCAD executes all assignments before geometry in each scope.
         assignments = [n for n in nodes if isinstance(n, Assignment)]
         others = [n for n in nodes if not isinstance(n, Assignment)]
+        t_resolve_start = time.perf_counter() if self._profiling else 0.0
         for node in assignments + others:
             self._eval_statement(node, ctx)
+        t_resolve_end = time.perf_counter() if self._profiling else 0.0
         result = self.generate_tree(self.csg_tree)
+        t_generate_end = time.perf_counter() if self._profiling else 0.0
+        if self._profiling:
+            resolve_time = t_resolve_end - t_resolve_start
+            generate_time = t_generate_end - t_resolve_end
+            self_sum = sum(s.self_time for s in self._profile_sites.values())
+            self.profile_result = ProfileResult(
+                call_sites=list(self._profile_sites.values()),
+                resolve_time=resolve_time,
+                generate_time=generate_time,
+                total_time=resolve_time + generate_time,
+                unattributed_time=max(0.0, resolve_time - self_sum),
+            )
         # ! (show_only) modifier: if any body is show_only, display only those + highlights
         show_only = [b for b in result if b.role == "show_only"]
         if show_only:
@@ -2676,6 +2741,48 @@ class Evaluator:
         return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
                             children_caller_ctx=children_caller_ctx, share_dyn=share_dyn)
 
+    def _profile_enter(self, kind: str, name: str, call_pos, decl_pos):
+        """Push profiling state for a user module/function call about to
+        start -- shared by _eval_user_module/_eval_user_function/
+        _eval_function_literal's `if self._profiling:` blocks so the
+        timing/aggregation logic lives in one place, not copy-pasted
+        across all 3 call-stack push/pop sites. Returns a tuple to hand
+        back to _profile_exit on the matching pop."""
+        call_origin = getattr(call_pos, 'origin', None) or ''
+        call_line = getattr(call_pos, 'line', 0) if call_pos else 0
+        site_key = (kind, name, call_origin, call_line)
+        site = self._profile_sites.get(site_key)
+        if site is None:
+            site = CallSiteProfile(
+                kind=kind, name=name, call_origin=call_origin, call_line=call_line,
+                decl_origin=getattr(decl_pos, 'origin', None) or '',
+                decl_line=getattr(decl_pos, 'line', 0) if decl_pos else 0,
+            )
+            self._profile_sites[site_key] = site
+        site.call_count += 1
+        recursive_reentry = site_key in self._profile_active
+        if not recursive_reentry:
+            self._profile_active.add(site_key)
+        self._profile_child_time.append(0.0)
+        return site, site_key, recursive_reentry, time.perf_counter()
+
+    def _profile_exit(self, site: "CallSiteProfile", site_key: tuple, recursive_reentry: bool, t_start: float):
+        """Pop profiling state on the matching call-stack pop -- see
+        _profile_enter. Self time is unconditional (disjoint wall-clock
+        slices, never overlapping, so nothing to guard). Cumulative time
+        is skipped on a recursive re-entry: the outer invocation's own
+        elapsed already includes it, via the child-time propagation to
+        the parent frame below -- without this guard a self-recursive
+        call site's cumulative_time would balloon past total wall time."""
+        elapsed = time.perf_counter() - t_start
+        child_time = self._profile_child_time.pop()
+        site.self_time += elapsed - child_time
+        if not recursive_reentry:
+            site.cumulative_time += elapsed
+            self._profile_active.discard(site_key)
+        if self._profile_child_time:
+            self._profile_child_time[-1] += elapsed
+
     def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         # Bind parameters
         child_scope = getattr(decl, 'scope', None) or ctx.scope
@@ -2707,6 +2814,7 @@ class Evaluator:
         call_pos = getattr(call, 'position', None)
         decl_pos = getattr(decl, 'position', None)
         child_ctx.dyn["$parent_modules"] = sum(1 for e in self._call_stack if e[0] == "module")
+        prof = self._profile_enter("module", name, call_pos, decl_pos) if self._profiling else None
         self._call_stack.append(("module", name, call_pos, decl_pos))
         self._frame_ctxs.append(child_ctx)
         try:
@@ -2715,6 +2823,8 @@ class Evaluator:
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
+            if prof is not None:
+                self._profile_exit(*prof)
 
     def _bind_args(self, params, arguments, ctx: EvalContext) -> dict[str, Any]:
         result = {}
@@ -5474,6 +5584,7 @@ class Evaluator:
                 child_ctx.let[k] = v
         self._apply_defaults(params, child_ctx)
         pos = call_node.position if call_node is not None else None
+        prof = self._profile_enter("function", name, pos, decl.position) if self._profiling else None
         self._call_stack.append(("function", name, pos, decl.position))
         self._frame_ctxs.append(child_ctx)
         try:
@@ -5486,6 +5597,8 @@ class Evaluator:
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
+            if prof is not None:
+                self._profile_exit(*prof)
 
     def _eval_function_literal(self, func_node: FunctionLiteral, arguments, ctx: EvalContext, call_node=None, name: str | None = None) -> Any:
         params = func_node.parameters
@@ -5502,6 +5615,7 @@ class Evaluator:
         self._apply_defaults(params, child_ctx)
         pos = call_node.position if call_node is not None else None
         fn_name = name or "<function>"
+        prof = self._profile_enter("function", fn_name, pos, func_node.position) if self._profiling else None
         self._call_stack.append(("function", fn_name, pos, func_node.position))
         self._frame_ctxs.append(child_ctx)
         try:
@@ -5514,6 +5628,8 @@ class Evaluator:
         finally:
             self._call_stack.pop()
             self._frame_ctxs.pop()
+            if prof is not None:
+                self._profile_exit(*prof)
 
 
 _EXPR_DISPATCH: dict[type, callable] = {
