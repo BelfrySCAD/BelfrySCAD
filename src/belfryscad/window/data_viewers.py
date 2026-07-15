@@ -944,8 +944,14 @@ class ProfileViewer(QDialog):
         self._table.customContextMenuRequested.connect(self._context_menu)
         self._table.cellDoubleClicked.connect(self._goto_call_site)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # Interactive (the default), not Stretch -- Stretch fills available
+        # space but also disables user drag-resizing for that section
+        # entirely, which is the opposite of what these two variable-length
+        # text columns need. Just give them a wider starting width.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(0, 160)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(2, 220)
         layout.addWidget(self._table)
 
         self._populate(result)
