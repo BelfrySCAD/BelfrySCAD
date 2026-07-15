@@ -1161,6 +1161,61 @@ class TestUserFunctions:
 
 
 # ---------------------------------------------------------------------------
+# Default-parameter scoping: default expressions are evaluated lexically
+# against the function/module's own declaration scope, never the caller's,
+# and can't see the call's own sibling parameters either -- both verified
+# directly against real OpenSCAD (Applications/OpenSCAD.app). Regression
+# coverage for a bug where _apply_defaults evaluated defaults against the
+# caller's ctx, so a default reading a name the caller shadowed via let()
+# picked up the caller's value instead of the function's own lexical one.
+# ---------------------------------------------------------------------------
+
+class TestDefaultParamScoping:
+    def test_default_ignores_caller_let_shadow(self):
+        src = """
+        function f(x, y=k) = x + y;
+        k = 100;
+        function g() = let(k=1) f(1);
+        function h() = let(k=2) f(1);
+        echo(g());
+        echo(h());
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 101", "ECHO: 101"]
+
+    def test_default_cannot_see_sibling_param(self):
+        _, lines = run("function f(a, b=a*2) = a + b; echo(f(3));")
+        assert lines[0] == "WARNING: Ignoring unknown variable 'a' in file <string>, line 1"
+        assert lines[1] == "ECHO: undef"
+
+    def test_function_body_already_ignores_caller_let(self):
+        # Sanity check: the function BODY (not a default) already correctly
+        # resolves free variables lexically -- only defaults had the bug.
+        src = """
+        function f(x) = x + k;
+        k = 100;
+        function g() = let(k=1) f(1);
+        echo(g());
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 101"]
+
+    def test_module_default_ignores_caller_let_shadow(self):
+        src = """
+        module m(x, y=k) { echo(x + y); }
+        k = 100;
+        module g() { let(k=1) m(1); }
+        g();
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 101"]
+
+    def test_explicit_arg_bypasses_default(self):
+        _, lines = run("function f(x, y=k) = x + y; k=100; echo(f(1, 5));")
+        assert lines == ["ECHO: 6"]
+
+
+# ---------------------------------------------------------------------------
 # Control flow
 # ---------------------------------------------------------------------------
 
@@ -1624,6 +1679,50 @@ class TestLetBlocks:
         # Later bindings in the same let() can reference earlier ones.
         _, lines = run("echo(let(a=1, b=a+1) b);")
         assert lines == ["ECHO: 2"]
+
+
+class TestLetDollarVarScoping:
+    """$-prefixed let() bindings are special variables -- real OpenSCAD
+    scopes them dynamically, so they must stay visible to any function or
+    module called from inside the let, not just the let's own body.
+    Verified directly against real OpenSCAD (Applications/OpenSCAD.app).
+    Regression coverage for a bug where let() always wrote bindings into
+    the lexical .let scope, even for $-prefixed names, so a let($fn=...)
+    was invisible to anything it called."""
+
+    def test_expr_let_propagates_into_called_function(self):
+        src = """
+        function f() = $fn;
+        $fn = 10;
+        function g() = let($fn=99) f();
+        echo(g());
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 99"]
+
+    def test_statement_let_block_propagates_into_module_and_function(self):
+        src = """
+        module m() { echo($fn); }
+        function f() = $fn;
+        $fn = 10;
+        let ($fn = 99) {
+            m();
+            echo(f());
+        }
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 99", "ECHO: 99"]
+
+    def test_let_dollar_var_does_not_leak_out(self):
+        src = """
+        function f() = $fn;
+        $fn = 10;
+        v1 = let($fn=55) f();
+        v2 = f();
+        echo(v1, v2);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: 55, 10"]
 
 
 # ---------------------------------------------------------------------------
@@ -2334,6 +2433,18 @@ class TestListCompLet:
         # the original bug report: nested for with outer let binding
         _, lines = run("grid = [for(h=[0:2]) [let(b=h) for(a=[0:2]) a+b]]; echo(grid);")
         assert lines == ["ECHO: [[0, 1, 2], [1, 2, 3], [2, 3, 4]]"]
+
+    def test_dollar_var_let_propagates_into_called_function(self):
+        # $-prefixed let() bindings are dynamically scoped (see
+        # TestLetDollarVarScoping) -- same rule applies inside a list
+        # comprehension's let() clause. Verified against real OpenSCAD.
+        src = """
+        function f() = $fn;
+        $fn = 10;
+        echo([for (i=[0:1]) let($fn=99+i) f()]);
+        """
+        _, lines = run(src)
+        assert lines == ["ECHO: [99, 100]"]
 
 
 # ---------------------------------------------------------------------------
