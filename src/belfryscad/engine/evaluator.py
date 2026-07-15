@@ -1973,6 +1973,11 @@ class Evaluator:
         # CSGNode, to taint it (and its ancestors) as uncacheable. See
         # CSGNode.uncacheable.
         self._rands_call_count = 0
+        # id(decl)/id(func_node) -> whether any of its declared parameter
+        # names starts with '$'. A purely static property of the
+        # declaration (never of a particular call) -- see
+        # _has_dollar_param's docstring.
+        self._decl_dollar_param: dict[int, bool] = {}
         # Every geometry-producing builtin kind (== CSGNode.kind) is
         # registered here (Phase 2, complete — see docs/evaluator.md "CSG
         # tree"). resolve_fn parses arguments and recursively resolves
@@ -5432,6 +5437,22 @@ class Evaluator:
                         default_ctx = child_ctx.child_ctx(let={}, share_dyn=True)
                     let_dict[pname] = _eval(default, default_ctx)
 
+    def _has_dollar_param(self, decl_id: int, params) -> bool:
+        """Whether any of `params`' declared names starts with '$' --
+        memoized by declaration identity, since this is a purely static
+        property of the declaration, never of any particular call. Lets
+        _eval_user_function/_eval_function_literal skip the any(bound)
+        share_dyn check entirely for the overwhelming common case (no
+        $-param declared at all -- BOSL2 barely uses them): bound's keys
+        are always a subset of params' names, so a declaration with no
+        $-param can never produce a $ key in bound regardless of the call,
+        and share_dyn can just be True unconditionally."""
+        cached = self._decl_dollar_param.get(decl_id)
+        if cached is None:
+            cached = any(p.name.name[0] == '$' for p in params)
+            self._decl_dollar_param[decl_id] = cached
+        return cached
+
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
         params = decl.parameters or []
         bound = self._bind_args(params, arguments, ctx)
@@ -5444,7 +5465,7 @@ class Evaluator:
         # optimization: on a BOSL2-heavy script (Anklet.scad, ~1.1M user
         # function calls), context-creation machinery was ~9.6% of total
         # evaluate() time, and this is its single biggest piece.
-        share_dyn = not any(k[0] == '$' for k in bound)
+        share_dyn = True if not self._has_dollar_param(id(decl), params) else not any(k[0] == '$' for k in bound)
         child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope, share_dyn=share_dyn)
         for k, v in bound.items():
             if k[0] == '$':
@@ -5471,7 +5492,7 @@ class Evaluator:
         bound = self._bind_args(params, arguments, ctx)
         fn_scope = func_node.scope or ctx.scope
         # See _eval_user_function's matching comment -- same optimization.
-        share_dyn = not any(k[0] == '$' for k in bound)
+        share_dyn = True if not self._has_dollar_param(id(func_node), params) else not any(k[0] == '$' for k in bound)
         child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope, share_dyn=share_dyn)
         for k, v in bound.items():
             if k[0] == '$':
