@@ -907,7 +907,7 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _SELF_MS_COL = 5
+    _CUM_MS_COL = 7
 
     def __init__(self, result: "ProfileResult", parent=None):
         super().__init__(parent)
@@ -915,7 +915,6 @@ class ProfileViewer(QDialog):
         self.resize(900, 500)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._result = result
-        self._entries: list = []  # CallSiteProfile per row, parallel to table rows
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -956,7 +955,7 @@ class ProfileViewer(QDialog):
 
         self._populate(result)
         self._table.setSortingEnabled(True)
-        self._table.sortItems(self._SELF_MS_COL, Qt.SortOrder.DescendingOrder)
+        self._table.sortItems(self._CUM_MS_COL, Qt.SortOrder.DescendingOrder)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
@@ -968,9 +967,8 @@ class ProfileViewer(QDialog):
 
     def _populate(self, result: "ProfileResult"):
         resolve_time = result.resolve_time
-        self._entries = list(result.call_sites)
-        self._table.setRowCount(len(self._entries))
-        for row, site in enumerate(self._entries):
+        self._table.setRowCount(len(result.call_sites))
+        for row, site in enumerate(result.call_sites):
             self_ms = site.self_time * 1000
             cum_ms = site.cumulative_time * 1000
             self_pct = 100 * site.self_time / resolve_time if resolve_time > 0 else 0.0
@@ -990,20 +988,32 @@ class ProfileViewer(QDialog):
                 if col < 3:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
+            # setSortingEnabled(True) reorders the table's *visual* rows
+            # without touching self._entries, so a post-sort row index no
+            # longer matches self._entries[row] -- stash the site directly
+            # on the row's own item instead, so lookups stay correct no
+            # matter how the user has sorted the table (a real bug: this
+            # is the codebase's first sortable table, and the "index a
+            # parallel list by row" pattern every other viewer here uses
+            # only happens to work because none of their tables sort).
+            self._table.item(row, 0).setData(Qt.ItemDataRole.UserRole, site)
+
+    def _site_at_row(self, row: int) -> "CallSiteProfile | None":
+        item = self._table.item(row, 0)
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
 
     def _goto_call_site(self, row: int, _col: int):
-        if 0 <= row < len(self._entries):
-            site = self._entries[row]
+        site = self._site_at_row(row)
+        if site is not None:
             self.navigate_requested.emit(site.call_origin, site.call_line)
 
     def _context_menu(self, pos):
         item = self._table.itemAt(pos)
         if item is None:
             return
-        row = item.row()
-        if not (0 <= row < len(self._entries)):
+        site = self._site_at_row(item.row())
+        if site is None:
             return
-        site = self._entries[row]
 
         menu = QMenu(self)
         menu.addAction("Go to Call Site", lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
