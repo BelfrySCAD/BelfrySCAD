@@ -930,11 +930,20 @@ class ProfileViewer(QDialog):
         )
         layout.addWidget(summary)
 
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        self._search_mode = QComboBox()
+        self._search_mode.addItem("Contains")
+        self._search_mode.addItem("Starts With")
+        self._search_mode.addItem("Exact Match")
+        search_row.addWidget(self._search_mode)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search Name / Caller / Caller File…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._apply_search_filter)
-        layout.addWidget(self._search)
+        search_row.addWidget(self._search, 1)
+        layout.addLayout(search_row)
+        self._search_mode.currentIndexChanged.connect(self._apply_search_filter)
 
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
@@ -1012,11 +1021,19 @@ class ProfileViewer(QDialog):
         item = self._table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
 
+    def _text_matches(self, cell: str, text: str) -> bool:
+        mode = self._search_mode.currentText()
+        if mode == "Exact Match":
+            return cell == text
+        if mode == "Starts With":
+            return cell.startswith(text)
+        return text in cell  # "Contains"
+
     def _apply_search_filter(self, _=None):
         text = self._search.text().strip().lower()
         for row in range(self._table.rowCount()):
             match = not text or any(
-                (item := self._table.item(row, col)) is not None and text in item.text().lower()
+                (item := self._table.item(row, col)) is not None and self._text_matches(item.text().lower(), text)
                 for col in self._SEARCH_COLS
             )
             self._table.setRowHidden(row, not match)
@@ -1037,9 +1054,17 @@ class ProfileViewer(QDialog):
         menu = QMenu(self)
         menu.addAction("Go to Call Site", lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
         menu.addAction("Go to Declaration", lambda: self.navigate_requested.emit(site.decl_origin, site.decl_line))
-        menu.addAction("Filter by Name", lambda: self._search.setText(site.name))
-        menu.addAction("Filter by Caller", lambda: self._search.setText(site.caller_name))
+        menu.addAction("Filter by Name", lambda: self._filter_by(site.name))
+        menu.addAction("Filter by Caller", lambda: self._filter_by(site.caller_name))
         menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _filter_by(self, text: str):
+        """Used by the "Filter by Name"/"Filter by Caller" context menu
+        actions -- an exact match, since the text comes from a real
+        site's own name/caller_name rather than something the user is
+        still typing."""
+        self._search_mode.setCurrentText("Exact Match")
+        self._search.setText(text)
 
 
 # ---------------------------------------------------------------------------
