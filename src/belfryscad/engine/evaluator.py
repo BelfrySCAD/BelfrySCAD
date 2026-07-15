@@ -1662,6 +1662,7 @@ class CallSiteProfile:
     accounting rules."""
     kind: str            # "module" | "function"
     name: str
+    caller_name: str     # enclosing module/function's name, or "<toplevel>"
     call_origin: str     # call_pos.origin ('' for the main file)
     call_line: int
     decl_origin: str
@@ -2753,8 +2754,16 @@ class Evaluator:
         site_key = (kind, name, call_origin, call_line)
         site = self._profile_sites.get(site_key)
         if site is None:
+            # self._call_stack still has the caller on top -- _profile_enter
+            # always runs before this call's own frame is pushed. A given
+            # call site is always lexically inside the same enclosing
+            # module/function body regardless of which invocation this is,
+            # so the caller name is a one-time-computed, structural property
+            # of the site, same as decl_origin/decl_line.
+            caller_name = self._call_stack[-1][1] if self._call_stack else "<toplevel>"
             site = CallSiteProfile(
-                kind=kind, name=name, call_origin=call_origin, call_line=call_line,
+                kind=kind, name=name, caller_name=caller_name,
+                call_origin=call_origin, call_line=call_line,
                 decl_origin=getattr(decl_pos, 'origin', None) or '',
                 decl_line=getattr(decl_pos, 'line', 0) if decl_pos else 0,
             )

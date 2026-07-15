@@ -907,7 +907,7 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _CUM_MS_COL = 7
+    _CUM_MS_COL = 8
 
     def __init__(self, result: "ProfileResult", parent=None):
         super().__init__(parent)
@@ -931,7 +931,7 @@ class ProfileViewer(QDialog):
 
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
-        cols = ["Name", "Kind", "File", "Line", "Calls",
+        cols = ["Name", "Caller", "Kind", "Caller File", "Line", "Calls",
                 "Self (ms)", "Self %", "Cumulative (ms)", "Cumulative %"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
@@ -949,8 +949,10 @@ class ProfileViewer(QDialog):
         # text columns need. Just give them a wider starting width.
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(0, 160)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(2, 220)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(1, 140)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(3, 220)
         layout.addWidget(self._table)
 
         self._populate(result)
@@ -975,6 +977,7 @@ class ProfileViewer(QDialog):
             cum_pct = 100 * site.cumulative_time / resolve_time if resolve_time > 0 else 0.0
             values = [
                 QTableWidgetItem(site.name),
+                QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
                 QTableWidgetItem(site.call_origin),
                 _NumericTableWidgetItem(site.call_line, str(site.call_line)),
@@ -985,7 +988,7 @@ class ProfileViewer(QDialog):
                 _NumericTableWidgetItem(cum_pct, f"{cum_pct:.1f}"),
             ]
             for col, item in enumerate(values):
-                if col < 3:
+                if col < 4:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
             # setSortingEnabled(True) reorders the table's *visual* rows
