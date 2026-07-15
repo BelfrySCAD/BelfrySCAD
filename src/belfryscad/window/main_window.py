@@ -254,9 +254,10 @@ class _RenderCallback(QObject):
             self._file_tab.root_scope = root_scope
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float, object, object)
-    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list):
-        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree)
+    @Slot(object, object, float, object, object, object)
+    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result):
+        self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
+                                 profile_result=profile_result)
 
     @Slot()
     def on_done(self):
@@ -270,17 +271,18 @@ class _RenderWorker(QObject):
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     ast_ready = Signal(object, object)   # (nodes, root_scope) — emitted after successful parse
-    finished = Signal(object, object, float, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree)
+    finished = Signal(object, object, float, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
-                 manifold_cache=None):
+                 manifold_cache=None, profile: bool = False):
         super().__init__()
         self._source = source
         self._file_path = file_path
         self._cancel = cancel
         self._viewport_params = viewport_params or {}
         self._manifold_cache = manifold_cache
+        self._profile = profile
 
     @Slot()
     def run(self):
@@ -347,7 +349,7 @@ class _RenderWorker(QObject):
             return
 
         # --- Evaluate ---
-        evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache)
+        evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache, profile=self._profile)
         try:
             bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
         except RecursionError:
@@ -387,7 +389,7 @@ class _RenderWorker(QObject):
                 if k in explicit:
                     v = dyn[k]
                     final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
-        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree)
+        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result)
 
 
 class _DetachedTabBar(QWidget):
@@ -499,6 +501,7 @@ class MainWindow(QMainWindow):
         self.id_to_node: dict = {}
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
+        self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
         from belfryscad.engine.evaluator import ManifoldCache
         self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
@@ -865,7 +868,9 @@ class MainWindow(QMainWindow):
         # Design
         design_menu = mb.addMenu("Design")
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
+        self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
+        self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
         self._add_action(design_menu, "Flush Caches", self._flush_caches)
         design_menu.addSeparator()
@@ -1580,7 +1585,7 @@ class MainWindow(QMainWindow):
             self._viewport.update()
         return changed
 
-    def _render(self, tab=None):
+    def _render(self, tab=None, profile: bool = False):
         if not isinstance(tab, QWidget):
             tab = self._current_tab()
         if not tab:
@@ -1604,7 +1609,8 @@ class MainWindow(QMainWindow):
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache)
+        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
+                               profile=profile)
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -1659,13 +1665,14 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
-                        final_vp: dict | None = None, csg_tree: list | None = None):
+                        final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
         self._last_csg_tree = csg_tree
+        self._last_profile_result = profile_result
         try:
             self._viewport.load_geometry(bodies)
         except Exception as e:
@@ -1729,6 +1736,17 @@ class MainWindow(QMainWindow):
             return
         from belfryscad.engine.evaluator import format_csg_tree
         self.log(format_csg_tree(self._last_csg_tree))
+
+    def _show_profile_report(self):
+        """Open a sortable per-call-site profiling report from the last
+        "Render with Profiling" run."""
+        if not self._last_profile_result:
+            self.log("No profile available — use Render with Profiling first.")
+            return
+        from belfryscad.window.data_viewers import ProfileViewer
+        viewer = ProfileViewer(self._last_profile_result, parent=self)
+        viewer.navigate_requested.connect(self._on_debug_frame_selected)
+        viewer.show()
 
     def _flush_caches(self):
         """Discard each tab's pre-calculated AST scope/node table, the

@@ -67,6 +67,8 @@ No live preview. Full Manifold CSG processing runs when:
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
 - A **file is saved** (`_write_file` triggers `_render` after writing)
 
+**"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See `docs/evaluator.md`'s "Profiling" section.
+
 The viewport always shows the last render's result; it stays static while the user edits code.
 
 ## V1 Scope Boundaries
@@ -87,4 +89,4 @@ Detailed implementation notes live in `docs/`:
 - **`docs/wysiwyg.md`** — Viewport camera controls, selection model, transform gizmos, value overlay, and source rewrite rules for drag-to-edit.
 - **`docs/debugger.md`** — `DebugSession` signals, call stack display, per-frame variable inspection, expression-level stepping, and `DebuggerPane` states.
 - **`docs/rendering.md`** — Threaded rendering (`_RenderWorker`/`_RenderCallback`), cancellation, and progress indicator.
-- **`docs/editor.md`** — Code editor features (Find/Replace, Indent Guides, Column Guide, Code Folding, Go to Definition), Undo/Redo, console output, keyboard shortcuts, preferences, GUI layout, menu structure, and data viewers (ListViewer, VNFViewer, PathViewer, GridViewer).
+- **`docs/editor.md`** — Code editor features (Find/Replace, Indent Guides, Column Guide, Code Folding, Go to Definition), Undo/Redo, console output, keyboard shortcuts, preferences, GUI layout, menu structure, and data viewers (ListViewer, VNFViewer, PathViewer, GridViewer, ProfileViewer).
