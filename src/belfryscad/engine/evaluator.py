@@ -1822,7 +1822,14 @@ def _canon(value):
     numpy arrays become tuples; dict keys are sorted by str(key) (params
     dicts commonly mix int positional-arg keys with str named-arg keys —
     e.g. `cube(10, center=true)` — sorting the raw keys directly would
-    raise TypeError comparing int to str)."""
+    raise TypeError comparing int to str). bool is tagged distinctly from
+    int/float: Python's `False == 0`/`True == 1` (and matching hashes) would
+    otherwise silently collide two OpenSCAD values of different type and
+    meaning -- found via a real corruption where force_list(chamfer=0, 4)
+    was served force_list(corner_flip=false, 4)'s cached [false,false,...]
+    result, and bool*number evaluates to undef here, not 0."""
+    if isinstance(value, bool):
+        return ("__bool__", value)
     if isinstance(value, np.ndarray):
         return ("__ndarray__", value.shape, tuple(value.flatten().tolist()))
     if isinstance(value, (list, tuple)):
@@ -1886,7 +1893,7 @@ class EvalContext:
         self.children_caller_ctx = children_caller_ctx
 
     def child_ctx(self, scope=None, dyn=None, let=None, color=None,
-                  children_nodes=None, children_caller_ctx=None):
+                  children_nodes=None, children_caller_ctx=None, share_dyn=False):
         """Like every other field here, an unspecified children_nodes/
         children_caller_ctx means "inherit from self" -- NOT "this call has
         no deferred children," which is what defaulting to []/None would
@@ -1901,13 +1908,23 @@ class EvalContext:
         (silently swallowing the children() call's own forwarded geometry)
         the moment _resolve_color's `ctx.child_ctx(color=rgba)` reset them —
         _resolve_transform never hit this, since it evaluates children
-        against the original ctx directly rather than deriving a new one."""
+        against the original ctx directly rather than deriving a new one.
+
+        `share_dyn`: only meaningful when `dyn` isn't given explicitly --
+        skips the `dict(self.dyn)`/`set(self.dyn_explicit)` copies and
+        shares the parent's own dict/set by reference instead. Only safe
+        when the caller can guarantee this new context's dyn/dyn_explicit
+        will never be mutated in place (a $-prefixed `Assignment` statement
+        is the only thing that does, and those only occur in module-body
+        statement evaluation, never in a bare function-call fast path) --
+        see _eval_user_function's share_dyn computation for the one place
+        this is actually exercised."""
         return EvalContext(
             scope=scope if scope is not None else self.scope,
-            dyn=dyn if dyn is not None else dict(self.dyn),
+            dyn=dyn if dyn is not None else (self.dyn if share_dyn else dict(self.dyn)),
             let=let if let is not None else dict(self.let),
             dyn_positions={} if dyn is None else self.dyn_positions,
-            dyn_explicit=set(self.dyn_explicit),
+            dyn_explicit=self.dyn_explicit if share_dyn else set(self.dyn_explicit),
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else self.children_nodes,
             children_caller_ctx=children_caller_ctx if children_caller_ctx is not None else self.children_caller_ctx,
@@ -1926,13 +1943,14 @@ class EvalContext:
         return ctx
 
     def call_ctx(self, scope=None, color=None,
-                 children_nodes=None, children_caller_ctx=None):
+                 children_nodes=None, children_caller_ctx=None, share_dyn=False):
+        """`share_dyn`: see child_ctx's docstring -- same safety contract."""
         return EvalContext(
             scope=scope if scope is not None else self.scope,
-            dyn=dict(self.dyn),
+            dyn=self.dyn if share_dyn else dict(self.dyn),
             let={},
             dyn_positions={},
-            dyn_explicit=set(self.dyn_explicit),
+            dyn_explicit=self.dyn_explicit if share_dyn else set(self.dyn_explicit),
             color=color if color is not None else self.color,
             children_nodes=children_nodes if children_nodes is not None else [],
             children_caller_ctx=children_caller_ctx,
@@ -2635,7 +2653,7 @@ class Evaluator:
         return outer.start_offset <= inner.start_offset and inner.end_offset <= outer.end_offset
 
     def _call_ctx_for(self, decl, ctx: EvalContext, scope=None,
-                      children_nodes=None, children_caller_ctx=None) -> EvalContext:
+                      children_nodes=None, children_caller_ctx=None, share_dyn=False) -> EvalContext:
         call_stack = self._call_stack
         if call_stack:
             decl_pos = decl.position
@@ -2649,9 +2667,9 @@ class Evaluator:
                         o_start, o_end = outer.start_offset, outer.end_offset
                         if (o_start, o_end) != (dp_start, dp_end) and o_start <= dp_start and dp_end <= o_end:
                             return ctx.child_ctx(scope=scope, children_nodes=children_nodes,
-                                                 children_caller_ctx=children_caller_ctx)
+                                                 children_caller_ctx=children_caller_ctx, share_dyn=share_dyn)
         return ctx.call_ctx(scope=scope, children_nodes=children_nodes,
-                            children_caller_ctx=children_caller_ctx)
+                            children_caller_ctx=children_caller_ctx, share_dyn=share_dyn)
 
     def _eval_user_module(self, decl: ModuleDeclaration, call: ModularCall, ctx: EvalContext) -> list[ColoredBody]:
         # Bind parameters
@@ -2678,7 +2696,7 @@ class Evaluator:
             else:
                 child_ctx.let[k] = v
         # Apply defaults for missing params
-        self._apply_defaults(params, child_ctx, ctx)
+        self._apply_defaults(params, child_ctx)
 
         name = call.name.name
         call_pos = getattr(call, 'position', None)
@@ -4487,7 +4505,9 @@ class Evaluator:
             if self._debugging:
                 self._check_debug(assign, ctx)
             v = self._eval_expr(assign.expr, ctx)
-            child_ctx.let[assign.name.name] = v
+            # dyn/dyn_explicit are already a fresh copy (plain child_ctx(),
+            # not let_child_ctx()) -- dyn_copied=True skips the redundant copy.
+            self._bind_let_name(child_ctx, assign.name.name, v, True)
         body = getattr(node, 'children', None) or getattr(node, 'body', None) or []
         return self._eval_children(body, child_ctx)
 
@@ -4744,13 +4764,38 @@ class Evaluator:
             return obj.get(member)
         return None
 
+    @staticmethod
+    def _bind_let_name(child_ctx: EvalContext, name: str, v, dyn_copied: bool) -> bool:
+        """Write one let()-clause binding into the right dict. $-prefixed
+        names are special variables -- real OpenSCAD scopes them
+        dynamically, so a let($fn=99) must remain visible to anything
+        called from inside the let, not just the let's own body -- so they
+        go into .dyn, not .let (verified against real OpenSCAD: a called
+        function/module reading $fn sees the let()'s override). Everything
+        else is an ordinary lexical binding, local to this let. child_ctx's
+        dyn/dyn_explicit may start out shared by reference with the parent
+        (see let_child_ctx) -- copy them on the first $-write so the
+        override doesn't leak back out once the let returns; dyn_copied
+        tracks whether that copy has already happened."""
+        if name[0] == '$':
+            if not dyn_copied:
+                child_ctx.dyn = dict(child_ctx.dyn)
+                child_ctx.dyn_explicit = set(child_ctx.dyn_explicit)
+                dyn_copied = True
+            child_ctx.dyn[name] = v
+            child_ctx.dyn_explicit.add(name)
+        else:
+            child_ctx.let[name] = v
+        return dyn_copied
+
     def _expr_let(self, node, ctx):
         child_ctx = ctx.let_child_ctx()
+        dyn_copied = False
         for assign in node.assignments:
             if self._debugging:
                 self._check_debug(assign, child_ctx)
             v = self._eval_expr(assign.expr, child_ctx)
-            child_ctx.let[assign.name.name] = v
+            dyn_copied = self._bind_let_name(child_ctx, assign.name.name, v, dyn_copied)
         return self._eval_expr(node.body, child_ctx)
 
     def _expr_echo(self, node, ctx):
@@ -4829,10 +4874,12 @@ class Evaluator:
                 self._expr_depth -= 1
             elif te is ListCompLet:
                 let_ctx = ctx.let_child_ctx()
+                dyn_copied = False
                 for assign in elem.assignments:
                     if self._debugging:
                         self._check_debug(assign, let_ctx)
-                    let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
+                    v = self._eval_expr(assign.expr, let_ctx)
+                    dyn_copied = self._bind_let_name(let_ctx, assign.name.name, v, dyn_copied)
                 result.extend(self._eval_list_comp_body(elem.body, let_ctx))
             elif te is ListCompEach:
                 self._expr_depth += 1
@@ -4872,10 +4919,12 @@ class Evaluator:
             return self._eval_listcomp_cfor(body, ctx)
         if t is ListCompLet:
             let_ctx = ctx.let_child_ctx()
+            dyn_copied = False
             for assign in body.assignments:
                 if self._debugging:
                     self._check_debug(assign, let_ctx)
-                let_ctx.let[assign.name.name] = self._eval_expr(assign.expr, let_ctx)
+                v = self._eval_expr(assign.expr, let_ctx)
+                dyn_copied = self._bind_let_name(let_ctx, assign.name.name, v, dyn_copied)
             return self._eval_list_comp_body(body.body, let_ctx)
         if t is ListCompIf:
             if self._debugging:
@@ -5356,26 +5405,53 @@ class Evaluator:
             }),
         })
 
-    def _apply_defaults(self, params, child_ctx: EvalContext, caller_ctx: EvalContext):
+    def _apply_defaults(self, params, child_ctx: EvalContext):
+        """Fill in any param not already bound in child_ctx.let from its
+        default expression. Matches real OpenSCAD (verified directly against
+        /Applications/OpenSCAD.app): a default expression is evaluated
+        purely lexically against the function/module's own declaration
+        scope (child_ctx.scope) -- it sees neither the caller's local
+        variables nor this same call's other (sibling) parameters, though
+        $-vars remain dynamically scoped as usual (child_ctx.dyn is already
+        the correctly-threaded dynamic environment, so it's reused as-is).
+        A default that reads a variable the caller shadows via let()
+        resolves to the function's own enclosing scope, not the caller's
+        shadow; a default referencing an earlier sibling parameter is an
+        unknown variable (warning + undef), not a forward reference."""
         let_dict = child_ctx.let
+        default_ctx = None
         _eval = self._eval_expr
         for param in params:
             pname = param.name.name
             if pname not in let_dict:
                 default = param.default
-                let_dict[pname] = _eval(default, caller_ctx) if default is not None else None
+                if default is None:
+                    let_dict[pname] = None
+                else:
+                    if default_ctx is None:
+                        default_ctx = child_ctx.child_ctx(let={}, share_dyn=True)
+                    let_dict[pname] = _eval(default, default_ctx)
 
     def _eval_user_function(self, name: str, decl: FunctionDeclaration, arguments, ctx: EvalContext, call_node=None) -> Any:
         params = decl.parameters or []
         bound = self._bind_args(params, arguments, ctx)
         fn_scope = decl.scope or ctx.scope
-        child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope)
+        # No $-prefixed argument was actually bound (the common case --
+        # _apply_defaults below only ever writes into .let, never .dyn, so
+        # bound's own keys are the complete set of things that could touch
+        # child_ctx.dyn) -- safe to skip copying dyn/dyn_explicit and share
+        # ctx's own dict/set by reference instead. A real, measured
+        # optimization: on a BOSL2-heavy script (Anklet.scad, ~1.1M user
+        # function calls), context-creation machinery was ~9.6% of total
+        # evaluate() time, and this is its single biggest piece.
+        share_dyn = not any(k[0] == '$' for k in bound)
+        child_ctx = self._call_ctx_for(decl, ctx, scope=fn_scope, share_dyn=share_dyn)
         for k, v in bound.items():
             if k[0] == '$':
                 child_ctx.dyn[k] = v
             else:
                 child_ctx.let[k] = v
-        self._apply_defaults(params, child_ctx, ctx)
+        self._apply_defaults(params, child_ctx)
         pos = call_node.position if call_node is not None else None
         self._call_stack.append(("function", name, pos, decl.position))
         self._frame_ctxs.append(child_ctx)
@@ -5394,13 +5470,15 @@ class Evaluator:
         params = func_node.parameters
         bound = self._bind_args(params, arguments, ctx)
         fn_scope = func_node.scope or ctx.scope
-        child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope)
+        # See _eval_user_function's matching comment -- same optimization.
+        share_dyn = not any(k[0] == '$' for k in bound)
+        child_ctx = self._call_ctx_for(func_node, ctx, scope=fn_scope, share_dyn=share_dyn)
         for k, v in bound.items():
             if k[0] == '$':
                 child_ctx.dyn[k] = v
             else:
                 child_ctx.let[k] = v
-        self._apply_defaults(params, child_ctx, ctx)
+        self._apply_defaults(params, child_ctx)
         pos = call_node.position if call_node is not None else None
         fn_name = name or "<function>"
         self._call_stack.append(("function", fn_name, pos, func_node.position))
