@@ -22,7 +22,7 @@ import manifold3d as m3d
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
-    QSplitter, QTabWidget, QWidget, QComboBox,
+    QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
@@ -907,7 +907,8 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _CUM_MS_COL = 8
+    _SELF_MS_COL = 6
+    _SEARCH_COLS = (0, 1, 3)  # Name, Caller, Caller File
 
     def __init__(self, result: "ProfileResult", parent=None):
         super().__init__(parent)
@@ -928,6 +929,12 @@ class ProfileViewer(QDialog):
             f"Unattributed: {result.unattributed_time * 1000:.1f} ms ({unattributed_pct:.1f}% of resolve)"
         )
         layout.addWidget(summary)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search Name / Caller / Caller File…")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._apply_search_filter)
+        layout.addWidget(self._search)
 
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
@@ -957,7 +964,7 @@ class ProfileViewer(QDialog):
 
         self._populate(result)
         self._table.setSortingEnabled(True)
-        self._table.sortItems(self._CUM_MS_COL, Qt.SortOrder.DescendingOrder)
+        self._table.sortItems(self._SELF_MS_COL, Qt.SortOrder.DescendingOrder)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
@@ -1005,6 +1012,15 @@ class ProfileViewer(QDialog):
         item = self._table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
 
+    def _apply_search_filter(self, _=None):
+        text = self._search.text().strip().lower()
+        for row in range(self._table.rowCount()):
+            match = not text or any(
+                (item := self._table.item(row, col)) is not None and text in item.text().lower()
+                for col in self._SEARCH_COLS
+            )
+            self._table.setRowHidden(row, not match)
+
     def _goto_call_site(self, row: int, _col: int):
         site = self._site_at_row(row)
         if site is not None:
@@ -1021,6 +1037,7 @@ class ProfileViewer(QDialog):
         menu = QMenu(self)
         menu.addAction("Go to Call Site", lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
         menu.addAction("Go to Declaration", lambda: self.navigate_requested.emit(site.decl_origin, site.decl_line))
+        menu.addAction("Show Caller Profiling", lambda: self._search.setText(site.caller_name))
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
 
