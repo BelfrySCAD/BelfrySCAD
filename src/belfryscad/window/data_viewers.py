@@ -885,6 +885,7 @@ class _NumericTableWidgetItem(QTableWidgetItem):
         super().__init__(text)
         self._value = value
         self.setFlags(self.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     def __lt__(self, other):
         if isinstance(other, _NumericTableWidgetItem):
