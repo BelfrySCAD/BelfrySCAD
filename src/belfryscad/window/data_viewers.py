@@ -1037,7 +1037,8 @@ class ProfileViewer(QDialog):
         menu = QMenu(self)
         menu.addAction("Go to Call Site", lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
         menu.addAction("Go to Declaration", lambda: self.navigate_requested.emit(site.decl_origin, site.decl_line))
-        menu.addAction("Show Caller Profiling", lambda: self._search.setText(site.caller_name))
+        menu.addAction("Filter by Name", lambda: self._search.setText(site.name))
+        menu.addAction("Filter by Caller", lambda: self._search.setText(site.caller_name))
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
 
