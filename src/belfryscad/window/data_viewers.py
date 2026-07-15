@@ -907,7 +907,7 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _SELF_MS_COL = 5
+    _CUM_MS_COL = 7
 
     def __init__(self, result: "ProfileResult", parent=None):
         super().__init__(parent)
@@ -955,7 +955,7 @@ class ProfileViewer(QDialog):
 
         self._populate(result)
         self._table.setSortingEnabled(True)
-        self._table.sortItems(self._SELF_MS_COL, Qt.SortOrder.DescendingOrder)
+        self._table.sortItems(self._CUM_MS_COL, Qt.SortOrder.DescendingOrder)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
