@@ -869,8 +869,9 @@ class MainWindow(QMainWindow):
         design_menu = mb.addMenu("Design")
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
-        self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
+        design_menu.addSeparator()
+        self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
         self._add_action(design_menu, "Flush Caches", self._flush_caches)
         design_menu.addSeparator()
@@ -1673,6 +1674,8 @@ class MainWindow(QMainWindow):
         self.id_to_node = id_to_node
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
+        if profile_result is not None:
+            self._show_profile_report()
         try:
             self._viewport.load_geometry(bodies)
         except Exception as e:
