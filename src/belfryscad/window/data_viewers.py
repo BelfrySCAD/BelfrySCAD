@@ -932,7 +932,7 @@ class ProfileViewer(QDialog):
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
         cols = ["Name", "Caller", "Kind", "Caller File", "Line", "Calls",
-                "Self (ms)", "Self %", "Cumulative (ms)", "Cumulative %"]
+                "Self (ms)", "Self %", "Total (ms)", "Total %"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
         self._table.verticalHeader().setVisible(False)
