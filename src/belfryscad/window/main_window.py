@@ -621,6 +621,18 @@ class MainWindow(QMainWindow):
         # --- Customizer dock (right, bottom — tabbed with Animate) ---
         self._customizer_pane = CustomizerPane()
         self._customizer_pane.source_changed.connect(self._on_customizer_source_changed)
+        # Auto-render 10s after the user stops editing Customizer fields --
+        # start()ing an already-running QTimer restarts its countdown, which
+        # is exactly the debounce this needs (each new edit pushes the
+        # render back out, so it only fires once editing has genuinely
+        # stopped). _customizer_render_tab is the tab active when the timer
+        # was (re)started, checked again on fire in case the user has since
+        # switched tabs -- rendering whatever's merely current then would
+        # render the wrong file.
+        self._customizer_render_timer = QTimer(self)
+        self._customizer_render_timer.setSingleShot(True)
+        self._customizer_render_timer.timeout.connect(self._on_customizer_render_timer)
+        self._customizer_render_tab = None
 
         self._customizer_dock = QDockWidget("Customizer", self)
         self._customizer_dock.setObjectName("CustomizerDock")
@@ -1194,6 +1206,14 @@ class MainWindow(QMainWindow):
         cursor = editor.textCursor()
         cursor.setPosition(min(cursor_pos, len(new_source)))
         editor.setTextCursor(cursor)
+        self._customizer_render_tab = tab
+        self._customizer_render_timer.start(10000)
+
+    def _on_customizer_render_timer(self):
+        tab = self._customizer_render_tab
+        self._customizer_render_tab = None
+        if tab is not None and tab is self._current_tab():
+            self._render(tab)
 
     # ------------------------------------------------------------------
     # File operations
@@ -2458,10 +2478,12 @@ class MainWindow(QMainWindow):
             if tab and not self._confirm_unsaved(tab):
                 event.ignore()
                 return
-        # Stop animation playback (no more renders get queued) and let any
-        # in-flight render thread finish — Qt aborts if a QThread is
-        # destroyed while still running.
+        # Stop animation playback and any pending debounced Customizer
+        # render (no more renders get queued) and let any in-flight render
+        # thread finish — Qt aborts if a QThread is destroyed while still
+        # running.
         self._animate_pane.pause()
+        self._customizer_render_timer.stop()
         if self._render_cancel is not None:
             self._render_cancel.set()
         deadline = time.monotonic() + 5.0

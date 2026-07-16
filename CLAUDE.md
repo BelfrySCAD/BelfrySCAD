@@ -66,6 +66,7 @@ No live preview. Full Manifold CSG processing runs when:
 - An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
 - A **file is saved** (`_write_file` triggers `_render` after writing)
+- The user stops editing **Customizer** fields for 10 seconds (`MainWindow._customizer_render_timer`, a debounced single-shot `QTimer` restarted on every edit — see `docs/editor.md`'s CustomizerPane section)
 
 **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See `docs/evaluator.md`'s "Profiling" section.
 
