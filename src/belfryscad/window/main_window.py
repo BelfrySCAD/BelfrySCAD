@@ -1206,6 +1206,15 @@ class MainWindow(QMainWindow):
         cursor = editor.textCursor()
         cursor.setPosition(min(cursor_pos, len(new_source)))
         editor.setTextCursor(cursor)
+        # A render already in flight is now stale (it's computing geometry
+        # for source this edit just superseded) -- cancel it right away
+        # rather than letting it run to completion for nothing; the
+        # debounced render below will start a fresh one once editing
+        # actually settles. Same cancel idiom as Escape (keyPressEvent).
+        if self._render_cancel is not None and any(t.isRunning() for _, _, t in self._render_jobs):
+            self._render_cancel.set()
+            self._set_render_busy(False)
+            self.log("Render cancelled — Customizer field changed.")
         self._customizer_render_tab = tab
         self._customizer_render_timer.start(10000)
 
