@@ -487,6 +487,10 @@ class MainWindow(QMainWindow):
     # states are discarded rather than applied on top of the new layout.
     _LAYOUT_VERSION = 5
 
+    # Debounce interval for Customizer-triggered auto-render -- see
+    # _on_customizer_source_changed.
+    _CUSTOMIZER_RENDER_DELAY_MS = 5000
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("BelfrySCAD")
@@ -621,8 +625,9 @@ class MainWindow(QMainWindow):
         # --- Customizer dock (right, bottom — tabbed with Animate) ---
         self._customizer_pane = CustomizerPane()
         self._customizer_pane.source_changed.connect(self._on_customizer_source_changed)
-        # Auto-render 10s after the user stops editing Customizer fields --
-        # start()ing an already-running QTimer restarts its countdown, which
+        # Auto-render _CUSTOMIZER_RENDER_DELAY_MS after the user stops
+        # editing Customizer fields -- start()ing an already-running QTimer
+        # restarts its countdown, which
         # is exactly the debounce this needs (each new edit pushes the
         # render back out, so it only fires once editing has genuinely
         # stopped). _customizer_render_tab is the tab active when the timer
@@ -1216,7 +1221,7 @@ class MainWindow(QMainWindow):
             self._set_render_busy(False)
             self.log("Render cancelled — Customizer field changed.")
         self._customizer_render_tab = tab
-        self._customizer_render_timer.start(10000)
+        self._customizer_render_timer.start(self._CUSTOMIZER_RENDER_DELAY_MS)
 
     def _on_customizer_render_timer(self):
         tab = self._customizer_render_tab
