@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "belfryscad"
-version = "0.12.1"
+version = "0.12.2"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -66,7 +66,7 @@ requires-dist = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-lalr-parser", specifier = ">=1.0.2" },
+    { name = "openscad-lalr-parser", specifier = ">=1.1.0" },
     { name = "pillow" },
     { name = "pyside6" },
     { name = "setproctitle", specifier = ">=1.3.7" },
@@ -909,14 +909,14 @@ wheels = [
 
 [[package]]
 name = "openscad-lalr-parser"
-version = "1.0.2"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "lark" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/55/15/8acfaa01ff7d06c37d56a87b4333fdbb5220dd0faf4949562ff992fed4d8/openscad_lalr_parser-1.0.2.tar.gz", hash = "sha256:011bb56f96cbac22b0d750c1f4c004ddc2548909bda39bd237e0d8a3a11f7016", size = 30923, upload-time = "2026-06-22T21:10:01.126Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/9b/d327dbc50ab8137d9bd3ba4c3d582f4e30e0e14d988cf5793599e65d9190/openscad_lalr_parser-1.1.0.tar.gz", hash = "sha256:5660a9f8b6429ecc11ea708a0558fd9bb3e643f6b679cf6a7f743cc671e2c682", size = 30942, upload-time = "2026-07-17T11:11:40.351Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/4a/69f6256f4d7f6b4547af6dce532723b2db68afe17ae9b1064d6cb4c44ca9/openscad_lalr_parser-1.0.2-py3-none-any.whl", hash = "sha256:41f158f04f9c8b46bb448cba757dbb475f64a835291c38f021ddbcbe3d76afeb", size = 35456, upload-time = "2026-06-22T21:09:59.878Z" },
+    { url = "https://files.pythonhosted.org/packages/29/1e/6b0d4093a9ceffb5c0b139d26f91967567e0067fefc3ec9a35bc675b158e/openscad_lalr_parser-1.1.0-py3-none-any.whl", hash = "sha256:ea3eaf528d3b67b46da494d0bd465db200ee5a06f044e86a0fcc1bcbb76a0588", size = 35476, upload-time = "2026-07-17T11:11:38.945Z" },
 ]
 
 [[package]]
