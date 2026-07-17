@@ -12,7 +12,7 @@ BelfrySCAD is a hybrid procedural CAD application combining OpenSCAD-style scrip
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
-- **Parser**: openscad_lalr_parser ≥1.0.2 (LALR-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Fetched from PyPI.
+- **Parser**: openscad_lalr_parser ≥1.1.0 (LALR-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Fetched from PyPI.
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
