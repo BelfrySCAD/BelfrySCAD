@@ -14,6 +14,7 @@ Data viewer windows launched from the debugger's variable context menu.
 from __future__ import annotations
 import ast
 import bisect
+import copy
 import math
 import re
 import numpy as np
@@ -22,10 +23,10 @@ import manifold3d as m3d
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
-    QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
+    QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit, QToolButton,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
 from belfryscad.window.viewport import Viewport
 
@@ -336,6 +337,75 @@ def _apply_affine(matrix: list, points: list) -> list:
         transformed = m @ homog
         result.append(transformed[:n - 1].tolist())
     return result
+
+
+# ---------------------------------------------------------------------------
+# Affine editor transform tools -- compose a new operation onto the current
+# matrix (M_new = N . M, i.e. N is applied AFTER the existing transform),
+# rather than decomposing the matrix into components (decomposition can't
+# recover the original authored order -- a composed matrix has no memory
+# of the operations that built it). Rotate/Scale support an explicit pivot
+# via _pivot_about (T(c) . N . T(-c)); Translate needs none (translation
+# commutes with any pivot wrap); Skew is applied about the origin only,
+# matching OpenSCAD convention.
+# ---------------------------------------------------------------------------
+
+def _identity_matrix(n: int) -> list:
+    return [[1.0 if r == c else 0.0 for c in range(n)] for r in range(n)]
+
+
+def _translation_matrix(delta, n: int) -> np.ndarray:
+    """NxN homogeneous translation matrix. len(delta) == n - 1."""
+    m = np.eye(n, dtype=np.float64)
+    for i, d in enumerate(delta):
+        m[i, n - 1] = d
+    return m
+
+
+def _axis_rotation_matrix(n: int, axis, angle_deg: float) -> np.ndarray:
+    """NxN homogeneous rotation about the origin. n == 3: axis is ignored
+    (single implicit in-plane/Z rotation). n == 4: axis in {0, 1, 2} for
+    X/Y/Z, an elementary axis-aligned rotation."""
+    m = np.eye(n, dtype=np.float64)
+    a = math.radians(angle_deg)
+    c, s = math.cos(a), math.sin(a)
+    if n == 3:
+        m[0, 0], m[0, 1] = c, -s
+        m[1, 0], m[1, 1] = s, c
+        return m
+    i, j = {0: (1, 2), 1: (2, 0), 2: (0, 1)}[axis]
+    m[i, i], m[i, j] = c, -s
+    m[j, i], m[j, j] = s, c
+    return m
+
+
+def _scale_matrix(factors, n: int) -> np.ndarray:
+    """NxN homogeneous scale about the origin. len(factors) == n - 1."""
+    return np.diag(list(factors) + [1.0]).astype(np.float64)
+
+
+def _shear_matrix(n: int, axis_a: int, axis_b: int, factor: float) -> np.ndarray:
+    """NxN homogeneous shear about the origin: axis_a' += factor * axis_b.
+    axis_a != axis_b, both in range(n - 1)."""
+    m = np.eye(n, dtype=np.float64)
+    m[axis_a, axis_b] = factor
+    return m
+
+
+def _pivot_about(op: np.ndarray, center, n: int) -> np.ndarray:
+    """Wrap an origin-based homogeneous op as T(c) @ op @ T(-c), so it
+    acts about *center* instead of the origin."""
+    t_c = _translation_matrix(center, n)
+    t_nc = _translation_matrix([-x for x in center], n)
+    return t_c @ op @ t_nc
+
+
+def _compose_after(op: np.ndarray, current: list) -> list:
+    """M_new = op @ current -- op is left-multiplied onto the existing
+    matrix, i.e. applied AFTER it. The single boundary function that
+    converts the numpy math result back into the nested-list shape a
+    viewer's stored value requires."""
+    return (op @ np.array(current, dtype=np.float64)).tolist()
 
 
 _HEADER_STYLE = (
@@ -1068,10 +1138,143 @@ class ProfileViewer(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Shared undo/redo for the editable literal viewers (Matrix/Affine/VNF/
+# Path/Grid/Region) -- every mutation (table edit, viewport vertex drag,
+# add/delete, keyboard nudge) gets its own dialog-scoped undo/redo stack,
+# independent of the main editor's document-level QUndoStack (see
+# main_window.py's _TextEditCmd/_GizmoCmd -- same QUndoStack/QUndoCommand
+# idiom, just scoped to this dialog instead of the main window).
+# ---------------------------------------------------------------------------
+
+class _ViewerEditCmd(QUndoCommand):
+    """Generic snapshot undo command shared by all six editable viewers.
+    These values are small (a handful to a few hundred floats), so storing
+    full before/after copies is simpler than inverse-operation commands
+    and the cost is irrelevant. Unlike main_window.py's _TextEditCmd, no
+    _first_redo guard is needed: at push time the dialog's value is still
+    "before" (the caller passes the proposed "after" as a plain argument,
+    it isn't applied until push() triggers this command's redo()), so
+    redo() unconditionally applying `_after` is correct."""
+
+    def __init__(self, dialog, before, after, label):
+        super().__init__(label)
+        self._dialog = dialog
+        self._before = before
+        self._after = after
+
+    def undo(self):
+        self._dialog._apply_value(copy.deepcopy(self._before))
+
+    def redo(self):
+        self._dialog._apply_value(copy.deepcopy(self._after))
+
+
+class _UndoableViewerMixin:
+    """Mixed into the six editable literal-viewer dialogs. Subclasses must
+    implement:
+        _get_value(self) -> the current value (whatever attribute holds it)
+        _apply_value(self, value) -> replace that attribute + refresh the
+            table/viewport display to match
+
+    Call _setup_undo(value) once, in __init__ after the value attribute
+    and display widgets exist, to wire everything up."""
+
+    def _setup_undo(self, value):
+        self._original_value = copy.deepcopy(value)
+        self._undo_stack = QUndoStack(self)
+        self._undo_action = self._undo_stack.createUndoAction(self, "Undo")
+        self._redo_action = self._undo_stack.createRedoAction(self, "Redo")
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self._undo_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._redo_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.addAction(self._undo_action)
+        self.addAction(self._redo_action)
+        self._live_before = None   # snapshot while a drag/nudge is in progress
+        self._suspend_main_window_undo_shortcuts()
+        self.finished.connect(lambda _r=0: self._restore_main_window_undo_shortcuts())
+
+    def _suspend_main_window_undo_shortcuts(self):
+        """Cmd+Z/Cmd+Shift+Z on this dialog's own QUndoStack would otherwise
+        be genuinely ambiguous with the main window's own ApplicationShortcut-
+        context Undo/Redo actions (confirmed live: Qt fires *neither* action
+        and logs "Ambiguous shortcut overload" -- ShortcutContext specificity
+        does NOT arbitrate this, contrary to what you might expect). Clearing
+        the main window's shortcuts (not disabling the actions -- their
+        enabled state is auto-managed by its own QUndoStack and shouldn't be
+        touched) for the dialog's lifetime resolves the ambiguity; restored
+        on close. Duck-typed (`getattr`) rather than importing MainWindow, to
+        avoid a circular import from this module. Walks `parentWidget()`
+        rather than using `self.window()` -- a QDialog is its own
+        top-level window (has its own OS window frame) even with a
+        `parent` set, so `.window()` returns the dialog itself, not the
+        actual MainWindow ancestor `parent` was constructed with."""
+        win = self.parentWidget()
+        while win is not None and not hasattr(win, '_act_undo'):
+            win = win.parentWidget()
+        self._suspended_main_shortcuts = []
+        for name in ('_act_undo', '_act_redo'):
+            action = getattr(win, name, None)
+            if action is not None:
+                self._suspended_main_shortcuts.append((action, action.shortcut()))
+                action.setShortcut(QKeySequence())
+
+    def _restore_main_window_undo_shortcuts(self):
+        for action, shortcut in getattr(self, '_suspended_main_shortcuts', []):
+            action.setShortcut(shortcut)
+
+    def _commit_value(self, new_value, label="Edit"):
+        """Push one undo step. All discrete mutation paths (table edits,
+        tool applies, resets, one-shot add/delete) funnel through here."""
+        before = copy.deepcopy(self._get_value())
+        after = copy.deepcopy(new_value)
+        if before == after:
+            return
+        self._undo_stack.push(_ViewerEditCmd(self, before, after, label))
+
+    def _begin_live_edit(self):
+        """Call once when a continuous edit starts (Cmd+drag press, or
+        immediately before applying a keyboard nudge)."""
+        self._live_before = copy.deepcopy(self._get_value())
+
+    def _end_live_edit(self, label="Edit"):
+        """Call once when a continuous edit ends (Cmd+drag release, or
+        immediately after applying a keyboard nudge) -- pushes exactly
+        ONE undo step for the whole gesture, not one per live frame."""
+        if self._live_before is None:
+            return
+        before, self._live_before = self._live_before, None
+        after = copy.deepcopy(self._get_value())
+        if before == after:
+            return
+        self._undo_stack.push(_ViewerEditCmd(self, before, after, label))
+
+    def _on_reset_original(self):
+        self._commit_value(self._original_value, "Reset to Original")
+
+    def _make_undo_button_row(self) -> QHBoxLayout:
+        """Reset to Original / Undo / Redo, meant to be inserted into the
+        dialog's existing button row. Reset-to-Identity (Matrix/Affine
+        only, where "identity" is a meaningful concept) is added
+        separately by those two classes."""
+        row = QHBoxLayout()
+        reset = QPushButton("Reset to Original")
+        reset.clicked.connect(self._on_reset_original)
+        row.addWidget(reset)
+        undo_btn = QToolButton()
+        undo_btn.setDefaultAction(self._undo_action)
+        row.addWidget(undo_btn)
+        redo_btn = QToolButton()
+        redo_btn.setDefaultAction(self._redo_action)
+        row.addWidget(redo_btn)
+        return row
+
+
+# ---------------------------------------------------------------------------
 # Matrix Viewer
 # ---------------------------------------------------------------------------
 
-class MatrixViewer(QDialog):
+class MatrixViewer(QDialog, _UndoableViewerMixin):
     """Displays a square 2x2-5x5 list of lists of numbers as a grid of
     cells, row/column headers 0-indexed to match OpenSCAD list indexing.
     Read-only by default. Pass `editable=True` for a Save/Cancel editing
@@ -1121,6 +1324,12 @@ class MatrixViewer(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        if editable:
+            self._setup_undo(value)
+            reset_id = QPushButton("Reset to Identity")
+            reset_id.clicked.connect(self._on_reset_identity)
+            btn_row.addWidget(reset_id)
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1141,6 +1350,21 @@ class MatrixViewer(QDialog):
         height = row_h + self._table.horizontalHeader().height() + 80
         self.resize(max(220, width), max(180, height))
 
+    def _get_value(self):
+        return self._value
+
+    def _apply_value(self, value):
+        self._value = value
+        n = len(value)
+        self._table.blockSignals(True)
+        for r in range(n):
+            for c in range(n):
+                self._table.item(r, c).setText(_fmt_short(value[r][c]))
+        self._table.blockSignals(False)
+
+    def _on_reset_identity(self):
+        self._commit_value(_identity_matrix(len(self._value)), "Reset to Identity")
+
     def _on_item_changed(self, item: QTableWidgetItem):
         parsed = _parse_number(item.text())
         if parsed is None:
@@ -1148,10 +1372,9 @@ class MatrixViewer(QDialog):
             item.setText(_fmt_short(self._value[item.row()][item.column()]))
             self._table.blockSignals(False)
             return
-        self._value[item.row()][item.column()] = parsed
-        self._table.blockSignals(True)
-        item.setText(_fmt_short(parsed))
-        self._table.blockSignals(False)
+        new_value = copy.deepcopy(self._value)
+        new_value[item.row()][item.column()] = parsed
+        self._commit_value(new_value, "Edit Cell")
 
     def _on_save(self):
         self.committed.emit(_format_value(self._value))
@@ -1249,14 +1472,19 @@ class _AffineViewport(Viewport):
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
 
-class AffineMatrixViewer(QDialog):
+class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
     """Visualizes a 3x3 (2D) or 4x4 (3D) homogeneous affine transform
     matrix by showing a reference unit square/cube next to its image
     under the matrix, alongside the matrix's numbers. Read-only by default;
     pass `editable=True` for a Save/Cancel editing mode (see `MatrixViewer`
-    for the shared editing convention)."""
+    for the shared editing convention). Editable mode additionally offers
+    Translate/Rotate/Scale/Skew tools that compose a new operation onto
+    the current matrix (M_new = N . M -- see _compose_after) rather than
+    requiring the user to hand-edit numbers."""
 
     committed = Signal(str)
+
+    _AXIS_NAMES = ["X", "Y", "Z"]
 
     def __init__(self, title: str, value: list, parent=None, editable: bool = False):
         super().__init__(parent)
@@ -1314,8 +1542,17 @@ class AffineMatrixViewer(QDialog):
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
+        if editable:
+            self._setup_undo(value)
+            layout.addWidget(self._build_tools_tabs(n))
+
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        if editable:
+            reset_id = QPushButton("Reset to Identity")
+            reset_id.clicked.connect(self._on_reset_identity)
+            btn_row.addWidget(reset_id)
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1330,7 +1567,24 @@ class AffineMatrixViewer(QDialog):
             btn_row.addWidget(dismiss)
         layout.addLayout(btn_row)
 
-        self.resize(600 + table_w, 480)
+        self.resize(600 + table_w, 480 + (90 if editable else 0))
+
+    def _get_value(self):
+        return self._value
+
+    def _apply_value(self, value):
+        self._value = value
+        n = len(value)
+        self._table.blockSignals(True)
+        for r in range(n):
+            for c in range(n):
+                self._table.item(r, c).setText(_fmt_short(value[r][c]))
+        self._table.blockSignals(False)
+        if self._vp._ctx is not None:
+            self._vp.load_matrix(self._value)
+
+    def _on_reset_identity(self):
+        self._commit_value(_identity_matrix(len(self._value)), "Reset to Identity")
 
     def _on_item_changed(self, item: QTableWidgetItem):
         parsed = _parse_number(item.text())
@@ -1339,16 +1593,180 @@ class AffineMatrixViewer(QDialog):
             item.setText(_fmt_short(self._value[item.row()][item.column()]))
             self._table.blockSignals(False)
             return
-        self._value[item.row()][item.column()] = parsed
-        self._table.blockSignals(True)
-        item.setText(_fmt_short(parsed))
-        self._table.blockSignals(False)
-        if self._vp._ctx is not None:
-            self._vp.load_matrix(self._value)
+        new_value = copy.deepcopy(self._value)
+        new_value[item.row()][item.column()] = parsed
+        self._commit_value(new_value, "Edit Cell")
 
     def _on_save(self):
         self.committed.emit(_format_value(self._value))
         self.accept()
+
+    # ------------------------------------------------------------------
+    # Translate/Rotate/Scale/Skew tools
+    # ------------------------------------------------------------------
+
+    def _build_tools_tabs(self, n: int) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.setMaximumHeight(80)
+        tabs.addTab(self._build_translate_tab(n), "Translate")
+        tabs.addTab(self._build_rotate_tab(n), "Rotate")
+        tabs.addTab(self._build_scale_tab(n), "Scale")
+        tabs.addTab(self._build_skew_tab(n), "Skew")
+        return tabs
+
+    def _current_translation(self, n: int) -> list:
+        """The matrix's current translation column -- used as the default
+        centerpoint for Rotate/Scale ("rotate/scale in place")."""
+        return [self._value[i][n - 1] for i in range(n - 1)]
+
+    def _make_vector_fields(self, n: int, default: list = None) -> list:
+        fields = []
+        for i in range(n - 1):
+            e = QLineEdit(_fmt_short(default[i]) if default is not None else "0")
+            e.setMaximumWidth(60)
+            fields.append(e)
+        return fields
+
+    def _make_center_fields(self, n: int) -> list:
+        return self._make_vector_fields(n, self._current_translation(n))
+
+    @staticmethod
+    def _read_fields(fields: list) -> list | None:
+        values = [_parse_number(f.text()) for f in fields]
+        return None if any(v is None for v in values) else values
+
+    def _build_translate_tab(self, n: int) -> QWidget:
+        w = QWidget()
+        row = QHBoxLayout(w)
+        fields = self._make_vector_fields(n)
+        for axis, e in zip(self._AXIS_NAMES, fields):
+            row.addWidget(QLabel(axis + ":"))
+            row.addWidget(e)
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(lambda: self._on_apply_translate(fields))
+        row.addWidget(apply_btn)
+        row.addStretch()
+        return w
+
+    def _on_apply_translate(self, fields: list):
+        delta = self._read_fields(fields)
+        if delta is None:
+            return
+        n = len(self._value)
+        op = _translation_matrix(delta, n)
+        self._commit_value(_compose_after(op, self._value), "Translate")
+
+    def _build_rotate_tab(self, n: int) -> QWidget:
+        w = QWidget()
+        row = QHBoxLayout(w)
+        axis_combo = None
+        if n == 4:
+            row.addWidget(QLabel("Axis:"))
+            axis_combo = QComboBox()
+            axis_combo.addItems(self._AXIS_NAMES)
+            row.addWidget(axis_combo)
+        row.addWidget(QLabel("Angle:"))
+        angle_field = QLineEdit("0")
+        angle_field.setMaximumWidth(60)
+        row.addWidget(angle_field)
+        row.addWidget(QLabel("Center:"))
+        center_fields = self._make_center_fields(n)
+        for e in center_fields:
+            row.addWidget(e)
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(lambda: self._on_apply_rotate(axis_combo, angle_field, center_fields))
+        row.addWidget(apply_btn)
+        row.addStretch()
+        return w
+
+    def _on_apply_rotate(self, axis_combo, angle_field, center_fields: list):
+        angle = _parse_number(angle_field.text())
+        center = self._read_fields(center_fields)
+        if angle is None or center is None:
+            return
+        n = len(self._value)
+        axis = axis_combo.currentIndex() if axis_combo is not None else None
+        op = _pivot_about(_axis_rotation_matrix(n, axis, angle), center, n)
+        self._commit_value(_compose_after(op, self._value), "Rotate")
+
+    def _build_scale_tab(self, n: int) -> QWidget:
+        w = QWidget()
+        row = QHBoxLayout(w)
+        factor_fields = self._make_vector_fields(n, [1] * (n - 1))
+        for axis, e in zip(self._AXIS_NAMES, factor_fields):
+            row.addWidget(QLabel(axis + ":"))
+            row.addWidget(e)
+        uniform_cb = QCheckBox("Uniform")
+
+        def _on_uniform_toggled(checked):
+            for e in factor_fields[1:]:
+                e.setEnabled(not checked)
+        uniform_cb.toggled.connect(_on_uniform_toggled)
+        row.addWidget(uniform_cb)
+        row.addWidget(QLabel("Center:"))
+        center_fields = self._make_center_fields(n)
+        for e in center_fields:
+            row.addWidget(e)
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(
+            lambda: self._on_apply_scale(factor_fields, uniform_cb, center_fields))
+        row.addWidget(apply_btn)
+        row.addStretch()
+        return w
+
+    def _on_apply_scale(self, factor_fields: list, uniform_cb, center_fields: list):
+        factors = self._read_fields(factor_fields)
+        center = self._read_fields(center_fields)
+        if factors is None or center is None:
+            return
+        if uniform_cb.isChecked():
+            factors = [factors[0]] * len(factors)
+        n = len(self._value)
+        op = _pivot_about(_scale_matrix(factors, n), center, n)
+        self._commit_value(_compose_after(op, self._value), "Scale")
+
+    def _build_skew_tab(self, n: int) -> QWidget:
+        w = QWidget()
+        row = QHBoxLayout(w)
+        row.addWidget(QLabel("Shear axis:"))
+        axis_a_combo = QComboBox()
+        axis_a_combo.addItems(self._AXIS_NAMES[:n - 1])
+        row.addWidget(axis_a_combo)
+        row.addWidget(QLabel("along:"))
+        axis_b_combo = QComboBox()
+        row.addWidget(axis_b_combo)
+
+        def _refresh_axis_b():
+            a_idx = axis_a_combo.currentIndex()
+            axis_b_combo.blockSignals(True)
+            axis_b_combo.clear()
+            for i, name in enumerate(self._AXIS_NAMES[:n - 1]):
+                if i != a_idx:
+                    axis_b_combo.addItem(name, i)
+            axis_b_combo.blockSignals(False)
+        axis_a_combo.currentIndexChanged.connect(_refresh_axis_b)
+        _refresh_axis_b()
+
+        row.addWidget(QLabel("Factor:"))
+        factor_field = QLineEdit("0")
+        factor_field.setMaximumWidth(60)
+        row.addWidget(factor_field)
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(
+            lambda: self._on_apply_skew(axis_a_combo, axis_b_combo, factor_field))
+        row.addWidget(apply_btn)
+        row.addStretch()
+        return w
+
+    def _on_apply_skew(self, axis_a_combo, axis_b_combo, factor_field):
+        factor = _parse_number(factor_field.text())
+        if factor is None or axis_b_combo.currentData() is None:
+            return
+        n = len(self._value)
+        axis_a = axis_a_combo.currentIndex()
+        axis_b = axis_b_combo.currentData()
+        op = _shear_matrix(n, axis_a, axis_b, factor)
+        self._commit_value(_compose_after(op, self._value), "Skew")
 
 
 # ---------------------------------------------------------------------------
@@ -1358,6 +1776,11 @@ class AffineMatrixViewer(QDialog):
 class _VNFViewport(Viewport):
     face_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
+    # keyboard nudge) so the dialog can push exactly one undo step for the
+    # whole gesture instead of one per live frame.
+    vertex_drag_started = Signal()
+    vertex_drag_finished = Signal()
 
     def __init__(self, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False, pan_speed=2.0)
@@ -1590,6 +2013,7 @@ class _VNFViewport(Viewport):
                 self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                 self._drag_plane_point = self._verts_3d[vi].copy()
                 self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
@@ -1629,6 +2053,7 @@ class _VNFViewport(Viewport):
             self._press_pos = None
             self._drag_started = False
             self._delta_label.hide()
+            self.vertex_drag_finished.emit()
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
@@ -1654,11 +2079,13 @@ class _VNFViewport(Viewport):
             magnitude = _key_nudge_magnitude(event.modifiers())
             delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
+                self.vertex_drag_started.emit()
                 for vi in self._vert_indices:
                     if 0 <= vi < len(self._verts_3d):
                         new_pt = self._verts_3d[vi] + delta
                         self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
                                                 round(float(new_pt[1]), 3), round(float(new_pt[2]), 3))
+                self.vertex_drag_finished.emit()
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -1685,7 +2112,7 @@ class _VNFViewport(Viewport):
 # VNF Viewer
 # ---------------------------------------------------------------------------
 
-class VNFViewer(QDialog):
+class VNFViewer(QDialog, _UndoableViewerMixin):
     """3D mesh viewer for VNF [vertices, faces] structures with vertex/face
     tables. Read-only by default; pass `editable=True` for a Save/Cancel
     editing mode (see `MatrixViewer` for the shared editing convention) --
@@ -1742,6 +2169,9 @@ class VNFViewer(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        if editable:
+            self._setup_undo(vnf_value)
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1760,6 +2190,8 @@ class VNFViewer(QDialog):
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.vertex_drag_started.connect(self._begin_live_edit)
+            self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
 
     @staticmethod
     def _make_vert_table(verts, editable: bool = False) -> QTableWidget:
@@ -1889,6 +2321,19 @@ class VNFViewer(QDialog):
             self._vp.doneCurrent()
             self._vp.update()
 
+    def _get_value(self):
+        return self._vnf
+
+    def _apply_value(self, value):
+        self._vnf = value
+        verts = self._vnf[0]
+        self._vert_table.blockSignals(True)
+        for i, v in enumerate(verts):
+            for j in range(3):
+                self._vert_table.item(i, j).setText(f"{v[j]:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild()
+
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
         parsed = _parse_number(item.text())
@@ -1897,11 +2342,9 @@ class VNFViewer(QDialog):
             item.setText(f"{self._vnf[0][i][j]:g}")
             self._vert_table.blockSignals(False)
             return
-        self._vnf[0][i][j] = parsed
-        self._vert_table.blockSignals(True)
-        item.setText(f"{parsed:g}")
-        self._vert_table.blockSignals(False)
-        self._rebuild()
+        new_value = copy.deepcopy(self._vnf)
+        new_value[0][i][j] = parsed
+        self._commit_value(new_value, "Edit Vertex")
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
         """Live update while Cmd+dragging or arrow-key-nudging a vertex
@@ -1988,7 +2431,7 @@ class VNFViewer(QDialog):
 # Path Viewer
 # ---------------------------------------------------------------------------
 
-class PathViewer(QDialog):
+class PathViewer(QDialog, _UndoableViewerMixin):
     """2D/3D path viewer with vertex table, selectable markers, and hover
     tooltips. Read-only by default; pass `editable=True` for a Save/Cancel
     editing mode (see `MatrixViewer` for the shared editing convention)."""
@@ -2016,8 +2459,11 @@ class PathViewer(QDialog):
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         if editable:
+            self._setup_undo(path_value)
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.vertex_drag_started.connect(self._begin_live_edit)
+            self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
             self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
             self._vp.bezier_vertex_added.connect(self._on_viewport_bezier_vertex_added)
             self._vp.delete_vertex_requested.connect(self._delete_vertex)
@@ -2052,6 +2498,8 @@ class PathViewer(QDialog):
         self._bezier_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._bezier_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._bezier_cb)
+        if editable:
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -2156,11 +2604,11 @@ class PathViewer(QDialog):
             index_map[old_i] = new_i
             new_i += 1
         self._vp.remap_node_types(index_map)
+        new_path = copy.deepcopy(self._path)
         for r in rows:
-            del self._path[r]
-        self._populate_vert_table()
+            del new_path[r]
+        self._commit_value(new_path, "Delete Vertex")
         self._vert_table.clearSelection()
-        self._rebuild()
 
     def _delete_bezier_v0(self, i0: int):
         """Delete an on-curve bezier vertex (v0) while doing its best to
@@ -2236,15 +2684,21 @@ class PathViewer(QDialog):
             new_path.append(val)
 
         self._vp.remap_node_types(index_map)
-        self._path[:] = new_path
-        self._populate_vert_table()
+        self._commit_value(new_path, "Delete Vertex")
         self._vert_table.clearSelection()
-        self._rebuild()
         for old_idx in reclassify_old:
             new_idx = index_map.get(old_idx)
             if new_idx is not None:
                 self._vp.classify_single_node(new_idx)
         self._vp.refresh_markers()
+
+    def _get_value(self):
+        return self._path
+
+    def _apply_value(self, value):
+        self._path = value
+        self._populate_vert_table()
+        self._rebuild()
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -2254,11 +2708,9 @@ class PathViewer(QDialog):
             item.setText(f"{self._path[i][j]:g}")
             self._vert_table.blockSignals(False)
             return
-        self._path[i][j] = parsed
-        self._vert_table.blockSignals(True)
-        item.setText(f"{parsed:g}")
-        self._vert_table.blockSignals(False)
-        self._rebuild()
+        new_value = copy.deepcopy(self._path)
+        new_value[i][j] = parsed
+        self._commit_value(new_value, "Edit Vertex")
 
     def _on_save(self):
         self.committed.emit(_format_value(self._path))
@@ -2302,10 +2754,10 @@ class PathViewer(QDialog):
         that segment. Row-count change, so repopulates the whole table
         like `_delete_vertex` does, rather than an in-place cell update."""
         new_pt = [x, y] if self._is_2d else [x, y, z]
-        self._path.insert(insert_after + 1, new_pt)
-        self._populate_vert_table()
+        new_path = copy.deepcopy(self._path)
+        new_path.insert(insert_after + 1, new_pt)
+        self._commit_value(new_path, "Add Vertex")
         self._vert_table.selectRow(insert_after + 1)
-        self._rebuild()
 
     def _on_viewport_bezier_vertex_added(self, i0: int, new_pts: list):
         """Bezier-mode "Add Vertex" (`_PathViewport.contextMenuEvent`'s
@@ -2326,10 +2778,10 @@ class PathViewer(QDialog):
                 index_map[old_i] = old_i + 3
         self._vp.remap_node_types(index_map)
         pts_as_lists = [([p[0], p[1]] if self._is_2d else [p[0], p[1], p[2]]) for p in new_pts]
-        self._path[i0 + 1:i0 + 3] = pts_as_lists
-        self._populate_vert_table()
+        new_path = copy.deepcopy(self._path)
+        new_path[i0 + 1:i0 + 3] = pts_as_lists
+        self._commit_value(new_path, "Add Vertex")
         self._vert_table.selectRow(i0 + 3)
-        self._rebuild()
         self._vp.classify_single_node(i0 + 3)
         self._vp.refresh_markers()
 
@@ -2375,6 +2827,12 @@ class _PathViewport(Viewport):
     """Viewport subclass with selectable vertex markers and hover tooltips."""
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
+    # keyboard nudge) so the dialog can push exactly one undo step for the
+    # whole gesture instead of one per live frame -- see
+    # PathViewer._begin_live_edit/_end_live_edit.
+    vertex_drag_started = Signal()
+    vertex_drag_finished = Signal()
     add_vertex_requested = Signal(int, float, float, float)  # (insert_after_idx, x, y, z) -- right-click on a line, editable only
     delete_vertex_requested = Signal(int)  # (vertex_idx) -- right-click directly on a vertex, editable only
     # (v0_idx, [a, d, f, e, c]) -- bezier-mode "Add Vertex": De Casteljau
@@ -2799,6 +3257,7 @@ class _PathViewport(Viewport):
                     self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                     self._drag_plane_point = self._path_pts[vi].copy()
                 self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
@@ -2838,6 +3297,7 @@ class _PathViewport(Viewport):
             self._press_pos = None
             self._drag_started = False
             self._delta_label.hide()
+            self.vertex_drag_finished.emit()
             if not moved:
                 self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
             return
@@ -2989,12 +3449,14 @@ class _PathViewport(Viewport):
                 # the later one's own independent nudge runs after the
                 # earlier one's link already moved it (last-write-wins for
                 # that one key event); a minor, acceptable edge case.
+                self.vertex_drag_started.emit()
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._path_pts):
                         new_pt = self._path_pts[vi] + delta
                         for idx, moved_pt in self._resolve_bezier_moves(vi, new_pt):
                             self.vertex_moved.emit(idx, round(float(moved_pt[0]), 3),
                                                     round(float(moved_pt[1]), 3), round(float(moved_pt[2]), 3))
+                self.vertex_drag_finished.emit()
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -3004,7 +3466,7 @@ class _PathViewport(Viewport):
 # Grid Viewer
 # ---------------------------------------------------------------------------
 
-class GridViewer(QDialog):
+class GridViewer(QDialog, _UndoableViewerMixin):
     """3D grid viewer for lists of lists of points with quad mesh faces.
     Read-only by default; pass `editable=True` for a Save/Cancel editing
     mode (see `MatrixViewer` for the shared editing convention). Edits
@@ -3094,6 +3556,9 @@ class GridViewer(QDialog):
         self._wrap_combo.currentIndexChanged.connect(self._rebuild)
         btn_row.addWidget(self._wrap_combo)
         btn_row.addSpacing(20)
+        if editable:
+            self._setup_undo(grid_value)
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -3113,6 +3578,8 @@ class GridViewer(QDialog):
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.vertex_drag_started.connect(self._begin_live_edit)
+            self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
             self._vp.delete_row_requested.connect(self._on_viewport_delete_row_requested)
             self._vp.delete_column_requested.connect(self._on_viewport_delete_column_requested)
 
@@ -3285,12 +3752,9 @@ class GridViewer(QDialog):
                 pt = list(p)
                 pt[-1] += 1.0
                 new_row.append(pt)
-        self._grid.insert(insert_at, new_row)
-        self._sync_face_mode_combo()
-        self._vp.sync_row_bookkeeping(self._grid)
-        self._rebuild()
-        self._refresh_row_bookkeeping()
-        self._refresh_row_combo_items()
+        new_grid = copy.deepcopy(self._grid)
+        new_grid.insert(insert_at, new_row)
+        self._commit_value(new_grid, "Add Row")
         self._row_combo.blockSignals(True)
         self._row_combo.setCurrentIndex(insert_at)
         self._row_combo.blockSignals(False)
@@ -3305,12 +3769,9 @@ class GridViewer(QDialog):
         if self._rows <= 2 or self._is_bezier_mode():
             return
         row_idx = self._row_combo.currentIndex()
-        del self._grid[row_idx]
-        self._sync_face_mode_combo()
-        self._vp.sync_row_bookkeeping(self._grid)
-        self._rebuild()
-        self._refresh_row_bookkeeping()
-        self._refresh_row_combo_items()
+        new_grid = copy.deepcopy(self._grid)
+        del new_grid[row_idx]
+        self._commit_value(new_grid, "Delete Row")
         select = min(row_idx, self._rows - 1)
         self._row_combo.blockSignals(True)
         self._row_combo.setCurrentIndex(select)
@@ -3330,7 +3791,8 @@ class GridViewer(QDialog):
             return
         row_idx = self._row_combo.currentIndex()
         col_wrap = self._wrap_flags()[0]
-        for row in self._grid:
+        new_grid = copy.deepcopy(self._grid)
+        for row in new_grid:
             if col_idx >= len(row):
                 continue
             cur = row[col_idx]
@@ -3351,10 +3813,7 @@ class GridViewer(QDialog):
                 new_pt = list(cur)
                 new_pt[-1] += 1.0
             row.insert(insert_at, new_pt)
-        self._sync_face_mode_combo()
-        self._vp.sync_row_bookkeeping(self._grid)
-        self._rebuild()
-        self._refresh_row_bookkeeping()
+        self._commit_value(new_grid, "Add Column")
         self._on_row_changed(row_idx)
 
     def _delete_column(self, col_idx: int):
@@ -3368,13 +3827,11 @@ class GridViewer(QDialog):
         for row in self._grid:
             if col_idx < len(row) and len(row) - 1 < 1:
                 return
-        for row in self._grid:
+        new_grid = copy.deepcopy(self._grid)
+        for row in new_grid:
             if col_idx < len(row):
                 del row[col_idx]
-        self._sync_face_mode_combo()
-        self._vp.sync_row_bookkeeping(self._grid)
-        self._rebuild()
-        self._refresh_row_bookkeeping()
+        self._commit_value(new_grid, "Delete Column")
         self._on_row_changed(row_idx, select_all=False)
 
     def _on_vert_table_selection(self):
@@ -3474,6 +3931,22 @@ class GridViewer(QDialog):
                                bezier_patch=(mode == "Bezier Patch"),
                                reframe=reframe)
 
+    def _get_value(self):
+        return self._grid
+
+    def _apply_value(self, value):
+        self._grid = value
+        self._sync_face_mode_combo()
+        self._vp.sync_row_bookkeeping(self._grid)
+        self._refresh_row_bookkeeping()
+        self._refresh_row_combo_items()
+        row_idx = max(0, min(self._row_combo.currentIndex(), self._rows - 1))
+        self._row_combo.blockSignals(True)
+        self._row_combo.setCurrentIndex(row_idx)
+        self._row_combo.blockSignals(False)
+        self._on_row_changed(row_idx, select_all=False)
+        self._rebuild()
+
     def _on_item_changed(self, item: QTableWidgetItem):
         row_idx = self._row_combo.currentIndex()
         col_idx, j = item.row(), item.column()
@@ -3483,11 +3956,9 @@ class GridViewer(QDialog):
             item.setText(f"{self._grid[row_idx][col_idx][j]:g}")
             self._vert_table.blockSignals(False)
             return
-        self._grid[row_idx][col_idx][j] = parsed
-        self._vert_table.blockSignals(True)
-        item.setText(f"{parsed:g}")
-        self._vert_table.blockSignals(False)
-        self._rebuild()
+        new_value = copy.deepcopy(self._grid)
+        new_value[row_idx][col_idx][j] = parsed
+        self._commit_value(new_value, "Edit Vertex")
 
     def _on_save(self):
         self.committed.emit(_format_value(self._grid))
@@ -3498,6 +3969,11 @@ class _GridViewport(Viewport):
     """Viewport for grid data with quad mesh faces and selectable vertex markers."""
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
+    # keyboard nudge) so the dialog can push exactly one undo step for the
+    # whole gesture instead of one per live frame.
+    vertex_drag_started = Signal()
+    vertex_drag_finished = Signal()
     delete_row_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
     delete_column_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
 
@@ -3874,6 +4350,7 @@ class _GridViewport(Viewport):
                     self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                     self._drag_plane_point = self._all_pts[vi].copy()
                 self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
@@ -3913,6 +4390,7 @@ class _GridViewport(Viewport):
             self._press_pos = None
             self._drag_started = False
             self._delta_label.hide()
+            self.vertex_drag_finished.emit()
             if not moved:
                 self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
             return
@@ -3971,11 +4449,13 @@ class _GridViewport(Viewport):
             magnitude = _key_nudge_magnitude(event.modifiers())
             delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
+                self.vertex_drag_started.emit()
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._all_pts):
                         new_pt = self._all_pts[vi] + delta
                         self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
                                                 round(float(new_pt[1]), 3), round(float(new_pt[2]), 3))
+                self.vertex_drag_finished.emit()
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -3985,7 +4465,7 @@ class _GridViewport(Viewport):
 # Region Viewer
 # ---------------------------------------------------------------------------
 
-class RegionViewer(QDialog):
+class RegionViewer(QDialog, _UndoableViewerMixin):
     """2D viewer for a "region" -- a list of closed polygon paths under
     even-odd fill semantics (a path nested inside another alternates
     solid/hole, e.g. three concentric circles = a disc surrounded by a
@@ -4066,6 +4546,9 @@ class RegionViewer(QDialog):
         self._fill_combo.currentIndexChanged.connect(self._rebuild)
         btn_row.addWidget(self._fill_combo)
         btn_row.addSpacing(20)
+        if editable:
+            self._setup_undo(region_value)
+            btn_row.addLayout(self._make_undo_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -4085,6 +4568,8 @@ class RegionViewer(QDialog):
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
+            self._vp.vertex_drag_started.connect(self._begin_live_edit)
+            self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
             self._vp.add_path_requested.connect(self._on_viewport_add_path_requested)
             self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
 
@@ -4186,12 +4671,10 @@ class RegionViewer(QDialog):
         half = _marker_radius_for_point(self._vp, np.array([x, y, 0.0])) * 8
         new_path = [[x - half, y - half], [x + half, y - half],
                     [x + half, y + half], [x - half, y + half]]
-        self._region.append(new_path)
-        insert_at = len(self._region) - 1
-        self._vp.sync_path_bookkeeping(self._region)
-        self._rebuild()
-        self._refresh_path_bookkeeping()
-        self._refresh_path_combo_items()
+        new_region = copy.deepcopy(self._region)
+        new_region.append(new_path)
+        insert_at = len(new_region) - 1
+        self._commit_value(new_region, "Add Path")
         self._path_combo.blockSignals(True)
         self._path_combo.setCurrentIndex(insert_at)
         self._path_combo.blockSignals(False)
@@ -4206,13 +4689,9 @@ class RegionViewer(QDialog):
         `_on_viewport_vertex_clicked` does for a clicked vertex."""
         if path_idx != self._path_combo.currentIndex():
             self._path_combo.setCurrentIndex(path_idx)
-        path = self._region[path_idx]
-        path.insert(insert_after + 1, [x, y])
-        self._vp.sync_path_bookkeeping(self._region)
-        self._rebuild()
-        self._refresh_path_bookkeeping()
-        self._populate_table(path)
-        self._pts_label.setText(f"Path Points ({len(path)})")
+        new_region = copy.deepcopy(self._region)
+        new_region[path_idx].insert(insert_after + 1, [x, y])
+        self._commit_value(new_region, "Add Vertex")
         self._vert_table.selectRow(insert_after + 1)
         self._vp.set_selected_path(path_idx)
 
@@ -4223,11 +4702,9 @@ class RegionViewer(QDialog):
         if self._num_paths <= 1:
             return
         path_idx = self._path_combo.currentIndex()
-        del self._region[path_idx]
-        self._vp.sync_path_bookkeeping(self._region)
-        self._rebuild()
-        self._refresh_path_bookkeeping()
-        self._refresh_path_combo_items()
+        new_region = copy.deepcopy(self._region)
+        del new_region[path_idx]
+        self._commit_value(new_region, "Delete Path")
         select = min(path_idx, self._num_paths - 1)
         self._path_combo.blockSignals(True)
         self._path_combo.setCurrentIndex(select)
@@ -4253,12 +4730,9 @@ class RegionViewer(QDialog):
             insert_at = vertex_idx + 1
         nxt = path[neighbor_idx]
         new_pt = [(a + b) / 2.0 for a, b in zip(cur, nxt)]
-        path.insert(insert_at, new_pt)
-        self._vp.sync_path_bookkeeping(self._region)
-        self._rebuild()
-        self._refresh_path_bookkeeping()
-        self._populate_table(path)
-        self._pts_label.setText(f"Path Points ({len(path)})")
+        new_region = copy.deepcopy(self._region)
+        new_region[path_idx].insert(insert_at, new_pt)
+        self._commit_value(new_region, "Add Vertex")
         self._vert_table.selectRow(insert_at)
         self._vp.set_selected_path(path_idx)
 
@@ -4271,12 +4745,9 @@ class RegionViewer(QDialog):
         path = self._region[path_idx]
         if len(path) - 1 < 3:
             return
-        del path[vertex_idx]
-        self._vp.sync_path_bookkeeping(self._region)
-        self._rebuild()
-        self._refresh_path_bookkeeping()
-        self._populate_table(path)
-        self._pts_label.setText(f"Path Points ({len(path)})")
+        new_region = copy.deepcopy(self._region)
+        del new_region[path_idx][vertex_idx]
+        self._commit_value(new_region, "Delete Vertex")
         self._vert_table.clearSelection()
         self._vp.set_selected_path(path_idx)
 
@@ -4335,6 +4806,21 @@ class RegionViewer(QDialog):
             self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"),
                                  reframe=reframe)
 
+    def _get_value(self):
+        return self._region
+
+    def _apply_value(self, value):
+        self._region = value
+        self._vp.sync_path_bookkeeping(self._region)
+        self._refresh_path_bookkeeping()
+        self._refresh_path_combo_items()
+        path_idx = max(0, min(self._path_combo.currentIndex(), self._num_paths - 1))
+        self._path_combo.blockSignals(True)
+        self._path_combo.setCurrentIndex(path_idx)
+        self._path_combo.blockSignals(False)
+        self._on_path_changed(path_idx)
+        self._rebuild()
+
     def _on_item_changed(self, item: QTableWidgetItem):
         path_idx = self._path_combo.currentIndex()
         col_idx, j = item.row(), item.column()
@@ -4344,11 +4830,9 @@ class RegionViewer(QDialog):
             item.setText(f"{self._region[path_idx][col_idx][j]:g}")
             self._vert_table.blockSignals(False)
             return
-        self._region[path_idx][col_idx][j] = parsed
-        self._vert_table.blockSignals(True)
-        item.setText(f"{parsed:g}")
-        self._vert_table.blockSignals(False)
-        self._rebuild()
+        new_value = copy.deepcopy(self._region)
+        new_value[path_idx][col_idx][j] = parsed
+        self._commit_value(new_value, "Edit Vertex")
 
     def _on_save(self):
         self.committed.emit(_format_value(self._region))
@@ -4370,6 +4854,11 @@ class _RegionViewport(Viewport):
 
     vertex_clicked = Signal(int)
     vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
+    # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
+    # keyboard nudge) so the dialog can push exactly one undo step for the
+    # whole gesture instead of one per live frame.
+    vertex_drag_started = Signal()
+    vertex_drag_finished = Signal()
     add_path_requested = Signal(float, float)  # (x, y) -- right-click blank space, editable only
     add_vertex_requested = Signal(int, int, float, float)  # (path_idx, insert_after_col_idx, x, y) -- right-click on a line, editable only
 
@@ -4607,6 +5096,7 @@ class _RegionViewport(Viewport):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
                 self._drag_vertex_idx = vi
+                self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
@@ -4643,6 +5133,7 @@ class _RegionViewport(Viewport):
             self._drag_vertex_idx = -1
             self._press_pos = None
             self._drag_started = False
+            self.vertex_drag_finished.emit()
             if not moved:
                 self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
             return
@@ -4727,11 +5218,13 @@ class _RegionViewport(Viewport):
             magnitude = _key_nudge_magnitude(event.modifiers())
             delta = _key_nudge_delta(self._renderer.camera, 2, event.key(), magnitude)
             if delta is not None:
+                self.vertex_drag_started.emit()
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._all_pts):
                         new_pt = self._all_pts[vi] + delta
                         self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
                                                 round(float(new_pt[1]), 3), 0.0)
+                self.vertex_drag_finished.emit()
                 event.accept()
                 return
         super().keyPressEvent(event)
