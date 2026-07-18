@@ -26,6 +26,8 @@ from belfryscad.window.data_viewers import (
     _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
     _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix, _is_region,
     _affine_reference_shape, _affine_shape_edges, _apply_affine,
+    _identity_matrix, _translation_matrix, _axis_rotation_matrix,
+    _scale_matrix, _shear_matrix, _pivot_about, _compose_after,
     _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
     _key_nudge_magnitude, _key_nudge_delta,
     _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
@@ -352,6 +354,125 @@ class TestApplyAffine:
         out = _apply_affine(identity, cube)
         for p, o in zip(cube, out):
             assert all(abs(a - b) < 1e-9 for a, b in zip(p, o))
+
+
+class TestIdentityMatrix:
+    def test_3x3(self):
+        assert _identity_matrix(3) == [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+    def test_4x4(self):
+        assert _identity_matrix(4) == [
+            [1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0],
+        ]
+
+
+class TestTranslationMatrix:
+    def test_2d(self):
+        m = _translation_matrix([2, 3], 3).tolist()
+        out = _apply_affine(m, [[0, 0]])
+        assert out == [[2.0, 3.0]]
+
+    def test_3d(self):
+        m = _translation_matrix([1, 2, 3], 4).tolist()
+        out = _apply_affine(m, [[0, 0, 0]])
+        assert out == [[1.0, 2.0, 3.0]]
+
+
+class TestAxisRotationMatrix:
+    def test_2d_90deg(self):
+        m = _axis_rotation_matrix(3, None, 90).tolist()
+        out = _apply_affine(m, [[1, 0]])
+        assert abs(out[0][0] - 0) < 1e-9
+        assert abs(out[0][1] - 1) < 1e-9
+
+    def test_3d_z_axis_90deg(self):
+        m = _axis_rotation_matrix(4, 2, 90).tolist()
+        out = _apply_affine(m, [[1, 0, 0]])
+        assert abs(out[0][0] - 0) < 1e-9
+        assert abs(out[0][1] - 1) < 1e-9
+        assert abs(out[0][2] - 0) < 1e-9
+
+    def test_3d_x_axis_90deg(self):
+        m = _axis_rotation_matrix(4, 0, 90).tolist()
+        out = _apply_affine(m, [[0, 1, 0]])
+        assert abs(out[0][0] - 0) < 1e-9
+        assert abs(out[0][1] - 0) < 1e-9
+        assert abs(out[0][2] - 1) < 1e-9
+
+    def test_3d_y_axis_90deg(self):
+        m = _axis_rotation_matrix(4, 1, 90).tolist()
+        out = _apply_affine(m, [[0, 0, 1]])
+        assert abs(out[0][0] - 1) < 1e-9
+        assert abs(out[0][1] - 0) < 1e-9
+        assert abs(out[0][2] - 0) < 1e-9
+
+
+class TestScaleMatrix:
+    def test_2d(self):
+        m = _scale_matrix([2, 3], 3).tolist()
+        out = _apply_affine(m, [[1, 1]])
+        assert out == [[2.0, 3.0]]
+
+    def test_3d(self):
+        m = _scale_matrix([2, 3, 4], 4).tolist()
+        out = _apply_affine(m, [[1, 1, 1]])
+        assert out == [[2.0, 3.0, 4.0]]
+
+
+class TestShearMatrix:
+    def test_2d_x_by_y(self):
+        m = _shear_matrix(3, 0, 1, 2.0).tolist()
+        out = _apply_affine(m, [[1, 3]])
+        assert out == [[7.0, 3.0]]
+
+    def test_3d_x_by_z(self):
+        m = _shear_matrix(4, 0, 2, 1.5).tolist()
+        out = _apply_affine(m, [[1, 0, 2]])
+        assert out == [[4.0, 0.0, 2.0]]
+
+
+class TestPivotAbout:
+    def test_180deg_rotation_about_offset_center_2d(self):
+        # 180deg rotation about (2, 0) maps (0, 0) -> (4, 0)
+        rot = _axis_rotation_matrix(3, None, 180)
+        piv = _pivot_about(rot, [2, 0], 3)
+        out = _apply_affine(piv.tolist(), [[0, 0]])
+        assert abs(out[0][0] - 4) < 1e-9
+        assert abs(out[0][1] - 0) < 1e-9
+
+    def test_180deg_rotation_about_offset_center_3d(self):
+        rot = _axis_rotation_matrix(4, 2, 180)   # about Z
+        piv = _pivot_about(rot, [2, 0, 0], 4)
+        out = _apply_affine(piv.tolist(), [[0, 0, 5]])
+        assert abs(out[0][0] - 4) < 1e-9
+        assert abs(out[0][1] - 0) < 1e-9
+        assert abs(out[0][2] - 5) < 1e-9   # Z untouched by a Z-axis rotation
+
+    def test_scale_about_center_leaves_center_fixed(self):
+        scale = _scale_matrix([2, 2], 3)
+        piv = _pivot_about(scale, [1, 1], 3)
+        out = _apply_affine(piv.tolist(), [[1, 1]])
+        assert abs(out[0][0] - 1) < 1e-9
+        assert abs(out[0][1] - 1) < 1e-9
+
+
+class TestComposeAfter:
+    def test_order_is_new_op_after_existing(self):
+        # M = translate(1, 0); N = scale-by-2 about origin.
+        # compose_after(N, M) means "N applied after M" -> translate then
+        # scale: (0,0) -> (1,0) -> (2,0). The reversed order (scale then
+        # translate) would give (1, 0) instead -- this is the
+        # discriminating case that actually catches an order regression.
+        m = _translation_matrix([1, 0], 3).tolist()
+        n = _scale_matrix([2, 2], 3)
+        out = _apply_affine(_compose_after(n, m), [[0, 0]])
+        assert out == [[2.0, 0.0]]
+
+    def test_identity_op_leaves_matrix_unchanged(self):
+        m = [[1, 0, 5], [0, 1, 3], [0, 0, 1]]
+        identity = np.array(_identity_matrix(3))
+        assert _compose_after(identity, m) == [[1.0, 0.0, 5.0], [0.0, 1.0, 3.0], [0.0, 0.0, 1.0]]
 
 
 class TestIterEnclosingLiterals:
