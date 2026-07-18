@@ -19,6 +19,7 @@ Constraint forms:
 Tab groups:
     /* [TabName] */    → start a named tab
     /* [Hidden] */     → suppress following variables from the pane
+    /* [Global] */     → shown at the top of every tab; never its own tab
 """
 
 import re
@@ -477,7 +478,7 @@ class CustomizerPane(QWidget):
         super().__init__(parent)
         self._source = ''
         self._params: list[ParameterDef] = []
-        self._widgets: dict[str, QWidget] = {}
+        self._widgets: dict[str, list[QWidget]] = {}
         self._updating = False
 
         outer = QVBoxLayout(self)
@@ -516,8 +517,7 @@ class CustomizerPane(QWidget):
             # Fast path: same parameters, only values may differ
             self._updating = True
             for p in new_params:
-                w = self._widgets.get(p.name)
-                if w is not None:
+                for w in self._widgets.get(p.name, ()):
                     w.set_value(p.default)
             self._updating = False
             self._params = new_params
@@ -554,6 +554,18 @@ class CustomizerPane(QWidget):
         for p in self._params:
             tabs.setdefault(p.tab, []).append(p)
 
+        # OpenSCAD Customizer convention: a "Global" group's parameters are
+        # shown at the top of every other tab, and never get a tab of their
+        # own. If Global is the only group present, it just falls back to
+        # the default single tab.
+        global_params = tabs.pop('Global', [])
+        if global_params:
+            if tabs:
+                for params in tabs.values():
+                    params[:0] = global_params
+            else:
+                tabs['Parameters'] = global_params
+
         for tab_name, params in tabs.items():
             container = QWidget()
             form = QFormLayout(container)
@@ -568,7 +580,7 @@ class CustomizerPane(QWidget):
                 w = self._make_widget(p)
                 if w is None:
                     continue
-                self._widgets[p.name] = w
+                self._widgets.setdefault(p.name, []).append(w)
                 lbl = QLabel(p.description)
                 lbl.setWordWrap(True)
                 form.addRow(lbl, w)
@@ -613,6 +625,13 @@ class CustomizerPane(QWidget):
     def _on_widget_changed(self, name: str, new_value: Any):
         if self._updating:
             return
+        # A Global param may have one widget instance per tab it's mirrored
+        # into (see _rebuild_ui) -- keep every copy in sync immediately,
+        # not just the one the user actually edited.
+        self._updating = True
+        for w in self._widgets.get(name, ()):
+            w.set_value(new_value)
+        self._updating = False
         new_source = write_back_value(self._source, name, new_value)
         if new_source != self._source:
             self._source = new_source

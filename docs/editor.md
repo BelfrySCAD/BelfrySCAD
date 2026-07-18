@@ -150,6 +150,8 @@ Each frame change re-renders the current file with `$t` set accordingly — `Mai
 
 **Parameter scanning** (`scan_parameters(source)`): reads lines top-to-bottom, tracking brace depth to skip nested scopes. A line comment (`// text`) immediately above an assignment becomes that parameter's description. Tab-group block comments (`/* [TabName] */`) group subsequent parameters; `/* [Hidden] */` suppresses all following parameters until the next group. Qualifying assignments have a name that is not a keyword or `$`-prefixed, and a value that parses as one of: `int`, `float`, `bool` (`true`/`false`), `"string"`, or a vector literal `[a, b, c, d]` of 1–4 numeric elements.
 
+**The `Global` tab group** (`/* [Global] */`) follows real OpenSCAD Customizer convention: `_rebuild_ui` pops it out of the per-tab grouping and prepends its parameters to every other tab instead of giving it a tab of its own; if Global is the only group present, its parameters fall back to the default single tab. Because a Global parameter ends up with one widget instance per tab it's mirrored into, `_widgets` maps each parameter name to a *list* of widget instances rather than a single one — `set_source`'s value-sync fast path and `_on_widget_changed` (editing any one copy) both update every instance in that list, so all visible copies of a Global parameter always agree.
+
 **Constraint syntax** (trailing `// comment` on the assignment line):
 
 | Constraint | Widget | Notes |
