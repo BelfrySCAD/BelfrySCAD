@@ -952,6 +952,10 @@ class MainWindow(QMainWindow):
             # modal widget is active, regardless of ApplicationModal vs.
             # WindowModal.
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._act_zoom_in = self._add_action(view_menu, "Zoom In", lambda: self._zoom_viewport(1), QKeySequence("Ctrl+]"))
+        self._act_zoom_in.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._act_zoom_out = self._add_action(view_menu, "Zoom Out", lambda: self._zoom_viewport(-1), QKeySequence("Ctrl+["))
+        self._act_zoom_out.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
@@ -1019,8 +1023,6 @@ class MainWindow(QMainWindow):
 
         shortcut("Ctrl++", self._font_size_increase)
         shortcut("Ctrl+-", self._font_size_decrease)
-        shortcut("Ctrl+[", lambda: self._zoom_viewport(-1))
-        shortcut("Ctrl+]", lambda: self._zoom_viewport(1))
         shortcut("Shift+F6", self._start_debug)
 
     # ------------------------------------------------------------------
@@ -2652,7 +2654,7 @@ class MainWindow(QMainWindow):
                 e.setFont(f)
 
     def _zoom_viewport(self, direction):
-        self._viewport.zoom(direction)
+        self._target_viewport().zoom(direction)
 
     # ------------------------------------------------------------------
     # Window
