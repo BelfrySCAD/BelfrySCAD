@@ -10,3 +10,4 @@
 - Materials support
 - Separate out openscad_evaluator library.
 - Customizer Parameter Editor
+- Customizer presets.
