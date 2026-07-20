@@ -924,3 +924,48 @@ class TestStepToChild:
 
         paused_lines, count = _run_debug_session(str(path), on_pause)
         assert count == 0  # neither cube nor sphere ever evaluated
+
+
+class TestPauseEventOrdering:
+    """Regression test for a lost-wakeup race in DebugSession.hook(): the
+    worker thread's `paused.emit(...)` only enqueues the cross-thread signal
+    -- it doesn't block -- so the main thread's queued `on_paused` handler
+    (which calls `resume()` -> `_pause_event.set()`) can run the instant
+    `emit()` returns, before the worker thread reaches its own
+    `_pause_event.clear()`. If `clear()` runs *after* `emit()` instead of
+    before, that set() gets silently wiped out and `wait()` hangs forever --
+    this was the actual root cause of TestStepToChild's CI-only flakiness
+    (never reproduced locally, since the emit()-to-clear() gap is normally a
+    handful of bytecodes on an idle machine).
+
+    Forces the gap open with an injected delay so this test doesn't depend
+    on incidentally winning the same race that caused the original
+    flakiness -- it must fail deterministically if the ordering regresses,
+    not just occasionally on a loaded CI runner.
+    """
+
+    def test_resume_landing_immediately_after_emit_is_not_lost(self, tmp_path, monkeypatch):
+        import time
+        import threading as threading_module
+
+        real_clear = threading_module.Event.clear
+
+        def delayed_clear(self):
+            # Widens whatever gap production code leaves between emit() and
+            # clear() -- harmless (just slower) if clear() already runs
+            # before emit(), which is what should make this test pass.
+            time.sleep(0.02)
+            return real_clear(self)
+
+        monkeypatch.setattr(threading_module.Event, "clear", delayed_clear)
+
+        src = "module foo(bar) {\n    echo(bar);\n    children();\n}\nfoo(1) {\n    cube(42);\n    sphere(13);\n}\n"
+        path = tmp_path / "pause_event_ordering.scad"
+        path.write_text(src)
+
+        def on_pause(line):
+            return "step_to_child" if line == 5 else "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause, timeout=5.0)
+        assert 6 in paused_lines  # cube(42); -- lost if the resume's set() got clobbered
+        assert count == 2
