@@ -280,9 +280,16 @@ class DebugSession(QObject):
             partial_bodies, partial_error = (
                 _generate_partial_render(self._ev) if self._ev is not None else (None, None)
             )
+            # Clear *before* emitting: paused's queued delivery can run
+            # resume() -> _pause_event.set() on the main thread the instant
+            # emit() returns (it only enqueues; it doesn't block), racing
+            # this thread's own next statement. Clearing after emit() risks
+            # wiping out a set() that already landed, permanently losing the
+            # wakeup and hanging in wait() below -- clearing first guarantees
+            # any subsequent set() (whenever it actually happens) sticks.
+            self._pause_event.clear()
             self.paused.emit(origin or "", line, list(all_frame_locals), display_stack,
                               partial_bodies, partial_error)
-            self._pause_event.clear()
             self._pause_event.wait()
 
             if self._stopped:
@@ -320,9 +327,12 @@ class DebugSession(QObject):
         partial_bodies, partial_error = (
             _generate_partial_render(self._ev) if self._ev is not None else (None, None)
         )
+        # See the matching comment in hook() above: clear before emitting,
+        # not after, or a resume() that lands right after emit() returns can
+        # be silently wiped out by this clear() and hang wait() forever.
+        self._pause_event.clear()
         self.error_break.emit(origin or "", line, msg, list(all_frame_locals), display_stack,
                                partial_bodies, partial_error)
-        self._pause_event.clear()
         self._pause_event.wait()
 
     def _on_function_return(self, name: str, value, depth: int):
