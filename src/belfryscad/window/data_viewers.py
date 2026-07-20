@@ -1775,6 +1775,7 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
 
 class _VNFViewport(Viewport):
     face_clicked = Signal(int)
+    vertex_clicked = Signal(int)  # plain left-click on a vertex marker -- takes priority over face_clicked
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
     # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
     # keyboard nudge) so the dialog can push exactly one undo step for the
@@ -2111,9 +2112,13 @@ class _VNFViewport(Viewport):
                 and not self._drag_started
                 and self._press_pos is not None):
             pos = event.position().toPoint()
-            face = self._pick_face(pos.x(), pos.y())
-            self.highlight_face(face)
-            self.face_clicked.emit(face)
+            vi = self._pick_vertex(pos.x(), pos.y())
+            if vi >= 0:
+                self.vertex_clicked.emit(vi)
+            else:
+                face = self._pick_face(pos.x(), pos.y())
+                self.highlight_face(face)
+                self.face_clicked.emit(face)
         self._press_pos = None
         self._drag_started = False
         super().mouseReleaseEvent(event)
@@ -2227,6 +2232,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
                 self._vp._renderer.camera.orthographic = w._viewport._renderer.camera.orthographic
                 break
         self._vp.face_clicked.connect(self._on_viewport_face_clicked)
+        self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vp)
 
         # Tables in a tab widget
@@ -2695,6 +2701,27 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._select_face_vertices(face_idx)
         else:
             self._face_table.clearSelection()
+            self._vert_table.clearSelection()
+            self._vp.highlight_vertices([])
+        self._syncing = False
+
+    def _on_viewport_vertex_clicked(self, vi: int):
+        """Plain left-click on a vertex marker (selected or, with "Show
+        Unselected Vertices" on, one of the green ones) selects just that
+        vertex in the table -- takes priority over face picking, mirrors
+        `PathViewer`/`GridViewer`'s identical click-to-select convention.
+        Doesn't touch any current face selection/highlight, matching how
+        selecting vertices directly in the table already leaves face
+        selection alone (`_on_vert_table_selection`)."""
+        if self._syncing:
+            return
+        self._syncing = True
+        self._tab_widget.setCurrentIndex(0)
+        if 0 <= vi < self._vert_table.rowCount():
+            self._vert_table.selectRow(vi)
+            self._vert_table.scrollTo(self._vert_table.model().index(vi, 0))
+            self._vp.highlight_vertices([vi])
+        else:
             self._vert_table.clearSelection()
             self._vp.highlight_vertices([])
         self._syncing = False
