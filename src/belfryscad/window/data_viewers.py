@@ -87,7 +87,7 @@ def _is_list(v) -> bool:
 
 
 def _is_oscobject(v) -> bool:
-    from belfryscad.engine.evaluator import OscObject
+    from openscad_evaluator import OscObject
     return isinstance(v, OscObject)
 
 

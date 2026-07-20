@@ -32,7 +32,7 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
-    from belfryscad.engine.evaluator import OscObject
+    from openscad_evaluator import OscObject
     if isinstance(v, OscObject):
         inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
         return f"object({inner})"
@@ -70,7 +70,7 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
 
 def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     """Format OscObject values with multi-line layout. Returns None for other types."""
-    from belfryscad.engine.evaluator import OscObject
+    from openscad_evaluator import OscObject
     if isinstance(value, OscObject):
         if not value.data:
             return "object()"
@@ -150,7 +150,7 @@ def _generate_partial_render(ev) -> tuple[list | None, str | None]:
     stack picks up already-resolved leaves (e.g. cube()'s CSGNode sitting
     in union()'s still-in-progress accumulator) instead of only nodes
     whose entire enclosing statement chain has already completed."""
-    from belfryscad.engine.evaluator import to_renderable_bodies
+    from openscad_evaluator import to_renderable_bodies
     try:
         partial_nodes = [node for level in ev._tree_stack for node in level]
         return to_renderable_bodies(ev.generate_tree(partial_nodes)), None
@@ -334,7 +334,7 @@ class DebugSession(QObject):
             self.logged_value.emit(display_name, value)
 
     def _run(self, nodes, root_scope, viewport_params: dict):
-        from belfryscad.engine.evaluator import Evaluator, EvalError
+        from openscad_evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
                       return_hook=self._on_function_return, manifold_cache=self._manifold_cache)
         self._ev = ev  # hook()/_error_break() read this to call generate_tree() on ev.csg_tree

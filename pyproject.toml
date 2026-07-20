@@ -14,11 +14,9 @@ dependencies = [
     "moderngl",
     "numpy",
     "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
-    "Pillow",
     "setproctitle>=1.3.7",
     "openscad_lalr_parser>=1.1.0",
-    "fonttools>=4.0",
-    "shapely-polyskel>=0.1.2",
+    "openscad_evaluator>=1.0.0",
     "certifi",
 ]
 
@@ -31,10 +29,16 @@ packages = ["src/belfryscad"]
 [tool.uv]
 package = true
 
+# TEMPORARY: openscad_evaluator hasn't been published to PyPI yet (repo
+# creation + PyPI publish are separately-gated steps in the extraction
+# plan) -- remove this override once it has, so the >=1.0.0 constraint
+# above resolves against the real published package.
+[tool.uv.sources]
+openscad_evaluator = { path = "../openscad_evaluator", editable = true }
+
 [dependency-groups]
 dev = [
     "briefcase>=0.4.2",
-    "ezdxf>=1.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
 ]
@@ -63,12 +67,10 @@ requires = [
     "moderngl",
     "numpy",
     "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
-    "Pillow",
     "setproctitle>=1.3.7",
     "openscad_lalr_parser>=1.1.0",
-    "fonttools>=4.0",
+    "openscad_evaluator>=1.0.0",
     "./vendor/wheels/euclid3-0.1-py3-none-any.whl",
-    "shapely-polyskel>=0.1.2",
     "certifi",
 ]
 
