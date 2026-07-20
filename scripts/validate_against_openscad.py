@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from openscad_lalr_parser import getASTfromString, build_scopes
-from belfryscad.engine.evaluator import Evaluator, EvalError
+from openscad_evaluator import Evaluator, EvalError
 
 OPENSCAD = "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD"
 

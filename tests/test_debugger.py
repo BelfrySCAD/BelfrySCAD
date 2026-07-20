@@ -8,7 +8,7 @@ expr_level, origin).
 import pytest
 from openscad_lalr_parser import getASTfromString, build_scopes
 
-from belfryscad.engine.evaluator import Evaluator, EvalContext, EvalError
+from openscad_evaluator import Evaluator, EvalContext, EvalError
 from belfryscad.window.debugger import _generate_partial_render
 
 

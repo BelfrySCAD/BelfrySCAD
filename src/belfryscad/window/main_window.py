@@ -37,68 +37,6 @@ def _fmt_elapsed(elapsed_ms: float) -> str:
     return f"({elapsed_ms:.0f} ms)"
 
 
-def _resolve_use_scopes(nodes, current_file, log_fn):
-    """Resolve `use <file>` statements per OpenSCAD semantics.
-
-    Each top-level `UseStatement` is replaced by the used file's *own*
-    module and function declarations — its top-level geometry and variable
-    assignments are not injected, so `current_file`'s own variable namespace
-    stays isolated from (and invisible to) the used file's globals.
-    Declarations that the used file itself pulled in via a nested `use` are
-    not re-exported ("nested use has no effect on the base file's
-    environment").
-
-    Returns `(processed_nodes, own_nodes, root_scope)`:
-    - `processed_nodes` — what `current_file` should be evaluated as: its
-      own nodes plus the declarations injected via its `use` statements.
-    - `own_nodes` — `current_file`'s own nodes (minus `UseStatement`s),
-      excluding anything injected via `use`; this is what gets exposed to
-      whoever in turn `use`s `current_file`.
-    - `root_scope` — built from `processed_nodes`, then each injected
-      declaration is re-anchored to its own file's root scope (computed
-      recursively), giving it access to its own file's globals without
-      exposing them to `current_file`.
-    """
-    from openscad_lalr_parser import getASTfromLibraryFile, build_scopes
-    from openscad_lalr_parser.nodes import UseStatement, ModuleDeclaration, FunctionDeclaration
-
-    injected = []
-    reanchor = []
-    for node in nodes:
-        if not isinstance(node, UseStatement):
-            continue
-        try:
-            fp = node.filepath.val if hasattr(node.filepath, 'val') else node.filepath
-            # `include`d files are flattened into `nodes`, so a `use` statement
-            # may have originated from a different file than `current_file` —
-            # resolve relative paths against where it was actually written.
-            origin = getattr(getattr(node, 'position', None), 'origin', None)
-            lib_nodes, lib_path = getASTfromLibraryFile(origin or current_file, fp, include_comments=False)
-        except Exception as e:
-            msg = str(e)
-            if "not found" not in msg and "No such file" not in msg:
-                log_fn(f"use error: {e}")
-            continue
-        if not lib_nodes:
-            continue
-        _, lib_own_nodes, lib_root_scope = _resolve_use_scopes(lib_nodes, lib_path, log_fn)
-        lib_injected = [
-            n for n in lib_own_nodes
-            if isinstance(n, (ModuleDeclaration, FunctionDeclaration))
-        ]
-        injected.extend(lib_injected)
-        if lib_injected:
-            reanchor.append((lib_injected, lib_root_scope))
-
-    own_nodes = [n for n in nodes if not isinstance(n, UseStatement)]
-    processed_nodes = injected + own_nodes
-    root_scope = build_scopes(processed_nodes)
-    for lib_injected, lib_root_scope in reanchor:
-        for n in lib_injected:
-            n.build_scope(lib_root_scope)
-    return processed_nodes, own_nodes, root_scope
-
-
 class _TextEditCmd(QUndoCommand):
     """Undo command for raw text edits in the code editor."""
     _MERGE_WINDOW = 3.0   # seconds: edits this close are merged into one undo step
@@ -294,7 +232,7 @@ class _RenderWorker(QObject):
     def _do_render(self):
         import io, sys as _sys, time as _time, os as _os, tempfile, traceback
         from openscad_lalr_parser import getASTfromFile
-        from belfryscad.engine.evaluator import Evaluator, EvalError, to_renderable_bodies
+        from openscad_evaluator import Evaluator, EvalError, to_renderable_bodies, resolve_use_scopes
 
         _t0 = _time.perf_counter()
 
@@ -338,7 +276,7 @@ class _RenderWorker(QObject):
         # Resolve `use` statements and build scopes
         current_file = self._file_path or parse_path
         try:
-            nodes, _own, root_scope = _resolve_use_scopes(nodes, current_file, self.logged.emit)
+            nodes, _own, root_scope = resolve_use_scopes(nodes, current_file, self.logged.emit)
         except RecursionError:
             self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during scope build).")
             return
@@ -506,7 +444,7 @@ class MainWindow(QMainWindow):
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
-        from belfryscad.engine.evaluator import ManifoldCache
+        from openscad_evaluator import ManifoldCache
         self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
@@ -1774,7 +1712,7 @@ class MainWindow(QMainWindow):
         if not self._last_csg_tree:
             self.log("No CSG tree available — render first.")
             return
-        from belfryscad.engine.evaluator import format_csg_tree
+        from openscad_evaluator import format_csg_tree
         self.log(format_csg_tree(self._last_csg_tree))
 
     def _show_profile_report(self):
@@ -2045,6 +1983,7 @@ class MainWindow(QMainWindow):
         self._console.clear()
 
         from openscad_lalr_parser import getASTfromFile
+        from openscad_evaluator import resolve_use_scopes
         import tempfile, io, sys as _sys
 
         _tmp = None
@@ -2084,7 +2023,7 @@ class MainWindow(QMainWindow):
 
         current_file = tab.file_path or parse_path
         try:
-            nodes, _own, root_scope = _resolve_use_scopes(nodes, current_file, self.log)
+            nodes, _own, root_scope = resolve_use_scopes(nodes, current_file, self.log)
         except RecursionError:
             self.log("Error: AST too deeply nested (recursion limit exceeded during scope build).")
             return
@@ -2221,7 +2160,7 @@ class MainWindow(QMainWindow):
         self._viewport.set_debug_paused(True)
 
     def _on_debug_finished(self, bodies, id_to_node):
-        from belfryscad.engine.evaluator import to_renderable_bodies
+        from openscad_evaluator import to_renderable_bodies
 
         tab = self._debug_tab
         if not tab:

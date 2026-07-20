@@ -1,5 +1,5 @@
 """
-Tests for `use <file>` resolution (`_resolve_use_scopes` in main_window.py).
+Tests for `use <file>` resolution (`resolve_use_scopes` in openscad_evaluator).
 
 Per the OpenSCAD docs, `use <file>`:
 - brings the used file's own modules/functions into scope
@@ -11,8 +11,7 @@ Per the OpenSCAD docs, `use <file>`:
 import pytest
 from openscad_lalr_parser import getASTfromFile
 
-from belfryscad.engine.evaluator import Evaluator
-from belfryscad.window.main_window import _resolve_use_scopes
+from openscad_evaluator import Evaluator, resolve_use_scopes
 
 
 def run_file(path, log=None):
@@ -20,7 +19,7 @@ def run_file(path, log=None):
     logs = [] if log is None else log
     echo_lines = []
     nodes = getASTfromFile(str(path), include_comments=False)
-    nodes, _own, root_scope = _resolve_use_scopes(nodes, str(path), logs.append)
+    nodes, _own, root_scope = resolve_use_scopes(nodes, str(path), logs.append)
     ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
     bodies, _ = ev.evaluate(nodes, root_scope)
     return bodies, echo_lines, logs
