@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "0.13.3"
+version = "0.14.0"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -29,13 +29,6 @@ packages = ["src/belfryscad"]
 [tool.uv]
 package = true
 
-# TEMPORARY: openscad_evaluator hasn't been published to PyPI yet (repo
-# creation + PyPI publish are separately-gated steps in the extraction
-# plan) -- remove this override once it has, so the >=1.0.0 constraint
-# above resolves against the real published package.
-[tool.uv.sources]
-openscad_evaluator = { path = "../openscad_evaluator", editable = true }
-
 [dependency-groups]
 dev = [
     "briefcase>=0.4.2",
@@ -50,7 +43,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "0.13.3"
+version = "0.14.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
