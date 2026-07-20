@@ -1781,6 +1781,12 @@ class _VNFViewport(Viewport):
     # whole gesture instead of one per live frame.
     vertex_drag_started = Signal()
     vertex_drag_finished = Signal()
+    # Right-click-in-viewport face/vertex topology edits (editable only) --
+    # the viewport just picks and emits; the dialog owns the actual
+    # mutation, same convention as every other signal above.
+    duplicate_vertex_requested = Signal(int)
+    delete_face_requested = Signal(int)
+    reverse_face_requested = Signal(int)
 
     def __init__(self, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False, pan_speed=2.0)
@@ -2103,6 +2109,34 @@ class _VNFViewport(Viewport):
         face_id = self._renderer.ray_cast(ray_o, ray_d)
         return face_id if face_id is not None else -1
 
+    def contextMenuEvent(self, event):
+        """Right-click a vertex marker for Duplicate Vertex, or (failing
+        that) a face for Delete Face / Reverse Face -- editable only,
+        mirrors _PathViewport.contextMenuEvent's pick-then-menu pattern,
+        including the _last_mouse/_mouse_button reset before exec(): Qt
+        doesn't reliably deliver this widget's own mouseReleaseEvent for a
+        right-click that opens a popup, so without this a right-click that
+        opens a menu can leave stale pan-drag state behind."""
+        if not self._editable:
+            return
+        pos = event.pos()
+        vi = self._pick_vertex(pos.x(), pos.y())
+        if vi >= 0:
+            self._last_mouse = None
+            self._mouse_button = None
+            menu = QMenu(self)
+            menu.addAction("Duplicate Vertex", lambda: self.duplicate_vertex_requested.emit(vi))
+            menu.exec(event.globalPos())
+            return
+        face = self._pick_face(pos.x(), pos.y())
+        if face >= 0:
+            self._last_mouse = None
+            self._mouse_button = None
+            menu = QMenu(self)
+            menu.addAction("Delete Face", lambda: self.delete_face_requested.emit(face))
+            menu.addAction("Reverse Face", lambda: self.reverse_face_requested.emit(face))
+            menu.exec(event.globalPos())
+
     def closeEvent(self, event):
         self._vert_blink_timer.stop()
         super().closeEvent(event)
@@ -2115,8 +2149,13 @@ class _VNFViewport(Viewport):
 class VNFViewer(QDialog, _UndoableViewerMixin):
     """3D mesh viewer for VNF [vertices, faces] structures with vertex/face
     tables. Read-only by default; pass `editable=True` for a Save/Cancel
-    editing mode (see `MatrixViewer` for the shared editing convention) --
-    vertex *positions* only, face topology is never edited here."""
+    editing mode (see `MatrixViewer` for the shared editing convention).
+    Editable mode also supports face topology edits: add/duplicate/delete
+    vertices and add/delete/reverse faces (vertex table "+"/"-" buttons and
+    right-click menus, viewport right-click, and the "Add Face" button for
+    a 3-vertex selection). Deleting a vertex cascade-deletes any face that
+    referenced it and renumbers every surviving face's vertex indices to
+    match the shrunk vertex list."""
 
     committed = Signal(str)
 
@@ -2147,12 +2186,42 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         # Tables in a tab widget
         self._tab_widget = QTabWidget(splitter)
 
+        self._add_face_btn = None
         self._vert_table = self._make_vert_table(vnf_value[0], editable)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
-        self._tab_widget.addTab(self._vert_table, f"Vertices ({len(vnf_value[0])})")
+        vert_container = QWidget()
+        vert_layout = QVBoxLayout(vert_container)
+        vert_layout.setContentsMargins(0, 0, 0, 0)
+        vert_layout.addWidget(self._vert_table, 1)
+        if editable:
+            vert_btn_row = QHBoxLayout()
+            add_vert_btn = QPushButton("+")
+            add_vert_btn.setFixedWidth(28)
+            add_vert_btn.setToolTip("Add a vertex (duplicates the last one, offset)")
+            add_vert_btn.clicked.connect(self._add_vertex_default)
+            vert_btn_row.addWidget(add_vert_btn)
+            del_vert_btn = QPushButton("-")
+            del_vert_btn.setFixedWidth(28)
+            del_vert_btn.setToolTip("Delete the selected vertices")
+            del_vert_btn.clicked.connect(lambda: self._delete_vertices(self._selected_vertex_indices()))
+            vert_btn_row.addWidget(del_vert_btn)
+            vert_btn_row.addSpacing(12)
+            self._add_face_btn = QPushButton("Add Face")
+            self._add_face_btn.setEnabled(False)
+            self._add_face_btn.setToolTip("Select exactly 3 vertices to create a face from them")
+            self._add_face_btn.clicked.connect(self._add_face_from_selection)
+            vert_btn_row.addWidget(self._add_face_btn)
+            vert_btn_row.addStretch()
+            vert_layout.addLayout(vert_btn_row)
+            self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
+        self._tab_widget.addTab(vert_container, f"Vertices ({len(vnf_value[0])})")
 
         self._face_table = self._make_face_table(vnf_value[1])
         self._face_table.itemSelectionChanged.connect(self._on_face_table_selection)
+        if editable:
+            self._face_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._face_table.customContextMenuRequested.connect(self._show_face_table_context_menu)
         self._tab_widget.addTab(self._face_table, f"Faces ({len(vnf_value[1])})")
 
         splitter.addWidget(self._tab_widget)
@@ -2192,6 +2261,9 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._vp.vertex_moved.connect(self._on_viewport_vertex_moved)
             self._vp.vertex_drag_started.connect(self._begin_live_edit)
             self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
+            self._vp.duplicate_vertex_requested.connect(self._duplicate_vertex)
+            self._vp.delete_face_requested.connect(self._delete_face)
+            self._vp.reverse_face_requested.connect(self._reverse_face)
 
     @staticmethod
     def _make_vert_table(verts, editable: bool = False) -> QTableWidget:
@@ -2326,13 +2398,44 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
     def _apply_value(self, value):
         self._vnf = value
+        self._populate_vert_table()
+        self._populate_face_table()
+        self._rebuild()
+
+    def _populate_vert_table(self):
+        """Full rebuild of the vertex table from `self._vnf[0]` -- unlike
+        `_on_item_changed`/`_on_viewport_vertex_moved`, which only ever
+        touch existing cells' text in place, add/duplicate/delete changes
+        the row count, so the whole table needs repopulating (mirrors
+        `PathViewer._populate_vert_table`'s identical row-count-change
+        situation)."""
         verts = self._vnf[0]
         self._vert_table.blockSignals(True)
+        self._vert_table.setRowCount(len(verts))
+        self._vert_table.setVerticalHeaderLabels([str(i) for i in range(len(verts))])
         for i, v in enumerate(verts):
             for j in range(3):
-                self._vert_table.item(i, j).setText(f"{v[j]:g}")
+                item = QTableWidgetItem(f"{v[j]:g}")
+                if not self._editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._vert_table.setItem(i, j, item)
         self._vert_table.blockSignals(False)
-        self._rebuild()
+        self._tab_widget.setTabText(0, f"Vertices ({len(verts)})")
+
+    def _populate_face_table(self):
+        """Full rebuild of the face table from `self._vnf[1]` -- same
+        row-count-change situation as `_populate_vert_table`."""
+        faces = self._vnf[1]
+        self._face_table.blockSignals(True)
+        self._face_table.setRowCount(len(faces))
+        self._face_table.setVerticalHeaderLabels([str(i) for i in range(len(faces))])
+        for i, f in enumerate(faces):
+            text = "[" + ", ".join(str(int(idx)) for idx in f) + "]"
+            item = QTableWidgetItem(text)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._face_table.setItem(i, 0, item)
+        self._face_table.blockSignals(False)
+        self._tab_widget.setTabText(1, f"Faces ({len(faces)})")
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -2375,6 +2478,145 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         rows = self._vert_table.selectionModel().selectedRows()
         indices = [r.row() for r in rows]
         self._vp.highlight_vertices(indices)
+        if self._add_face_btn is not None:
+            self._add_face_btn.setEnabled(len(indices) == 3)
+
+    def _selected_vertex_indices(self) -> set:
+        return {r.row() for r in self._vert_table.selectionModel().selectedRows()}
+
+    @staticmethod
+    def _offset_position(base_pos, existing_verts, step=(1.0, 0.0, 0.0)):
+        """Return a position offset from `base_pos` along `step` that
+        doesn't coincide (within a small float epsilon) with any position
+        already in `existing_verts` -- guards a duplicated/added vertex
+        against landing exactly on top of an existing one. Unlikely for a
+        single duplicate, but a real risk for repeated duplicates-of-
+        duplicates, or a symmetric mesh where the offset spot happens to
+        already be occupied. Always terminates: a finite vertex set can't
+        block an unboundedly growing offset forever."""
+        n = 1
+        while True:
+            candidate = [base_pos[0] + step[0] * n, base_pos[1] + step[1] * n, base_pos[2] + step[2] * n]
+            if not any(all(abs(candidate[k] - v[k]) < 1e-9 for k in range(3)) for v in existing_verts):
+                return candidate
+            n += 1
+
+    def _duplicate_vertex(self, source_idx: int):
+        """Append a copy of vertex `source_idx`, offset a bit, to the end
+        of the vertex list -- triggered from the vertex table/viewport
+        right-click menu. No face changes; the new vertex starts
+        unreferenced by any face."""
+        verts = self._vnf[0]
+        if source_idx < 0 or source_idx >= len(verts):
+            return
+        new_value = copy.deepcopy(self._vnf)
+        new_value[0].append(self._offset_position(verts[source_idx], verts))
+        self._commit_value(new_value, "Duplicate Vertex")
+        self._vert_table.selectRow(len(new_value[0]) - 1)
+
+    def _add_vertex_default(self):
+        """The "+" button: duplicates the last vertex (offset), or starts
+        a fresh mesh at the origin if the vertex list is currently empty."""
+        verts = self._vnf[0]
+        new_value = copy.deepcopy(self._vnf)
+        if verts:
+            new_value[0].append(self._offset_position(verts[-1], verts))
+        else:
+            new_value[0].append([0.0, 0.0, 0.0])
+        self._commit_value(new_value, "Add Vertex")
+        self._vert_table.selectRow(len(new_value[0]) - 1)
+
+    def _delete_vertices(self, indices):
+        """The "-" button / Delete key / no-arg selection path: removes
+        every given vertex row, cascade-deletes any face that referenced
+        one of them, and renumbers every surviving face's vertex indices
+        to match the shrunk vertex list (old_idx -> new_idx built from the
+        survivors in order -- same technique as
+        `PathViewer._delete_vertex`'s `index_map`, applied to faces instead
+        of `_node_types`)."""
+        if not indices:
+            return
+        old_verts = self._vnf[0]
+        old_faces = self._vnf[1]
+        index_map = {}
+        new_i = 0
+        for old_i in range(len(old_verts)):
+            if old_i in indices:
+                continue
+            index_map[old_i] = new_i
+            new_i += 1
+        new_verts = [v for i, v in enumerate(old_verts) if i not in indices]
+        new_faces = []
+        for face in old_faces:
+            face_idxs = [int(vi) for vi in face]
+            if any(vi in indices for vi in face_idxs):
+                continue  # cascade delete: face referenced a deleted vertex
+            new_faces.append([index_map[vi] for vi in face_idxs])
+        self._commit_value([new_verts, new_faces], "Delete Vertex")
+        self._vert_table.clearSelection()
+
+    def _add_face_from_selection(self):
+        """The "Add Face" button: requires exactly 3 selected vertex rows
+        (enforced by the button's own enabled state, re-checked here
+        defensively). Appends the 3 indices in ascending row order --
+        winding isn't inferred from geometry, use Reverse Face afterward
+        if it comes out backwards."""
+        indices = sorted(self._selected_vertex_indices())
+        if len(indices) != 3:
+            return
+        new_value = copy.deepcopy(self._vnf)
+        new_value[1].append(list(indices))
+        self._commit_value(new_value, "Add Face")
+        self._face_table.selectRow(len(new_value[1]) - 1)
+
+    def _delete_face(self, face_idx: int):
+        faces = self._vnf[1]
+        if face_idx < 0 or face_idx >= len(faces):
+            return
+        new_value = copy.deepcopy(self._vnf)
+        del new_value[1][face_idx]
+        self._commit_value(new_value, "Delete Face")
+
+    def _reverse_face(self, face_idx: int):
+        faces = self._vnf[1]
+        if face_idx < 0 or face_idx >= len(faces):
+            return
+        new_value = copy.deepcopy(self._vnf)
+        new_value[1][face_idx] = list(reversed(new_value[1][face_idx]))
+        self._commit_value(new_value, "Reverse Face")
+
+    def _show_vert_table_context_menu(self, pos):
+        """Right-click menu on the vertex table (`editable=True` only) --
+        mirrors `PathViewer._show_vert_table_context_menu`'s `rowAt`
+        idiom: no menu when the click lands on empty space below the last
+        row."""
+        vertex_idx = self._vert_table.rowAt(pos.y())
+        if vertex_idx < 0:
+            return
+        menu = QMenu(self._vert_table)
+        menu.addAction("Duplicate Vertex", lambda: self._duplicate_vertex(vertex_idx))
+        menu.exec(self._vert_table.viewport().mapToGlobal(pos))
+
+    def _show_face_table_context_menu(self, pos):
+        """Right-click menu on the face table (`editable=True` only) --
+        same `rowAt` idiom as `_show_vert_table_context_menu`."""
+        face_idx = self._face_table.rowAt(pos.y())
+        if face_idx < 0:
+            return
+        menu = QMenu(self._face_table)
+        menu.addAction("Delete Face", lambda: self._delete_face(face_idx))
+        menu.addAction("Reverse Face", lambda: self._reverse_face(face_idx))
+        menu.exec(self._face_table.viewport().mapToGlobal(pos))
+
+    def keyPressEvent(self, event):
+        """Delete/Backspace deletes the currently selected vertices --
+        mirrors `PathViewer.keyPressEvent`'s identical convention for the
+        same kind of vertex table."""
+        if self._editable and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._delete_vertices(self._selected_vertex_indices())
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _on_face_table_selection(self):
         if self._syncing:
