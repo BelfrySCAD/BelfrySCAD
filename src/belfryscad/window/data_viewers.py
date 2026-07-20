@@ -1803,6 +1803,7 @@ class _VNFViewport(Viewport):
         self._vert_marker_vbo_w = None
         self._vert_blink_red = True
         self._vert_indices: list[int] = []
+        self._show_unselected = False
         self._vert_blink_timer = QTimer(self)
         self._vert_blink_timer.setInterval(250)
         self._vert_blink_timer.timeout.connect(self._blink_tick)
@@ -1886,6 +1887,7 @@ class _VNFViewport(Viewport):
 
         if not indices or self._ctx is None or len(self._verts_3d) == 0:
             self._vert_blink_timer.stop()
+            self._build_unselected_markers()  # selection just cleared -- refresh which vertices count as "unselected"
             self.doneCurrent()
             self.update()
             return
@@ -1897,8 +1899,47 @@ class _VNFViewport(Viewport):
         self._vert_blink_red = True
         self._vert_blink_timer.start()
         self._build_vert_markers()
+        self._build_unselected_markers()
         self.doneCurrent()
         self.update()
+
+    def set_show_unselected(self, enabled: bool):
+        """Toggle the "Show Unselected Vertices" checkbox -- unlike the
+        selected-vertex markers (always shown, blinking), this is opt-in:
+        a VNF mesh can have far more vertices than a Path/Grid, where the
+        equivalent "always show every point in green" markers
+        (`_PathViewport`/`_GridViewport._build_point_markers`) are cheap
+        enough to leave permanently on."""
+        self._show_unselected = enabled
+        self.makeCurrent()
+        self._build_unselected_markers()
+        self.doneCurrent()
+        self.update()
+
+    def _build_unselected_markers(self):
+        """Green cube markers for every vertex *not* currently selected --
+        mirrors `_PathViewport`/`_GridViewport._build_point_markers`
+        (same green, same shared `SceneRenderer.upload_points`/
+        `clear_points` pipeline, auto-rendered by `_render_simple_points`
+        with no `_paint_extra` changes needed), just gated behind
+        `_show_unselected` rather than always on."""
+        self._renderer.clear_points()
+        if not self._show_unselected or self._ctx is None or len(self._verts_3d) == 0:
+            return
+        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        selected = set(self._vert_indices)
+        unit_faces = _cube_faces(1.0, False)
+        marker_tris = []
+        for i, pt in enumerate(self._verts_3d):
+            if i in selected:
+                continue
+            r = _marker_radius_for_point(self, pt)
+            for v0, v1, v2 in unit_faces:
+                marker_tris.append(np.concatenate([pt + v0 * r, green]))
+                marker_tris.append(np.concatenate([pt + v1 * r, green]))
+                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+        if marker_tris:
+            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
     def _release_vert_markers(self):
         for attr in ("_vert_marker_vao_r", "_vert_marker_vao_w"):
@@ -1950,15 +1991,20 @@ class _VNFViewport(Viewport):
         super().frame_scene(bb_min, bb_max, reframe=reframe)
         if self._vert_indices:
             self._build_vert_markers()
+        if self._show_unselected:
+            self._build_unselected_markers()
 
     def wheelEvent(self, event):
         # Unlike frame_scene above, this is a genuine external Qt event --
         # never called from inside another makeCurrent'd block -- so it
         # does need its own bracket.
         super().wheelEvent(event)
-        if self._vert_indices:
+        if self._vert_indices or self._show_unselected:
             self.makeCurrent()
-            self._build_vert_markers()
+            if self._vert_indices:
+                self._build_vert_markers()
+            if self._show_unselected:
+                self._build_unselected_markers()
             self.doneCurrent()
 
     def _paint_extra(self, mvp: np.ndarray):
@@ -2238,6 +2284,9 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        show_unselected_cb = QCheckBox("Show Unselected Vertices")
+        show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
+        btn_row.addWidget(show_unselected_cb)
         if editable:
             self._setup_undo(vnf_value)
             btn_row.addLayout(self._make_undo_button_row())
