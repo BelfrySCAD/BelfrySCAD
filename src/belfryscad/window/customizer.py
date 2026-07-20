@@ -443,6 +443,7 @@ class _VectorWidget(QWidget):
             spin.setRange(-1e9, 1e9)
             spin.setSingleStep(0.1 if isinstance(v, float) else 1.0)
             spin.setValue(float(v))
+            spin.setMaximumWidth(75)
             spin.editingFinished.connect(
                 lambda idx=i, s=spin: self._on_elem(idx, s.value())
             )
