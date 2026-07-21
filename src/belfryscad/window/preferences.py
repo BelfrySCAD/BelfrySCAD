@@ -438,19 +438,31 @@ class ColorSchemeManagerDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
+        # Splitter holds ONLY the list and the preview, each a single direct
+        # child widget, so both get exactly the same height -- the CRUD/
+        # Close buttons live in their own full-width row below instead of
+        # being stacked under the list inside a wrapper widget, which
+        # previously made the list column shorter than the preview
+        # (the preview, alone in its splitter half, filled the whole
+        # splitter height; the list didn't, since its own button row ate
+        # some of that height out of the left half only).
         splitter = QSplitter(Qt.Orientation.Horizontal)
         outer.addWidget(splitter, 1)
-
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
 
         self._list = QListWidget()
         self._list.currentItemChanged.connect(self._update_button_states)
         self._list.currentItemChanged.connect(self._update_preview)
-        left_layout.addWidget(self._list, 1)
+        splitter.addWidget(self._list)
 
+        self._preview = _ColorSchemePreview()
+        splitter.addWidget(self._preview)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([260, 440])
+
+        # One row for everything below the splitter, so Close lines up
+        # vertically with the CRUD buttons instead of sitting in its own
+        # row underneath them.
         btn_row = QHBoxLayout()
         self._btn_new = QPushButton("New...")
         self._btn_new.clicked.connect(self._on_new)
@@ -469,20 +481,13 @@ class ColorSchemeManagerDialog(QDialog):
         self._btn_export.clicked.connect(self._on_export)
         btn_row.addWidget(self._btn_import)
         btn_row.addWidget(self._btn_export)
-        left_layout.addLayout(btn_row)
-
-        splitter.addWidget(left)
-
-        self._preview = _ColorSchemePreview()
-        splitter.addWidget(self._preview)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([260, 440])
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
         buttons.accepted.connect(self.close)
-        outer.addWidget(buttons)
+        btn_row.addWidget(buttons)
+
+        outer.addLayout(btn_row)
 
         self._reload_list()
 
