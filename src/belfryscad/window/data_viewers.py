@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
     QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit, QToolButton,
 )
-from PySide6.QtCore import Qt, QPoint, Signal, QTimer
+from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
 from belfryscad.window.viewport import Viewport
@@ -843,6 +843,46 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
         Qt.Key.Key_Up: up_delta,
         Qt.Key.Key_Down: -up_delta,
     }.get(key)
+
+
+def _vertex_click_mode(modifiers: Qt.KeyboardModifier) -> str:
+    """Standardized vertex-click selection mode, shared by every editable
+    viewport with a selectable vertex list (Path/Grid/VNF/Region): no
+    modifier replaces the selection with just the clicked vertex, Shift
+    adds it, Cmd (Control in the Qt enum) toggles it. Only ever consulted
+    for a plain click (no drag) -- Cmd is intercepted earlier, at
+    mousePressEvent, to arm a vertex-move drag instead; if that drag never
+    actually moves the vertex, the release handler hardcodes "toggle"
+    directly rather than calling this (Cmd's intent there is unambiguous)."""
+    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        return "add"
+    if modifiers & Qt.KeyboardModifier.ControlModifier:
+        return "toggle"
+    return "replace"
+
+
+def _apply_click_selection(table: QTableWidget, row: int, mode: str):
+    """Apply a standardized vertex-click selection mode to `table`'s row
+    selection -- shared by every editable viewport's
+    `_on_viewport_vertex_clicked` handler. "replace": deselect everything
+    else, select just `row`. "add" (Shift-click): add `row` to the
+    current selection. "toggle" (Cmd-click): flip `row`'s own membership
+    in the selection. `row < 0` (clicked blank space) only has an effect
+    for "replace", clearing the selection -- "add"/"toggle" on blank
+    space is a no-op, nothing to add or toggle."""
+    if row < 0:
+        if mode == "replace":
+            table.clearSelection()
+        return
+    if mode == "replace":
+        table.clearSelection()
+        table.selectRow(row)
+        return
+    sel = table.selectionModel()
+    index = table.model().index(row, 0)
+    flag = (QItemSelectionModel.SelectionFlag.Toggle if mode == "toggle"
+            else QItemSelectionModel.SelectionFlag.Select)
+    sel.select(index, flag | QItemSelectionModel.SelectionFlag.Rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1775,7 +1815,7 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
 
 class _VNFViewport(Viewport):
     face_clicked = Signal(int)
-    vertex_clicked = Signal(int)  # plain left-click on a vertex marker -- takes priority over face_clicked
+    vertex_clicked = Signal(int, str)  # (vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode) -- takes priority over face_clicked
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
     # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
     # keyboard nudge) so the dialog can push exactly one undo step for the
@@ -2102,11 +2142,18 @@ class _VNFViewport(Viewport):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self._drag_vertex_idx >= 0:
+            vi = self._drag_vertex_idx
+            moved = self._drag_started
             self._drag_vertex_idx = -1
             self._press_pos = None
             self._drag_started = False
             self._delta_label.hide()
             self.vertex_drag_finished.emit()
+            if not moved:
+                # Cmd was held at press time (the only way _drag_vertex_idx
+                # gets armed) but nothing actually moved -- toggle, not a
+                # plain click.
+                self.vertex_clicked.emit(vi, "toggle")
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
@@ -2114,7 +2161,7 @@ class _VNFViewport(Viewport):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
             if vi >= 0:
-                self.vertex_clicked.emit(vi)
+                self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
             else:
                 face = self._pick_face(pos.x(), pos.y())
                 self.highlight_face(face)
@@ -2705,30 +2752,23 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._vp.highlight_vertices([])
         self._syncing = False
 
-    def _on_viewport_vertex_clicked(self, vi: int):
-        """Plain left-click on a vertex marker (selected or, with "Show
-        Unselected Vertices" on, one of the green ones) selects just that
-        vertex in the table -- takes priority over face picking, mirrors
-        `PathViewer`/`GridViewer`'s identical click-to-select convention.
-        Doesn't touch any current face selection/highlight, matching how
+    def _on_viewport_vertex_clicked(self, vi: int, mode: str):
+        """Click on a vertex marker (selected or, with "Show Unselected
+        Vertices" on, one of the green ones) applies the standardized
+        replace/add/toggle selection mode (`_apply_click_selection`) --
+        takes priority over face picking. Switches to the Vertices tab;
+        doesn't touch any current face selection/highlight, matching how
         selecting vertices directly in the table already leaves face
-        selection alone (`_on_vert_table_selection`)."""
-        if self._syncing:
-            return
-        self._syncing = True
+        selection alone (`_on_vert_table_selection`). Lets the resulting
+        `itemSelectionChanged` -> `_on_vert_table_selection` handle
+        highlighting and the Add Face button's enabled state naturally,
+        rather than bypassing it here -- necessary now that a click can
+        add to an existing selection instead of always replacing it."""
         self._tab_widget.setCurrentIndex(0)
-        if 0 <= vi < self._vert_table.rowCount():
-            self._vert_table.selectRow(vi)
-            self._vert_table.scrollTo(self._vert_table.model().index(vi, 0))
-            self._vp.highlight_vertices([vi])
-        else:
-            self._vert_table.clearSelection()
-            self._vp.highlight_vertices([])
-        self._syncing = False
+        _apply_click_selection(self._vert_table, vi, mode)
 
     def _select_face_vertices(self, face_idx: int):
         """Select the vertices referenced by the given face in the vertex table."""
-        from PySide6.QtCore import QItemSelectionModel
         faces_raw = self._vnf[1]
         if face_idx < 0 or face_idx >= len(faces_raw):
             return
@@ -3039,10 +3079,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         indices = sorted(r.row() for r in rows)
         self._vp.set_selected(indices)
 
-    def _on_viewport_vertex_clicked(self, vi: int):
-        self._vert_table.clearSelection()
-        if 0 <= vi < self._vert_table.rowCount():
-            self._vert_table.selectRow(vi)
+    def _on_viewport_vertex_clicked(self, vi: int, mode: str):
+        _apply_click_selection(self._vert_table, vi, mode)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
         """Live update while Cmd+dragging or arrow-key-nudging a vertex
@@ -3143,7 +3181,7 @@ _NODE_TYPE_SHAPE_FN = {
 
 class _PathViewport(Viewport):
     """Viewport subclass with selectable vertex markers and hover tooltips."""
-    vertex_clicked = Signal(int)
+    vertex_clicked = Signal(int, str)  # (vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
     # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
     # keyboard nudge) so the dialog can push exactly one undo step for the
@@ -3617,14 +3655,17 @@ class _PathViewport(Viewport):
             self._delta_label.hide()
             self.vertex_drag_finished.emit()
             if not moved:
-                self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
+                # Cmd was held at press time (the only way _drag_vertex_idx
+                # gets armed) but nothing actually moved -- toggle, not a
+                # plain click.
+                self.vertex_clicked.emit(vi, "toggle")
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
                 and self._press_pos is not None):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
-            self.vertex_clicked.emit(vi)
+            self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
         # Captured here (a genuine right-button pan drag), not left as a
         # side effect of the reset below -- contextMenuEvent fires right
         # after this handler and needs to know whether *this* release
@@ -4160,22 +4201,20 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         global_indices = [row_start + c for c in col_indices]
         self._vp.set_selected(global_indices)
 
-    def _on_viewport_vertex_clicked(self, vi: int):
+    def _on_viewport_vertex_clicked(self, vi: int, mode: str):
         if vi < 0:
-            # Plain left-click on blank viewport space -- deselect
-            # everything (matches PathViewer/RegionViewer/VNFViewer),
-            # rather than the previous no-op. Clearing the table
-            # selection is enough: itemSelectionChanged already drives
-            # _on_vert_table_selection -> _vp.set_selected([]), which
-            # stops the blink timer and rebuilds markers as all-green.
-            self._vert_table.clearSelection()
+            _apply_click_selection(self._vert_table, -1, mode)
             return
         row_idx, col_idx = _grid_flat_to_rc(vi, self._row_offsets)
         if row_idx != self._row_combo.currentIndex():
+            # The table only ever shows one row's vertices at a time --
+            # switching rows repopulates it, so whatever was selected
+            # belonged to a different row and no longer exists. "add"/
+            # "toggle" can't mean anything across that boundary; fall back
+            # to selecting just the clicked vertex in its own row.
             self._row_combo.setCurrentIndex(row_idx)
-        self._vert_table.clearSelection()
-        if 0 <= col_idx < self._vert_table.rowCount():
-            self._vert_table.selectRow(col_idx)
+            mode = "replace"
+        _apply_click_selection(self._vert_table, col_idx, mode)
 
     def _on_viewport_delete_row_requested(self, vi: int):
         """Right-click "Delete Row" on a vertex in the viewport
@@ -4285,7 +4324,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
 
 class _GridViewport(Viewport):
     """Viewport for grid data with quad mesh faces and selectable vertex markers."""
-    vertex_clicked = Signal(int)
+    vertex_clicked = Signal(int, str)  # (flat vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode)
     vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
     # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
     # keyboard nudge) so the dialog can push exactly one undo step for the
@@ -4710,14 +4749,17 @@ class _GridViewport(Viewport):
             self._delta_label.hide()
             self.vertex_drag_finished.emit()
             if not moved:
-                self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
+                # Cmd was held at press time (the only way _drag_vertex_idx
+                # gets armed) but nothing actually moved -- toggle, not a
+                # plain click.
+                self.vertex_clicked.emit(vi, "toggle")
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
                 and self._press_pos is not None):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
-            self.vertex_clicked.emit(vi)
+            self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
         # Captured here (a genuine right-button pan drag), not left as a
         # side effect of the reset below -- contextMenuEvent fires right
         # after this handler and needs to know whether *this* release
@@ -5077,21 +5119,20 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         global_indices = [path_start + c for c in col_indices]
         self._vp.set_selected(global_indices)
 
-    def _on_viewport_vertex_clicked(self, vi: int):
+    def _on_viewport_vertex_clicked(self, vi: int, mode: str):
         if vi < 0:
-            # Plain left-click on blank viewport space -- deselect
-            # everything, rather than the previous no-op. Clearing the
-            # table selection is enough: itemSelectionChanged already
-            # drives _on_vert_table_selection -> _vp.set_selected([]),
-            # which stops the blink timer and rebuilds markers as all-green.
-            self._vert_table.clearSelection()
+            _apply_click_selection(self._vert_table, -1, mode)
             return
         path_idx, col_idx = _grid_flat_to_rc(vi, self._path_offsets)
         if path_idx != self._path_combo.currentIndex():
+            # The table only ever shows one path's vertices at a time --
+            # switching paths repopulates it, so whatever was selected
+            # belonged to a different path and no longer exists. "add"/
+            # "toggle" can't mean anything across that boundary; fall back
+            # to selecting just the clicked vertex in its own path.
             self._path_combo.setCurrentIndex(path_idx)
-        self._vert_table.clearSelection()
-        if 0 <= col_idx < self._vert_table.rowCount():
-            self._vert_table.selectRow(col_idx)
+            mode = "replace"
+        _apply_click_selection(self._vert_table, col_idx, mode)
 
     def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
         """Live update while Cmd+dragging or arrow-key-nudging a vertex
@@ -5170,7 +5211,7 @@ class _RegionViewport(Viewport):
     stay visually distinguishable while editing), with an optional
     even-odd filled mesh (`_region_fill_mesh`) underneath."""
 
-    vertex_clicked = Signal(int)
+    vertex_clicked = Signal(int, str)  # (flat vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode)
     vertex_moved = Signal(int, float, float, float)  # (flat index, new_x, new_y, new_z) -- Cmd+drag, editable only
     # Bracket a continuous vertex_moved sequence (a Cmd+drag gesture, or one
     # keyboard nudge) so the dialog can push exactly one undo step for the
@@ -5453,14 +5494,17 @@ class _RegionViewport(Viewport):
             self._drag_started = False
             self.vertex_drag_finished.emit()
             if not moved:
-                self.vertex_clicked.emit(vi)   # plain click on a vertex, no actual drag
+                # Cmd was held at press time (the only way _drag_vertex_idx
+                # gets armed) but nothing actually moved -- toggle, not a
+                # plain click.
+                self.vertex_clicked.emit(vi, "toggle")
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
                 and self._press_pos is not None):
             pos = event.position().toPoint()
             vi = self._pick_vertex(pos.x(), pos.y())
-            self.vertex_clicked.emit(vi)
+            self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
         # Captured here (a genuine right-button pan drag), not left as a
         # side effect of the reset below -- contextMenuEvent fires right
         # after this handler and needs to know whether *this* release
