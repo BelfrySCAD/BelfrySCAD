@@ -21,7 +21,7 @@ import numpy as np
 import manifold3d as m3d
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
     QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
 )
@@ -885,6 +885,34 @@ def _apply_click_selection(table: QTableWidget, row: int, mode: str):
     sel.select(index, flag | QItemSelectionModel.SelectionFlag.Rows)
 
 
+def _sync_viewport_to_main_window(vp):
+    """Match a freshly-constructed data-viewer viewport's colors and FOV
+    to the user's current settings. Without this, a newly-opened dialog
+    is stuck on `SceneRenderer`/`Camera`'s bare constructor defaults (a
+    different color theme, a different FOV) until the user happens to
+    open Preferences while the dialog is open -- the only other place
+    these get applied is `MainWindow._apply_preferences`, whose own sync
+    loop (`hasattr(w, '_vp')`) only ever reaches *already-open* dialogs,
+    never one that doesn't exist yet at the moment preferences last
+    changed. Color theme is read directly from the persisted preference
+    (works even with no `MainWindow` instance around, e.g. future
+    standalone/test usage). FOV has no persisted preference of its own
+    -- it's only ever changed live, via Shift+wheel or a script's `$vpf`
+    -- so it's copied from whichever `MainWindow` viewport is currently
+    open; if none is, the viewport's own already-set default is left
+    alone."""
+    from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
+    from belfryscad.window.preferences import load_preference
+    theme = COLOR_THEMES.get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
+    vp._renderer.bg_color = theme["background"]
+    vp._renderer._default_color = theme["object"]
+    vp._renderer.axes_color = theme["axes"]
+    for w in QApplication.topLevelWidgets():
+        if hasattr(w, '_viewport'):
+            vp._renderer.camera.fov = w._viewport._renderer.camera.fov
+            break
+
+
 # ---------------------------------------------------------------------------
 # List / Object Viewer
 # ---------------------------------------------------------------------------
@@ -1538,6 +1566,7 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _AffineViewport(value, self)
+        _sync_viewport_to_main_window(self._vp)
         splitter.addWidget(self._vp)
 
         table_container = QWidget()
@@ -2268,13 +2297,13 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
 
-        # Viewport — match main window's perspective mode
+        # Viewport — match main window's perspective mode, color theme, and FOV
         self._vp = _VNFViewport(splitter, editable=editable)
-        from PySide6.QtWidgets import QApplication
         for w in QApplication.topLevelWidgets():
             if hasattr(w, '_viewport'):
                 self._vp._renderer.camera.orthographic = w._viewport._renderer.camera.orthographic
                 break
+        _sync_viewport_to_main_window(self._vp)
         self._vp.face_clicked.connect(self._on_viewport_face_clicked)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vp)
@@ -2808,6 +2837,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _PathViewport(path_value, self._is_2d, self, editable=editable)
+        _sync_viewport_to_main_window(self._vp)
         splitter.addWidget(self._vp)
 
         self._vert_table = self._make_vert_table(path_value, self._is_2d, editable)
@@ -3848,6 +3878,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _GridViewport(grid_value, self._is_2d, self, editable=editable)
+        _sync_viewport_to_main_window(self._vp)
         splitter.addWidget(self._vp)
 
         table_container = QWidget()
@@ -4852,6 +4883,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _RegionViewport(region_value, self, editable=editable)
+        _sync_viewport_to_main_window(self._vp)
         splitter.addWidget(self._vp)
 
         table_container = QWidget()
