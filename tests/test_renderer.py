@@ -13,7 +13,7 @@ from pytest import approx
 
 from belfryscad.engine.renderer import (
     nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
-    _axis_density, _tick_is_drawn,
+    _axis_density, _tick_is_drawn, _axis_extent,
 )
 
 
@@ -321,6 +321,44 @@ class TestAxisDensity:
         end_on, stride = _axis_density(cam)
         assert end_on[1] is False and end_on[2] is False
         assert stride[1] == 1 and stride[2] == 1
+
+
+class TestAxisExtent:
+    """_axis_extent feeds both the drawn axis-line length and the target
+    tick/label density (_nice_spacings' raw = L / 28). It must scale with
+    fov as well as distance, so a Shift+wheel FOV change (which changes how
+    much world is visible at a fixed distance, same visual effect as
+    zooming) keeps tick density visually consistent on screen -- see the
+    PR/commit this covers, where narrowing fov left ticks unchanged in
+    world-space while showing far fewer of them on screen."""
+
+    def test_matches_old_flat_formula_at_default_fov(self):
+        cam = Camera()
+        cam.distance = 40.0
+        assert cam.fov == Camera.DEFAULT_FOV
+        assert _axis_extent(cam) == approx(cam.distance * 2.5)
+
+    def test_narrower_fov_shrinks_extent(self):
+        cam = Camera()
+        cam.distance = 40.0
+        default = _axis_extent(cam)
+        cam.fov = Camera.DEFAULT_FOV / 2
+        assert _axis_extent(cam) < default
+
+    def test_wider_fov_grows_extent(self):
+        cam = Camera()
+        cam.distance = 40.0
+        default = _axis_extent(cam)
+        cam.fov = Camera.DEFAULT_FOV * 2
+        assert _axis_extent(cam) > default
+
+    def test_scales_linearly_with_distance_at_fixed_fov(self):
+        cam = Camera()
+        cam.fov = 60.0
+        cam.distance = 10.0
+        small = _axis_extent(cam)
+        cam.distance = 20.0
+        assert _axis_extent(cam) == approx(small * 2)
 
 
 class TestTickIsDrawn:

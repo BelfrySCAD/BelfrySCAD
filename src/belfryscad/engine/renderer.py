@@ -216,8 +216,8 @@ class Camera:
         """(near, far), scaled to self.distance rather than fixed constants.
 
         frame_bounds() sets distance proportional to the framed object's
-        radius (same heuristic _render_axes uses for tick/axis extent via
-        `distance * 2.5`) -- a fixed far=10000 clipped large or elongated
+        radius (same distance-scaling heuristic _render_axes/_axis_extent
+        use for tick/axis extent) -- a fixed far=10000 clipped large or elongated
         models once that pushed the camera far enough away to fit them at
         the default FOV: cylinder(h=3500, d=1000) needs distance~10438 to
         fit at fov=22.5, already past far=10000, silently clipping
@@ -333,6 +333,19 @@ class Camera:
         radius = np.linalg.norm(bb_max - bb_min) / 2
         self.target = center.astype(np.float32)
         self.distance = max(radius / math.tan(math.radians(self.fov / 2)) * 1.1, 1.0)
+
+
+def _axis_extent(camera: Camera) -> float:
+    """World-space half-length used for both the drawn axis-line extent and
+    the target tick/label density (_nice_spacings' raw = L / 28). Scaled by
+    fov as well as distance -- previously distance-only (a flat `* 2.5`),
+    so narrowing fov (Shift+wheel optical zoom-in, distance unchanged) left
+    tick spacing unchanged in world-space while showing far fewer ticks on
+    screen, and widening fov left the view looking sparse. Dividing by
+    tan(DEFAULT_FOV/2) keeps this identical to the old flat formula at the
+    default fov, so typical (never-zoomed-via-fov) views are unaffected."""
+    return (camera.distance * math.tan(math.radians(camera.fov / 2))
+            / math.tan(math.radians(Camera.DEFAULT_FOV / 2)) * 2.5)
 
 
 def _axis_density(camera: Camera) -> tuple[list[bool], list[int]]:
@@ -1106,7 +1119,7 @@ class SceneRenderer:
         self._ctx.enable(mgl.DEPTH_TEST)
 
     def _render_axes(self, mvp: np.ndarray):
-        L       = self.camera.distance * 2.5
+        L       = _axis_extent(self.camera)
         label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
         red   = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         green   = np.array([0.15, 0.65, 0.15], dtype=np.float32)
@@ -1237,7 +1250,7 @@ class SceneRenderer:
 
     def _axis_tick_world_points(self) -> list[tuple[np.ndarray, str, int]]:
         """Return (world_position, text, axis_index) for every tick that should be labeled."""
-        L = self.camera.distance * 2.5
+        L = _axis_extent(self.camera)
         spacing, _, _ = _nice_spacings(L)
         end_on_axis, stride = _axis_density(self.camera)
 
