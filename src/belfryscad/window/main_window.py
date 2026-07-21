@@ -2327,6 +2327,18 @@ class MainWindow(QMainWindow):
     def _open_preferences(self):
         dialog = PreferencesDialog(parent=self, on_change=self._apply_preferences)
         dialog.exec()
+        # Belt-and-suspenders against a reported black-out of the main
+        # viewport after closing the (possibly further-nested, via the
+        # Color Scheme Manager) modal dialog chain: _apply_preferences
+        # already calls vp.update() on every preference change, including
+        # the one _open_scheme_manager fires when its own nested dialog
+        # closes, but update() only *schedules* a repaint for the next
+        # event-loop iteration -- on macOS a QOpenGLWidget's on-screen
+        # backing store can apparently miss that scheduled repaint after a
+        # nested exec() chain closes, leaving stale (black) content
+        # visible until something else forces a real redraw. repaint()
+        # forces one synchronously, right now.
+        self._viewport.repaint()
 
     def _apply_preferences(self):
         family = load_preference("editor/fontFamily")
