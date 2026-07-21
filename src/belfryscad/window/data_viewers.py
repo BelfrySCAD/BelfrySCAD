@@ -2325,7 +2325,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             add_vert_btn.setToolTip("Add a vertex (duplicates the last one, offset)")
             add_vert_btn.clicked.connect(self._add_vertex_default)
             vert_btn_row.addWidget(add_vert_btn)
-            del_vert_btn = QPushButton("—")
+            del_vert_btn = QPushButton("–")
             del_vert_btn.setFixedWidth(42)
             del_vert_btn.setToolTip("Delete the selected vertices")
             del_vert_btn.clicked.connect(lambda: self._delete_vertices(self._selected_vertex_indices()))
