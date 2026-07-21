@@ -345,11 +345,15 @@ class _ColorSchemePreview(Viewport):
     app), so those alone are rebuilt in `apply_scheme`."""
 
     _RADIUS = 1.0
-    _MARKER_RADIUS = 0.16
+    _MARKER_RADIUS = 0.08
 
     def __init__(self, parent=None):
         super().__init__(parent, selectable=False)
         self.setMinimumSize(200, 200)
+        # Off by default on SceneRenderer -- without it, markers on the far
+        # side of the octahedron draw right through the solid mesh instead
+        # of being occluded by it (same fix GridViewer/VNFViewer apply).
+        self._renderer.depth_test_points = True
         # apply_scheme() is typically called (via ColorSchemeManagerDialog's
         # _update_preview) before GL has ever initialized -- the dialog
         # populates its list, which selects a row and previews it, all
