@@ -531,7 +531,7 @@ def _triangle_faces(r: float, is_2d: bool) -> list:
 
 def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
     """Screen-space-constant marker radius (in world units) for a marker
-    positioned AT `world_point`, so it stays ~6px on screen regardless of
+    positioned AT `world_point`, so it stays ~12px on screen regardless of
     zoom -- in *both* projection modes and regardless of which vertex is
     being sized. Shared by every viewport that rebuilds marker geometry
     on zoom (`_GridViewport`, `_PathViewport`, `_AffineViewport`,
@@ -562,7 +562,7 @@ def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
         world_per_px = 2.0 * depth * math.tan(math.radians(cam.fov / 2)) / vh
     else:
         world_per_px = depth * 0.003
-    return world_per_px * 3
+    return world_per_px * 6
 
 
 def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> list:
