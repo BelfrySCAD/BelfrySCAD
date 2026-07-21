@@ -174,18 +174,10 @@ class PreferencesDialog(QDialog):
         vp_form.addRow("Stereo depth scale:", scale_row)
 
         current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(8)
         self._color_theme = QComboBox()
         self._reload_theme_items(current_theme)
-        self._color_theme.currentTextChanged.connect(
-            lambda v: self._emit("viewport/colorTheme", v)
-        )
-        theme_row.addWidget(self._color_theme, 1)
-        manage_btn = QPushButton("Manage...")
-        manage_btn.clicked.connect(self._open_scheme_manager)
-        theme_row.addWidget(manage_btn)
-        vp_form.addRow("Color theme:", theme_row)
+        self._color_theme.currentTextChanged.connect(self._on_theme_combo_changed)
+        vp_form.addRow("Color theme:", self._color_theme)
 
         tabs.addTab(viewport_tab, "Viewport")
         tabs.tabBar().moveTab(1, 0)  # Viewport first
@@ -201,17 +193,33 @@ class PreferencesDialog(QDialog):
         if self._on_change:
             self._on_change()
 
+    _MANAGE_SCHEMES = "Manage..."  # trailing combo entry, after a separator
+
     def _reload_theme_items(self, select: str = None):
-        """(Re)populate the color-theme combo from `all_schemes()` --
-        called at init and again after the Manager dialog closes, in case
-        a custom scheme was added/renamed/deleted while it was open."""
+        """(Re)populate the color-theme combo from `all_schemes()`, plus a
+        trailing separator + "Manage..." entry -- called at init and again
+        after the Manager dialog closes, in case a custom scheme was
+        added/renamed/deleted while it was open."""
         select = select or self._color_theme.currentText() or load_preference("viewport/colorTheme")
+        if select == self._MANAGE_SCHEMES:
+            # Reached when re-populating right after the user picked
+            # "Manage..." itself (see _on_theme_combo_changed) -- that's
+            # not a real scheme, fall back to the actually-active one.
+            select = load_preference("viewport/colorTheme")
         self._color_theme.blockSignals(True)
         self._color_theme.clear()
         self._color_theme.addItems(sorted(all_schemes()))
+        self._color_theme.insertSeparator(self._color_theme.count())
+        self._color_theme.addItem(self._MANAGE_SCHEMES)
         idx = self._color_theme.findText(select)
         self._color_theme.setCurrentIndex(idx if idx >= 0 else 0)
         self._color_theme.blockSignals(False)
+
+    def _on_theme_combo_changed(self, v: str):
+        if v == self._MANAGE_SCHEMES:
+            self._open_scheme_manager()
+            return
+        self._emit("viewport/colorTheme", v)
 
     def _open_scheme_manager(self):
         dialog = ColorSchemeManagerDialog(parent=self)
