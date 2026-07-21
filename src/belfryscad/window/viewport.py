@@ -27,6 +27,19 @@ def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor, prefix: 
         icon = QIcon(str(path)) if path.exists() else QIcon()
     pixmap = icon.pixmap(size, size)
     recolored = QPixmap(pixmap.size())
+    # icon.pixmap(size, size) returns a pixmap sized size*devicePixelRatio
+    # in raw pixels on a HiDPI screen, with devicePixelRatio() set so its
+    # LOGICAL size is still size x size -- but a freshly-constructed
+    # QPixmap always defaults devicePixelRatio to 1.0, so without this,
+    # `recolored`'s logical size silently becomes size*dpr x size*dpr
+    # instead of size x size. drawPixmap below then only fills the
+    # top-left 1/dpr fraction of `recolored`'s canvas (the rest stays
+    # transparent), and every consumer that fits this into a fixed
+    # logical-pixel icon slot (setIconSize, QLabel.setPixmap) shrinks
+    # that already-too-small glyph even further -- reproduced only on a
+    # HiDPI/Retina display (dpr > 1), never on a standard external
+    # monitor (dpr == 1, where this mismatch is a no-op).
+    recolored.setDevicePixelRatio(pixmap.devicePixelRatio())
     recolored.fill(Qt.GlobalColor.transparent)
     painter = QPainter(recolored)
     painter.drawPixmap(0, 0, pixmap)
