@@ -431,7 +431,9 @@ class _StringWidget(QWidget):
 class _VectorWidget(QWidget):
     value_changed = Signal(object)
 
-    def __init__(self, value: list, parent=None):
+    def __init__(self, value: list, min_v: Optional[float] = None,
+                 max_v: Optional[float] = None, step: Optional[float] = None,
+                 parent=None):
         super().__init__(parent)
         self._value = list(value)
         lay = QHBoxLayout(self)
@@ -440,8 +442,19 @@ class _VectorWidget(QWidget):
         self._spins: list[QDoubleSpinBox] = []
         for i, v in enumerate(value):
             spin = QDoubleSpinBox()
-            spin.setRange(-1e9, 1e9)
-            spin.setSingleStep(0.1 if isinstance(v, float) else 1.0)
+            if min_v is not None and max_v is not None:
+                spin.setRange(min_v, max_v)
+            else:
+                spin.setRange(-1e9, 1e9)
+            if step is not None:
+                # Same decimals-from-step convention as _NumberWidget, for
+                # a [min:step:max] constraint applied to each component.
+                step_s = f'{step:g}'
+                dec = len(step_s.split('.')[1].rstrip('0')) if '.' in step_s else 0
+                spin.setDecimals(max(1, dec))
+                spin.setSingleStep(step)
+            else:
+                spin.setSingleStep(0.1 if isinstance(v, float) else 1.0)
             spin.setValue(float(v))
             spin.setMaximumWidth(75)
             spin.editingFinished.connect(
@@ -603,7 +616,10 @@ class CustomizerPane(QWidget):
         if isinstance(val, bool):
             w = _BoolWidget(val)
         elif isinstance(val, list):
-            w = _VectorWidget(val)
+            if wtype == 'slider':
+                w = _VectorWidget(val, spec['min'], spec['max'], spec['step'])
+            else:
+                w = _VectorWidget(val)
         elif isinstance(val, str):
             if wtype == 'dropdown':
                 w = _ComboWidget(spec['options'], val)
