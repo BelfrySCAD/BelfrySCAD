@@ -680,7 +680,7 @@ class SceneRenderer:
     # ------------------------------------------------------------------
 
     def upload_mesh(self, positions: np.ndarray, normals: np.ndarray,
-                     color: tuple = (0.9, 0.85, 0.1, 1.0),
+                     color: Optional[tuple] = None,
                      backface_color: Optional[tuple] = None,
                      edge_positions: Optional[np.ndarray] = None,
                      edge_colors: Optional[np.ndarray] = None,
@@ -689,7 +689,11 @@ class SceneRenderer:
         support. `positions`/`normals` are (3T, 3) arrays, one row per
         triangle corner (T triangles, ordered tri0.v0, tri0.v1, tri0.v2,
         tri1.v0, ...). Pass `tri_ids` (one id per triangle) to make the mesh
-        participate in `ray_cast` picking."""
+        participate in `ray_cast` picking. `color=None` (the default) tracks
+        the live color theme's object color (`self._default_color`,
+        resolved fresh every draw -- see `base_color = buf.color if
+        buf.color is not None else self._default_color` below); pass an
+        explicit RGBA tuple only to pin a fixed color regardless of theme."""
         interleaved = np.concatenate([positions, normals], axis=1).astype(np.float32)
         vbo = self._ctx.buffer(interleaved.tobytes())
         vao = self._ctx.vertex_array(
@@ -910,7 +914,7 @@ class SceneRenderer:
                 self._mesh_prog["mvp"].write((proj @ view).T.astype(np.float32).tobytes())
                 self._mesh_prog["light_dir"].value = tuple(L_world)
                 self._mesh_prog["eye_pos"].value = tuple(eye_pos)
-                self._mesh_prog["object_color"].value = buf.color
+                self._mesh_prog["object_color"].value = buf.color if buf.color is not None else self._default_color
                 self._mesh_prog["backface_color"].value = buf.backface_color or (1.0, 0.0, 1.0, 1.0)
                 buf.vao.render()
                 buf_models.append(model)
