@@ -946,12 +946,13 @@ def _sync_viewport_to_main_window(vp):
     -- so it's copied from whichever `MainWindow` viewport is currently
     open; if none is, the viewport's own already-set default is left
     alone."""
-    from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
+    from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_schemes
     from belfryscad.window.preferences import load_preference
-    theme = COLOR_THEMES.get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
+    theme = all_schemes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
     vp._renderer.bg_color = theme["background"]
     vp._renderer._default_color = theme["object"]
     vp._renderer.axes_color = theme["axes"]
+    vp._renderer.unselected_vertex_color = theme["unselected_vertex"]
     for w in QApplication.topLevelWidgets():
         if hasattr(w, '_viewport'):
             vp._renderer.camera.fov = w._viewport._renderer.camera.fov
@@ -2026,16 +2027,16 @@ class _VNFViewport(Viewport):
         self.update()
 
     def _build_unselected_markers(self):
-        """Green dodecahedron markers for every vertex *not* currently
-        selected -- mirrors `_PathViewport`/`_GridViewport._build_point_markers`
-        (same green, same shared `SceneRenderer.upload_points`/
-        `clear_points` pipeline, auto-rendered by `_render_simple_points`
-        with no `_paint_extra` changes needed), just gated behind
-        `_show_unselected` rather than always on."""
+        """Theme-colored dodecahedron markers for every vertex *not*
+        currently selected -- mirrors `_PathViewport`/`_GridViewport.
+        _build_point_markers` (same color, same shared `SceneRenderer.
+        upload_points`/`clear_points` pipeline, auto-rendered by
+        `_render_simple_points` with no `_paint_extra` changes needed),
+        just gated behind `_show_unselected` rather than always on."""
         self._renderer.clear_points()
         if not self._show_unselected or self._ctx is None or len(self._verts_3d) == 0:
             return
-        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._vert_indices)
         unit_faces = _dodecahedron_faces(1.0, False)
         marker_tris = []
@@ -2043,7 +2044,7 @@ class _VNFViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
@@ -3533,7 +3534,7 @@ class _PathViewport(Viewport):
         if len(pts) == 0 or self._ctx is None:
             return
 
-        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._selected_indices)
 
         marker_tris = []
@@ -3541,7 +3542,7 @@ class _PathViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, self._unit_faces_for_point(i), green))
+            marker_tris.extend(_lit_marker_triangles(pt, r, self._unit_faces_for_point(i), unselected_color))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -4623,7 +4624,7 @@ class _GridViewport(Viewport):
             return
 
         unit_faces = self._marker_faces(1.0)
-        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._selected_indices)
 
         marker_tris = []
@@ -4631,7 +4632,7 @@ class _GridViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -5386,7 +5387,7 @@ class _RegionViewport(Viewport):
             return
 
         unit_faces = self._marker_faces(1.0)
-        green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
+        unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._selected_indices)
 
         marker_tris = []
@@ -5394,7 +5395,7 @@ class _RegionViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
