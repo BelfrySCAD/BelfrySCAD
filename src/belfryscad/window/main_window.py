@@ -2325,8 +2325,23 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentIndex(idx)
 
     def _open_preferences(self):
-        dialog = PreferencesDialog(parent=self, on_change=self._apply_preferences)
-        dialog.exec()
+        # Non-modal singleton window, same convention as
+        # _open_library_manager -- PreferencesDialog used to be opened via
+        # dialog.exec(), which (see PreferencesDialog's own docstring)
+        # suppressed View-menu shortcuts for any Viewport nested inside it
+        # (namely the Color Scheme Manager's live preview) and, separately,
+        # left the main viewport visibly black after the modal chain
+        # closed on macOS -- both symptoms of the same underlying Qt
+        # modal-shortcut/repaint suppression, fixed by dropping modality
+        # entirely rather than working around either symptom individually.
+        if not hasattr(self, '_preferences_dialog') or self._preferences_dialog is None:
+            self._preferences_dialog = PreferencesDialog(parent=self, on_change=self._apply_preferences)
+            self._preferences_dialog.destroyed.connect(
+                lambda: setattr(self, '_preferences_dialog', None)
+            )
+        self._preferences_dialog.show()
+        self._preferences_dialog.raise_()
+        self._preferences_dialog.activateWindow()
 
     def _apply_preferences(self):
         family = load_preference("editor/fontFamily")

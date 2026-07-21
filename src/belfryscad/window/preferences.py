@@ -50,12 +50,26 @@ def save_preferences(values: dict):
 
 class PreferencesDialog(QDialog):
     """Every control saves and applies its value immediately on change —
-    there's no OK/Cancel, just a Close button."""
+    there's no OK/Cancel, just a Close button.
+
+    Non-modal (`.show()`, not `.exec()`) -- any Qt-modal state, via
+    `QDialog.exec()`, suppresses the main window's cross-window View-menu
+    shortcuts (Cmd+0-9 view presets etc, even with `ApplicationShortcut`
+    context) for whichever `Viewport` a modal dialog embeds or gates
+    access to. The `Viewport` inside `ColorSchemeManagerDialog` (opened
+    from this dialog's Color Theme dropdown) hit exactly this: its own
+    shortcuts didn't fire while nested inside this dialog's modal loop.
+    Confirmed via `feedback_qt_modal_vs_menubar_shortcuts` (this session's
+    memory) that the same issue was already hit and fixed for the
+    data-viewer "Edit as..." editors the identical way -- dropping
+    modality is the only fix that actually worked there, not picking a
+    different modality flavor or shortcut context. Nothing here needs
+    real Qt modality: every control saves+applies live, and interacting
+    with the main window while this is open is harmless."""
 
     def __init__(self, parent=None, on_change=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
-        self.setModal(True)
         self.setMinimumWidth(360)
         self._on_change = on_change
 
@@ -222,14 +236,38 @@ class PreferencesDialog(QDialog):
         self._emit("viewport/colorTheme", v)
 
     def _open_scheme_manager(self):
-        dialog = ColorSchemeManagerDialog(parent=self)
-        dialog.exec()
-        # The active scheme may have been edited, renamed, or deleted
-        # while the manager was open -- refresh the combo and re-apply
-        # preferences unconditionally rather than trying to track exactly
-        # what changed.
-        self._reload_theme_items()
+        # Reuse the same instance across repeated "Manage..." selections
+        # (same singleton-window convention as MainWindow._open_library_
+        # manager) rather than opening a new one every time -- needed now
+        # that this is non-modal, so nothing stops the user picking
+        # "Manage..." again while one is already open.
+        if not hasattr(self, '_scheme_manager_dialog') or self._scheme_manager_dialog is None:
+            self._scheme_manager_dialog = ColorSchemeManagerDialog(
+                parent=self, on_close=self._on_scheme_manager_closed,
+                on_selection_changed=self._sync_active_scheme,
+            )
+            self._scheme_manager_dialog.destroyed.connect(
+                lambda: setattr(self, '_scheme_manager_dialog', None)
+            )
+        self._scheme_manager_dialog.show()
+        self._scheme_manager_dialog.raise_()
+        self._scheme_manager_dialog.activateWindow()
+
+    def _sync_active_scheme(self, select: str = None):
+        """Reflect `select` (or, if `None`, whatever's already showing) in
+        the Color theme dropdown and re-apply preferences -- shared by
+        every path that needs the dropdown/live app theme to track the
+        Manager: live, on each list selection change there
+        (`on_selection_changed`), and again defensively when the Manager
+        closes (`_on_scheme_manager_closed`), in case the active scheme
+        was edited, renamed, or deleted without a matching selection
+        change (e.g. Delete auto-selects a different row, which already
+        goes through the live path too, but this catches anything else)."""
+        self._reload_theme_items(select=select)
         self._emit("viewport/colorTheme", self._color_theme.currentText())
+
+    def _on_scheme_manager_closed(self):
+        self._sync_active_scheme()
 
 
 class _ColorSwatchButton(QWidget):
@@ -405,6 +443,17 @@ class _ColorSchemePreview(Viewport):
         self._rebuild_markers(colors["unselected_vertex"])
 
     def _rebuild_markers(self, color: tuple):
+        # clear_points()/upload_points() are real GL buffer calls, and this
+        # runs from _update_preview -- a plain QListWidget.currentItemChanged
+        # handler, not this widget's own paintGL cycle -- so without an
+        # explicit makeCurrent() bracket they'd mutate whatever OTHER GL
+        # widget's context happened to be bound at the time (typically the
+        # main window's viewport), corrupting its state; the symptom only
+        # becomes visible once that widget's next repaint runs against the
+        # wrong/half-mutated buffers, e.g. right as this dialog closes and
+        # the main window regains focus. Same fix data_viewers.py's own
+        # GL-mutating methods already apply for the identical reason.
+        self.makeCurrent()
         self._renderer.clear_points()
         unit_faces = _dodecahedron_faces(1.0, False)
         marker_color = np.array(color[:3], dtype=np.float32)
@@ -417,6 +466,7 @@ class _ColorSchemePreview(Viewport):
             marker_tris.extend(_lit_marker_triangles(pt, self._MARKER_RADIUS, unit_faces, marker_color))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+        self.doneCurrent()
 
 
 class ColorSchemeManagerDialog(QDialog):
@@ -425,13 +475,29 @@ class ColorSchemeManagerDialog(QDialog):
     `LibraryManagerWindow` (`library_manager.py`), not a new UI pattern.
     Built-in themes are shown (so they're browsable/exportable/copyable)
     but not editable or deletable -- `_DEFAULTS`-derived data, not user
-    data."""
+    data.
 
-    def __init__(self, parent=None):
+    Non-modal (`.show()`, not `.exec()`), same reasoning as
+    `PreferencesDialog` -- this dialog embeds a real `Viewport` (`_vp`,
+    the live preview) whose own Cmd+0-9 etc. shortcuts need to keep
+    working, which a Qt-modal dialog would suppress. `on_close` (called
+    from `closeEvent`, since there's no `dialog.exec()` return to hang
+    post-close logic off of anymore) lets the opener react when the user
+    closes this dialog -- `PreferencesDialog._open_scheme_manager` uses
+    it to refresh the Color Theme dropdown and re-apply preferences.
+    `on_selection_changed(name)` fires the same sync live, on every list
+    selection change, not just at close -- so the Preferences dropdown
+    (and, as a consequence of how it's wired, the whole app's live theme)
+    tracks whatever's currently highlighted here while browsing, not just
+    whatever was selected the moment the dialog happened to close."""
+
+    def __init__(self, parent=None, on_close=None, on_selection_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Manage Color Schemes")
         self.setMinimumSize(700, 400)
         self.resize(760, 440)
+        self._on_close = on_close
+        self._on_selection_changed = on_selection_changed
 
         self._custom = load_custom_schemes()
 
@@ -454,8 +520,17 @@ class ColorSchemeManagerDialog(QDialog):
         self._list.currentItemChanged.connect(self._update_preview)
         splitter.addWidget(self._list)
 
-        self._preview = _ColorSchemePreview()
-        splitter.addWidget(self._preview)
+        # Named _vp (not e.g. _preview), matching every other viewer
+        # dialog's own attribute name (VNFViewer/PathViewer/GridViewer/
+        # RegionViewer/AffineMatrixViewer): MainWindow._active_viewer_
+        # viewport() resolves View-menu shortcuts (Cmd+0-9 view presets
+        # etc.) by checking `hasattr(QApplication.activeWindow(), '_vp')`
+        # on whichever window currently has focus -- a differently-named
+        # attribute would silently fall through to the main window's own
+        # viewport instead, appearing as "the shortcuts don't work" while
+        # this dialog is focused.
+        self._vp = _ColorSchemePreview()
+        splitter.addWidget(self._vp)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([260, 440])
@@ -494,7 +569,14 @@ class ColorSchemeManagerDialog(QDialog):
     def _update_preview(self, *_):
         name = self._selected_name()
         colors = all_schemes().get(name) if name else None
-        self._preview.apply_scheme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
+        self._vp.apply_scheme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
+        if name and self._on_selection_changed:
+            self._on_selection_changed(name)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        if self._on_close:
+            self._on_close()
 
     # -- list population --------------------------------------------------
 
