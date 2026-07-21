@@ -2362,7 +2362,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         layout.addWidget(splitter, 1)
 
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.setContentsMargins(20, 0, 20, 0)
         show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
         btn_row.addWidget(show_unselected_cb)
@@ -2489,8 +2489,9 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
         # tri_ids=tri_to_face_arr lets SceneRenderer.ray_cast resolve a hit
         # triangle straight back to its OpenSCAD face index for picking.
+        # color left as the default (None) so it tracks the live color
+        # theme's object color instead of a fixed one.
         self._vp._renderer.upload_mesh(positions, normals,
-                             color=(0.9, 0.85, 0.1, 1.0),
                              edge_positions=edge_data[:, :3],
                              edge_colors=edge_data[:, 3:],
                              tri_ids=tri_to_face_arr)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "0.16.2"
+version = "0.16.3"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -43,7 +43,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "0.16.2"
+version = "0.16.3"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
