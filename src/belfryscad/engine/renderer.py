@@ -42,6 +42,23 @@ uniform vec3 eye_pos;
 uniform bool flat_preview;
 out vec4 fragColor;
 void main() {
+    // At a silhouette edge, a manifold solid's front- and back-facing
+    // triangles converge to nearly the same screen depth -- floating-
+    // point/MSAA-sample precision can then let a sliver of the
+    // (farther) backface win the depth test over the (nearer)
+    // frontface for a few edge pixels, showing up as a thin magenta
+    // fringe on an otherwise perfectly manifold shape. Nudging backface
+    // fragments very slightly farther away resolves that tie in the
+    // frontface's favor without visibly affecting genuine backface
+    // visibility (an actual hole/gap, or flat_preview's intentional
+    // double-sided shading) anywhere but that razor-thin edge case.
+    // GLSL requires gl_FragDepth to be written on *every* path once any
+    // path writes it, or its value is undefined on the others -- so the
+    // frontface path must also assign it (to the untouched default),
+    // not just the backface path. (Writing gl_FragDepth disables early-Z
+    // for this shader; an acceptable tradeoff here, not a hot per-pixel
+    // path.)
+    gl_FragDepth = gl_FragCoord.z + (gl_FrontFacing ? 0.0 : 0.000002);
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) {
         if (!flat_preview) {
@@ -213,6 +230,10 @@ uniform vec3 light_dir;
 uniform vec3 eye_pos;
 out vec4 fragColor;
 void main() {
+    // Same silhouette-edge depth-tie fix as _FRAG -- see its comment.
+    // gl_FragDepth must be written on every path, not just the backface
+    // one, or its value is undefined where the shader doesn't write it.
+    gl_FragDepth = gl_FragCoord.z + (gl_FrontFacing ? 0.0 : 0.000002);
     vec3 n = normalize(v_normal);
     vec3 col;
     if (!gl_FrontFacing) {
