@@ -243,7 +243,8 @@ class PreferencesDialog(QDialog):
         # "Manage..." again while one is already open.
         if not hasattr(self, '_scheme_manager_dialog') or self._scheme_manager_dialog is None:
             self._scheme_manager_dialog = ColorSchemeManagerDialog(
-                parent=self, on_close=self._on_scheme_manager_closed
+                parent=self, on_close=self._on_scheme_manager_closed,
+                on_selection_changed=self._sync_active_scheme,
             )
             self._scheme_manager_dialog.destroyed.connect(
                 lambda: setattr(self, '_scheme_manager_dialog', None)
@@ -252,13 +253,21 @@ class PreferencesDialog(QDialog):
         self._scheme_manager_dialog.raise_()
         self._scheme_manager_dialog.activateWindow()
 
-    def _on_scheme_manager_closed(self):
-        # The active scheme may have been edited, renamed, or deleted
-        # while the manager was open -- refresh the combo and re-apply
-        # preferences unconditionally rather than trying to track exactly
-        # what changed.
-        self._reload_theme_items()
+    def _sync_active_scheme(self, select: str = None):
+        """Reflect `select` (or, if `None`, whatever's already showing) in
+        the Color theme dropdown and re-apply preferences -- shared by
+        every path that needs the dropdown/live app theme to track the
+        Manager: live, on each list selection change there
+        (`on_selection_changed`), and again defensively when the Manager
+        closes (`_on_scheme_manager_closed`), in case the active scheme
+        was edited, renamed, or deleted without a matching selection
+        change (e.g. Delete auto-selects a different row, which already
+        goes through the live path too, but this catches anything else)."""
+        self._reload_theme_items(select=select)
         self._emit("viewport/colorTheme", self._color_theme.currentText())
+
+    def _on_scheme_manager_closed(self):
+        self._sync_active_scheme()
 
 
 class _ColorSwatchButton(QWidget):
@@ -475,14 +484,20 @@ class ColorSchemeManagerDialog(QDialog):
     from `closeEvent`, since there's no `dialog.exec()` return to hang
     post-close logic off of anymore) lets the opener react when the user
     closes this dialog -- `PreferencesDialog._open_scheme_manager` uses
-    it to refresh the Color Theme dropdown and re-apply preferences."""
+    it to refresh the Color Theme dropdown and re-apply preferences.
+    `on_selection_changed(name)` fires the same sync live, on every list
+    selection change, not just at close -- so the Preferences dropdown
+    (and, as a consequence of how it's wired, the whole app's live theme)
+    tracks whatever's currently highlighted here while browsing, not just
+    whatever was selected the moment the dialog happened to close."""
 
-    def __init__(self, parent=None, on_close=None):
+    def __init__(self, parent=None, on_close=None, on_selection_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Manage Color Schemes")
         self.setMinimumSize(700, 400)
         self.resize(760, 440)
         self._on_close = on_close
+        self._on_selection_changed = on_selection_changed
 
         self._custom = load_custom_schemes()
 
@@ -555,6 +570,8 @@ class ColorSchemeManagerDialog(QDialog):
         name = self._selected_name()
         colors = all_schemes().get(name) if name else None
         self._vp.apply_scheme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
+        if name and self._on_selection_changed:
+            self._on_selection_changed(name)
 
     def closeEvent(self, event):
         super().closeEvent(event)
