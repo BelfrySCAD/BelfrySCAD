@@ -1,10 +1,12 @@
 import json
 
+import numpy as np
+
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
     QPushButton, QLineEdit, QListWidget, QListWidgetItem, QColorDialog, QMessageBox,
-    QFileDialog,
+    QFileDialog, QSplitter,
 )
 from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtCore import QSettings, Qt, Signal
@@ -12,6 +14,10 @@ from PySide6.QtCore import QSettings, Qt, Signal
 from belfryscad.window.color_themes import (
     COLOR_THEMES, DEFAULT_COLOR_THEME, all_schemes, is_builtin,
     load_custom_schemes, save_custom_schemes, unique_scheme_name, SCHEME_COLOR_KEYS,
+)
+from belfryscad.window.viewport import Viewport
+from belfryscad.window.data_viewers import (
+    _diamond_faces, _dodecahedron_faces, _lit_marker_triangles,
 )
 
 _DEFAULTS = {
@@ -323,6 +329,84 @@ class ColorSchemeEditorDialog(QDialog):
         return {key: self._swatches[key].color() for key, _ in self._LABELS}
 
 
+class _ColorSchemePreview(Viewport):
+    """A real, live `Viewport` showing a simple octahedron (reusing
+    `_diamond_faces`'s existing octahedron geometry -- same shape already
+    used for `_PathViewport`'s "same_angle" bezier marker) with dodecahedron
+    vertex markers at its 6 corners, so `ColorSchemeManagerDialog`'s list
+    selection can be previewed in the actual rendering pipeline rather than
+    a static swatch mockup.
+
+    The octahedron mesh is uploaded once with `color=None`, which already
+    tracks the live theme's object color fresh every draw (`renderer.
+    _default_color`) -- no re-upload needed when the scheme changes, same
+    as any other data-viewer mesh. Vertex markers bake their color directly
+    into the uploaded triangle data (same as every other marker in this
+    app), so those alone are rebuilt in `apply_scheme`."""
+
+    _RADIUS = 1.0
+    _MARKER_RADIUS = 0.16
+
+    def __init__(self, parent=None):
+        super().__init__(parent, selectable=False)
+        self.setMinimumSize(200, 200)
+        # apply_scheme() is typically called (via ColorSchemeManagerDialog's
+        # _update_preview) before GL has ever initialized -- the dialog
+        # populates its list, which selects a row and previews it, all
+        # synchronously in __init__, well before the widget is first shown/
+        # painted. schedule_load only remembers ONE pending callback, so
+        # apply_scheme must NOT call schedule_load itself (that would
+        # clobber the _load_mesh callback registered below and the mesh
+        # would never get uploaded) -- it just records the latest requested
+        # colors, and _load_mesh applies them once GL is actually ready.
+        self._pending_colors = COLOR_THEMES[DEFAULT_COLOR_THEME]
+        self.schedule_load(self._load_mesh)
+
+    def _load_mesh(self):
+        tris = _diamond_faces(self._RADIUS, False)
+        positions, normals = [], []
+        for v0, v1, v2 in tris:
+            n = np.cross(v1 - v0, v2 - v0)
+            ln = np.linalg.norm(n)
+            if ln > 0:
+                n = n / ln
+            positions.extend([v0, v1, v2])
+            normals.extend([n, n, n])
+        self._renderer.upload_mesh(
+            np.array(positions, dtype=np.float32), np.array(normals, dtype=np.float32)
+        )
+        bb = np.array([self._RADIUS] * 3, dtype=np.float32)
+        self.frame_scene(-bb, bb)
+        self._apply_colors_now(self._pending_colors)
+
+    def apply_scheme(self, colors: dict):
+        self._pending_colors = colors
+        if self._ctx is not None:
+            self._apply_colors_now(colors)
+        self.update()
+
+    def _apply_colors_now(self, colors: dict):
+        self._renderer.bg_color = colors["background"]
+        self._renderer._default_color = colors["object"]
+        self._renderer.axes_color = colors["axes"]
+        self._renderer.unselected_vertex_color = colors["unselected_vertex"]
+        self._rebuild_markers(colors["unselected_vertex"])
+
+    def _rebuild_markers(self, color: tuple):
+        self._renderer.clear_points()
+        unit_faces = _dodecahedron_faces(1.0, False)
+        marker_color = np.array(color[:3], dtype=np.float32)
+        marker_tris = []
+        for pt in (np.array(v, dtype=np.float32) for v in (
+            (self._RADIUS, 0, 0), (-self._RADIUS, 0, 0),
+            (0, self._RADIUS, 0), (0, -self._RADIUS, 0),
+            (0, 0, self._RADIUS), (0, 0, -self._RADIUS),
+        )):
+            marker_tris.extend(_lit_marker_triangles(pt, self._MARKER_RADIUS, unit_faces, marker_color))
+        if marker_tris:
+            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+
+
 class ColorSchemeManagerDialog(QDialog):
     """List every scheme (built-in + custom), with New/Copy/Edit/Delete/
     Import/Export buttons -- same list-plus-button-row shape as
@@ -334,16 +418,26 @@ class ColorSchemeManagerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Manage Color Schemes")
-        self.setMinimumSize(420, 360)
+        self.setMinimumSize(700, 400)
+        self.resize(760, 440)
 
         self._custom = load_custom_schemes()
 
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        outer.addWidget(splitter, 1)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
         self._list = QListWidget()
         self._list.currentItemChanged.connect(self._update_button_states)
-        outer.addWidget(self._list, 1)
+        self._list.currentItemChanged.connect(self._update_preview)
+        left_layout.addWidget(self._list, 1)
 
         btn_row = QHBoxLayout()
         self._btn_new = QPushButton("New...")
@@ -363,7 +457,15 @@ class ColorSchemeManagerDialog(QDialog):
         self._btn_export.clicked.connect(self._on_export)
         btn_row.addWidget(self._btn_import)
         btn_row.addWidget(self._btn_export)
-        outer.addLayout(btn_row)
+        left_layout.addLayout(btn_row)
+
+        splitter.addWidget(left)
+
+        self._preview = _ColorSchemePreview()
+        splitter.addWidget(self._preview)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([260, 440])
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
@@ -371,6 +473,11 @@ class ColorSchemeManagerDialog(QDialog):
         outer.addWidget(buttons)
 
         self._reload_list()
+
+    def _update_preview(self, *_):
+        name = self._selected_name()
+        colors = all_schemes().get(name) if name else None
+        self._preview.apply_scheme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
 
     # -- list population --------------------------------------------------
 
@@ -388,6 +495,7 @@ class ColorSchemeManagerDialog(QDialog):
         if select is None and self._list.count() and self._list.currentRow() < 0:
             self._list.setCurrentRow(0)
         self._update_button_states()
+        self._update_preview()
 
     def _selected_name(self) -> str:
         item = self._list.currentItem()
