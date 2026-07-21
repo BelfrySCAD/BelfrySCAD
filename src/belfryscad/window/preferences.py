@@ -432,7 +432,30 @@ class _ColorThemePreview(Viewport):
     def apply_theme(self, colors: dict):
         self._pending_colors = colors
         if self._ctx is not None:
+            # This path runs from _update_preview -- a plain QListWidget.
+            # currentItemChanged handler, not this widget's own paintGL
+            # cycle -- so the GL calls in _apply_colors_now/_rebuild_markers
+            # need an explicit makeCurrent()/doneCurrent() bracket here, or
+            # they'd mutate whatever OTHER GL widget's context happened to
+            # be bound at the time (typically the main window's viewport),
+            # corrupting its state (same class of bug data_viewers.py's own
+            # GL-mutating methods guard against).
+            #
+            # _load_mesh's call to the same methods below must NOT be
+            # bracketed the same way -- it runs inside initializeGL(),
+            # where Qt has already made this widget's context current and
+            # keeps relying on that after initializeGL() returns; an extra
+            # doneCurrent() there tears down state Qt's own QOpenGLWidget
+            # internals still needed. This was a real, previously-shipped
+            # bug (not just theoretical): it corrupted native Qt/window
+            # bookkeeping in a way that didn't crash immediately, only
+            # surfacing later as a SIGBUS alignment fault deep inside Qt's
+            # own key-event handling on an unrelated subsequent keypress --
+            # confusing to diagnose from that crash alone, since nothing
+            # in the traceback pointed back to this dialog.
+            self.makeCurrent()
             self._apply_colors_now(colors)
+            self.doneCurrent()
         self.update()
 
     def _apply_colors_now(self, colors: dict):
@@ -443,17 +466,6 @@ class _ColorThemePreview(Viewport):
         self._rebuild_markers(colors["unselected_vertex"])
 
     def _rebuild_markers(self, color: tuple):
-        # clear_points()/upload_points() are real GL buffer calls, and this
-        # runs from _update_preview -- a plain QListWidget.currentItemChanged
-        # handler, not this widget's own paintGL cycle -- so without an
-        # explicit makeCurrent() bracket they'd mutate whatever OTHER GL
-        # widget's context happened to be bound at the time (typically the
-        # main window's viewport), corrupting its state; the symptom only
-        # becomes visible once that widget's next repaint runs against the
-        # wrong/half-mutated buffers, e.g. right as this dialog closes and
-        # the main window regains focus. Same fix data_viewers.py's own
-        # GL-mutating methods already apply for the identical reason.
-        self.makeCurrent()
         self._renderer.clear_points()
         unit_faces = _dodecahedron_faces(1.0, False)
         marker_color = np.array(color[:3], dtype=np.float32)
@@ -466,7 +478,6 @@ class _ColorThemePreview(Viewport):
             marker_tris.extend(_lit_marker_triangles(pt, self._MARKER_RADIUS, unit_faces, marker_color))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
-        self.doneCurrent()
 
 
 class ColorThemeManagerDialog(QDialog):
