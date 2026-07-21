@@ -23,7 +23,7 @@ import manifold3d as m3d
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
-    QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit, QToolButton,
+    QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
@@ -1292,21 +1292,18 @@ class _UndoableViewerMixin:
     def _on_reset_original(self):
         self._commit_value(self._original_value, "Reset to Original")
 
-    def _make_undo_button_row(self) -> QHBoxLayout:
-        """Reset to Original / Undo / Redo, meant to be inserted into the
-        dialog's existing button row. Reset-to-Identity (Matrix/Affine
-        only, where "identity" is a meaningful concept) is added
-        separately by those two classes."""
+    def _make_reset_button_row(self) -> QHBoxLayout:
+        """Reset to Original, meant to be inserted into the dialog's
+        existing button row. No dedicated Undo/Redo buttons -- Cmd+Z/
+        Cmd+Shift+Z (`_undo_action`/`_redo_action`, still wired up in
+        `_setup_undo` via `self.addAction(...)`) are always expected to
+        be available regardless of any visible button. Reset-to-Identity
+        (Matrix/Affine only, where "identity" is a meaningful concept) is
+        added separately by those two classes."""
         row = QHBoxLayout()
         reset = QPushButton("Reset to Original")
         reset.clicked.connect(self._on_reset_original)
         row.addWidget(reset)
-        undo_btn = QToolButton()
-        undo_btn.setDefaultAction(self._undo_action)
-        row.addWidget(undo_btn)
-        redo_btn = QToolButton()
-        redo_btn.setDefaultAction(self._redo_action)
-        row.addWidget(redo_btn)
         return row
 
 
@@ -1369,7 +1366,7 @@ class MatrixViewer(QDialog, _UndoableViewerMixin):
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
             btn_row.addWidget(reset_id)
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1592,7 +1589,7 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
             btn_row.addWidget(reset_id)
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -1945,7 +1942,7 @@ class _VNFViewport(Viewport):
         self.update()
 
     def set_show_unselected(self, enabled: bool):
-        """Toggle the "Show Unselected Vertices" checkbox -- unlike the
+        """Toggle the "Show Vertices" checkbox -- unlike the
         selected-vertex markers (always shown, blinking), this is opt-in:
         a VNF mesh can have far more vertices than a Path/Grid, where the
         equivalent "always show every point in green" markers
@@ -2337,12 +2334,12 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
-        show_unselected_cb = QCheckBox("Show Unselected Vertices")
+        show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
         btn_row.addWidget(show_unselected_cb)
         if editable:
             self._setup_undo(vnf_value)
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -2857,7 +2854,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._bezier_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._bezier_cb)
         if editable:
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -3917,7 +3914,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         btn_row.addSpacing(20)
         if editable:
             self._setup_undo(grid_value)
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
@@ -4908,7 +4905,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         btn_row.addSpacing(20)
         if editable:
             self._setup_undo(region_value)
-            btn_row.addLayout(self._make_undo_button_row())
+            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
