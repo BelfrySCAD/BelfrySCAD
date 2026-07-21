@@ -187,12 +187,14 @@ void main() {
 class Camera:
     """Spherical-coordinate orbit camera."""
 
+    DEFAULT_FOV = 22.5
+
     def __init__(self):
         self.azimuth = 295.0
         self.elevation = 35.0
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self.fov = 22.5
+        self.fov = self.DEFAULT_FOV
         self.orthographic = False
         self.stereo = False
         self.viewer_ipd = 65.0           # mm — interpupillary distance

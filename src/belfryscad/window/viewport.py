@@ -337,6 +337,8 @@ class Viewport(QOpenGLWidget):
 
     def set_view_preset(self, preset: str):
         cam = self._renderer.camera
+        if preset != "all":
+            cam.fov = cam.DEFAULT_FOV
         if preset == "top":
             # Not exactly 90: _look_at's world-up ([0,0,1]) becomes parallel
             # to the forward vector at precisely elevation=+-90 (gimbal
