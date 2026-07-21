@@ -104,6 +104,56 @@ void main() {
 }
 """
 
+_MARKER_VERT = """
+#version 330 core
+in vec3 in_position;
+in vec3 in_normal;
+in vec3 in_color;
+uniform mat4 mvp;
+out vec3 v_normal;
+out vec3 v_world_pos;
+out vec3 v_color;
+void main() {
+    v_world_pos = in_position;
+    v_normal = in_normal;
+    v_color = in_color;
+    gl_Position = mvp * vec4(in_position, 1.0);
+}
+"""
+
+# Phong-lit point markers (vertex/corner indicator polyhedra -- dodecahedra
+# etc.) -- same lighting formula as _MESH_FRAG, but per-vertex in_color
+# instead of a uniform object_color, since a single batched draw call can
+# mix differently-colored markers (e.g. green "unselected" vs red/white
+# blink toggle). No model matrix: marker geometry is already baked to
+# world space at build time, same as _gizmo_prog's markers were.
+_MARKER_FRAG = """
+#version 330 core
+in vec3 v_normal;
+in vec3 v_world_pos;
+in vec3 v_color;
+uniform vec3 light_dir;
+uniform vec3 eye_pos;
+out vec4 fragColor;
+void main() {
+    vec3 n = normalize(v_normal);
+    if (!gl_FrontFacing) {
+        n = -n;
+    }
+    vec3 L = normalize(light_dir);
+    float diff_key  = max(dot(n, L), 0.0);
+    float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
+    vec3 lit = 0.35 * v_color + 0.50 * diff_key * v_color + 0.20 * diff_fill * v_color;
+
+    vec3 V = normalize(eye_pos - v_world_pos);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(n, H), 0.0), 64.0) * 0.5;
+    lit += vec3(spec);
+
+    fragColor = vec4(lit, 1.0);
+}
+"""
+
 _LABEL_VERT = """
 #version 330 core
 in vec2 in_position;
@@ -454,8 +504,8 @@ class LineBuffer:
 
 
 class PointBuffer:
-    """A raw point-marker (pre-tessellated, e.g. octahedra) VBO/VAO uploaded
-    via `SceneRenderer.upload_points`."""
+    """A raw point-marker (pre-tessellated, e.g. dodecahedra) VBO/VAO
+    uploaded via `SceneRenderer.upload_points`, phong-lit via `_marker_prog`."""
     def __init__(self, vbo: mgl.Buffer, vao: mgl.VertexArray):
         self.vbo = vbo
         self.vao = vao
@@ -476,6 +526,7 @@ class SceneRenderer:
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._mesh_prog: Optional[mgl.Program] = None
+        self._marker_prog: Optional[mgl.Program] = None
         self._buffers: list[MeshBuffer] = []
         self._line_buffers: list[LineBuffer] = []
         self._point_buffers: list[PointBuffer] = []
@@ -514,6 +565,7 @@ class SceneRenderer:
         self._ctx = ctx
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
         self._mesh_prog = ctx.program(vertex_shader=_MESH_VERT, fragment_shader=_MESH_FRAG)
+        self._marker_prog = ctx.program(vertex_shader=_MARKER_VERT, fragment_shader=_MARKER_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
         self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
         self._label_prog = ctx.program(vertex_shader=_LABEL_VERT, fragment_shader=_LABEL_FRAG)
@@ -742,11 +794,14 @@ class SceneRenderer:
         return lb
 
     def upload_points(self, data: np.ndarray) -> PointBuffer:
-        """`data` rows are `[x, y, z, r, g, b]`; drawn as `GL_TRIANGLES`
-        (pre-tessellated point markers, e.g. octahedra, one per point)."""
+        """`data` rows are `[x, y, z, nx, ny, nz, r, g, b]`; drawn as
+        `GL_TRIANGLES` (pre-tessellated point markers, e.g. dodecahedra,
+        one per point), phong-lit via `_marker_prog` using each row's own
+        normal and color -- see `_paint_scene`'s `_render_simple_points`
+        call for the `light_dir`/`eye_pos` uniforms."""
         vbo = self._ctx.buffer(data.astype(np.float32).tobytes())
         vao = self._ctx.vertex_array(
-            self._gizmo_prog, [(vbo, "3f 3f", "in_position", "in_color")],
+            self._marker_prog, [(vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
         )
         pb = PointBuffer(vbo, vao)
         self._point_buffers.append(pb)
@@ -805,8 +860,8 @@ class SceneRenderer:
             lb.vao.render(mgl.LINES)
         self._ctx.line_width = old_lw
 
-    def _render_simple_points(self, mvp: np.ndarray):
-        if not self._point_buffers or self._gizmo_prog is None:
+    def _render_simple_points(self, mvp: np.ndarray, eye_pos: np.ndarray, L_world: np.ndarray):
+        if not self._point_buffers or self._marker_prog is None:
             return
         if not self.depth_test_points:
             self._ctx.disable(mgl.DEPTH_TEST)
@@ -818,7 +873,9 @@ class SceneRenderer:
             # occluded by real opaque faces farther in front.
             self._ctx.polygon_offset = (-1.0, -1.0)
             self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
-        self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+        self._marker_prog["light_dir"].value = tuple(L_world)
+        self._marker_prog["eye_pos"].value = tuple(eye_pos)
         for pb in self._point_buffers:
             pb.vao.render(mgl.TRIANGLES)
         if not self.depth_test_points:
@@ -1015,7 +1072,7 @@ class SceneRenderer:
         # (blinking selection markers etc.), before axes so ghost/highlight
         # passes below still correctly composite over everything.
         self._render_simple_lines(mvp)
-        self._render_simple_points(mvp)
+        self._render_simple_points(mvp, eye_pos, L_world)
         if extra_paint is not None:
             extra_paint(mvp)
 

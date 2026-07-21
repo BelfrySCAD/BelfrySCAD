@@ -434,35 +434,58 @@ def _size_combo_to_widest_item(combo: QComboBox, extra: int = 40):
     combo.setMinimumWidth(widest + extra)
 
 
-def _cube_faces(r: float, is_2d: bool) -> list:
-    """Triangle triples (as vertex-offset vectors) forming a cube point
-    marker of half-width `r` — a flat axis-aligned square in the XY plane
-    when `is_2d`, a full cube otherwise. Shared by every viewport that
-    draws corner/vertex markers (`_GridViewport`, `_PathViewport`,
-    `_AffineViewport`, `_VNFViewport`)."""
-    if is_2d:
-        ppp = np.array([r, r, 0])
-        pnp = np.array([r, -r, 0])
-        nnp = np.array([-r, -r, 0])
-        npp = np.array([-r, r, 0])
-        return [(ppp, pnp, nnp), (ppp, nnp, npp)]
+_DODECA_PHI = (1 + 5 ** 0.5) / 2
 
-    ppp = np.array([r, r, r])
-    ppn = np.array([r, r, -r])
-    pnp = np.array([r, -r, r])
-    pnn = np.array([r, -r, -r])
-    npp = np.array([-r, r, r])
-    npn = np.array([-r, r, -r])
-    nnp = np.array([-r, -r, r])
-    nnn = np.array([-r, -r, -r])
-    return [
-        (ppp, pnp, pnn), (ppp, pnn, ppn),   # +X
-        (npp, npn, nnn), (npp, nnn, nnp),   # -X
-        (ppp, ppn, npn), (ppp, npn, npp),   # +Y
-        (pnp, nnp, nnn), (pnp, nnn, pnn),   # -Y
-        (ppp, npp, nnp), (ppp, nnp, pnp),   # +Z
-        (ppn, pnn, nnn), (ppn, nnn, npn),   # -Z
-    ]
+# 20 vertices of a regular dodecahedron, unit circumradius (sqrt(3) before
+# normalization -- divided out in _dodecahedron_faces): 8 (+-1,+-1,+-1)
+# cube corners, plus 3 groups of 4 forming golden-ratio rectangles in each
+# coordinate plane. Standard construction.
+_DODECA_VERTS = [
+    (s1, s2, s3) for s1 in (1, -1) for s2 in (1, -1) for s3 in (1, -1)
+] + [
+    (0, s1 / _DODECA_PHI, s2 * _DODECA_PHI) for s1 in (1, -1) for s2 in (1, -1)
+] + [
+    (s1 / _DODECA_PHI, s2 * _DODECA_PHI, 0) for s1 in (1, -1) for s2 in (1, -1)
+] + [
+    (s1 * _DODECA_PHI, 0, s2 / _DODECA_PHI) for s1 in (1, -1) for s2 in (1, -1)
+]
+
+# 12 pentagonal faces, each a 5-tuple of _DODECA_VERTS indices in winding
+# order. Verified offline (see PR): all vertices 3-regular, exactly 30
+# unique edges each shared by exactly 2 faces, every face planar to float
+# precision -- see tests/test_data_viewers.py::TestDodecahedronFaces.
+_DODECA_FACES = [
+    (0, 8, 10, 2, 16), (0, 16, 17, 1, 12), (0, 12, 14, 4, 8),
+    (8, 4, 18, 6, 10), (10, 6, 15, 13, 2), (2, 13, 3, 17, 16),
+    (1, 17, 3, 11, 9), (1, 9, 5, 14, 12), (4, 14, 5, 19, 18),
+    (6, 18, 19, 7, 15), (13, 15, 7, 11, 3), (5, 9, 11, 7, 19),
+]
+
+
+def _dodecahedron_faces(r: float, is_2d: bool) -> list:
+    """Triangle triples (as vertex-offset vectors) forming a dodecahedron
+    point marker of circumradius `r` — a flat regular 12-gon (dodecagon) in
+    the XY plane when `is_2d`, a full 12-pentagon dodecahedron (fan-
+    triangulated to 36 triangles) otherwise. Shared by every viewport that
+    draws corner/vertex markers (`_GridViewport`, `_PathViewport`,
+    `_AffineViewport`, `_VNFViewport`, `_RegionViewport`). The `is_2d` case
+    is safe to light (see `_lit_marker_triangles`) because those viewers
+    are permanently locked to a top-down camera, so the marker's single
+    +Z-facing normal always faces the eye."""
+    if is_2d:
+        n = 12
+        pts = [np.array([r * math.cos(2 * math.pi * i / n),
+                          r * math.sin(2 * math.pi * i / n), 0.0]) for i in range(n)]
+        center = np.zeros(3)
+        return [(center, pts[i], pts[(i + 1) % n]) for i in range(n)]
+
+    verts = [np.array(v) / math.sqrt(3.0) * r for v in _DODECA_VERTS]
+    tris = []
+    for face in _DODECA_FACES:
+        v0 = verts[face[0]]
+        for i in range(1, 4):
+            tris.append((v0, verts[face[i]], verts[face[i + 1]]))
+    return tris
 
 
 def _diamond_faces(r: float, is_2d: bool) -> list:
@@ -470,8 +493,8 @@ def _diamond_faces(r: float, is_2d: bool) -> list:
     -- a rotated square (rhombus, points N/E/S/W) in the XY plane when
     `is_2d`, an octahedron (points along +-X/+-Y/+-Z) otherwise. Used for
     `_PathViewport`'s bezier "same_angle" node-type marker -- same
-    offset-vector convention as `_cube_faces`, just a different silhouette
-    so it's visually distinct at marker size."""
+    offset-vector convention as `_dodecahedron_faces`, just a different
+    silhouette so it's visually distinct at marker size."""
     px = np.array([r, 0, 0])
     nx = np.array([-r, 0, 0])
     py = np.array([0, r, 0])
@@ -492,7 +515,7 @@ def _triangle_faces(r: float, is_2d: bool) -> list:
     """Triangle triples forming a triangle point marker of half-width `r`
     -- an equilateral triangle in the XY plane when `is_2d`, a tetrahedron
     otherwise. Used for `_PathViewport`'s bezier "symmetric" node-type
-    marker -- same offset-vector convention as `_cube_faces`."""
+    marker -- same offset-vector convention as `_dodecahedron_faces`."""
     if is_2d:
         p0 = np.array([0.0, r, 0.0])
         p1 = np.array([-r * 0.866, -r * 0.5, 0.0])
@@ -540,6 +563,28 @@ def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
     else:
         world_per_px = depth * 0.003
     return world_per_px * 3
+
+
+def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> list:
+    """Build (position, normal, color) interleaved rows for one marker,
+    phong-lit via a flat per-triangle normal (cross product of two edges,
+    same convention as `_VNFViewport._rebuild_highlight`). `unit_faces` is
+    the (v0, v1, v2) offset-vector triangle list from `_dodecahedron_faces`/
+    `_diamond_faces`/`_triangle_faces`; `color` is that marker's RGB.
+    Shared by every marker-building call site so the cross-product-normal
+    step isn't repeated at each one -- feeds `SceneRenderer.upload_points`'
+    `[x,y,z, nx,ny,nz, r,g,b]` row format."""
+    rows = []
+    for v0, v1, v2 in unit_faces:
+        p0, p1, p2 = pt + v0 * r, pt + v1 * r, pt + v2 * r
+        n = np.cross(p1 - p0, p2 - p0)
+        ln = np.linalg.norm(n)
+        if ln > 0:
+            n = n / ln
+        rows.append(np.concatenate([p0, n, color]))
+        rows.append(np.concatenate([p1, n, color]))
+        rows.append(np.concatenate([p2, n, color]))
+    return rows
 
 
 def _view_locked_axis(camera) -> int:
@@ -1522,17 +1567,14 @@ class _AffineViewport(Viewport):
         self._renderer.clear_points()
         if len(self._corners) == 0 or self._ctx is None:
             return
-        unit_faces = _cube_faces(1.0, self._is_2d)
+        unit_faces = _dodecahedron_faces(1.0, self._is_2d)
         first_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         rest_color = np.array([0.9, 0.45, 0.1], dtype=np.float32)
         marker_tris = []
         for i, pt in enumerate(self._corners):
             color = first_color if i == 0 else rest_color
             r = _marker_radius_for_point(self, pt)
-            for v0, v1, v2 in unit_faces:
-                marker_tris.append(np.concatenate([pt + v0 * r, color]))
-                marker_tris.append(np.concatenate([pt + v1 * r, color]))
-                marker_tris.append(np.concatenate([pt + v2 * r, color]))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, color))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
@@ -1984,8 +2026,8 @@ class _VNFViewport(Viewport):
         self.update()
 
     def _build_unselected_markers(self):
-        """Green cube markers for every vertex *not* currently selected --
-        mirrors `_PathViewport`/`_GridViewport._build_point_markers`
+        """Green dodecahedron markers for every vertex *not* currently
+        selected -- mirrors `_PathViewport`/`_GridViewport._build_point_markers`
         (same green, same shared `SceneRenderer.upload_points`/
         `clear_points` pipeline, auto-rendered by `_render_simple_points`
         with no `_paint_extra` changes needed), just gated behind
@@ -1995,16 +2037,13 @@ class _VNFViewport(Viewport):
             return
         green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
         selected = set(self._vert_indices)
-        unit_faces = _cube_faces(1.0, False)
+        unit_faces = _dodecahedron_faces(1.0, False)
         marker_tris = []
         for i, pt in enumerate(self._verts_3d):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            for v0, v1, v2 in unit_faces:
-                marker_tris.append(np.concatenate([pt + v0 * r, green]))
-                marker_tris.append(np.concatenate([pt + v1 * r, green]))
-                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
 
@@ -2025,7 +2064,7 @@ class _VNFViewport(Viewport):
         if not self._vert_indices or self._ctx is None:
             return
 
-        unit_faces = _cube_faces(1.0, False)
+        unit_faces = _dodecahedron_faces(1.0, False)
 
         for color_val, vao_attr, vbo_attr in [
             (np.array([1.0, 0.0, 0.0], dtype=np.float32), "_vert_marker_vao_r", "_vert_marker_vbo_r"),
@@ -2035,16 +2074,13 @@ class _VNFViewport(Viewport):
             for vi in self._vert_indices:
                 pt = self._verts_3d[vi]
                 r = _marker_radius_for_point(self, pt)
-                for v0, v1, v2 in unit_faces:
-                    tris.append(np.concatenate([pt + v0 * r, color_val]))
-                    tris.append(np.concatenate([pt + v1 * r, color_val]))
-                    tris.append(np.concatenate([pt + v2 * r, color_val]))
+                tris.extend(_lit_marker_triangles(pt, r, unit_faces, color_val))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
                 vao = self._ctx.vertex_array(
-                    self._renderer._gizmo_prog,
-                    [(vbo, "3f 3f", "in_position", "in_color")],
+                    self._renderer._marker_prog,
+                    [(vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
                 )
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
@@ -2076,10 +2112,21 @@ class _VNFViewport(Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
+        cam = self._renderer.camera
+        view = cam.view_matrix()
+        light = np.array([0.6, 0.8, 1.0], dtype=np.float32)
+        light /= np.linalg.norm(light)
+        L_world = (view[:3, :3].T @ light).astype(np.float32)
+        L_world /= np.linalg.norm(L_world)
+        eye_pos = cam.eye_position()
+
         # Vertex markers (swap red/white)
         vao = self._vert_marker_vao_r if self._vert_blink_red else self._vert_marker_vao_w
         if vao is not None:
-            self._renderer._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog = self._renderer._marker_prog
+            marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog["light_dir"].value = tuple(L_world)
+            marker_prog["eye_pos"].value = tuple(eye_pos)
             # Depth-tested (not disabled): markers must stay occluded by mesh
             # faces farther in front. Small polygon offset toward the camera
             # just breaks ties against coincident wireframe edges at the same
@@ -2092,19 +2139,12 @@ class _VNFViewport(Viewport):
 
         if self._highlight_vao is None:
             return
-        import moderngl as mgl
         self._ctx.polygon_offset = (-1.0, -1.0)
         self._ctx.enable_direct(0x8037)
-        cam = self._renderer.camera
-        view = cam.view_matrix()
-        light = np.array([0.6, 0.8, 1.0], dtype=np.float32)
-        light /= np.linalg.norm(light)
-        L_world = (view[:3, :3].T @ light).astype(np.float32)
-        L_world /= np.linalg.norm(L_world)
         mesh_prog = self._renderer._mesh_prog
         mesh_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         mesh_prog["light_dir"].value = tuple(L_world)
-        mesh_prog["eye_pos"].value = tuple(cam.eye_position())
+        mesh_prog["eye_pos"].value = tuple(eye_pos)
         mesh_prog["object_color"].value = (0.2, 0.9, 0.3, 1.0)
         mesh_prog["backface_color"].value = (0.8, 0.0, 0.8, 1.0)
         self._highlight_vao.render()
@@ -3196,12 +3236,12 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
 
 # v0 index -> marker shape, keyed by bezier node type -- disjointed keeps
-# the plain cube look; the other two get a distinct silhouette so a node's
-# type is visible at a glance. Module-level (not a class attribute) so the
-# names here unambiguously resolve to these free functions, not to any
-# same-named instance method defined later in _PathViewport's class body.
+# the plain dodecahedron look; the other two get a distinct silhouette so a
+# node's type is visible at a glance. Module-level (not a class attribute)
+# so the names here unambiguously resolve to these free functions, not to
+# any same-named instance method defined later in _PathViewport's class body.
 _NODE_TYPE_SHAPE_FN = {
-    "disjointed": _cube_faces,
+    "disjointed": _dodecahedron_faces,
     "same_angle": _diamond_faces,
     "symmetric": _triangle_faces,
 }
@@ -3476,15 +3516,15 @@ class _PathViewport(Viewport):
         node_type = self._node_types.get(v0_idx, "disjointed")
         return _bezier_linked_moves(self._path_pts, self._closed, dragged_idx, new_pos, node_type)
 
-    def _cube_faces(self, r):
-        return _cube_faces(r, self._is_2d)
+    def _marker_faces(self, r):
+        return _dodecahedron_faces(r, self._is_2d)
 
     def _unit_faces_for_point(self, idx: int) -> list:
         if self._bezier and idx % 3 == 0:
             shape_fn = _NODE_TYPE_SHAPE_FN.get(
-                self._node_types.get(idx, "disjointed"), _cube_faces)
+                self._node_types.get(idx, "disjointed"), _dodecahedron_faces)
             return shape_fn(1.0, self._is_2d)
-        return self._cube_faces(1.0)
+        return self._marker_faces(1.0)
 
     def _build_point_markers(self):
         self._renderer.clear_points()
@@ -3501,10 +3541,7 @@ class _PathViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            for v0, v1, v2 in self._unit_faces_for_point(i):
-                marker_tris.append(np.concatenate([pt + v0 * r, green]))
-                marker_tris.append(np.concatenate([pt + v1 * r, green]))
-                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+            marker_tris.extend(_lit_marker_triangles(pt, r, self._unit_faces_for_point(i), green))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -3547,7 +3584,7 @@ class _PathViewport(Viewport):
         if not self._selected_indices or self._ctx is None:
             return
 
-        unit_faces = self._cube_faces(1.0)
+        unit_faces = self._marker_faces(1.0)
         pts = self._path_pts
 
         for color_val, vao_attr, vbo_attr in [
@@ -3559,16 +3596,13 @@ class _PathViewport(Viewport):
                 if 0 <= vi < len(pts):
                     pt = pts[vi]
                     r = _marker_radius_for_point(self, pt)
-                    for v0, v1, v2 in unit_faces:
-                        tris.append(np.concatenate([pt + v0 * r, color_val]))
-                        tris.append(np.concatenate([pt + v1 * r, color_val]))
-                        tris.append(np.concatenate([pt + v2 * r, color_val]))
+                    tris.extend(_lit_marker_triangles(pt, r, unit_faces, color_val))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
                 vao = self._ctx.vertex_array(
-                    self._renderer._gizmo_prog,
-                    [(vbo, "3f 3f", "in_position", "in_color")],
+                    self._renderer._marker_prog,
+                    [(vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
                 )
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
@@ -3577,7 +3611,16 @@ class _PathViewport(Viewport):
         import moderngl as mgl
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
-            self._renderer._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            cam = self._renderer.camera
+            view = cam.view_matrix()
+            light = np.array([0.6, 0.8, 1.0], dtype=np.float32)
+            light /= np.linalg.norm(light)
+            L_world = (view[:3, :3].T @ light).astype(np.float32)
+            L_world /= np.linalg.norm(L_world)
+            marker_prog = self._renderer._marker_prog
+            marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog["light_dir"].value = tuple(L_world)
+            marker_prog["eye_pos"].value = tuple(cam.eye_position())
             self._ctx.disable(mgl.DEPTH_TEST)
             vao.render(mgl.TRIANGLES)
             self._ctx.enable(mgl.DEPTH_TEST)
@@ -4569,8 +4612,8 @@ class _GridViewport(Viewport):
         self.doneCurrent()
         self.update()
 
-    def _cube_faces(self, r):
-        return _cube_faces(r, self._is_2d)
+    def _marker_faces(self, r):
+        return _dodecahedron_faces(r, self._is_2d)
 
     def _build_point_markers(self):
         self._renderer.clear_points()
@@ -4579,7 +4622,7 @@ class _GridViewport(Viewport):
         if len(pts) == 0 or self._ctx is None:
             return
 
-        unit_faces = self._cube_faces(1.0)
+        unit_faces = self._marker_faces(1.0)
         green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
         selected = set(self._selected_indices)
 
@@ -4588,10 +4631,7 @@ class _GridViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            for v0, v1, v2 in unit_faces:
-                marker_tris.append(np.concatenate([pt + v0 * r, green]))
-                marker_tris.append(np.concatenate([pt + v1 * r, green]))
-                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -4639,7 +4679,7 @@ class _GridViewport(Viewport):
         if not self._selected_indices or self._ctx is None:
             return
 
-        unit_faces = self._cube_faces(1.0)
+        unit_faces = self._marker_faces(1.0)
         pts = self._all_pts
 
         for color_val, vao_attr, vbo_attr in [
@@ -4651,16 +4691,13 @@ class _GridViewport(Viewport):
                 if 0 <= vi < len(pts):
                     pt = pts[vi]
                     r = _marker_radius_for_point(self, pt)
-                    for v0, v1, v2 in unit_faces:
-                        tris.append(np.concatenate([pt + v0 * r, color_val]))
-                        tris.append(np.concatenate([pt + v1 * r, color_val]))
-                        tris.append(np.concatenate([pt + v2 * r, color_val]))
+                    tris.extend(_lit_marker_triangles(pt, r, unit_faces, color_val))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
                 vao = self._ctx.vertex_array(
-                    self._renderer._gizmo_prog,
-                    [(vbo, "3f 3f", "in_position", "in_color")],
+                    self._renderer._marker_prog,
+                    [(vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
                 )
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
@@ -4669,7 +4706,16 @@ class _GridViewport(Viewport):
         import moderngl as mgl
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
-            self._renderer._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            cam = self._renderer.camera
+            view = cam.view_matrix()
+            light = np.array([0.6, 0.8, 1.0], dtype=np.float32)
+            light /= np.linalg.norm(light)
+            L_world = (view[:3, :3].T @ light).astype(np.float32)
+            L_world /= np.linalg.norm(L_world)
+            marker_prog = self._renderer._marker_prog
+            marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog["light_dir"].value = tuple(L_world)
+            marker_prog["eye_pos"].value = tuple(cam.eye_position())
             # Depth-tested (not disabled): markers must stay occluded by mesh
             # faces farther in front. Small polygon offset toward the camera
             # just breaks ties against coincident wireframe edges at the same
@@ -5329,8 +5375,8 @@ class _RegionViewport(Viewport):
         self.doneCurrent()
         self.update()
 
-    def _cube_faces(self, r):
-        return _cube_faces(r, True)
+    def _marker_faces(self, r):
+        return _dodecahedron_faces(r, True)
 
     def _build_point_markers(self):
         self._renderer.clear_points()
@@ -5339,7 +5385,7 @@ class _RegionViewport(Viewport):
         if len(pts) == 0 or self._ctx is None:
             return
 
-        unit_faces = self._cube_faces(1.0)
+        unit_faces = self._marker_faces(1.0)
         green = np.array([0.0, 0.8, 0.2], dtype=np.float32)
         selected = set(self._selected_indices)
 
@@ -5348,10 +5394,7 @@ class _RegionViewport(Viewport):
             if i in selected:
                 continue
             r = _marker_radius_for_point(self, pt)
-            for v0, v1, v2 in unit_faces:
-                marker_tris.append(np.concatenate([pt + v0 * r, green]))
-                marker_tris.append(np.concatenate([pt + v1 * r, green]))
-                marker_tris.append(np.concatenate([pt + v2 * r, green]))
+            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, green))
 
         if marker_tris:
             self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
@@ -5399,7 +5442,7 @@ class _RegionViewport(Viewport):
         if not self._selected_indices or self._ctx is None:
             return
 
-        unit_faces = self._cube_faces(1.0)
+        unit_faces = self._marker_faces(1.0)
         pts = self._all_pts
 
         for color_val, vao_attr, vbo_attr in [
@@ -5411,16 +5454,13 @@ class _RegionViewport(Viewport):
                 if 0 <= vi < len(pts):
                     pt = pts[vi]
                     r = _marker_radius_for_point(self, pt)
-                    for v0, v1, v2 in unit_faces:
-                        tris.append(np.concatenate([pt + v0 * r, color_val]))
-                        tris.append(np.concatenate([pt + v1 * r, color_val]))
-                        tris.append(np.concatenate([pt + v2 * r, color_val]))
+                    tris.extend(_lit_marker_triangles(pt, r, unit_faces, color_val))
             if tris:
                 data = np.array(tris, dtype=np.float32)
                 vbo = self._ctx.buffer(data.tobytes())
                 vao = self._ctx.vertex_array(
-                    self._renderer._gizmo_prog,
-                    [(vbo, "3f 3f", "in_position", "in_color")],
+                    self._renderer._marker_prog,
+                    [(vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
                 )
                 setattr(self, vao_attr, vao)
                 setattr(self, vbo_attr, vbo)
@@ -5429,7 +5469,16 @@ class _RegionViewport(Viewport):
         import moderngl as mgl
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
-            self._renderer._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            cam = self._renderer.camera
+            view = cam.view_matrix()
+            light = np.array([0.6, 0.8, 1.0], dtype=np.float32)
+            light /= np.linalg.norm(light)
+            L_world = (view[:3, :3].T @ light).astype(np.float32)
+            L_world /= np.linalg.norm(L_world)
+            marker_prog = self._renderer._marker_prog
+            marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog["light_dir"].value = tuple(L_world)
+            marker_prog["eye_pos"].value = tuple(cam.eye_position())
             self._ctx.disable(mgl.DEPTH_TEST)
             vao.render(mgl.TRIANGLES)
             self._ctx.enable(mgl.DEPTH_TEST)

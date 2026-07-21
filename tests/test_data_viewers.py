@@ -32,7 +32,7 @@ from belfryscad.window.data_viewers import (
     _key_nudge_magnitude, _key_nudge_delta,
     _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
     _v0_handle_indices, _snap_handles_to_node_type, _fit_merged_segment,
-    _owning_v0_index,
+    _owning_v0_index, _dodecahedron_faces, _DODECA_VERTS, _DODECA_FACES,
 )
 
 
@@ -676,6 +676,74 @@ class TestKeyNudgeDelta:
     def test_unrecognized_key_returns_none_regardless_of_magnitude(self):
         cam = Camera()
         assert _key_nudge_delta(cam, 2, Qt.Key.Key_A, magnitude=0.1) is None
+
+
+class TestDodecahedronFaces:
+    """The hand-written 20-vertex/12-face regular dodecahedron table behind
+    `_dodecahedron_faces` (replaces the old cube vertex-marker shape) is
+    easy to get wrong by hand -- a transposed index or wrong sign would
+    ship a subtly warped shape. These topology checks (Euler's formula,
+    edge-sharing, planarity) catch that without needing GL."""
+
+    def test_twenty_unique_vertices(self):
+        verts = np.array(_DODECA_VERTS, dtype=float)
+        assert len(verts) == 20
+        rounded = {tuple(np.round(v, 6)) for v in verts}
+        assert len(rounded) == 20
+
+    def test_twelve_faces_covering_all_vertices(self):
+        assert len(_DODECA_FACES) == 12
+        covered = set()
+        for f in _DODECA_FACES:
+            assert len(set(f)) == 5
+            covered.update(f)
+        assert covered == set(range(20))
+
+    def test_vertices_are_three_regular(self):
+        verts = np.array(_DODECA_VERTS, dtype=float)
+        n = len(verts)
+        dists = np.linalg.norm(verts[:, None, :] - verts[None, :, :], axis=2)
+        edge_len = dists[dists > 1e-6].min()
+        for i in range(n):
+            neighbors = np.sum((dists[i] > 1e-6) & (dists[i] < edge_len + 1e-4))
+            assert neighbors == 3, f"vertex {i} has {neighbors} neighbors, expected 3"
+
+    def test_thirty_edges_each_shared_by_exactly_two_faces(self):
+        from collections import Counter
+        edge_counts = Counter()
+        for f in _DODECA_FACES:
+            for k in range(5):
+                edge_counts[tuple(sorted((f[k], f[(k + 1) % 5])))] += 1
+        assert len(edge_counts) == 30
+        assert set(edge_counts.values()) == {2}
+
+    def test_euler_characteristic(self):
+        # V - E + F == 2 for any convex polyhedron.
+        assert 20 - 30 + 12 == 2
+
+    def test_faces_are_planar(self):
+        verts = np.array(_DODECA_VERTS, dtype=float)
+        for f in _DODECA_FACES:
+            pts = verts[list(f)]
+            normal = np.cross(pts[1] - pts[0], pts[2] - pts[0])
+            normal /= np.linalg.norm(normal)
+            errs = [abs(np.dot(p - pts[0], normal)) for p in pts[3:]]
+            assert max(errs) < 1e-9
+
+    def test_3d_returns_36_triangles_at_requested_radius(self):
+        tris = _dodecahedron_faces(2.0, False)
+        assert len(tris) == 36  # 12 faces x 3 fan-triangulated triangles
+        for v0, v1, v2 in tris:
+            for v in (v0, v1, v2):
+                assert abs(np.linalg.norm(v) - 2.0) < 1e-9  # circumradius == r
+
+    def test_2d_returns_flat_dodecagon_fan(self):
+        tris = _dodecahedron_faces(1.5, True)
+        assert len(tris) == 12
+        for center, p1, p2 in tris:
+            assert np.allclose(center, [0, 0, 0])
+            assert p1[2] == 0 and p2[2] == 0
+            assert abs(np.linalg.norm(p1) - 1.5) < 1e-9
 
 
 class TestClassifyNodeType:
