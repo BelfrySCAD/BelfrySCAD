@@ -946,9 +946,9 @@ def _sync_viewport_to_main_window(vp):
     -- so it's copied from whichever `MainWindow` viewport is currently
     open; if none is, the viewport's own already-set default is left
     alone."""
-    from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_schemes
+    from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
     from belfryscad.window.preferences import load_preference
-    theme = all_schemes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
+    theme = all_themes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
     vp._renderer.bg_color = theme["background"]
     vp._renderer._default_color = theme["object"]
     vp._renderer.axes_color = theme["axes"]

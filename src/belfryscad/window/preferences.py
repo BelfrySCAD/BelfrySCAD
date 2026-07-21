@@ -12,8 +12,8 @@ from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtCore import QSettings, Qt, Signal
 
 from belfryscad.window.color_themes import (
-    COLOR_THEMES, DEFAULT_COLOR_THEME, all_schemes, is_builtin,
-    load_custom_schemes, save_custom_schemes, unique_scheme_name, SCHEME_COLOR_KEYS,
+    COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes, is_builtin,
+    load_custom_themes, save_custom_themes, unique_theme_name, THEME_COLOR_KEYS,
 )
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.data_viewers import (
@@ -30,7 +30,7 @@ _DEFAULTS = {
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
-    "colorSchemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
+    "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
 }
 
 
@@ -56,7 +56,7 @@ class PreferencesDialog(QDialog):
     `QDialog.exec()`, suppresses the main window's cross-window View-menu
     shortcuts (Cmd+0-9 view presets etc, even with `ApplicationShortcut`
     context) for whichever `Viewport` a modal dialog embeds or gates
-    access to. The `Viewport` inside `ColorSchemeManagerDialog` (opened
+    access to. The `Viewport` inside `ColorThemeManagerDialog` (opened
     from this dialog's Color Theme dropdown) hit exactly this: its own
     shortcuts didn't fire while nested inside this dialog's modal loop.
     Confirmed via `feedback_qt_modal_vs_menubar_shortcuts` (this session's
@@ -207,67 +207,67 @@ class PreferencesDialog(QDialog):
         if self._on_change:
             self._on_change()
 
-    _MANAGE_SCHEMES = "Manage..."  # trailing combo entry, after a separator
+    _MANAGE_THEMES = "Manage Color Themes..."  # trailing combo entry, after a separator
 
     def _reload_theme_items(self, select: str = None):
-        """(Re)populate the color-theme combo from `all_schemes()`, plus a
+        """(Re)populate the color-theme combo from `all_themes()`, plus a
         trailing separator + "Manage..." entry -- called at init and again
-        after the Manager dialog closes, in case a custom scheme was
+        after the Manager dialog closes, in case a custom theme was
         added/renamed/deleted while it was open."""
         select = select or self._color_theme.currentText() or load_preference("viewport/colorTheme")
-        if select == self._MANAGE_SCHEMES:
+        if select == self._MANAGE_THEMES:
             # Reached when re-populating right after the user picked
             # "Manage..." itself (see _on_theme_combo_changed) -- that's
-            # not a real scheme, fall back to the actually-active one.
+            # not a real theme, fall back to the actually-active one.
             select = load_preference("viewport/colorTheme")
         self._color_theme.blockSignals(True)
         self._color_theme.clear()
-        self._color_theme.addItems(sorted(all_schemes()))
+        self._color_theme.addItems(sorted(all_themes()))
         self._color_theme.insertSeparator(self._color_theme.count())
-        self._color_theme.addItem(self._MANAGE_SCHEMES)
+        self._color_theme.addItem(self._MANAGE_THEMES)
         idx = self._color_theme.findText(select)
         self._color_theme.setCurrentIndex(idx if idx >= 0 else 0)
         self._color_theme.blockSignals(False)
 
     def _on_theme_combo_changed(self, v: str):
-        if v == self._MANAGE_SCHEMES:
-            self._open_scheme_manager()
+        if v == self._MANAGE_THEMES:
+            self._open_theme_manager()
             return
         self._emit("viewport/colorTheme", v)
 
-    def _open_scheme_manager(self):
+    def _open_theme_manager(self):
         # Reuse the same instance across repeated "Manage..." selections
         # (same singleton-window convention as MainWindow._open_library_
         # manager) rather than opening a new one every time -- needed now
         # that this is non-modal, so nothing stops the user picking
         # "Manage..." again while one is already open.
-        if not hasattr(self, '_scheme_manager_dialog') or self._scheme_manager_dialog is None:
-            self._scheme_manager_dialog = ColorSchemeManagerDialog(
-                parent=self, on_close=self._on_scheme_manager_closed,
-                on_selection_changed=self._sync_active_scheme,
+        if not hasattr(self, '_theme_manager_dialog') or self._theme_manager_dialog is None:
+            self._theme_manager_dialog = ColorThemeManagerDialog(
+                parent=self, on_close=self._on_theme_manager_closed,
+                on_selection_changed=self._sync_active_theme,
             )
-            self._scheme_manager_dialog.destroyed.connect(
-                lambda: setattr(self, '_scheme_manager_dialog', None)
+            self._theme_manager_dialog.destroyed.connect(
+                lambda: setattr(self, '_theme_manager_dialog', None)
             )
-        self._scheme_manager_dialog.show()
-        self._scheme_manager_dialog.raise_()
-        self._scheme_manager_dialog.activateWindow()
+        self._theme_manager_dialog.show()
+        self._theme_manager_dialog.raise_()
+        self._theme_manager_dialog.activateWindow()
 
-    def _sync_active_scheme(self, select: str = None):
+    def _sync_active_theme(self, select: str = None):
         """Reflect `select` (or, if `None`, whatever's already showing) in
         the Color theme dropdown and re-apply preferences -- shared by
         every path that needs the dropdown/live app theme to track the
         Manager: live, on each list selection change there
         (`on_selection_changed`), and again defensively when the Manager
-        closes (`_on_scheme_manager_closed`), in case the active scheme
+        closes (`_on_theme_manager_closed`), in case the active theme
         was edited, renamed, or deleted without a matching selection
         change (e.g. Delete auto-selects a different row, which already
         goes through the live path too, but this catches anything else)."""
         self._reload_theme_items(select=select)
         self._emit("viewport/colorTheme", self._color_theme.currentText())
 
-    def _on_scheme_manager_closed(self):
-        self._sync_active_scheme()
+    def _on_theme_manager_closed(self):
+        self._sync_active_theme()
 
 
 class _ColorSwatchButton(QWidget):
@@ -319,11 +319,11 @@ class _ColorSwatchButton(QWidget):
         super().mousePressEvent(event)
 
 
-class ColorSchemeEditorDialog(QDialog):
+class ColorThemeEditorDialog(QDialog):
     """Name + 4 color-swatch rows (Background/Object/Axes/Vertex -- the
     last one labeled just "Vertex" in the UI even though the underlying
     data key is `unselected_vertex`). Used for New/Copy/Edit alike in
-    `ColorSchemeManagerDialog`; the caller passes the starting name/colors
+    `ColorThemeManagerDialog`; the caller passes the starting name/colors
     and reads them back via `result_name()`/`result_colors()` after
     `exec()` returns Accepted."""
 
@@ -332,9 +332,9 @@ class ColorSchemeEditorDialog(QDialog):
 
     def __init__(self, name: str, colors: dict, existing_names: set, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Color Scheme")
+        self.setWindowTitle("Color Theme")
         self.setModal(True)
-        self._existing_names = existing_names  # every OTHER scheme's name (collision check)
+        self._existing_names = existing_names  # every OTHER theme's name (collision check)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -361,10 +361,10 @@ class ColorSchemeEditorDialog(QDialog):
     def _on_save(self):
         name = self._name_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "Color Scheme", "Name can't be empty.")
+            QMessageBox.warning(self, "Color Theme", "Name can't be empty.")
             return
         if name in self._existing_names:
-            QMessageBox.warning(self, "Color Scheme", f'"{name}" is already in use.')
+            QMessageBox.warning(self, "Color Theme", f'"{name}" is already in use.')
             return
         self.accept()
 
@@ -375,20 +375,20 @@ class ColorSchemeEditorDialog(QDialog):
         return {key: self._swatches[key].color() for key, _ in self._LABELS}
 
 
-class _ColorSchemePreview(Viewport):
+class _ColorThemePreview(Viewport):
     """A real, live `Viewport` showing a simple octahedron (reusing
     `_diamond_faces`'s existing octahedron geometry -- same shape already
     used for `_PathViewport`'s "same_angle" bezier marker) with dodecahedron
-    vertex markers at its 6 corners, so `ColorSchemeManagerDialog`'s list
+    vertex markers at its 6 corners, so `ColorThemeManagerDialog`'s list
     selection can be previewed in the actual rendering pipeline rather than
     a static swatch mockup.
 
     The octahedron mesh is uploaded once with `color=None`, which already
     tracks the live theme's object color fresh every draw (`renderer.
-    _default_color`) -- no re-upload needed when the scheme changes, same
+    _default_color`) -- no re-upload needed when the theme changes, same
     as any other data-viewer mesh. Vertex markers bake their color directly
     into the uploaded triangle data (same as every other marker in this
-    app), so those alone are rebuilt in `apply_scheme`."""
+    app), so those alone are rebuilt in `apply_theme`."""
 
     _RADIUS = 1.0
     _MARKER_RADIUS = 0.08
@@ -400,12 +400,12 @@ class _ColorSchemePreview(Viewport):
         # side of the octahedron draw right through the solid mesh instead
         # of being occluded by it (same fix GridViewer/VNFViewer apply).
         self._renderer.depth_test_points = True
-        # apply_scheme() is typically called (via ColorSchemeManagerDialog's
+        # apply_theme() is typically called (via ColorThemeManagerDialog's
         # _update_preview) before GL has ever initialized -- the dialog
         # populates its list, which selects a row and previews it, all
         # synchronously in __init__, well before the widget is first shown/
         # painted. schedule_load only remembers ONE pending callback, so
-        # apply_scheme must NOT call schedule_load itself (that would
+        # apply_theme must NOT call schedule_load itself (that would
         # clobber the _load_mesh callback registered below and the mesh
         # would never get uploaded) -- it just records the latest requested
         # colors, and _load_mesh applies them once GL is actually ready.
@@ -429,7 +429,7 @@ class _ColorSchemePreview(Viewport):
         self.frame_scene(-bb, bb)
         self._apply_colors_now(self._pending_colors)
 
-    def apply_scheme(self, colors: dict):
+    def apply_theme(self, colors: dict):
         self._pending_colors = colors
         if self._ctx is not None:
             self._apply_colors_now(colors)
@@ -469,8 +469,8 @@ class _ColorSchemePreview(Viewport):
         self.doneCurrent()
 
 
-class ColorSchemeManagerDialog(QDialog):
-    """List every scheme (built-in + custom), with New/Copy/Edit/Delete/
+class ColorThemeManagerDialog(QDialog):
+    """List every theme (built-in + custom), with New/Copy/Edit/Delete/
     Import/Export buttons -- same list-plus-button-row shape as
     `LibraryManagerWindow` (`library_manager.py`), not a new UI pattern.
     Built-in themes are shown (so they're browsable/exportable/copyable)
@@ -483,7 +483,7 @@ class ColorSchemeManagerDialog(QDialog):
     working, which a Qt-modal dialog would suppress. `on_close` (called
     from `closeEvent`, since there's no `dialog.exec()` return to hang
     post-close logic off of anymore) lets the opener react when the user
-    closes this dialog -- `PreferencesDialog._open_scheme_manager` uses
+    closes this dialog -- `PreferencesDialog._open_theme_manager` uses
     it to refresh the Color Theme dropdown and re-apply preferences.
     `on_selection_changed(name)` fires the same sync live, on every list
     selection change, not just at close -- so the Preferences dropdown
@@ -493,13 +493,13 @@ class ColorSchemeManagerDialog(QDialog):
 
     def __init__(self, parent=None, on_close=None, on_selection_changed=None):
         super().__init__(parent)
-        self.setWindowTitle("Manage Color Schemes")
+        self.setWindowTitle("Manage Color Themes")
         self.setMinimumSize(700, 400)
         self.resize(760, 440)
         self._on_close = on_close
         self._on_selection_changed = on_selection_changed
 
-        self._custom = load_custom_schemes()
+        self._custom = load_custom_themes()
 
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
@@ -529,7 +529,7 @@ class ColorSchemeManagerDialog(QDialog):
         # attribute would silently fall through to the main window's own
         # viewport instead, appearing as "the shortcuts don't work" while
         # this dialog is focused.
-        self._vp = _ColorSchemePreview()
+        self._vp = _ColorThemePreview()
         splitter.addWidget(self._vp)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -568,8 +568,8 @@ class ColorSchemeManagerDialog(QDialog):
 
     def _update_preview(self, *_):
         name = self._selected_name()
-        colors = all_schemes().get(name) if name else None
-        self._vp.apply_scheme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
+        colors = all_themes().get(name) if name else None
+        self._vp.apply_theme(colors or COLOR_THEMES[DEFAULT_COLOR_THEME])
         if name and self._on_selection_changed:
             self._on_selection_changed(name)
 
@@ -583,7 +583,7 @@ class ColorSchemeManagerDialog(QDialog):
     def _reload_list(self, select: str = None):
         self._list.blockSignals(True)
         self._list.clear()
-        for name in sorted(all_schemes()):
+        for name in sorted(all_themes()):
             label = f"{name} (built-in)" if is_builtin(name) else name
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, name)
@@ -611,20 +611,20 @@ class ColorSchemeManagerDialog(QDialog):
     # -- actions ------------------------------------------------------------
 
     def _save_and_reload(self, select: str):
-        save_custom_schemes(self._custom)
+        save_custom_themes(self._custom)
         self._reload_list(select=select)
 
     def _on_new(self):
-        default_colors = {k: (0.5, 0.5, 0.5, 1.0) for k in SCHEME_COLOR_KEYS}
-        name = unique_scheme_name("New Scheme", all_schemes())
+        default_colors = {k: (0.5, 0.5, 0.5, 1.0) for k in THEME_COLOR_KEYS}
+        name = unique_theme_name("New Theme", all_themes())
         self._open_editor(name, default_colors)
 
     def _on_copy(self):
         src = self._selected_name()
         if src is None:
             return
-        colors = all_schemes()[src]
-        name = unique_scheme_name(f"{src} copy", all_schemes())
+        colors = all_themes()[src]
+        name = unique_theme_name(f"{src} copy", all_themes())
         self._open_editor(name, colors)
 
     def _on_edit(self):
@@ -634,8 +634,8 @@ class ColorSchemeManagerDialog(QDialog):
         self._open_editor(name, self._custom[name], editing=name)
 
     def _open_editor(self, name: str, colors: dict, editing: str = None):
-        existing = set(all_schemes()) - ({editing} if editing else set())
-        dialog = ColorSchemeEditorDialog(name, colors, existing, parent=self)
+        existing = set(all_themes()) - ({editing} if editing else set())
+        dialog = ColorThemeEditorDialog(name, colors, existing, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         new_name = dialog.result_name()
@@ -650,7 +650,7 @@ class ColorSchemeManagerDialog(QDialog):
         if name is None or is_builtin(name):
             return
         reply = QMessageBox.question(
-            self, "Delete Color Scheme", f'Delete "{name}"?',
+            self, "Delete Color Theme", f'Delete "{name}"?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -659,18 +659,18 @@ class ColorSchemeManagerDialog(QDialog):
         self._save_and_reload(select=None)
 
     def _on_import(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Import Color Scheme", "", "Color Scheme (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import Color Theme", "", "Color Theme (*.json)")
         if not path:
             return
         try:
             with open(path, "r") as f:
                 data = json.load(f)
             name = str(data["name"])
-            colors = {k: tuple(data[k]) for k in SCHEME_COLOR_KEYS}
+            colors = {k: tuple(data[k]) for k in THEME_COLOR_KEYS}
         except (OSError, ValueError, KeyError, TypeError) as e:
-            QMessageBox.warning(self, "Import Color Scheme", f"Couldn't read this file:\n{e}")
+            QMessageBox.warning(self, "Import Color Theme", f"Couldn't read this file:\n{e}")
             return
-        name = unique_scheme_name(name, all_schemes())
+        name = unique_theme_name(name, all_themes())
         self._custom[name] = colors
         self._save_and_reload(select=name)
 
@@ -678,10 +678,10 @@ class ColorSchemeManagerDialog(QDialog):
         name = self._selected_name()
         if name is None:
             return
-        colors = all_schemes()[name]
-        path, _ = QFileDialog.getSaveFileName(self, "Export Color Scheme", f"{name}.json", "Color Scheme (*.json)")
+        colors = all_themes()[name]
+        path, _ = QFileDialog.getSaveFileName(self, "Export Color Theme", f"{name}.json", "Color Theme (*.json)")
         if not path:
             return
-        data = {"name": name, **{k: list(colors[k]) for k in SCHEME_COLOR_KEYS}}
+        data = {"name": name, **{k: list(colors[k]) for k in THEME_COLOR_KEYS}}
         with open(path, "w") as f:
             json.dump(data, f, indent=2)

@@ -16,7 +16,7 @@ from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assig
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.preferences import PreferencesDialog, load_preference
-from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_schemes
+from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
 import re
@@ -2329,7 +2329,7 @@ class MainWindow(QMainWindow):
         # _open_library_manager -- PreferencesDialog used to be opened via
         # dialog.exec(), which (see PreferencesDialog's own docstring)
         # suppressed View-menu shortcuts for any Viewport nested inside it
-        # (namely the Color Scheme Manager's live preview) and, separately,
+        # (namely the Color Theme Manager's live preview) and, separately,
         # left the main viewport visibly black after the modal chain
         # closed on macOS -- both symptoms of the same underlying Qt
         # modal-shortcut/repaint suppression, fixed by dropping modality
@@ -2352,7 +2352,7 @@ class MainWindow(QMainWindow):
         viewer_ipd = load_preference("viewport/viewerIPD", float)
         viewer_screen_dist = load_preference("viewport/viewerScreenDist", float)
         stereo_depth_scale = load_preference("viewport/stereoDepthScale", float)
-        theme = all_schemes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
+        theme = all_themes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
         for i in range(self._tabs.count()):
