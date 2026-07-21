@@ -537,6 +537,7 @@ class SceneRenderer:
         self._default_color = (0.9, 0.85, 0.1, 1.0)
         self.bg_color = (0.82, 0.82, 0.82, 1.0)
         self.axes_color = (0.2, 0.2, 0.2, 1.0)
+        self.unselected_vertex_color = (0.0, 0.9, 0.9, 1.0)
         self.selected_id: Optional[int] = None
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
