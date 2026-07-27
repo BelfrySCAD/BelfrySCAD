@@ -33,8 +33,9 @@ def _is_list(v) -> bool:
 
 
 def _is_oscobject(v) -> bool:
-    from belfryscad.engine.evaluator import OscObject
-    return isinstance(v, OscObject)
+    # Duck-typed so both the C++ backend's OscObject and the legacy Python
+    # evaluator's OscObject are accepted (both expose .data + .items()).
+    return hasattr(v, "data") and hasattr(v, "items") and not isinstance(v, dict)
 
 
 def _is_numeric_point(v) -> bool:

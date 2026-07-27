@@ -32,8 +32,8 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
-    from belfryscad.engine.evaluator import OscObject
-    if isinstance(v, OscObject):
+    from belfryscad.window.data_viewers import _is_oscobject
+    if _is_oscobject(v):
         inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
         return f"object({inner})"
     return str(v)
@@ -70,8 +70,8 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
 
 def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     """Format OscObject values with multi-line layout. Returns None for other types."""
-    from belfryscad.engine.evaluator import OscObject
-    if isinstance(value, OscObject):
+    from belfryscad.window.data_viewers import _is_oscobject
+    if _is_oscobject(value):
         if not value.data:
             return "object()"
         pad = " " * (indent + 4)
@@ -80,35 +80,27 @@ def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     return None
 
 
+def _value_to_scad(v) -> str:
+    """Render a debug value as an OpenSCAD literal (for 'Print to Console')."""
+    if v is None:
+        return "undef"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return f"{v:g}"
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_value_to_scad(x) for x in v) + "]"
+    return _fmt(v)  # OscObject -> object(...); anything else -> str()
+
+
 def _pretty_assignment(name: str, value) -> str:
-    """Format ``name = value;`` using the parser's pretty-printer for complex values."""
+    """Format ``name = value;`` for pasting into a script."""
     obj_fmt = _pretty_fmt_value(value)
     if obj_fmt is not None:
         return f"{name} = {obj_fmt};"
-
-    from openscad_lalr_parser.nodes import (
-        Assignment, ListComprehension, NumberLiteral, BooleanLiteral,
-        StringLiteral, UndefinedLiteral, Position, Identifier,
-    )
-    from openscad_lalr_parser import to_openscad
-
-    p = Position(0, 0, 0, 0, '')
-
-    def _to_ast(v):
-        if v is None:
-            return UndefinedLiteral(p)
-        if isinstance(v, bool):
-            return BooleanLiteral(p, v)
-        if isinstance(v, (int, float)):
-            return NumberLiteral(p, float(v))
-        if isinstance(v, str):
-            return StringLiteral(p, v)
-        if isinstance(v, list):
-            return ListComprehension(p, [_to_ast(x) for x in v])
-        return StringLiteral(p, str(v))
-
-    node = Assignment(p, Identifier(p, name), _to_ast(value))
-    return to_openscad([node]).rstrip('\n')
+    return f"{name} = {_value_to_scad(value)};"
 
 
 def _parse_val(s: str):
@@ -155,7 +147,12 @@ class DebugSession(QObject):
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
 
-    def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], viewport_params: dict | None = None, current_file: str | None = None):
+    def start(self, source_path: str, breakpoints: dict[str, set[int]], viewport_params: dict | None = None,
+              current_file: str | None = None, cleanup_path: str | None = None):
+        # cleanup_path: a temp .scad written for an unsaved buffer -- the C++
+        # evaluator reads it throughout the async session, so _run unlinks it
+        # only once evaluation ends.
+        self._cleanup_path = cleanup_path
         self._current_file = os.path.realpath(current_file) if current_file else None
         self._breakpoints = dict(breakpoints)
         self._break_on_first = True
@@ -167,7 +164,7 @@ class DebugSession(QObject):
         self._pause_requested = False
         self._pending_mods = {}
         self._thread = threading.Thread(
-            target=self._run, args=(nodes, root_scope, viewport_params or {}), daemon=True
+            target=self._run, args=(source_path, viewport_params or {}), daemon=True
         )
         self._thread.start()
 
@@ -260,11 +257,11 @@ class DebugSession(QObject):
         self._pause_event.clear()
         self._pause_event.wait()
 
-    def _run(self, nodes, root_scope, viewport_params: dict):
-        from belfryscad.engine.evaluator import Evaluator, EvalError
+    def _run(self, source_path: str, viewport_params: dict):
+        from openscad_cpp_evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break)
         try:
-            bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
+            bodies, id_to_node = ev.evaluate(source_path, viewport_params)
             if not self._stopped:
                 self.finished.emit(bodies, id_to_node)
         except EvalError as e:
@@ -274,6 +271,13 @@ class DebugSession(QObject):
             import traceback
             if not self._stopped:
                 self.errored.emit(f"{e}\n{traceback.format_exc()}")
+        finally:
+            if getattr(self, "_cleanup_path", None):
+                try:
+                    os.unlink(self._cleanup_path)
+                except OSError:
+                    pass
+                self._cleanup_path = None
 
     def pause(self):
         """Request the evaluator to pause at the next debug hook call."""
