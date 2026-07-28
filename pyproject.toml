@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "0.18.9"
-requires-python = ">=3.11"
+version = "0.19.0"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
@@ -15,8 +15,7 @@ dependencies = [
     "numpy",
     "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
     "setproctitle>=1.3.7",
-    "openscad_lalr_parser>=1.1.0",
-    "openscad_evaluator>=1.1.0",
+    "openscad_cpp_evaluator>=0.4.3",
     "certifi",
 ]
 
@@ -43,7 +42,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "0.18.9"
+version = "0.19.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
@@ -61,8 +60,7 @@ requires = [
     "numpy",
     "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
     "setproctitle>=1.3.7",
-    "openscad_lalr_parser>=1.1.0",
-    "openscad_evaluator>=1.1.0",
+    "openscad_cpp_evaluator>=0.4.3",
     "./vendor/wheels/euclid3-0.1-py3-none-any.whl",
     "certifi",
 ]
@@ -80,7 +78,10 @@ LSHandlerRank = "Alternate"
 UTTypeConformsTo = ["public.plain-text", "public.source-code"]
 
 [tool.briefcase.app.belfryscad.macOS]
-min_os_version = "12.0"
+# openscad_cpp_evaluator's compiled wheel requires macOS 13.3+ (its parser
+# submodule uses std::to_chars for floats, unavailable below that in
+# Apple's libc++) -- BelfrySCAD can no longer claim 12.0 as its floor.
+min_os_version = "13.3"
 universal_build = false
 
 [tool.briefcase.app.belfryscad.windows]

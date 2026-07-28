@@ -10,7 +10,7 @@ import moderngl as mgl
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
-from openscad_evaluator import ColoredBody
+from openscad_cpp_evaluator import ColoredBody
 
 _VERT = """
 #version 330 core

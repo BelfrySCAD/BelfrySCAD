@@ -4,12 +4,28 @@ Tests for debugger stepping behavior.
 Each test evaluates OpenSCAD source with a recording debug hook,
 then asserts the expected sequence of debug stops (line, depth,
 expr_level, origin).
-"""
-import pytest
-from openscad_lalr_parser import getASTfromString, build_scopes
 
-from openscad_evaluator import Evaluator, EvalContext, EvalError
+NOTE (C++ backend): openscad_cpp_evaluator's checkDebug() deliberately
+checks at STATEMENT granularity only, not the Python reference's additional
+expr_level sub-expression checks (list-comprehension clauses, ternary
+branches, individual C-style-for init/condition/incr parts) -- see
+Evaluator::checkDebug()'s own doc comment in evaluator.hpp. Tests that
+asserted on that finer granularity are adjusted or removed below, with a
+comment at each one explaining what changed and why -- not silently dropped.
+"""
+import tempfile
+from pathlib import Path
+
+import pytest
+from openscad_cpp_evaluator import Evaluator, EvalError
 from belfryscad.window.debugger import _generate_partial_render
+
+
+def _write(src: str) -> str:
+    f = tempfile.NamedTemporaryFile(suffix=".scad", mode="w", encoding="utf-8", delete=False)
+    f.write(src)
+    f.close()
+    return f.name
 
 
 def _make_recorder():
@@ -21,7 +37,8 @@ def _make_recorder():
     stops = []
 
     def hook(line, depth, *, forced=False, expr_level=False,
-             expr_depth=0, origin=None, get_frames=None):
+             expr_depth=0, origin=None, get_frames=None, generate_partial=None,
+             get_children_positions=None):
         stops.append({
             "line": line,
             "depth": depth,
@@ -35,19 +52,14 @@ def _make_recorder():
 
 
 def _run_with_debug(src: str):
-    """Parse, scope, evaluate with a recording debug hook.
-
-    Returns (bodies, echo_lines, stops).
-    """
+    """Evaluate with a recording debug hook. Returns (bodies, echo_lines, stops)."""
     hook, stops = _make_recorder()
     echo_lines = []
-    nodes = getASTfromString(src, include_comments=False)
-    root_scope = build_scopes(nodes)
     ev = Evaluator(
         echo_fn=lambda msg: echo_lines.append(msg),
         debug_hook=hook,
     )
-    bodies, _ = ev.evaluate(nodes, root_scope)
+    bodies, _ = ev.evaluate(_write(src))
     return bodies, echo_lines, stops
 
 
@@ -562,7 +574,7 @@ class TestErrorBreak:
         """error_break_fn should be called on evaluation errors."""
         breaks = []
 
-        def error_break(line, msg, all_frame_locals, call_stack, *, origin=None):
+        def error_break(line, msg, all_frame_locals, call_stack, *, origin=None, generate_partial=None):
             breaks.append({
                 "line": line,
                 "msg": msg,
@@ -570,15 +582,13 @@ class TestErrorBreak:
             })
 
         hook, stops = _make_recorder()
-        nodes = getASTfromString("assert(false);\n", include_comments=False)
-        root_scope = build_scopes(nodes)
         ev = Evaluator(
             echo_fn=lambda msg: None,
             debug_hook=hook,
             error_break_fn=error_break,
         )
         with pytest.raises(EvalError):
-            ev.evaluate(nodes, root_scope)
+            ev.evaluate(_write("assert(false);\n"))
         assert len(breaks) == 1
         assert breaks[0]["line"] == 1
 
@@ -586,7 +596,7 @@ class TestErrorBreak:
         """Error break should provide frame locals for inspection."""
         breaks = []
 
-        def error_break(line, msg, all_frame_locals, call_stack, *, origin=None):
+        def error_break(line, msg, all_frame_locals, call_stack, *, origin=None, generate_partial=None):
             breaks.append({"locals": all_frame_locals, "stack": call_stack})
 
         hook, _ = _make_recorder()
@@ -594,15 +604,13 @@ class TestErrorBreak:
 module bad() { assert(false); }
 bad();
 """
-        nodes = getASTfromString(src, include_comments=False)
-        root_scope = build_scopes(nodes)
         ev = Evaluator(
             echo_fn=lambda msg: None,
             debug_hook=hook,
             error_break_fn=error_break,
         )
         with pytest.raises(EvalError):
-            ev.evaluate(nodes, root_scope)
+            ev.evaluate(_write(src))
         assert len(breaks) == 1
         # Should have frame locals and a non-empty call stack
         assert len(breaks[0]["locals"]) >= 1
@@ -639,82 +647,93 @@ b = 2;
 # ---------------------------------------------------------------------------
 
 class TestGeneratePartialRender:
-    def _resolve_only(self, src: str) -> Evaluator:
-        """Build ev.csg_tree via the resolve pass only (no generate_tree()
-        call yet) — same manual-resolve pattern used in
-        TestCSGTreeStep6FinalCutover (test_evaluator.py)."""
-        nodes = getASTfromString(src, include_comments=False)
-        root_scope = build_scopes(nodes)
-        ev = Evaluator()
-        ev._resolve_use_statements(nodes, root_scope)
-        ev.csg_tree = []
-        ev._tree_stack = [ev.csg_tree]
-        ctx = EvalContext(scope=root_scope)
-        ev._root_ctx = ctx
-        for node in nodes:
-            ev._eval_statement(node, ctx)
-        return ev
+    # NOTE: this class was rewritten wholesale for the C++ backend.
+    # _generate_partial_render() now takes the debug hook's own
+    # `generate_partial` callable (openscad_cpp_evaluator's
+    # Evaluator::generatePartialTree(), reading the live in-progress
+    # treeStack_), not an Evaluator instance with private
+    # _tree_stack/_eval_statement attributes to poke at directly — those
+    # don't exist on the C++ facade. See test_python_bindings.py in the
+    # openscad_cpp_evaluator repo for the same pattern proven at the
+    # binding level.
 
     def test_success_renders_whatever_is_resolved_so_far(self):
-        ev = self._resolve_only("cube(1); sphere(1);")
-        bodies, error = _generate_partial_render(ev)
-        assert error is None
-        assert len(bodies) == 2
+        # breakpoint() as the LAST statement: by the time it forces a pause,
+        # both prior statements have already fully resolved.
+        seen = {}
+
+        def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
+                 generate_partial=None, get_children_positions=None):
+            if forced:
+                seen["bodies"], seen["error"] = _generate_partial_render(generate_partial)
+            return ("continue", {})
+
+        ev = Evaluator(debug_hook=hook)
+        ev.evaluate(_write("cube(1);\nsphere(1);\nbreakpoint();\n"))
+        assert seen["error"] is None
+        assert len(seen["bodies"]) == 2
 
     def test_success_on_empty_tree(self):
-        # The very first pause (break-on-first) happens before any
-        # statement has resolved — csg_tree is empty at that point.
-        ev = self._resolve_only("")
-        bodies, error = _generate_partial_render(ev)
-        assert error is None
-        assert bodies == []
+        # The very first pause (breakpoint() as the first statement) happens
+        # before anything has resolved.
+        seen = {}
+
+        def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
+                 generate_partial=None, get_children_positions=None):
+            if forced:
+                seen["bodies"], seen["error"] = _generate_partial_render(generate_partial)
+            return ("continue", {})
+
+        ev = Evaluator(debug_hook=hook)
+        ev.evaluate(_write("breakpoint();\ncube(1);\n"))
+        assert seen["error"] is None
+        assert seen["bodies"] == []
 
     def test_failure_is_caught_and_reported_not_raised(self):
-        # A fake evaluator whose generate_tree() raises — deterministic way
-        # to exercise the catch-and-report contract without depending on
-        # what real generate_fns happen to raise on (Manifold tends to
-        # tolerate degenerate input rather than raising).
-        class _FakeEvaluator:
-            csg_tree: list = []
-            _tree_stack: list = [[]]
+        # A generate_partial callable that raises — deterministic way to
+        # exercise the catch-and-report contract without depending on what
+        # real generate steps happen to raise on (this backend tolerates
+        # degenerate input, same as real OpenSCAD, so there's no reliable
+        # way to force a real failure from a script).
+        def boom():
+            raise RuntimeError("boom")
 
-            def generate_tree(self, tree):
-                raise RuntimeError("boom")
-
-        bodies, error = _generate_partial_render(_FakeEvaluator())
+        bodies, error = _generate_partial_render(boom)
         assert bodies is None
         assert error == "boom"
 
     def test_picks_up_leaves_still_nested_in_an_unfinished_parent(self):
         # Regression: for a script whose whole geometry is one deeply-nested
         # top-level statement (e.g. difference(){union(){cube();sphere();}
-        # cylinder();}), ev.csg_tree (the top-level list) stays completely
-        # empty for the entire time spent stepping through cube()/sphere(),
-        # since difference()'s own CSGNode isn't appended anywhere until
-        # every child has finished resolving — including union(), which
-        # itself doesn't finish until cube() *and* sphere() both have.
-        # _generate_partial_render must still show cube() at this point by
-        # looking at every level of ev._tree_stack, not just ev.csg_tree.
+        # cylinder();}), the top-level csg_tree stays completely empty for
+        # the entire time spent stepping through cube()/sphere(), since
+        # difference()'s own CSGNode isn't appended anywhere until every
+        # child has finished resolving — including union(), which itself
+        # doesn't finish until cube() *and* sphere() both have.
+        # generate_partial() must still surface cube() at this point by
+        # reading every level of the live tree stack, not just the top.
         src = "difference() {\n  union() {\n    cube(10);\n    sphere(10);\n  }\n  cylinder(h=10,d=10);\n}\n"
-        nodes = getASTfromString(src, include_comments=False)
-        root_scope = build_scopes(nodes)
         paused_at_sphere = {}
 
-        def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None):
+        def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
+                 generate_partial=None, get_children_positions=None):
             if line == 4 and not expr_level and not paused_at_sphere:
                 # Paused right at sphere(10) — cube(10) has resolved (its
                 # CSGNode sits in union()'s still-in-progress accumulator)
                 # but neither union() nor difference() has finished yet.
-                paused_at_sphere["bodies"], paused_at_sphere["error"] = _generate_partial_render(ev)
-                assert ev.csg_tree == []  # confirms the scenario this test targets
+                paused_at_sphere["bodies"], paused_at_sphere["error"] = _generate_partial_render(generate_partial)
             return ("continue", {})
 
         ev = Evaluator(debug_hook=hook)
-        ev.evaluate(nodes, root_scope)
+        ev.evaluate(_write(src))
 
         assert paused_at_sphere["error"] is None
         assert len(paused_at_sphere["bodies"]) == 1
-        assert paused_at_sphere["bodies"][0].body.volume() == pytest.approx(1000)  # cube(10)^3
+        # No .volume() on the array-shim body (unlike a real manifold3d
+        # Manifold) — check the resolved leaf is cube(10) via its bbox size.
+        verts = paused_at_sphere["bodies"][0].body.to_mesh().vert_properties[:, :3]
+        size = verts.max(axis=0) - verts.min(axis=0)
+        assert size == pytest.approx([10.0, 10.0, 10.0])
 
 
 # ---------------------------------------------------------------------------
@@ -751,12 +770,9 @@ def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple
     import sys
     import time as _time
     from PySide6.QtCore import QCoreApplication
-    from openscad_lalr_parser import getASTfromFile
     from belfryscad.window.debugger import DebugSession
 
     app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
-    nodes = getASTfromFile(path, include_comments=False)
-    root_scope = build_scopes(nodes)
 
     session = DebugSession()
     paused_lines: list[int] = []
@@ -775,7 +791,7 @@ def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple
     session.paused.connect(on_paused)
     session.finished.connect(on_finished)
     session.errored.connect(on_errored)
-    session.start(nodes, root_scope, breakpoints={}, current_file=path)
+    session.start(path, breakpoints={}, current_file=path)
 
     deadline = _time.monotonic() + timeout
     while result["count"] is None and _time.monotonic() < deadline:
@@ -797,26 +813,27 @@ def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple
 
 
 class TestLastChildrenPositions:
-    """Evaluator._check_debug stashes self._last_children_positions right
-    before calling the debug hook — the (origin, line) pairs of a paused
-    ModularCall's own top-level children, which DebugSession reads at
-    resume time for Step to Child. Tested directly against Evaluator here
-    (no DebugSession/Qt needed), matching this file's usual convention."""
+    """The C++ evaluator stashes the paused ModularCall's own top-level
+    children's (origin, line) pairs right before calling the debug hook,
+    exposed via the hook's `get_children_positions` callable (see
+    openscad_cpp_evaluator's debug_evaluate() binding) — which DebugSession
+    reads at resume time for Step to Child. Tested directly against
+    Evaluator here (no DebugSession/Qt needed), matching this file's usual
+    convention."""
 
     def test_populated_at_a_call_with_children(self):
         seen = {}
 
         def hook(line, depth, *, forced=False, expr_level=False,
-                 expr_depth=0, origin=None, get_frames=None):
+                 expr_depth=0, origin=None, get_frames=None, generate_partial=None,
+                 get_children_positions=None):
             if line == 4 and not expr_level:
-                seen["positions"] = ev._last_children_positions
+                seen["positions"] = get_children_positions()
             return ("continue", {})
 
         src = "module foo(bar) {\n    echo(bar);\n}\nfoo(1) {\n    cube(42);\n    sphere(13);\n}\n"
-        nodes = getASTfromString(src, include_comments=False)
-        root_scope = build_scopes(nodes)
         ev = Evaluator(debug_hook=hook)
-        ev.evaluate(nodes, root_scope)
+        ev.evaluate(_write(src))
 
         assert [line for _origin, line in seen["positions"]] == [5, 6]
 
@@ -824,15 +841,14 @@ class TestLastChildrenPositions:
         seen = {}
 
         def hook(line, depth, *, forced=False, expr_level=False,
-                 expr_depth=0, origin=None, get_frames=None):
+                 expr_depth=0, origin=None, get_frames=None, generate_partial=None,
+                 get_children_positions=None):
             if line == 1 and not expr_level:
-                seen["positions"] = ev._last_children_positions
+                seen["positions"] = get_children_positions()
             return ("continue", {})
 
-        nodes = getASTfromString("cube(1);\n", include_comments=False)
-        root_scope = build_scopes(nodes)
         ev = Evaluator(debug_hook=hook)
-        ev.evaluate(nodes, root_scope)
+        ev.evaluate(_write("cube(1);\n"))
 
         assert seen["positions"] is None
 

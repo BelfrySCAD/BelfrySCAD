@@ -1,5 +1,8 @@
 """
-Tests for `use <file>` resolution (`resolve_use_scopes` in openscad_evaluator).
+Tests for `use <file>` resolution (handled internally by the C++ evaluator's
+own parser -- openscad_cpp_evaluator.Evaluator.evaluate() resolves `use`/
+`include` as part of a single evaluate() call now; there's no separate
+resolve step to call from Python).
 
 Per the OpenSCAD docs, `use <file>`:
 - brings the used file's own modules/functions into scope
@@ -8,20 +11,24 @@ Per the OpenSCAD docs, `use <file>`:
 - lets the used file's modules/functions resolve its own globals
 - does not leak declarations the used file itself pulled in via a nested `use`
 """
-import pytest
-from openscad_lalr_parser import getASTfromFile
+from openscad_cpp_evaluator import Evaluator
 
-from openscad_evaluator import Evaluator, resolve_use_scopes
+
+def _bbox(body):
+    """(xmin,ymin,zmin,xmax,ymax,zmax) of a body's mesh -- the array-shim
+    backend has no .bounding_box() (unlike a real manifold3d.Manifold), so
+    compute it from the raw vertex array instead."""
+    verts = body.to_mesh().vert_properties[:, :3]
+    mn, mx = verts.min(axis=0), verts.max(axis=0)
+    return (float(mn[0]), float(mn[1]), float(mn[2]), float(mx[0]), float(mx[1]), float(mx[2]))
 
 
 def run_file(path, log=None):
-    """Parse `path`, resolve `use` statements, and evaluate. Returns (bodies, echo_lines, logs)."""
+    """Evaluate `path` (use/include resolved internally). Returns (bodies, echo_lines, logs)."""
     logs = [] if log is None else log
     echo_lines = []
-    nodes = getASTfromFile(str(path), include_comments=False)
-    nodes, _own, root_scope = resolve_use_scopes(nodes, str(path), logs.append)
-    ev = Evaluator(echo_fn=lambda msg: echo_lines.append(msg))
-    bodies, _ = ev.evaluate(nodes, root_scope)
+    ev = Evaluator(echo_fn=lambda msg: (logs if msg.startswith("WARNING:") else echo_lines).append(msg))
+    bodies, _ = ev.evaluate(str(path))
     return bodies, echo_lines, logs
 
 
@@ -44,7 +51,7 @@ class TestUseStatement:
         assert logs == []
         # Only box()'s cube is produced; lib.scad's top-level cube is ignored.
         assert len(bodies) == 1
-        assert bodies[0].body.bounding_box() == (0.0, 0.0, 0.0, 10.0, 10.0, 10.0)
+        assert _bbox(bodies[0].body) == (0.0, 0.0, 0.0, 10.0, 10.0, 10.0)
         # double_width() resolves lib.scad's own `width`, not main.scad's.
         assert echoes[0] == "ECHO: 20"
         # main.scad's own `width` is untouched by lib.scad's.
@@ -60,10 +67,9 @@ class TestUseStatement:
             "echo(get_x());\n"
         )
         _bodies, echoes, logs = run_file(tmp_path / "main.scad")
-        assert logs == []
         # `x` is unresolved within lib.scad's scope -> warns, then undef.
-        assert echoes[0].startswith("WARNING: Ignoring unknown variable 'x'")
-        assert echoes[1] == "ECHO: undef"
+        assert any("x" in w for w in logs)
+        assert echoes[0] == "ECHO: undef"
 
     def test_nested_use_does_not_leak(self, tmp_path):
         (tmp_path / "inner.scad").write_text(
@@ -82,15 +88,14 @@ class TestUseStatement:
             "echo(is_undef(get_inner));\n"
         )
         _bodies, echoes, logs = run_file(tmp_path / "main2.scad")
-        assert logs == []
         # combo() can call get_inner() (lib2's own nested `use`) and reach inner_val.
         assert echoes[0] == "ECHO: 107"
         # inner.scad's declarations don't leak into main2.scad -> both
         # references are unresolved (warn), then is_undef(undef) == true.
-        assert echoes[1].startswith("WARNING: Ignoring unknown variable 'inner_val'")
+        assert any("inner_val" in w for w in logs)
+        assert echoes[1] == "ECHO: true"
+        assert any("get_inner" in w for w in logs)
         assert echoes[2] == "ECHO: true"
-        assert echoes[3].startswith("WARNING: Ignoring unknown variable 'get_inner'")
-        assert echoes[4] == "ECHO: true"
 
     def test_use_missing_file_is_silently_ignored(self, tmp_path):
         (tmp_path / "main.scad").write_text(
@@ -122,4 +127,4 @@ class TestUseStatement:
         bodies, _echoes, logs = run_file(tmp_path / "main.scad")
         assert logs == []
         assert len(bodies) == 1
-        assert bodies[0].body.bounding_box() == (0.0, 0.0, 0.0, 7.0, 7.0, 7.0)
+        assert _bbox(bodies[0].body) == (0.0, 0.0, 0.0, 7.0, 7.0, 7.0)
