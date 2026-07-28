@@ -53,33 +53,14 @@ def _parse_number(text: str):
 
 def _format_value(value: list) -> str:
     """Serialize an edited (nested list of numbers) value back to OpenSCAD
-    source, on Save. Builds a synthetic ListComprehension/NumberLiteral AST
-    and renders it with the parser's own pretty-printer (`to_openscad`)
-    rather than hand-rolled string joining — same pattern already used by
-    `debugger._pretty_assignment` for formatting debug values.
-
-    `to_openscad` only routes a node through the real width-aware formatter
-    (which decides inline vs. multi-line list layout) for specific statement
-    types like `Assignment` — a bare expression node falls through to a
-    naive `str(node)` with no line-wrapping at all. So this wraps the value
-    in a throwaway `Assignment` to reach the real formatter, then strips the
-    synthetic "name = "/";" back off."""
-    from openscad_lalr_parser.nodes import ListComprehension, NumberLiteral, Position, Assignment, Identifier
-    from openscad_lalr_parser import to_openscad
-
-    pos = Position(origin="<synthetic>", line=0, column=0)
-
-    def to_ast(v):
-        if isinstance(v, list):
-            return ListComprehension(pos, [to_ast(x) for x in v])
-        return NumberLiteral(pos, float(v))
-
-    name = "_v"
-    node = Assignment(pos, Identifier(pos, name), to_ast(value))
-    text = to_openscad([node])
-    prefix = f"{name} = "
-    assert text.startswith(prefix) and text.endswith(";"), text
-    return text[len(prefix):-1]
+    source, on Save. Plain recursive formatting -- always inline, no
+    width-aware line-wrapping (the C++ backend has no pretty-printer to
+    reach for that; still valid, still readable for the editable
+    Matrix/Affine/Path/Grid viewers' typical small dimensions). Number
+    formatting mirrors debugger._fmt's own `f"{v:g}"` convention."""
+    if isinstance(value, list):
+        return "[" + ", ".join(_format_value(x) for x in value) + "]"
+    return f"{float(value):g}"
 
 
 def _is_list(v) -> bool:
@@ -87,8 +68,9 @@ def _is_list(v) -> bool:
 
 
 def _is_oscobject(v) -> bool:
-    from openscad_evaluator import OscObject
-    return isinstance(v, OscObject)
+    # Duck-typed so both the C++ backend's OscObject and the legacy Python
+    # evaluator's OscObject are accepted (both expose .data + .items()).
+    return hasattr(v, "data") and hasattr(v, "items") and not isinstance(v, dict)
 
 
 def _is_numeric_point(v) -> bool:

@@ -32,8 +32,8 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
-    from openscad_evaluator import OscObject
-    if isinstance(v, OscObject):
+    from belfryscad.window.data_viewers import _is_oscobject
+    if _is_oscobject(v):
         inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
         return f"object({inner})"
     return str(v)
@@ -70,8 +70,8 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
 
 def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     """Format OscObject values with multi-line layout. Returns None for other types."""
-    from openscad_evaluator import OscObject
-    if isinstance(value, OscObject):
+    from belfryscad.window.data_viewers import _is_oscobject
+    if _is_oscobject(value):
         if not value.data:
             return "object()"
         pad = " " * (indent + 4)
@@ -80,35 +80,27 @@ def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     return None
 
 
+def _value_to_scad(v) -> str:
+    """Render a debug value as an OpenSCAD literal (for 'Print to Console')."""
+    if v is None:
+        return "undef"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return f"{v:g}"
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_value_to_scad(x) for x in v) + "]"
+    return _fmt(v)  # OscObject -> object(...); anything else -> str()
+
+
 def _pretty_assignment(name: str, value) -> str:
-    """Format ``name = value;`` using the parser's pretty-printer for complex values."""
+    """Format ``name = value;`` for pasting into a script."""
     obj_fmt = _pretty_fmt_value(value)
     if obj_fmt is not None:
         return f"{name} = {obj_fmt};"
-
-    from openscad_lalr_parser.nodes import (
-        Assignment, ListComprehension, NumberLiteral, BooleanLiteral,
-        StringLiteral, UndefinedLiteral, Position, Identifier,
-    )
-    from openscad_lalr_parser import to_openscad
-
-    p = Position(0, 0, 0, 0, '')
-
-    def _to_ast(v):
-        if v is None:
-            return UndefinedLiteral(p)
-        if isinstance(v, bool):
-            return BooleanLiteral(p, v)
-        if isinstance(v, (int, float)):
-            return NumberLiteral(p, float(v))
-        if isinstance(v, str):
-            return StringLiteral(p, v)
-        if isinstance(v, list):
-            return ListComprehension(p, [_to_ast(x) for x in v])
-        return StringLiteral(p, str(v))
-
-    node = Assignment(p, Identifier(p, name), _to_ast(value))
-    return to_openscad([node]).rstrip('\n')
+    return f"{name} = {_value_to_scad(value)};"
 
 
 def _parse_val(s: str):
@@ -129,31 +121,26 @@ def _parse_val(s: str):
     return None
 
 
-def _generate_partial_render(ev) -> tuple[list | None, str | None]:
-    """Best-effort generate_tree() over whatever's been resolved so far.
-    Returns (renderable_bodies, None) on success, (None, error_message) if
-    a generate_fn raises. Empty/partial child lists are already handled
-    gracefully by every generate_fn (Phase 2), so a real failure here is
-    more likely a genuine script problem surfacing earlier than usual (via
-    a live preview) than a false positive from mere incompleteness — either
-    way, it must not abort the debug session.
+def _generate_partial_render(generate_partial) -> tuple[list | None, str | None]:
+    """Best-effort live render of whatever's been resolved so far, via the
+    debug hook's own `generate_partial` callable (openscad_cpp_evaluator's
+    Evaluator::generatePartialTree(), exposed through debug_evaluate()'s
+    hook/error_break kwargs). Returns (renderable_bodies, None) on success,
+    (None, error_message) if a generate step raises. Empty/partial child
+    lists are already handled gracefully by every generate function, so a
+    real failure here is more likely a genuine script problem surfacing
+    earlier than usual (via a live preview) than a false positive from mere
+    incompleteness — either way, it must not abort the debug session.
 
-    Deliberately generates from ev._tree_stack flattened across *all*
-    nesting levels, not just ev.csg_tree (the top-level list). A CSGNode
-    only gets appended to its parent's accumulator once that parent's own
-    resolve_fn returns — so for a script whose whole geometry is one
-    deeply-nested top-level statement (e.g. difference(){union(){cube();
-    sphere();} cylinder();}), ev.csg_tree stays completely empty for the
-    entire time spent stepping through cube()/sphere()/cylinder(), since
-    difference()'s own CSGNode isn't appended anywhere until every child
-    (transitively) has finished resolving. Flattening every level of the
-    stack picks up already-resolved leaves (e.g. cube()'s CSGNode sitting
-    in union()'s still-in-progress accumulator) instead of only nodes
-    whose entire enclosing statement chain has already completed."""
-    from openscad_evaluator import to_renderable_bodies
+    `generate_partial` reads the C++ evaluator's own in-progress tree stack
+    directly (flattened across every nesting level, so a deeply-nested
+    top-level statement's already-resolved leaves show up even before the
+    whole statement finishes) — no bookkeeping needed on this side."""
+    if generate_partial is None:
+        return None, None
+    from openscad_cpp_evaluator import bodies_from_dicts
     try:
-        partial_nodes = [node for level in ev._tree_stack for node in level]
-        return to_renderable_bodies(ev.generate_tree(partial_nodes)), None
+        return bodies_from_dicts(generate_partial()), None
     except Exception as e:
         return None, str(e)
 
@@ -163,10 +150,11 @@ class DebugSession(QObject):
 
     # All emitted from the worker thread — PySide6 queues these to the main thread.
     # paused/error_break's trailing (partial_bodies, partial_error) come from
-    # _generate_partial_render() on self._ev.csg_tree, called just before
-    # each emit — a live, best-effort render of whatever's been resolved so
-    # far (Phase 3). partial_bodies is None (not []) when generation itself
-    # failed; partial_error then carries the message.
+    # _generate_partial_render() via the debug hook's own `generate_partial`
+    # callable (openscad_cpp_evaluator's Evaluator::generatePartialTree()),
+    # called just before each emit — a live, best-effort render of whatever's
+    # been resolved so far. partial_bodies is None (not []) when generation
+    # itself failed; partial_error then carries the message.
     paused = Signal(str, int, object, object, object, object)       # origin, line, all_frame_locals (list, innermost first), call_stack, partial_bodies, partial_error
     error_break = Signal(str, int, str, object, object, object, object)  # origin, line, error header, all_frame_locals, call_stack, partial_bodies, partial_error
     finished = Signal(object, object)          # bodies, id_to_node
@@ -176,7 +164,7 @@ class DebugSession(QObject):
 
     def __init__(self, parent=None, manifold_cache=None):
         super().__init__(parent)
-        self._manifold_cache = manifold_cache  # shared ManifoldCache (see evaluator.py) -- passed through to the Evaluator() built in _run()
+        self._manifold_cache = manifold_cache  # shared ManifoldCache -- passed through to the Evaluator() built in _run()
         self._pause_event = threading.Event()
         self._resume_command = "continue"
         self._pending_mods: dict = {}
@@ -187,13 +175,17 @@ class DebugSession(QObject):
         self._step_line: int = 0            # line at pause (for into/over: pause when line changes)
         self._step_depth: int = 0           # depth at pause (over: same depth; out: less than)
         self._step_origin: str = ""         # file at pause (over: same file; into: detect file change)
-        self._step_to_child_targets: set = set()  # (origin, line) pairs from _last_children_positions at the paused call site
+        self._step_to_child_targets: set = set()  # (origin, line) pairs from get_children_positions() at the paused call site
         self._stopped: bool = False
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
-        self._ev = None  # set in _run() once the Evaluator exists, so the hook/_error_break can call generate_tree() on its csg_tree
 
-    def start(self, nodes, root_scope, breakpoints: dict[str, set[int]], viewport_params: dict | None = None, current_file: str | None = None):
+    def start(self, source_path: str, breakpoints: dict[str, set[int]], viewport_params: dict | None = None,
+              current_file: str | None = None, cleanup_path: str | None = None):
+        # cleanup_path: a temp .scad written for an unsaved buffer -- the C++
+        # evaluator reads it throughout this async session, so _run unlinks
+        # it only once evaluation ends.
+        self._cleanup_path = cleanup_path
         self._current_file = os.path.realpath(current_file) if current_file else None
         self._breakpoints = dict(breakpoints)
         self._break_on_first = True
@@ -206,7 +198,7 @@ class DebugSession(QObject):
         self._pause_requested = False
         self._pending_mods = {}
         self._thread = threading.Thread(
-            target=self._run, args=(nodes, root_scope, viewport_params or {}), daemon=True
+            target=self._run, args=(source_path, viewport_params or {}), daemon=True
         )
         self._thread.start()
 
@@ -224,7 +216,9 @@ class DebugSession(QObject):
             _resolve_cache[origin] = resolved
             return resolved
 
-        def hook(line: int, depth: int, *, forced: bool = False, expr_level: bool = False, expr_depth: int = 0, origin: str | None = None, get_frames=None) -> tuple[str, dict]:
+        def hook(line: int, depth: int, *, forced: bool = False, expr_level: bool = False, expr_depth: int = 0,
+                 origin: str | None = None, get_frames=None, generate_partial=None,
+                 get_children_positions=None) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -277,9 +271,7 @@ class DebugSession(QObject):
 
             (locals_dict, all_frame_locals), call_stack = get_frames()
             display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
-            partial_bodies, partial_error = (
-                _generate_partial_render(self._ev) if self._ev is not None else (None, None)
-            )
+            partial_bodies, partial_error = _generate_partial_render(generate_partial)
             # Clear *before* emitting: paused's queued delivery can run
             # resume() -> _pause_event.set() on the main thread the instant
             # emit() returns (it only enqueues; it doesn't block), racing
@@ -310,13 +302,14 @@ class DebugSession(QObject):
                 self._step_depth = depth
                 self._step_origin = resolved_origin
                 self._step_to_child_targets = set(
-                    (self._ev._last_children_positions if self._ev is not None else None) or []
+                    (get_children_positions() if get_children_positions else None) or []
                 )
 
             return ("continue", mods)
         return hook
 
-    def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str | None = None):
+    def _error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str | None = None,
+                     generate_partial=None):
         """Called by the evaluator on any runtime error in debug mode.
         Pauses so the user can inspect state; returns when the user resumes.
         The EvalError is raised by the evaluator after this returns.
@@ -324,9 +317,7 @@ class DebugSession(QObject):
         if self._stopped:
             return
         display_stack = [("toplevel", "<toplevel>", None)] + list(call_stack)
-        partial_bodies, partial_error = (
-            _generate_partial_render(self._ev) if self._ev is not None else (None, None)
-        )
+        partial_bodies, partial_error = _generate_partial_render(generate_partial)
         # See the matching comment in hook() above: clear before emitting,
         # not after, or a resume() that lands right after emit() returns can
         # be silently wiped out by this clear() and hang wait() forever.
@@ -343,13 +334,12 @@ class DebugSession(QObject):
         elif step == "over" and depth == self._step_depth + 1:
             self.logged_value.emit(display_name, value)
 
-    def _run(self, nodes, root_scope, viewport_params: dict):
-        from openscad_evaluator import Evaluator, EvalError
+    def _run(self, source_path: str, viewport_params: dict):
+        from openscad_cpp_evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
                       return_hook=self._on_function_return, manifold_cache=self._manifold_cache)
-        self._ev = ev  # hook()/_error_break() read this to call generate_tree() on ev.csg_tree
         try:
-            bodies, id_to_node = ev.evaluate(nodes, root_scope, viewport_params)
+            bodies, id_to_node = ev.evaluate(source_path, viewport_params)
             if not self._stopped:
                 self.finished.emit(bodies, id_to_node)
         except EvalError as e:
@@ -359,6 +349,13 @@ class DebugSession(QObject):
             import traceback
             if not self._stopped:
                 self.errored.emit(f"{e}\n{traceback.format_exc()}")
+        finally:
+            if getattr(self, "_cleanup_path", None):
+                try:
+                    os.unlink(self._cleanup_path)
+                except OSError:
+                    pass
+                self._cleanup_path = None
 
     def pause(self):
         """Request the evaluator to pause at the next debug hook call."""

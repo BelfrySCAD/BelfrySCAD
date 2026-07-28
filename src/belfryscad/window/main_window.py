@@ -221,67 +221,54 @@ class _RenderWorker(QObject):
         self._viewport_params = viewport_params or {}
         self._manifold_cache = manifold_cache
         self._profile = profile
+        self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
 
     @Slot()
     def run(self):
         try:
             self._do_render()
         finally:
+            # The C++ evaluator reads the file at eval time, so a temp file
+            # for an unsaved buffer must outlive _do_render -- clean it up here.
+            if self._tmp_path:
+                import os as _os
+                try:
+                    _os.unlink(self._tmp_path)
+                except OSError:
+                    pass
+                self._tmp_path = None
             self.done.emit()
 
     def _do_render(self):
-        import io, sys as _sys, time as _time, os as _os, tempfile, traceback
-        from openscad_lalr_parser import getASTfromFile
-        from openscad_evaluator import Evaluator, EvalError, to_renderable_bodies, resolve_use_scopes
+        import time as _time, tempfile, traceback
+        from openscad_cpp_evaluator import Evaluator, EvalError, ParseError, parse as _oce_parse, to_renderable_bodies
 
         _t0 = _time.perf_counter()
 
-        # --- Parse ---
-        _tmp = None
-        try:
-            buf = io.StringIO()
-            old_stdout = _sys.stdout
-            _sys.stdout = buf
+        # Write an unsaved buffer to a temp .scad so the C++ parser/evaluator
+        # (both path-based) can read it; run()'s finally unlinks it. A saved
+        # file is read in place. The C++ parser resolves use/include itself.
+        if self._file_path:
+            parse_path = self._file_path
+        else:
             _tmp = tempfile.NamedTemporaryFile(
-                suffix=".scad", mode="w", encoding="utf-8", delete=False,
-                dir=_os.path.dirname(self._file_path) if self._file_path else None,
+                suffix=".scad", mode="w", encoding="utf-8", delete=False
             )
             _tmp.write(self._source)
             _tmp.close()
-            parse_path = _tmp.name
-            nodes = getASTfromFile(parse_path, include_comments=False)
-            _sys.stdout = old_stdout
-            captured = buf.getvalue()
+            parse_path = self._tmp_path = _tmp.name
+
+        # --- Parse (C++) ---
+        try:
+            root_scope = _oce_parse(parse_path)
+        except ParseError as e:
+            self.parse_errored.emit(str(e))
+            return
         except Exception as e:
-            _sys.stdout = old_stdout
             self.logged.emit(f"Parse error: {e}")
             return
-        finally:
-            if _tmp is not None:
-                try:
-                    _os.unlink(_tmp.name)
-                except OSError:
-                    pass
 
-        if captured:
-            self.logged.emit(captured.rstrip())
-
-        if nodes is None:
-            self.parse_errored.emit(captured)
-            return
-
-        if self._cancel.is_set():
-            return
-
-        # Resolve `use` statements and build scopes
-        current_file = self._file_path or parse_path
-        try:
-            nodes, _own, root_scope = resolve_use_scopes(nodes, current_file, self.logged.emit)
-        except RecursionError:
-            self.logged.emit("Error: AST too deeply nested (recursion limit exceeded during scope build).")
-            return
-
-        self.ast_ready.emit(nodes, root_scope)
+        self.ast_ready.emit(None, root_scope)
 
         if self._cancel.is_set():
             return
@@ -289,7 +276,7 @@ class _RenderWorker(QObject):
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache, profile=self._profile)
         try:
-            bodies, id_to_node = evaluator.evaluate(nodes, root_scope, self._viewport_params)
+            bodies, id_to_node = evaluator.evaluate(parse_path, self._viewport_params)
         except RecursionError:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
             self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  {_fmt_elapsed(elapsed_ms)}")
@@ -314,19 +301,16 @@ class _RenderWorker(QObject):
 
         bodies = to_renderable_bodies(bodies)
         final_vp = {}
-        if evaluator._root_ctx is not None:
-            dyn = evaluator._root_ctx.dyn
-            explicit = evaluator._root_ctx.dyn_explicit
-            for k in ("$vpt", "$vpr", "$vpd", "$vpf"):
-                # Only apply values the script itself assigned -- dyn also
-                # carries $vp* pre-seeded from the *current* camera (see
-                # _viewport_params/viewport_params), which would otherwise
-                # get reapplied as a no-op-that-isn't: if the user manually
-                # orbits/pans/zooms while this render is in flight, that
-                # seeded value is stale by the time it comes back here.
-                if k in explicit:
-                    v = dyn[k]
-                    final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
+        for k in ("$vpt", "$vpr", "$vpd", "$vpf"):
+            # Only apply values the script itself assigned -- dyn also
+            # carries $vp* pre-seeded from the *current* camera (see
+            # _viewport_params/viewport_params), which would otherwise
+            # get reapplied as a no-op-that-isn't: if the user manually
+            # orbits/pans/zooms while this render is in flight, that
+            # seeded value is stale by the time it comes back here.
+            if k in evaluator.dyn_explicit:
+                v = evaluator.dyn[k]
+                final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result)
 
 
@@ -444,7 +428,7 @@ class MainWindow(QMainWindow):
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
-        from openscad_evaluator import ManifoldCache
+        from openscad_cpp_evaluator import ManifoldCache
         self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
@@ -1359,12 +1343,25 @@ class MainWindow(QMainWindow):
             if ext == ".3mf":
                 self._write_3mf(path, bodies)
             else:
-                import manifold3d as m3d
-                all_manifolds = [b.body for b in bodies if not b.body.is_empty()]
-                if not all_manifolds:
+                # STL/OBJ are triangle soups -- merging the already-final body
+                # meshes is plain index-offset concatenation (no CSG), so no
+                # manifold3d needed now that bodies carry raw arrays.
+                import numpy as np
+                from types import SimpleNamespace
+                parts_v, parts_t, voff = [], [], 0
+                for b in bodies:
+                    if b.body.is_empty():
+                        continue
+                    m = b.body.to_mesh()
+                    v = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
+                    t = np.asarray(m.tri_verts, dtype=np.int64) + voff
+                    parts_v.append(v)
+                    parts_t.append(t)
+                    voff += len(v)
+                if not parts_v:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
-                mesh = m3d.Manifold.compose(all_manifolds).to_mesh()
+                mesh = SimpleNamespace(vert_properties=np.vstack(parts_v), tri_verts=np.vstack(parts_t))
                 if ext == ".obj":
                     self._write_obj(path, mesh)
                 else:
@@ -1664,14 +1661,17 @@ class MainWindow(QMainWindow):
         script_moved_camera = bool(final_vp) and self._apply_vp_params(final_vp)
 
         try:
-            import manifold3d as m3d
             import numpy as np
-            all_bodies = [b.body for b in bodies if not b.body.is_empty()]
-            if all_bodies:
-                composed = m3d.Manifold.compose(all_bodies)
-                bb = composed.bounding_box()
-                bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
-                bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
+            mins, maxs = [], []
+            for b in bodies:
+                if b.body.is_empty():
+                    continue
+                v = np.asarray(b.body.to_mesh().vert_properties[:, :3])
+                mins.append(v.min(axis=0))
+                maxs.append(v.max(axis=0))
+            if mins:
+                bb_min = np.min(mins, axis=0).astype(np.float32)
+                bb_max = np.max(maxs, axis=0).astype(np.float32)
                 # Skip auto-fit if the script explicitly positioned the camera,
                 # or if animation playback is active.
                 if not script_moved_camera and not self._animate_pane.is_playing():
@@ -1679,8 +1679,8 @@ class MainWindow(QMainWindow):
                 self.log(f"Rendered successfully in {elapsed_ms / 1000:.3f} seconds.")
                 self.log(
                     "Bounds:\n"
-                    f"      [{bb[0]:.2f}, {bb[1]:.2f}, {bb[2]:.2f}]\n"
-                    f"      [{bb[3]:.2f}, {bb[4]:.2f}, {bb[5]:.2f}]"
+                    f"      [{bb_min[0]:.2f}, {bb_min[1]:.2f}, {bb_min[2]:.2f}]\n"
+                    f"      [{bb_max[0]:.2f}, {bb_max[1]:.2f}, {bb_max[2]:.2f}]"
                 )
         except Exception as e:
             import traceback
@@ -1712,7 +1712,7 @@ class MainWindow(QMainWindow):
         if not self._last_csg_tree:
             self.log("No CSG tree available — render first.")
             return
-        from openscad_evaluator import format_csg_tree
+        from openscad_cpp_evaluator import format_csg_tree
         self.log(format_csg_tree(self._last_csg_tree))
 
     def _show_profile_report(self):
@@ -1727,16 +1727,16 @@ class MainWindow(QMainWindow):
         viewer.show()
 
     def _flush_caches(self):
-        """Discard each tab's pre-calculated AST scope/node table, the
-        parser's AST cache, and the incremental Manifold rebuild cache."""
-        from openscad_lalr_parser import clear_ast_cache
+        """Discard each tab's pre-calculated AST scope/node table and the
+        incremental Manifold rebuild cache. (The old parser's separate AST
+        cache doesn't exist under the C++ backend -- it parses fresh from
+        the file on every call, nothing to flush there anymore.)"""
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 tab.root_scope = None
         self.id_to_node = {}
         self._csg_cache.clear()
-        clear_ast_cache()
         self.log("Flushed AST caches — render or debug to rebuild.")
 
     def _open_library_manager(self):
@@ -1982,50 +1982,41 @@ class MainWindow(QMainWindow):
 
         self._console.clear()
 
-        from openscad_lalr_parser import getASTfromFile
-        from openscad_evaluator import resolve_use_scopes
-        import tempfile, io, sys as _sys
+        import tempfile
+        from openscad_cpp_evaluator import parse as _oce_parse, ParseError
 
-        _tmp = None
-        try:
-            buf = io.StringIO()
-            old_stdout = _sys.stdout
-            _sys.stdout = buf
-            if tab.file_path:
-                parse_path = tab.file_path
-            else:
-                _tmp = tempfile.NamedTemporaryFile(
-                    suffix=".scad", mode="w", encoding="utf-8", delete=False
-                )
-                _tmp.write(source)
-                _tmp.close()
-                parse_path = _tmp.name
-            nodes = getASTfromFile(parse_path, include_comments=False)
-            _sys.stdout = old_stdout
-            captured = buf.getvalue()
-        except Exception as e:
-            _sys.stdout = old_stdout
-            self.log(f"Parse error: {e}")
-            return
-        finally:
-            if _tmp is not None:
-                import os as _os
-                try:
-                    _os.unlink(_tmp.name)
-                except OSError:
-                    pass
-
-        if captured:
-            self.log(captured.rstrip())
-        if nodes is None:
-            self._parse_error_to_editor(tab, captured)
-            return
+        # The C++ evaluator parses the file itself; write an unsaved buffer to
+        # a temp .scad it (and the debug session) can read. The debug session
+        # owns the temp's lifetime -- it unlinks cleanup_path when it ends.
+        cleanup_path = None
+        if tab.file_path:
+            parse_path = tab.file_path
+        else:
+            _tmp = tempfile.NamedTemporaryFile(suffix=".scad", mode="w", encoding="utf-8", delete=False)
+            _tmp.write(source)
+            _tmp.close()
+            parse_path = cleanup_path = _tmp.name
 
         current_file = tab.file_path or parse_path
         try:
-            nodes, _own, root_scope = resolve_use_scopes(nodes, current_file, self.log)
-        except RecursionError:
-            self.log("Error: AST too deeply nested (recursion limit exceeded during scope build).")
+            root_scope = _oce_parse(parse_path)  # for go-to-definition during debug
+        except ParseError as e:
+            self._parse_error_to_editor(tab, str(e))
+            if cleanup_path:
+                import os as _os
+                try:
+                    _os.unlink(cleanup_path)
+                except OSError:
+                    pass
+            return
+        except Exception as e:
+            self.log(f"Parse error: {e}")
+            if cleanup_path:
+                import os as _os
+                try:
+                    _os.unlink(cleanup_path)
+                except OSError:
+                    pass
             return
 
         tab.editor.clear_errors()
@@ -2057,9 +2048,10 @@ class MainWindow(QMainWindow):
         self._debugger_pane.set_running()
         self._viewport.load_geometry([])
         self._set_debug_busy(True)
-        self._debug_session.start(nodes, root_scope, breakpoints,
+        self._debug_session.start(parse_path, breakpoints,
                                 self._viewport_params(),
-                                current_file=current_file)
+                                current_file=current_file,
+                                cleanup_path=cleanup_path)
 
     def _find_or_open_tab(self, file_path: str):
         """Return the tab for *file_path*, opening it in a new tab if needed."""
@@ -2160,7 +2152,7 @@ class MainWindow(QMainWindow):
         self._viewport.set_debug_paused(True)
 
     def _on_debug_finished(self, bodies, id_to_node):
-        from openscad_evaluator import to_renderable_bodies
+        from openscad_cpp_evaluator import to_renderable_bodies
 
         tab = self._debug_tab
         if not tab:
@@ -2187,14 +2179,17 @@ class MainWindow(QMainWindow):
             return
         self._bodies = bodies
         try:
-            import manifold3d as m3d
             import numpy as np
-            all_bodies = [b.body for b in bodies if not b.body.is_empty()]
-            if all_bodies:
-                composed = m3d.Manifold.compose(all_bodies)
-                bb = composed.bounding_box()
-                bb_min = np.array([bb[0], bb[1], bb[2]], dtype=np.float32)
-                bb_max = np.array([bb[3], bb[4], bb[5]], dtype=np.float32)
+            mins, maxs = [], []
+            for b in bodies:
+                if b.body.is_empty():
+                    continue
+                v = np.asarray(b.body.to_mesh().vert_properties[:, :3])
+                mins.append(v.min(axis=0))
+                maxs.append(v.max(axis=0))
+            if mins:
+                bb_min = np.min(mins, axis=0).astype(np.float32)
+                bb_max = np.max(maxs, axis=0).astype(np.float32)
                 self._viewport.frame_scene(bb_min, bb_max)
                 self.log("Debug: completed.")
         except Exception:
