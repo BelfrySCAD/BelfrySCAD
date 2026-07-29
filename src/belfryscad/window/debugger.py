@@ -216,9 +216,34 @@ class DebugSession(QObject):
             _resolve_cache[origin] = resolved
             return resolved
 
+        def _apply_fast_continue(set_fast_continue):
+            # Tells the evaluator whether it's safe to speed up function
+            # calls with the bytecode VM until the next debug-hook call --
+            # see openscad_cpp_evaluator's Evaluator::setFastContinueBreakpoints
+            # doc comment for the exact contract. Only safe when NONE of
+            # the reasons every checkDebug() checkpoint might be needed
+            # apply right now: no step command pending (compiled code has
+            # no checkpoint for a step to land on), no pause requested
+            # (same reason -- a paused-by-request stop needs to happen at
+            # the very next checkpoint, wherever that is), and the
+            # session's own initial break-on-first stop already consumed.
+            # Called from every hook() exit point, not just once at
+            # start(), because all of these can change on every single
+            # call (a step command starting/finishing, pause() called from
+            # the GUI thread) -- see set_breakpoints's own doc comment for
+            # why breakpoint EDITS specifically don't need their own
+            # separate call here: this reads self._breakpoints fresh every
+            # time anyway.
+            if set_fast_continue is None:
+                return
+            if self._step_cmd is not None or self._break_on_first or self._pause_requested:
+                set_fast_continue(None)
+            else:
+                set_fast_continue(self._breakpoints)
+
         def hook(line: int, depth: int, *, forced: bool = False, expr_level: bool = False, expr_depth: int = 0,
                  origin: str | None = None, get_frames=None, generate_partial=None,
-                 get_children_positions=None) -> tuple[str, dict]:
+                 get_children_positions=None, set_fast_continue=None) -> tuple[str, dict]:
             if self._stopped:
                 return ("stop", {})
 
@@ -263,6 +288,7 @@ class DebugSession(QObject):
             )
 
             if not should_pause:
+                _apply_fast_continue(set_fast_continue)
                 return ("continue", {})
 
             # Clear all step state before pausing
@@ -305,6 +331,7 @@ class DebugSession(QObject):
                     (get_children_positions() if get_children_positions else None) or []
                 )
 
+            _apply_fast_continue(set_fast_continue)
             return ("continue", mods)
         return hook
 
@@ -367,7 +394,14 @@ class DebugSession(QObject):
         so newly-added breakpoints take effect immediately rather than only
         on the next Restart. Read by the hook (worker thread); reassigning
         the dict wholesale (rather than mutating it) makes the update
-        atomic enough under the GIL without needing a lock."""
+        atomic enough under the GIL without needing a lock.
+
+        Doesn't need to push anything to the evaluator's own fast-continue
+        state itself: hook()'s own _apply_fast_continue reads
+        self._breakpoints fresh on every single call (the next checkDebug()
+        checkpoint, wherever that lands), so an edit made here is picked up
+        at the same granularity breakpoint checking itself already has --
+        no extra plumbing, no risk of it going stale."""
         self._breakpoints = dict(breakpoints)
 
     def resume(self, command: str = "continue", mods: dict | None = None):
