@@ -222,11 +222,28 @@ class DebugSession(QObject):
             # see openscad_cpp_evaluator's Evaluator::setFastContinueBreakpoints
             # doc comment for the exact contract. Only safe when NONE of
             # the reasons every checkDebug() checkpoint might be needed
-            # apply right now: no step command pending (compiled code has
-            # no checkpoint for a step to land on), no pause requested
-            # (same reason -- a paused-by-request stop needs to happen at
-            # the very next checkpoint, wherever that is), and the
-            # session's own initial break-on-first stop already consumed.
+            # apply right now: no pause requested (a paused-by-request stop
+            # needs to happen at the very next checkpoint, wherever that
+            # is), the session's own initial break-on-first stop already
+            # consumed, and -- for step commands specifically -- only
+            # "over"/"out" are safe, not "into"/"to_child".
+            #
+            # "over"'s and "out"'s own step_hit conditions (below) NEVER
+            # examine anything deeper than self._step_depth: "over" only
+            # cares once execution returns to depth <= step_depth on a
+            # different line, "out" only cares once depth < step_depth.
+            # Whatever happens INSIDE the stepped-over/out-of call is
+            # something we've already decided never to pause on for step
+            # purposes -- exactly like a plain Continue, a function down
+            # there that doesn't contain a currently-set breakpoint is
+            # safe to run compiled (chunkEligibleNow, the C++ side, still
+            # forces the interpreter for any function that DOES contain
+            # one, so a breakpoint reached mid-step is never missed).
+            # "into" and "to_child" both genuinely need the very next
+            # statement-level checkpoint wherever it lands -- including
+            # one level deeper, inside a call the stepped statement makes
+            # -- so they still force the interpreter everywhere, unchanged.
+            #
             # Called from every hook() exit point, not just once at
             # start(), because all of these can change on every single
             # call (a step command starting/finishing, pause() called from
@@ -236,7 +253,8 @@ class DebugSession(QObject):
             # time anyway.
             if set_fast_continue is None:
                 return
-            if self._step_cmd is not None or self._break_on_first or self._pause_requested:
+            stepping_needs_full_interpreter = self._step_cmd in ("into", "to_child")
+            if stepping_needs_full_interpreter or self._break_on_first or self._pause_requested:
                 set_fast_continue(None)
             else:
                 set_fast_continue(self._breakpoints)

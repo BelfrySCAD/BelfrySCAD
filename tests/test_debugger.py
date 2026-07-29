@@ -14,6 +14,7 @@ asserted on that finer granularity are adjusted or removed below, with a
 comment at each one explaining what changed and why -- not silently dropped.
 """
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -752,7 +753,8 @@ class TestGeneratePartialRender:
 # loop, since queued cross-thread signals are never delivered without one.
 # ---------------------------------------------------------------------------
 
-def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple[list[int], int]:
+def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0,
+                        breakpoints: dict | None = None) -> tuple[list[int], int]:
     """Start a real DebugSession on the file at `path`. `on_pause_line(line)`
     is called at each pause and must return a resume command string (e.g.
     "continue", "step_to_child"). Returns (paused_lines, finished_body_count).
@@ -791,7 +793,7 @@ def _run_debug_session(path: str, on_pause_line, timeout: float = 15.0) -> tuple
     session.paused.connect(on_paused)
     session.finished.connect(on_finished)
     session.errored.connect(on_errored)
-    session.start(path, breakpoints={}, current_file=path)
+    session.start(path, breakpoints=breakpoints or {}, current_file=path)
 
     deadline = _time.monotonic() + timeout
     while result["count"] is None and _time.monotonic() < deadline:
@@ -940,6 +942,84 @@ class TestStepToChild:
 
         paused_lines, count = _run_debug_session(str(path), on_pause)
         assert count == 0  # neither cube nor sphere ever evaluated
+
+
+class TestStepOverFastContinue:
+    """step_over/step_out never examine anything deeper than the step's own
+    starting depth, so whatever they step over is safe to run through the
+    bytecode VM -- same reasoning as plain Continue (see
+    Evaluator.chunkEligibleNow / DebugSession._apply_fast_continue)."""
+
+    def test_step_over_heavy_call_is_fast_and_skips_its_internals(self, tmp_path):
+        src = (
+            "function heavy(n) = [for (i=[0:1:n-1]) i*i + i*i*i % 97 - (i % 13)];\n"
+            "function stepped_over() = let(r = heavy(900000)) len(r);\n"
+            "a = 1;\n"
+            "b = stepped_over();\n"
+            "c = 2;\n"
+            "cube(10);\n"
+        )
+        path = tmp_path / "step_over_fast.scad"
+        path.write_text(src)
+
+        start = time.perf_counter()
+        paused_lines, count = _run_debug_session(str(path), lambda line: "step_over", timeout=15.0)
+        elapsed = time.perf_counter() - start
+
+        assert paused_lines == [3, 4, 5, 6]  # lands past stepped_over()/heavy() without pausing inside
+        assert count == 1  # cube(10) rendered
+        assert elapsed < 2.0  # VM fast-continue; interpreted would take several seconds for 900k iterations
+
+    def test_step_over_still_honors_a_breakpoint_inside_the_stepped_over_call(self, tmp_path):
+        src = (
+            "function heavy(n) = [for (i=[0:1:n-1]) i*i];\n"  # line 1 -- breakpoint here
+            "function stepped_over() = let(r = heavy(3)) len(r);\n"
+            "a = 1;\n"
+            "b = stepped_over();\n"  # line 4 <- step over this
+            "c = 2;\n"
+            "cube(10);\n"
+        )
+        path = tmp_path / "step_over_breakpoint.scad"
+        path.write_text(src)
+
+        calls = {"n": 0}
+
+        def on_pause(line):
+            calls["n"] += 1
+            return "step_over" if calls["n"] <= 2 else "continue"
+
+        paused_lines, count = _run_debug_session(
+            str(path), on_pause, timeout=15.0, breakpoints={str(path): {1}})
+
+        assert 1 in paused_lines  # breakpoint inside heavy() still hit despite the active step_over
+        assert count == 1
+
+    def test_step_into_is_unaffected_and_still_lands_inside_the_call(self, tmp_path):
+        src = (
+            "function heavy(n) = [for (i=[0:1:n-1]) i*i];\n"
+            "function stepped_into() = let(r = heavy(3)) len(r);\n"
+            "a = 1;\n"
+            "b = stepped_into();\n"  # line 4 <- step into this
+            "c = 2;\n"
+            "cube(10);\n"
+        )
+        path = tmp_path / "step_into_sanity.scad"
+        path.write_text(src)
+
+        calls = {"n": 0}
+
+        def on_pause(line):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return "step_over"  # trivially steps over line 3 (a = 1;)
+            if calls["n"] == 2:
+                return "step_into"  # steps into stepped_into(), landing on its own line 2
+            return "continue"
+
+        paused_lines, count = _run_debug_session(str(path), on_pause, timeout=15.0)
+
+        assert 2 in paused_lines  # inside stepped_into()'s own body, not skipped over
+        assert count == 1
 
 
 class TestPauseEventOrdering:
