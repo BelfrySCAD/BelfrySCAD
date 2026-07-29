@@ -38,7 +38,7 @@ def _make_recorder():
 
     def hook(line, depth, *, forced=False, expr_level=False,
              expr_depth=0, origin=None, get_frames=None, generate_partial=None,
-             get_children_positions=None):
+             get_children_positions=None, set_fast_continue=None):
         stops.append({
             "line": line,
             "depth": depth,
@@ -663,7 +663,7 @@ class TestGeneratePartialRender:
         seen = {}
 
         def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
-                 generate_partial=None, get_children_positions=None):
+                 generate_partial=None, get_children_positions=None, set_fast_continue=None):
             if forced:
                 seen["bodies"], seen["error"] = _generate_partial_render(generate_partial)
             return ("continue", {})
@@ -679,7 +679,7 @@ class TestGeneratePartialRender:
         seen = {}
 
         def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
-                 generate_partial=None, get_children_positions=None):
+                 generate_partial=None, get_children_positions=None, set_fast_continue=None):
             if forced:
                 seen["bodies"], seen["error"] = _generate_partial_render(generate_partial)
             return ("continue", {})
@@ -716,7 +716,7 @@ class TestGeneratePartialRender:
         paused_at_sphere = {}
 
         def hook(line, depth, *, forced=False, expr_level=False, expr_depth=0, origin=None, get_frames=None,
-                 generate_partial=None, get_children_positions=None):
+                 generate_partial=None, get_children_positions=None, set_fast_continue=None):
             if line == 4 and not expr_level and not paused_at_sphere:
                 # Paused right at sphere(10) — cube(10) has resolved (its
                 # CSGNode sits in union()'s still-in-progress accumulator)
@@ -826,7 +826,7 @@ class TestLastChildrenPositions:
 
         def hook(line, depth, *, forced=False, expr_level=False,
                  expr_depth=0, origin=None, get_frames=None, generate_partial=None,
-                 get_children_positions=None):
+                 get_children_positions=None, set_fast_continue=None):
             if line == 4 and not expr_level:
                 seen["positions"] = get_children_positions()
             return ("continue", {})
@@ -842,7 +842,7 @@ class TestLastChildrenPositions:
 
         def hook(line, depth, *, forced=False, expr_level=False,
                  expr_depth=0, origin=None, get_frames=None, generate_partial=None,
-                 get_children_positions=None):
+                 get_children_positions=None, set_fast_continue=None):
             if line == 1 and not expr_level:
                 seen["positions"] = get_children_positions()
             return ("continue", {})
