@@ -1065,3 +1065,89 @@ class TestPauseEventOrdering:
         paused_lines, count = _run_debug_session(str(path), on_pause, timeout=5.0)
         assert 6 in paused_lines  # cube(42); -- lost if the resume's set() got clobbered
         assert count == 2
+
+
+class TestFastContinueInterrupt:
+    """In hook-skippable mode (a plain Continue with no step pending --
+    see _apply_fast_continue's own comment in debugger.py), checkDebug()
+    may skip the Python round-trip entirely for most checkpoints, so a
+    pause() landing mid-loop has no ordinary checkpoint to be noticed at.
+    FastContinueSignal.request() is what forces the next checkpoint
+    through regardless. Without it, pause() during a long hook-skippable
+    Continue would silently do nothing until the computation finished on
+    its own."""
+
+    def test_pause_interrupts_a_hook_skippable_continue_promptly(self, tmp_path):
+        import sys
+        import time as _time
+        from PySide6.QtCore import QCoreApplication, QTimer
+        from belfryscad.window.debugger import DebugSession
+
+        # Naive recursive fibonacci -- pure function-call computation, no
+        # geometry. Deliberately NOT a geometry loop: a geometry-heavy
+        # script's wall time is dominated by Manifold's own (uninterruptible)
+        # mesh/CSG boolean ops downstream of the last checkDebug() call, so
+        # pause() there would just be waiting for the render to finish
+        # regardless of this feature. Function calls each get their own
+        # checkDebug() checkpoint, spread across the whole ~1.4s of real
+        # interpreter time -- this is the workload the original bug report
+        # (BOSL2 NURBS math) actually looked like.
+        src = "function slow(n) = n <= 1 ? n : slow(n-1) + slow(n-2);\necho(slow(30));\n"
+        path = tmp_path / "fast_continue_interrupt.scad"
+        path.write_text(src)
+
+        app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
+        session = DebugSession()
+        pause_times: list[float] = []
+        continue_issued_at: dict[str, float | None] = {"t": None}
+        result = {"count": None}
+
+        def on_paused(origin, line, frames, stk, pbodies, perr):
+            pause_times.append(_time.monotonic())
+            if len(pause_times) == 1:
+                # break-on-first at line 1. Resume with plain "continue" and
+                # no breakpoints to engage hook-skippable mode, then request
+                # a pause() shortly after -- long before the loop would ever
+                # finish unattended.
+                continue_issued_at["t"] = _time.monotonic()
+                QTimer.singleShot(100, session.pause)
+            session.resume("continue")
+
+        def on_finished(bodies, id2node):
+            result["count"] = len(bodies)
+
+        def on_errored(msg):
+            result["count"] = -1
+
+        session.paused.connect(on_paused)
+        session.finished.connect(on_finished)
+        session.errored.connect(on_errored)
+        session.start(str(path), breakpoints={}, current_file=str(path))
+
+        deadline = _time.monotonic() + 15.0
+        while result["count"] is None and len(pause_times) < 2 and _time.monotonic() < deadline:
+            app.processEvents()
+            _time.sleep(0.001)
+
+        second_pause_delay = (
+            pause_times[1] - continue_issued_at["t"]
+            if len(pause_times) >= 2 and continue_issued_at["t"] is not None
+            else None
+        )
+
+        session.paused.disconnect()
+        session.finished.disconnect()
+        session.errored.disconnect()
+        if session.is_running():
+            session.stop()
+        if session._thread is not None:
+            session._thread.join(timeout=5.0)
+
+        assert len(pause_times) >= 2, (
+            "pause() was never honored during the hook-skippable Continue -- "
+            "the loop ran to completion instead of being interrupted"
+        )
+        # Well under the ~1.4s slow(30) takes to finish unattended -- proves
+        # the FastContinueSignal interrupt actually cut it short rather than
+        # the second pause just being the computation's own natural end.
+        assert second_pause_delay < 1.0
