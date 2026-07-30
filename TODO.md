@@ -9,3 +9,4 @@
 - Customizer Parameter Editor
 - Customizer presets.
 - For libraries we have installed, make a list of files we can include/use into the source.
+- AI Integration

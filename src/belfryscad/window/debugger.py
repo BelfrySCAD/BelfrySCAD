@@ -179,6 +179,17 @@ class DebugSession(QObject):
         self._stopped: bool = False
         self._pause_requested: bool = False
         self._thread: threading.Thread | None = None
+        # See setFastContinueBreakpoints's own doc comment
+        # (openscad_cpp_evaluator's evaluator.hpp) for hook-skippable mode:
+        # a plain Continue with no step pending can skip checkDebug()'s own
+        # Python round-trip entirely for a line with no breakpoint, not
+        # just decide VM eligibility. Since evaluate() runs as one single
+        # blocking call with the GIL released for its duration, there's no
+        # live Evaluator handle pause()/set_breakpoints() (main thread)
+        # could otherwise interrupt directly -- this flag is that
+        # interrupt, created fresh each start() and handed to the
+        # Evaluator constructor.
+        self._fast_continue_signal = None
 
     def start(self, source_path: str, breakpoints: dict[str, set[int]], viewport_params: dict | None = None,
               current_file: str | None = None, cleanup_path: str | None = None):
@@ -197,6 +208,8 @@ class DebugSession(QObject):
         self._stopped = False
         self._pause_requested = False
         self._pending_mods = {}
+        from openscad_cpp_evaluator import FastContinueSignal
+        self._fast_continue_signal = FastContinueSignal()
         self._thread = threading.Thread(
             target=self._run, args=(source_path, viewport_params or {}), daemon=True
         )
@@ -251,13 +264,25 @@ class DebugSession(QObject):
             # why breakpoint EDITS specifically don't need their own
             # separate call here: this reads self._breakpoints fresh every
             # time anyway.
+            #
+            # hook_skippable (2nd arg): true only for a plain Continue with
+            # no step pending at all -- checkDebug() itself may then skip
+            # calling into Python entirely for a line with no breakpoint,
+            # not just decide VM eligibility (see setFastContinueBreakpoints's
+            # own doc comment). "over"/"out" still pass a real breakpoints
+            # set (their own step_hit logic above is unaffected -- see the
+            # comment above this method), but keep hook_skippable=False:
+            # both need every statement to actually reach the hook so their
+            # own line/depth comparison can run, which a compile-time
+            # breakpoint-location check can't decide in advance the way a
+            # missing breakpoint can.
             if set_fast_continue is None:
                 return
             stepping_needs_full_interpreter = self._step_cmd in ("into", "to_child")
             if stepping_needs_full_interpreter or self._break_on_first or self._pause_requested:
-                set_fast_continue(None)
+                set_fast_continue(None, False)
             else:
-                set_fast_continue(self._breakpoints)
+                set_fast_continue(self._breakpoints, self._step_cmd is None)
 
         def hook(line: int, depth: int, *, forced: bool = False, expr_level: bool = False, expr_depth: int = 0,
                  origin: str | None = None, get_frames=None, generate_partial=None,
@@ -382,7 +407,8 @@ class DebugSession(QObject):
     def _run(self, source_path: str, viewport_params: dict):
         from openscad_cpp_evaluator import Evaluator, EvalError
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
-                      return_hook=self._on_function_return, manifold_cache=self._manifold_cache)
+                      return_hook=self._on_function_return, manifold_cache=self._manifold_cache,
+                      fast_continue_signal=self._fast_continue_signal)
         try:
             bodies, id_to_node = ev.evaluate(source_path, viewport_params)
             if not self._stopped:
@@ -405,6 +431,15 @@ class DebugSession(QObject):
     def pause(self):
         """Request the evaluator to pause at the next debug hook call."""
         self._pause_requested = True
+        # In hook-skippable mode (a plain Continue with no step pending,
+        # see _apply_fast_continue's own doc comment), checkDebug() may be
+        # skipping the Python round-trip entirely for most checkpoints --
+        # without this, a request landing mid-render could go unnoticed
+        # until whatever's running finishes on its own. request() forces
+        # the very next checkDebug() call through regardless of whether it
+        # hits a breakpoint, where pause_now (above) is then seen normally.
+        if self._fast_continue_signal is not None:
+            self._fast_continue_signal.request()
 
     def set_breakpoints(self, breakpoints: dict[str, set[int]]):
         """Update the breakpoint set for a running/paused session — called
@@ -415,12 +450,20 @@ class DebugSession(QObject):
         atomic enough under the GIL without needing a lock.
 
         Doesn't need to push anything to the evaluator's own fast-continue
-        state itself: hook()'s own _apply_fast_continue reads
+        BREAKPOINTS state itself: hook()'s own _apply_fast_continue reads
         self._breakpoints fresh on every single call (the next checkDebug()
         checkpoint, wherever that lands), so an edit made here is picked up
         at the same granularity breakpoint checking itself already has --
-        no extra plumbing, no risk of it going stale."""
+        no extra plumbing, no risk of it going stale. It DOES need to
+        force a checkpoint to actually happen soon, though: in
+        hook-skippable mode checkDebug() may be skipping the Python
+        round-trip entirely (see pause()'s own comment, just above, for
+        why -- same reasoning applies here), so a newly-added breakpoint
+        could otherwise go unnoticed until some OTHER checkpoint happens to
+        reach Python on its own."""
         self._breakpoints = dict(breakpoints)
+        if self._fast_continue_signal is not None:
+            self._fast_continue_signal.request()
 
     def resume(self, command: str = "continue", mods: dict | None = None):
         self._resume_command = command
@@ -431,6 +474,11 @@ class DebugSession(QObject):
 
     def stop(self):
         self._stopped = True
+        # See pause()'s own comment -- _stopped is only ever checked at the
+        # top of hook(), which hook-skippable mode may not reach again for
+        # a while otherwise.
+        if self._fast_continue_signal is not None:
+            self._fast_continue_signal.request()
         self._pause_event.set()
 
     def is_running(self) -> bool:
