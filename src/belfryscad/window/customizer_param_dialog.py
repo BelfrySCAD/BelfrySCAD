@@ -147,8 +147,13 @@ class ParameterEditorDialog(QDialog):
         # leftover dialog height and stretches the (mostly-empty) table
         # far past its content -- the resulting whitespace inside the
         # table's own border reads as "space before the buttons" even
-        # though it's really just an oversized table.
+        # though it's really just an oversized table. Preferred alone
+        # wasn't enough to stop this under the real macOS/Aqua style (only
+        # verified fixed offscreen, where the effect didn't reproduce) --
+        # setMaximumHeight is a hard, style-independent ceiling regardless
+        # of what's still driving the extra growth.
         self._dropdown_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._dropdown_table.setMaximumHeight(150)
         self._dropdown_table.itemChanged.connect(self._refresh_dropdown_default)
         self._dropdown_add_row_btn = QPushButton("+")
         self._dropdown_add_row_btn.setFixedWidth(28)
