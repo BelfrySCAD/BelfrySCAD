@@ -687,11 +687,28 @@ class DebuggerPane(QWidget):
             self._stack_list.setItem(row, col, item)
 
     def _populate_stack(self, call_stack: list, pause_origin: str = "", pause_line: int = 0,
-                        main_file: str = ""):
+                        main_file: str = "", parse_path: str = ""):
         self._stack_list.blockSignals(True)
         self._stack_list.setRowCount(0)
         self._stack_positions.clear()
         main_file_name = os.path.basename(main_file) if main_file else ''
+        _parse_real = os.path.realpath(parse_path) if parse_path else None
+
+        def _remap(o: str) -> str:
+            # MainWindow always parses the debugged tab's own live buffer
+            # from an ephemeral temp file (see _start_debug), so an origin
+            # equal to *that* temp path really means "the tab being
+            # debugged" -- remap it back to main_file (that tab's real,
+            # already-open file_path) so navigation (_stack_positions ->
+            # frame_selected -> _find_or_open_tab) lands on the real,
+            # already-open tab instead of trying to open a temp file that
+            # vanishes the moment the session ends, and so the File column
+            # shows a real filename instead of a random temp one.
+            if o and _parse_real and os.path.realpath(o) == _parse_real:
+                return main_file
+            return o
+
+        pause_origin = _remap(pause_origin)
         # call_stack is [toplevel, outermost, ..., innermost].
         # Navigation: each entry shows where it calls the next;
         # the innermost (last) entry shows the current pause point.
@@ -706,7 +723,7 @@ class DebuggerPane(QWidget):
             if entry[0] == "toplevel":
                 if non_toplevel:
                     cp = non_toplevel[0][2]  # call_pos of first callee
-                    cp_origin = getattr(cp, 'origin', '') or ''
+                    cp_origin = _remap(getattr(cp, 'origin', '') or '')
                     cp_line = int(getattr(cp, 'line', 0)) if cp else 0
                 else:
                     cp_origin = pause_origin
@@ -718,7 +735,7 @@ class DebuggerPane(QWidget):
                 name = entry[1]
                 decl_pos = entry[3] if len(entry) > 3 else None
                 decl_line = str(getattr(decl_pos, 'line', '?')) if decl_pos is not None else '?'
-                decl_origin = getattr(decl_pos, 'origin', '') if decl_pos is not None else ''
+                decl_origin = _remap(getattr(decl_pos, 'origin', '') if decl_pos is not None else '')
                 file_str = os.path.basename(decl_origin) if decl_origin else main_file_name
                 self._set_stack_row(row, f"{name}()", file_str, decl_line)
                 # Find the next non-toplevel entry after this one
@@ -726,7 +743,7 @@ class DebuggerPane(QWidget):
                 next_entry = call_stack[next_idx] if next_idx < len(call_stack) and call_stack[next_idx][0] != "toplevel" else None
                 if next_entry is not None:
                     cp = next_entry[2]  # call_pos of callee
-                    cp_origin = getattr(cp, 'origin', '') or ''
+                    cp_origin = _remap(getattr(cp, 'origin', '') or '')
                     self._stack_positions.append((
                         cp_origin or main_file,
                         int(getattr(cp, 'line', 0)) if cp else 0))
@@ -810,7 +827,7 @@ class DebuggerPane(QWidget):
             self._partial_warn_label.hide()
 
     def set_paused(self, line: int, all_frame_locals: list, call_stack: list, origin: str = "",
-                   partial_error: str | None = None, main_file: str = ""):
+                   partial_error: str | None = None, main_file: str = "", parse_path: str = ""):
         self._set_continue_mode()
         self._set_partial_warning(partial_error)
         self._status.setText(f"Paused at line {line}")
@@ -825,14 +842,15 @@ class DebuggerPane(QWidget):
         dyn_names = innermost.get("dyn_names", set())
         self._original_locals = {k: _fmt(v) for k, v in innermost.get("local_scope", {}).items()
                                   if k in dyn_names}
-        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file,
+                             parse_path=parse_path)
         self._populate_vars(self._all_frame_locals[self._innermost_row], is_innermost=True)
         for btn in (self._btn_continue, self._btn_step_into, self._btn_step_over,
                     self._btn_step_to_child, self._btn_step_out, self._btn_restart, self._btn_stop):
             btn.setEnabled(True)
 
     def set_error_break(self, line: int, msg: str, all_frame_locals: list, call_stack: list, origin: str = "",
-                        partial_error: str | None = None, main_file: str = ""):
+                        partial_error: str | None = None, main_file: str = "", parse_path: str = ""):
         self._set_continue_mode()
         self._set_partial_warning(partial_error)
         display = msg.removeprefix("ERROR: ")
@@ -846,7 +864,8 @@ class DebuggerPane(QWidget):
             self._all_frame_locals = list(all_frame_locals)
             self._innermost_row = 0
         self._original_locals = {}
-        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file)
+        self._populate_stack(call_stack, pause_origin=origin, pause_line=line, main_file=main_file,
+                             parse_path=parse_path)
         self._populate_vars(self._all_frame_locals[self._innermost_row])
         self._btn_continue.setEnabled(True)
         self._btn_step_into.setEnabled(False)
