@@ -620,6 +620,7 @@ class CustomizerPane(QWidget):
         self._add_param_btn = QPushButton("+")
         self._add_param_btn.setToolTip("Add a new parameter")
         self._add_param_btn.setFixedWidth(28)
+        self._add_param_btn.setFlat(True)
         self._add_param_btn.clicked.connect(self._on_add_parameter)
         add_row.addWidget(self._add_param_btn)
         add_row.addStretch()
