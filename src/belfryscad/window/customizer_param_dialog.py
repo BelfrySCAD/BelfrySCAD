@@ -98,7 +98,7 @@ class ParameterEditorDialog(QDialog):
         w = QWidget()
         f = QFormLayout(w)
         f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        f.setVerticalSpacing(4)
+        f.setVerticalSpacing(0)
         for label, field in rows:
             if label is None:
                 f.addRow(field)
