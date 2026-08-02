@@ -1614,6 +1614,20 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_animate_frame(self, t: float):
+        if self._render_jobs:
+            # A previous frame's render is still in flight (its worker
+            # thread hasn't reached a cancellation checkpoint yet, or hasn't
+            # even started) -- skip this tick rather than starting an
+            # overlapping one. openscad_cpp_evaluator's parser isn't safe
+            # for concurrent invocation from separate threads: a model slow
+            # enough to render across more than one animation tick (the
+            # timer fires unconditionally at the configured FPS regardless
+            # of render speed) corrupts the in-flight parse and can crash
+            # the whole process. The next tick retries against whatever $t
+            # is current by then, so playback naturally throttles to
+            # whatever FPS the model can actually sustain instead of queuing
+            # up ever more overlapping renders.
+            return
         if self._animate_pane.is_dumping():
             self._dump_frame = self._animate_pane.current_step()
         self._render()
