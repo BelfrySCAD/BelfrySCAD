@@ -579,6 +579,7 @@ class FindBar(QWidget):
 class CodeEditor(QPlainTextEdit):
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
+    edit_parameter_requested = Signal(str)     # emits a Customizer parameter's name
     print_to_console = Signal(str)             # emits formatted assignment string
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
     source_edited_externally = Signal()        # emits after an "Edit as..." Save writes back to source
@@ -1266,6 +1267,18 @@ class CodeEditor(QPlainTextEdit):
                 lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
             )
             menu.addAction(act)
+
+            # Works from any use of the name, not just its declaration line
+            # -- scan_parameters is keyed by name, same as Go to Definition
+            # above, so right-clicking a reference is just as good as
+            # right-clicking the assignment itself.
+            from belfryscad.window.customizer import scan_parameters
+            if not self.isReadOnly() and word in {p.name for p in scan_parameters(self.toPlainText())}:
+                edit_act = QAction(f"Edit Parameter '{word}'…", self)
+                edit_act.triggered.connect(
+                    lambda checked=False, w=word: self.edit_parameter_requested.emit(w)
+                )
+                menu.addAction(edit_act)
 
         # Lexical "View as..."/"Edit as..." for a plain numeric literal under
         # the cursor — independent of debug session state, so these work even
