@@ -1937,19 +1937,29 @@ class MainWindow(QMainWindow):
         import tempfile
         from openscad_cpp_evaluator import parse as _oce_parse, ParseError
 
-        # The C++ evaluator parses the file itself; write an unsaved buffer to
-        # a temp .scad it (and the debug session) can read. The debug session
-        # owns the temp's lifetime -- it unlinks cleanup_path when it ends.
-        cleanup_path = None
-        if tab.file_path:
-            parse_path = tab.file_path
-        else:
-            _tmp = tempfile.NamedTemporaryFile(suffix=".scad", mode="w", encoding="utf-8", delete=False)
-            _tmp.write(source)
-            _tmp.close()
-            parse_path = cleanup_path = _tmp.name
+        # Always parse the live buffer, same as _do_render (see its own
+        # doc comment) -- the debug session had the identical
+        # stale-on-disk-content bug: "if tab.file_path: parse_path =
+        # tab.file_path" ignored *source* entirely for any saved tab.
+        # Written into file_path's own directory (when set) so relative
+        # use/include still resolve. The debug session owns the temp's
+        # lifetime -- it unlinks cleanup_path when it ends.
+        tmp_dir = str(Path(tab.file_path).parent) if tab.file_path else None
+        _tmp = tempfile.NamedTemporaryFile(
+            suffix=".scad", mode="w", encoding="utf-8", delete=False, dir=tmp_dir
+        )
+        _tmp.write(source)
+        _tmp.close()
+        parse_path = cleanup_path = _tmp.name
+        tab._last_parse_path = parse_path
 
-        current_file = tab.file_path or parse_path
+        # checkDebug()/AST positions now always report *parse_path* as
+        # their origin for this tab's own top-level code (verified
+        # directly against the real debug hook -- see
+        # project_render_stale_buffer_bug memory), never file_path, so
+        # that's the identity the C++ hook layer's own fallback
+        # (_make_hook's _resolve) needs too.
+        current_file = parse_path
         try:
             root_scope = _oce_parse(parse_path)  # for go-to-definition during debug
         except ParseError as e:
@@ -1975,6 +1985,14 @@ class MainWindow(QMainWindow):
         tab.root_scope = root_scope
 
         breakpoints = self._collect_breakpoints()
+        # _collect_breakpoints keys everything by real file_path, but the
+        # C++ hook now reports this tab's own checkpoints under parse_path
+        # (the temp file) -- duplicate this tab's own breakpoint set under
+        # that key too, or they'd silently never match and stop firing.
+        if tab.file_path:
+            tab_key = str(Path(tab.file_path).resolve())
+            if tab_key in breakpoints:
+                breakpoints[str(Path(parse_path).resolve())] = breakpoints[tab_key]
 
         # Show the debugger dock and bring it to the front
         self._debugger_dock.show()
@@ -2033,8 +2051,15 @@ class MainWindow(QMainWindow):
         tab = self._debug_tab
         if tab is None:
             return
-        current_file = tab.file_path
-        if not origin or not current_file or str(Path(origin).resolve()) == str(Path(current_file).resolve()):
+        # _start_debug always parses this tab's own live buffer from a temp
+        # file (tab._last_parse_path), so checkpoints in its own top-level
+        # code report *that* as origin, not tab.file_path -- accept either
+        # as "this tab" (same identity mismatch _go_to_definition has).
+        identities = [p for p in (tab.file_path, getattr(tab, '_last_parse_path', None)) if p]
+        is_current_tab = not origin or not identities or any(
+            str(Path(origin).resolve()) == str(Path(p).resolve()) for p in identities
+        )
+        if is_current_tab:
             tab.editor.set_execution_line(line)
             self._tabs.setCurrentWidget(tab)
         else:
@@ -2057,7 +2082,8 @@ class MainWindow(QMainWindow):
                 # highlight, locals) — it's a best-effort preview.
                 self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_paused(line, all_frame_locals, call_stack, origin=origin,
-                                       partial_error=partial_error, main_file=self._debug_tab.file_path or "")
+                                       partial_error=partial_error, main_file=self._debug_tab.file_path or "",
+                                       parse_path=getattr(self._debug_tab, '_last_parse_path', None) or "")
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         # Only apply $vp* values the script itself assigned (dyn_explicit) --
@@ -2083,7 +2109,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.log(f"WARNING: live partial render failed to display: {e}")
         self._debugger_pane.set_error_break(line, msg, all_frame_locals, call_stack, origin=origin,
-                                            partial_error=partial_error, main_file=self._debug_tab.file_path or "")
+                                            partial_error=partial_error, main_file=self._debug_tab.file_path or "",
+                                            parse_path=getattr(self._debug_tab, '_last_parse_path', None) or "")
         innermost = all_frame_locals[0] if all_frame_locals else {}
         locals_dict = {**innermost.get("outer_scope", {}), **innermost.get("local_scope", {})}
         self._show_debug_line(origin, line)
