@@ -132,7 +132,7 @@ class ParameterEditorDialog(QDialog):
         self._stack.addWidget(self._make_page([("", self._check_default)]))
 
         self._dropdown_table = QTableWidget(0, 2)
-        self._dropdown_table.setHorizontalHeaderLabels(["Value", "Label"])
+        self._dropdown_table.setHorizontalHeaderLabels(["Label", "Value"])
         self._dropdown_table.verticalHeader().setVisible(False)
         self._dropdown_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._dropdown_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -201,10 +201,13 @@ class ParameterEditorDialog(QDialog):
     def _on_dropdown_add_row(self):
         row = self._dropdown_table.rowCount()
         self._dropdown_table.insertRow(row)
+        self._dropdown_table.setItem(row, 0, QTableWidgetItem())
         item = QTableWidgetItem()
-        self._dropdown_table.setItem(row, 0, item)
-        self._dropdown_table.setItem(row, 1, QTableWidgetItem())
-        self._dropdown_table.setCurrentCell(row, 0)
+        self._dropdown_table.setItem(row, 1, item)
+        # Focus Value (required -- a row with no value is skipped entirely,
+        # see _dropdown_options_list), not Label (optional, falls back to
+        # the value when blank).
+        self._dropdown_table.setCurrentCell(row, 1)
         self._dropdown_table.editItem(item)
 
     def _on_dropdown_remove_row(self):
@@ -222,19 +225,19 @@ class ParameterEditorDialog(QDialog):
         for value, label in options:
             row = self._dropdown_table.rowCount()
             self._dropdown_table.insertRow(row)
-            self._dropdown_table.setItem(row, 0, QTableWidgetItem(value))
-            self._dropdown_table.setItem(row, 1, QTableWidgetItem('' if label == value else label))
+            self._dropdown_table.setItem(row, 0, QTableWidgetItem('' if label == value else label))
+            self._dropdown_table.setItem(row, 1, QTableWidgetItem(value))
         self._dropdown_table.blockSignals(False)
         self._refresh_dropdown_default()
 
     def _dropdown_options_list(self) -> list[tuple[str, str]]:
         options = []
         for row in range(self._dropdown_table.rowCount()):
-            value_item = self._dropdown_table.item(row, 0)
+            value_item = self._dropdown_table.item(row, 1)
             value = value_item.text().strip() if value_item else ''
             if not value:
                 continue
-            label_item = self._dropdown_table.item(row, 1)
+            label_item = self._dropdown_table.item(row, 0)
             label = (label_item.text().strip() if label_item else '') or value
             options.append((value, label))
         return options
