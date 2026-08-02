@@ -44,7 +44,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSlider, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from belfryscad.scad_literals import (
@@ -642,8 +642,10 @@ class CustomizerPane(QWidget):
         self._preset_delete_btn.setFixedWidth(28)
         self._preset_delete_btn.clicked.connect(self._on_preset_delete)
         preset_row.addWidget(self._preset_delete_btn)
-        self._preset_update_btn = QPushButton("Update")
+        self._preset_update_btn = QPushButton()
+        self._preset_update_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self._preset_update_btn.setToolTip("Overwrite the selected preset with current values")
+        self._preset_update_btn.setFixedWidth(28)
         self._preset_update_btn.clicked.connect(self._on_preset_update)
         preset_row.addWidget(self._preset_update_btn)
         self._preset_row_widget = QWidget()
