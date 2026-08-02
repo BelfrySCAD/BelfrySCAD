@@ -20,6 +20,12 @@ Tab groups:
     /* [TabName] */    → start a named tab
     /* [Hidden] */     → suppress following variables from the pane
     /* [Global] */     → shown at the top of every tab; never its own tab
+
+Parameter sets ("presets"), mirroring OpenSCAD's own Customizer + CLI
+-p/-P: named snapshots of every parameter's value, stored as JSON
+alongside the .scad file (<name>.json). Values are stored using the same
+literal syntax as the .scad source itself (_format_value/_parse_literal),
+so the file is plain-text-diffable and round-trips through either tool.
 """
 
 import re
@@ -29,8 +35,13 @@ from typing import Any, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSlider,
-    QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+)
+
+from belfryscad.scad_literals import (
+    parse_literal as _parse_literal, format_value as _format_value,
+    preset_path_for, load_presets, save_presets,
 )
 
 
@@ -51,48 +62,6 @@ class ParameterDef:
 # ---------------------------------------------------------------------------
 # Source parsing
 # ---------------------------------------------------------------------------
-
-def _parse_literal(s: str) -> Optional[Any]:
-    s = s.strip()
-    if s == 'true':
-        return True
-    if s == 'false':
-        return False
-    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        return s[1:-1]
-    try:
-        if '.' in s or ('e' in s.lower() and re.match(r'^-?[\d]', s)):
-            return float(s)
-        return int(s)
-    except ValueError:
-        pass
-    m = re.match(r'^\[([^\[\]]*)\]$', s)
-    if m:
-        inner = m.group(1).strip()
-        if inner:
-            parts = [p.strip() for p in inner.split(',')]
-            if 1 <= len(parts) <= 4:
-                try:
-                    return [float(p) if '.' in p else int(p) for p in parts]
-                except ValueError:
-                    pass
-    return None
-
-
-def _format_value(v: Any) -> str:
-    if isinstance(v, bool):
-        return 'true' if v else 'false'
-    if isinstance(v, str):
-        return f'"{v}"'
-    if isinstance(v, list):
-        return '[' + ', '.join(_format_value(x) for x in v) + ']'
-    if isinstance(v, float):
-        s = f'{v:g}'
-        if '.' not in s and 'e' not in s.lower():
-            s += '.0'
-        return s
-    return str(v)
-
 
 def _valid_param_name(name: str) -> bool:
     _KEYWORDS = {'true', 'false', 'undef', 'use', 'include',
@@ -494,9 +463,30 @@ class CustomizerPane(QWidget):
         self._params: list[ParameterDef] = []
         self._widgets: dict[str, list[QWidget]] = {}
         self._updating = False
+        self._file_path: Optional[str] = None
+        self._presets: dict[str, dict[str, Any]] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+
+        preset_row = QHBoxLayout()
+        preset_row.setContentsMargins(6, 6, 6, 0)
+        self._preset_combo = QComboBox()
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_selected)
+        preset_row.addWidget(self._preset_combo, 1)
+        self._preset_save_as_btn = QPushButton("Save As…")
+        self._preset_save_as_btn.clicked.connect(self._on_preset_save_as)
+        preset_row.addWidget(self._preset_save_as_btn)
+        self._preset_update_btn = QPushButton("Update")
+        self._preset_update_btn.clicked.connect(self._on_preset_update)
+        preset_row.addWidget(self._preset_update_btn)
+        self._preset_delete_btn = QPushButton("Delete")
+        self._preset_delete_btn.clicked.connect(self._on_preset_delete)
+        preset_row.addWidget(self._preset_delete_btn)
+        self._preset_row_widget = QWidget()
+        self._preset_row_widget.setLayout(preset_row)
+        outer.addWidget(self._preset_row_widget)
+        self._refresh_preset_combo()
 
         self._tab_widget = QTabWidget()
         outer.addWidget(self._tab_widget)
@@ -515,10 +505,22 @@ class CustomizerPane(QWidget):
         outer.addWidget(self._empty_label)
 
         self._tab_widget.hide()
+        self._preset_row_widget.hide()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_file_path(self, path: Optional[str]):
+        """Tells the pane which .scad file is active, so presets can be
+        loaded from/saved to its <name>.json sidecar. Called whenever the
+        active tab or its saved path changes; None (unsaved buffer) just
+        disables preset save/update/delete."""
+        if path == self._file_path:
+            return
+        self._file_path = path
+        self._presets = load_presets(preset_path_for(path)) if path else {}
+        self._refresh_preset_combo()
 
     def set_source(self, source: str):
         """Re-scan *source* and refresh widgets.  Called on every editor change."""
@@ -558,11 +560,15 @@ class CustomizerPane(QWidget):
 
         if not self._params:
             self._tab_widget.hide()
+            self._preset_row_widget.hide()
             self._empty_label.show()
+            self._update_preset_buttons()
             return
 
         self._empty_label.hide()
         self._tab_widget.show()
+        self._preset_row_widget.show()
+        self._update_preset_buttons()
 
         tabs: dict[str, list[ParameterDef]] = {}
         for p in self._params:
@@ -653,3 +659,87 @@ class CustomizerPane(QWidget):
         if new_source != self._source:
             self._source = new_source
             self.source_changed.emit(new_source)
+
+    # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+
+    def _current_values(self) -> dict[str, Any]:
+        """Re-scans self._source (already up to date with any in-flight
+        widget edit -- see _on_widget_changed) rather than trusting
+        self._params, which a caller may not have refreshed yet."""
+        return {p.name: p.default for p in scan_parameters(self._source)}
+
+    def _refresh_preset_combo(self):
+        self._preset_combo.blockSignals(True)
+        self._preset_combo.clear()
+        self._preset_combo.addItem('(none)')
+        for name in sorted(self._presets):
+            self._preset_combo.addItem(name)
+        self._preset_combo.setCurrentIndex(0)
+        self._preset_combo.blockSignals(False)
+        self._update_preset_buttons()
+
+    def _update_preset_buttons(self):
+        has_path = self._file_path is not None
+        self._preset_save_as_btn.setEnabled(has_path and bool(self._params))
+        is_real_selection = self._preset_combo.currentIndex() > 0
+        self._preset_update_btn.setEnabled(has_path and is_real_selection)
+        self._preset_delete_btn.setEnabled(has_path and is_real_selection)
+
+    def _on_preset_selected(self, idx: int):
+        self._update_preset_buttons()
+        if idx <= 0:
+            return
+        values = self._presets.get(self._preset_combo.itemText(idx), {})
+        self._apply_preset_values(values)
+
+    def _apply_preset_values(self, values: dict[str, Any]):
+        self._updating = True
+        for name, val in values.items():
+            for w in self._widgets.get(name, ()):
+                w.set_value(val)
+        self._updating = False
+        new_source = self._source
+        for name, val in values.items():
+            new_source = write_back_value(new_source, name, val)
+        if new_source != self._source:
+            self._source = new_source
+            self.source_changed.emit(new_source)
+
+    def _on_preset_save_as(self):
+        if not self._file_path:
+            return
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        self._presets[name] = self._current_values()
+        save_presets(preset_path_for(self._file_path), self._presets)
+        self._refresh_preset_combo()
+        idx = self._preset_combo.findText(name)
+        if idx >= 0:
+            self._preset_combo.setCurrentIndex(idx)
+
+    def _on_preset_update(self):
+        idx = self._preset_combo.currentIndex()
+        if idx <= 0 or not self._file_path:
+            return
+        name = self._preset_combo.itemText(idx)
+        self._presets[name] = self._current_values()
+        save_presets(preset_path_for(self._file_path), self._presets)
+
+    def _on_preset_delete(self):
+        idx = self._preset_combo.currentIndex()
+        if idx <= 0 or not self._file_path:
+            return
+        name = self._preset_combo.itemText(idx)
+        reply = QMessageBox.question(
+            self, "Delete Preset", f"Delete preset {name!r}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._presets.pop(name, None)
+        save_presets(preset_path_for(self._file_path), self._presets)
+        self._refresh_preset_combo()

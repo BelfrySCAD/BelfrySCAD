@@ -1028,6 +1028,7 @@ class MainWindow(QMainWindow):
     def _tab_changed(self, index):
         tab = self._tabs.widget(index)
         if tab:
+            self._customizer_pane.set_file_path(tab.file_path)
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
 
@@ -1272,6 +1273,8 @@ class MainWindow(QMainWindow):
         if old_path and old_path != path:
             get_document_manager().unregister(old_path, tab.editor)
         get_document_manager().register(path, tab.editor)
+        if tab is self._current_tab():
+            self._customizer_pane.set_file_path(path)
         self._update_recent_files(path)
         self._render(tab)
         return True

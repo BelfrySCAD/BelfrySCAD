@@ -12,6 +12,12 @@ def _parse_args(argv):
                               "no GUI window opens")
     parser.add_argument("-D", dest="defines", action="append", default=[], metavar="var=value",
                          help="Override a top-level variable (repeatable). Only applies together with -o")
+    parser.add_argument("-p", "--param-file", dest="param_file", metavar="FILE",
+                         help="Customizer parameter set file (JSON, as saved by the GUI Customizer's "
+                              "Save As.../Update). Requires -P. Only applies together with -o")
+    parser.add_argument("-P", "--param-set", dest="param_set", metavar="NAME",
+                         help="Name of the parameter set to apply from -p's FILE. -D overrides take "
+                              "precedence over same-named preset values. Only applies together with -o")
     parser.add_argument("--render", action="store_true",
                          help="Accepted for OpenSCAD CLI compatibility -- BelfrySCAD has no separate "
                               "preview mode, so this has no effect (headless export always fully renders)")
@@ -139,6 +145,28 @@ def main():
         if not args.file:
             print("belfryscad: -o/--output requires an input .scad file", file=sys.stderr)
             raise SystemExit(1)
+
+        if args.param_file or args.param_set:
+            if not (args.param_file and args.param_set):
+                print("belfryscad: -p and -P must be used together", file=sys.stderr)
+                raise SystemExit(1)
+            # scad_literals, not window.customizer -- headless export never
+            # imports PySide6 (see this branch's own comment above).
+            from belfryscad.scad_literals import load_presets, format_value
+            presets = load_presets(args.param_file)
+            if args.param_set not in presets:
+                available = ", ".join(sorted(presets)) or "(none found)"
+                print(f"belfryscad: -P {args.param_set!r}: not found in {args.param_file!r} "
+                      f"(available: {available})", file=sys.stderr)
+                raise SystemExit(1)
+            # Preset values first, then explicit -D overrides -- both are
+            # appended-prelude top-level assignments, and OpenSCAD's
+            # declarative last-assignment-wins semantics (see
+            # belfryscad.headless._prepare_source) makes -D win ties, matching
+            # real OpenSCAD's "-D overrides Customizer" precedence.
+            preset_defines = [f"{k}={format_value(v)}" for k, v in presets[args.param_set].items()]
+            args.defines = preset_defines + args.defines
+
         common = dict(defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings, backend=args.backend)
         if args.output.lower().endswith(".png"):
             png_common = dict(
@@ -163,7 +191,8 @@ def main():
             args.file, args.output, summary=args.summary, summary_file=args.summary_file, **mesh_common))
 
     _only_with_output = {
-        "-D": args.defines, "--animate/--animate_dir": args.animate is not None or args.animate_dir,
+        "-D": args.defines, "-p/-P": args.param_file or args.param_set,
+        "--animate/--animate_dir": args.animate is not None or args.animate_dir,
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
         "--summary/--summary-file": args.summary or args.summary_file,
