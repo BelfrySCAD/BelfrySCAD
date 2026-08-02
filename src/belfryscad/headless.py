@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 _VALID_EXPORT_FORMATS = {"asciistl", "binstl"}
-_VALID_SUMMARY_KEYS = {"time", "geometry", "bounding-box"}
+_VALID_SUMMARY_KEYS = {"time", "geometry", "bounding-box", "area", "camera"}
 
 
 def build_define_prelude(defines: list[str]) -> str:
@@ -168,28 +168,37 @@ def _validate_backend(backend: str | None) -> bool:
     return False
 
 
-def _compute_summary(bodies, elapsed: float, keys: set) -> dict:
+def _compute_summary(bodies, elapsed: float, keys: set, camera: dict | None = None) -> dict:
     import numpy as np
 
     result = {}
     if "time" in keys:
         result["time"] = {"total": round(elapsed, 3)}
-    if "geometry" in keys or "bounding-box" in keys:
+    if "camera" in keys and camera is not None:
+        result["camera"] = camera
+    if "geometry" in keys or "bounding-box" in keys or "area" in keys:
         facets = 0
         vertices = 0
+        area = 0.0
         mins, maxs = [], []
         for b in bodies:
             if b.body.is_empty():
                 continue
             m = b.body.to_mesh()
             v = np.asarray(m.vert_properties[:, :3])
-            facets += len(m.tri_verts)
+            tris = np.asarray(m.tri_verts)
+            facets += len(tris)
             vertices += len(v)
+            if "area" in keys and len(tris):
+                a, bb_, c = v[tris[:, 0]], v[tris[:, 1]], v[tris[:, 2]]
+                area += float(np.linalg.norm(np.cross(bb_ - a, c - a), axis=1).sum() / 2)
             if len(v):
                 mins.append(v.min(axis=0))
                 maxs.append(v.max(axis=0))
         if "geometry" in keys:
             result["geometry"] = {"bodies": len(bodies), "facets": facets, "vertices": vertices}
+        if "area" in keys:
+            result["area"] = round(area, 3)
         if "bounding-box" in keys:
             bb = {"min": None, "max": None}
             if mins:
@@ -210,11 +219,12 @@ def _parse_summary_keys(summary: str) -> set | None:
     return keys
 
 
-def _emit_summary(bodies, elapsed: float, summary: str, summary_file: str | None) -> bool:
+def _emit_summary(bodies, elapsed: float, summary: str, summary_file: str | None,
+                   camera: dict | None = None) -> bool:
     keys = _parse_summary_keys(summary)
     if keys is None:
         return False
-    data = _compute_summary(bodies, elapsed, keys)
+    data = _compute_summary(bodies, elapsed, keys, camera=camera)
     if summary_file:
         import json
         text = json.dumps(data, indent=2)
@@ -223,7 +233,7 @@ def _emit_summary(bodies, elapsed: float, summary: str, summary_file: str | None
         else:
             Path(summary_file).write_text(text + "\n", encoding="utf-8")
     else:
-        for key in ("time", "geometry", "bounding-box"):
+        for key in ("time", "camera", "geometry", "area", "bounding-box"):
             if key in data:
                 print(f"{key}: {data[key]}")
     return True

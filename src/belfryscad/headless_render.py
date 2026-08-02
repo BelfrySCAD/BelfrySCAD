@@ -245,10 +245,11 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
                 camera: str | None = None, autocenter: bool = False, viewall: bool = False,
                 projection: str | None = None, view: str | None = None, colorscheme: str | None = None,
                 defines: list[str] = (), quiet: bool = False, hard_warnings: bool = False,
-                backend: str | None = None) -> int:
+                backend: str | None = None, summary: str | None = None,
+                summary_file: str | None = None) -> int:
     """Parse + evaluate source_path and render a PNG screenshot to
     output_path. Returns a process exit code (0 success, 1 failure)."""
-    from belfryscad.headless import _evaluate, _prepare_source, _cleanup, _validate_backend
+    from belfryscad.headless import _evaluate, _prepare_source, _cleanup, _validate_backend, _emit_summary
 
     if not _validate_backend(backend):
         return 1
@@ -266,7 +267,7 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
         _cleanup(tmp_path)
     if result is None:
         return 1
-    bodies, _elapsed = result
+    bodies, elapsed = result
 
     setup = _make_offscreen_renderer(opts)
     if setup is None:
@@ -274,6 +275,13 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
     _app, ctx, renderer, fbo = setup
     if not _paint_frame(ctx, renderer, fbo, opts, bodies, output_path):
         return 1
+
+    if summary is not None:
+        cam = renderer.camera
+        cam_info = {"translate": [float(x) for x in cam.target], "distance": float(cam.distance),
+                    "azimuth": float(cam.azimuth), "elevation": float(cam.elevation)}
+        if not _emit_summary(bodies, elapsed, summary, summary_file, camera=cam_info):
+            return 1
 
     if not quiet:
         print(f"Exported to {output_path}")

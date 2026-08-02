@@ -32,7 +32,7 @@ def _parse_args(argv):
                               "(BelfrySCAD has no CGAL backend). Only applies together with -o")
     parser.add_argument("--summary", metavar="KEYS",
                          help="Comma-separated summary info to print after export: all, time, geometry, "
-                              "bounding-box. Only applies together with -o")
+                              "bounding-box, area, camera (camera is .png-only). Only applies together with -o")
     parser.add_argument("--summary-file", dest="summary_file", metavar="FILE",
                          help="Write --summary as JSON to FILE ('-' for stdout) instead of printing it plainly")
     parser.add_argument("--imgsize", metavar="W,H", default="1024,768",
@@ -150,7 +150,8 @@ def main():
                 raise SystemExit(render_png_animation(
                     args.file, args.output, args.animate, animate_dir=args.animate_dir, **png_common))
             from belfryscad.headless_render import render_png
-            raise SystemExit(render_png(args.file, args.output, **png_common))
+            raise SystemExit(render_png(args.file, args.output, summary=args.summary,
+                                         summary_file=args.summary_file, **png_common))
 
         mesh_common = dict(common, export_format=args.export_format)
         if args.animate is not None:

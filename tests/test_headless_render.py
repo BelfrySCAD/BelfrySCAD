@@ -166,6 +166,19 @@ class TestRenderPng:
         code = render_png(str(tmp_path / "nope.scad"), str(tmp_path / "out.png"))
         assert code == 1
 
+    def test_summary_camera_and_geometry(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube([10, 5, 3]);\n")
+        out = tmp_path / "out.png"
+        summary_path = tmp_path / "summary.json"
+        code = render_png(str(src), str(out), imgsize="50,50", summary="camera,geometry",
+                           summary_file=str(summary_path))
+        assert code == 0
+        import json
+        data = json.loads(summary_path.read_text())
+        assert data["geometry"] == {"bodies": 1, "facets": 12, "vertices": 8}
+        assert set(data["camera"]) == {"translate", "distance", "azimuth", "elevation"}
+
     def test_define_applies(self, tmp_path):
         src = tmp_path / "in.scad"
         src.write_text("x = 10;\ncube([x, x, x]);\n")
