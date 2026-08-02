@@ -16,7 +16,8 @@ import json
 
 from belfryscad.window.customizer import (
     _parse_literal, _format_value, _parse_constraint, _default_step,
-    scan_parameters, write_back_value,
+    _coerce_option_value, _build_constraint,
+    scan_parameters, write_back_value, insert_parameter, replace_parameter, delete_parameter,
     preset_path_for, load_presets, save_presets,
 )
 
@@ -97,6 +98,46 @@ class TestParseConstraint:
         assert _parse_constraint('', 5) == {'type': 'default'}
 
 
+class TestCoerceOptionValue:
+    def test_int(self):
+        assert _coerce_option_value('10') == 10
+        assert isinstance(_coerce_option_value('10'), int)
+
+    def test_float(self):
+        assert _coerce_option_value('2.5') == 2.5
+
+    def test_string(self):
+        assert _coerce_option_value('sm') == 'sm'
+
+
+class TestBuildConstraint:
+    def test_slider_roundtrips_through_parse_constraint(self):
+        text = _build_constraint('slider', min=0, max=100, step=5)
+        assert text == '[0:5:100]'
+        assert _parse_constraint(text, 50) == {'type': 'slider', 'min': 0.0, 'max': 100.0, 'step': 5.0}
+
+    def test_dropdown_bare_when_label_matches_value(self):
+        text = _build_constraint('dropdown', options=[('a', 'a'), ('b', 'b')])
+        assert text == '[a, b]'
+
+    def test_dropdown_with_labels_roundtrips(self):
+        text = _build_constraint('dropdown', options=[('sm', 'Small'), ('lg', 'Large')])
+        assert text == '[sm:Small, lg:Large]'
+        assert _parse_constraint(text, 'sm') == {
+            'type': 'dropdown', 'options': [('sm', 'Small'), ('lg', 'Large')],
+        }
+
+    def test_string_maxlen(self):
+        assert _build_constraint('string', maxlen=20) == '20'
+
+    def test_string_no_maxlen_is_empty(self):
+        assert _build_constraint('string', maxlen=0) == ''
+
+    def test_number_and_checkbox_are_empty(self):
+        assert _build_constraint('number') == ''
+        assert _build_constraint('checkbox') == ''
+
+
 class TestScanParameters:
     def test_simple_assignment(self):
         params = scan_parameters('width = 10;\n')
@@ -153,6 +194,93 @@ class TestWriteBackValue:
     def test_unknown_name_returns_source_unchanged(self):
         source = 'width = 10;\n'
         assert write_back_value(source, 'nonexistent', 5) == source
+
+
+class TestInsertParameter:
+    def test_into_empty_file(self):
+        result = insert_parameter('', 'width', 10, 'Width', 'Parameters', '')
+        assert result == '// Width\nwidth = 10;\n'
+
+    def test_with_constraint(self):
+        result = insert_parameter('', 'width', 10, '', 'Parameters', '1:100')
+        assert result == 'width = 10; // 1:100\n'
+
+    def test_appends_after_last_param_in_same_default_tab(self):
+        source = 'a = 1;\nb = 2;\n'
+        result = insert_parameter(source, 'c', 3, '', 'Parameters', '')
+        assert result == 'a = 1;\nb = 2;\nc = 3;\n'
+
+    def test_new_named_tab_appends_with_header(self):
+        source = 'a = 1;\n'
+        result = insert_parameter(source, 'b', 2, '', 'Sizes', '')
+        assert result == 'a = 1;\n\n/* [Sizes] */\nb = 2;\n'
+
+    def test_second_param_in_same_named_tab_no_new_header(self):
+        source = 'a = 1;\n\n/* [Sizes] */\nb = 2;\n'
+        result = insert_parameter(source, 'c', 3, '', 'Sizes', '')
+        assert result == 'a = 1;\n\n/* [Sizes] */\nb = 2;\nc = 3;\n'
+
+    def test_default_tab_param_inserted_before_first_header(self):
+        # A headerless ("Parameters") param can't go after a tab-group
+        # header started earlier in the file -- it would be misread as
+        # belonging to that tab (scan_parameters has no "reset" syntax).
+        source = '/* [Sizes] */\nb = 2;\n'
+        result = insert_parameter(source, 'a', 1, '', 'Parameters', '')
+        assert result == 'a = 1;\n/* [Sizes] */\nb = 2;\n'
+
+    def test_global_tab_gets_explicit_header(self):
+        source = 'a = 1;\n'
+        result = insert_parameter(source, 'g', 5, '', 'Global', '')
+        assert result == 'a = 1;\n\n/* [Global] */\ng = 5;\n'
+
+
+class TestReplaceParameter:
+    def test_replaces_value_and_constraint(self):
+        source = 'width = 10; // [0:50]\n'
+        result = replace_parameter(source, 'width', 20, '', '0:100')
+        assert result == 'width = 20; // 0:100\n'
+
+    def test_removes_constraint_when_empty(self):
+        source = 'width = 10; // [0:50]\n'
+        result = replace_parameter(source, 'width', 20, '', '')
+        assert result == 'width = 20;\n'
+
+    def test_updates_existing_description(self):
+        source = '// Old desc\nwidth = 10;\n'
+        result = replace_parameter(source, 'width', 10, 'New desc', '')
+        assert result == '// New desc\nwidth = 10;\n'
+
+    def test_adds_description_where_none_existed(self):
+        source = 'width = 10;\n'
+        result = replace_parameter(source, 'width', 10, 'New desc', '')
+        assert result == '// New desc\nwidth = 10;\n'
+
+    def test_removes_description_when_cleared(self):
+        source = '// Old desc\nwidth = 10;\n'
+        result = replace_parameter(source, 'width', 10, '', '')
+        assert result == 'width = 10;\n'
+
+    def test_unknown_name_returns_source_unchanged(self):
+        source = 'width = 10;\n'
+        assert replace_parameter(source, 'nonexistent', 5, '', '') == source
+
+
+class TestDeleteParameter:
+    def test_removes_assignment_line(self):
+        source = 'a = 1;\nb = 2;\n'
+        assert delete_parameter(source, 'a') == 'b = 2;\n'
+
+    def test_removes_description_line_too(self):
+        source = '// A desc\na = 1;\nb = 2;\n'
+        assert delete_parameter(source, 'a') == 'b = 2;\n'
+
+    def test_leaves_tab_header_in_place(self):
+        source = '/* [Sizes] */\na = 1;\nb = 2;\n'
+        assert delete_parameter(source, 'a') == '/* [Sizes] */\nb = 2;\n'
+
+    def test_unknown_name_returns_source_unchanged(self):
+        source = 'width = 10;\n'
+        assert delete_parameter(source, 'nonexistent') == source
 
 
 class TestPresetPathFor:

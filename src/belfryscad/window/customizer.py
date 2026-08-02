@@ -26,6 +26,14 @@ Parameter sets ("presets"), mirroring OpenSCAD's own Customizer + CLI
 alongside the .scad file (<name>.json). Values are stored using the same
 literal syntax as the .scad source itself (_format_value/_parse_literal),
 so the file is plain-text-diffable and round-trips through either tool.
+
+Parameter Editor: "Add Parameter..." (always-visible button) and each
+parameter row's right-click "Edit Parameter.../Delete Parameter..." open
+ParameterEditorDialog (customizer_param_dialog.py) to create/edit/remove a
+parameter *definition* itself -- name, type, description, tab, constraint
+-- as opposed to the rest of this pane, which only edits an existing
+parameter's *value*. Renaming or moving an existing parameter to a
+different tab are both out of scope (see the dialog's own doc comment).
 """
 
 import re
@@ -35,8 +43,8 @@ from typing import Any, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
+    QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from belfryscad.scad_literals import (
@@ -162,6 +170,109 @@ def write_back_value(source: str, name: str, new_value: Any) -> str:
     return '\n'.join(lines)
 
 
+_DESC_LINE_RE = re.compile(r'^\s*//')
+_TAB_HEADER_RE = re.compile(r'^\s*/\*\s*\[([^\]]*)\]\s*\*/\s*$')
+
+
+def insert_parameter(source: str, name: str, default: Any, description: str,
+                      tab: str, constraint: str) -> str:
+    """Inserts a brand-new top-level parameter (used by the "Add
+    Parameter..." dialog) formatted to match what scan_parameters itself
+    recognizes. Placement:
+      - Right after the last existing parameter already in *tab*, if any.
+      - Else, for the default "Parameters" group (never explicitly
+        headered -- once a `/* [X] */` header appears, everything after it
+        belongs to X until the next header, so a headerless parameter can
+        only go before the first header in the file): after the last other
+        headerless parameter, else right before the file's first tab-group
+        header, else at the very top.
+      - Else (a genuinely new named tab, including "Global"): after the
+        last parameter overall, with a new `/* [tab] */` header -- always
+        a valid place for a header to start a fresh group.
+      - Or, if there are no existing parameters at all: at the top of the
+        file, with a header if *tab* isn't the default group."""
+    params = scan_parameters(source)
+    lines = source.split('\n')
+
+    new_lines = []
+    if description:
+        new_lines.append(f"// {description}")
+    val_str = _format_value(default)
+    new_lines.append(f"{name} = {val_str}; // {constraint}" if constraint else f"{name} = {val_str};")
+
+    same_tab = [p for p in params if p.tab == tab]
+    if same_tab:
+        insert_at = max(p.line_num for p in same_tab) + 1
+    elif tab == 'Parameters':
+        default_params = [p for p in params if p.tab == 'Parameters']
+        if default_params:
+            insert_at = max(p.line_num for p in default_params) + 1
+        else:
+            first_header = next((i for i, ln in enumerate(lines) if _TAB_HEADER_RE.match(ln)), None)
+            insert_at = first_header if first_header is not None else 0
+    else:
+        insert_at = max((p.line_num for p in params), default=-1) + 1
+        if tab:
+            header = ["", f"/* [{tab}] */"] if params else [f"/* [{tab}] */"]
+            new_lines = header + new_lines
+
+    lines[insert_at:insert_at] = new_lines
+    return '\n'.join(lines)
+
+
+def replace_parameter(source: str, name: str, new_default: Any,
+                       new_description: str, new_constraint: str) -> str:
+    """Rewrites an existing parameter's value/description/constraint in
+    place -- same line, same tab, same position. Does not rename the
+    variable (would require rewriting every use-site in the script) or
+    move it between tabs (would require relocating its lines) -- both are
+    deliberately out of scope for "Edit Parameter..."."""
+    params = scan_parameters(source)
+    target = next((p for p in params if p.name == name), None)
+    if target is None:
+        return source
+    lines = source.split('\n')
+
+    val_str = _format_value(new_default)
+    lines[target.line_num] = (
+        f"{name} = {val_str}; // {new_constraint}" if new_constraint else f"{name} = {val_str};"
+    )
+
+    desc_idx = target.line_num - 1
+    has_desc_line = desc_idx >= 0 and bool(_DESC_LINE_RE.match(lines[desc_idx]))
+    if has_desc_line:
+        if new_description:
+            lines[desc_idx] = f"// {new_description}"
+        else:
+            del lines[desc_idx]
+    elif new_description:
+        lines.insert(target.line_num, f"// {new_description}")
+
+    return '\n'.join(lines)
+
+
+def delete_parameter(source: str, name: str) -> str:
+    """Removes a parameter's assignment line and, if present, its
+    directly-preceding description comment line. Leaves any tab-group
+    header alone even if this was the header's last remaining parameter
+    (an empty tab is harmless -- scan_parameters just produces no
+    parameters for it -- and leaving the header is less surprising than
+    silently deleting it too)."""
+    params = scan_parameters(source)
+    target = next((p for p in params if p.name == name), None)
+    if target is None:
+        return source
+    lines = source.split('\n')
+
+    desc_idx = target.line_num - 1
+    has_desc_line = desc_idx >= 0 and bool(_DESC_LINE_RE.match(lines[desc_idx]))
+    del lines[target.line_num]
+    if has_desc_line:
+        del lines[desc_idx]
+
+    return '\n'.join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Constraint parsing
 # ---------------------------------------------------------------------------
@@ -216,6 +327,41 @@ def _parse_constraint(constraint: str, default_val: Any) -> dict:
         return {'type': 'string', 'maxlen': int(c)}
 
     return {'type': 'default'}
+
+
+def _coerce_option_value(s: str) -> Any:
+    """A dropdown option token (e.g. the 'sm' or '10' in '[sm:Small,
+    10:Ten]') is always written bare/unquoted regardless of whether it
+    represents a number or a string -- unlike _parse_literal, which expects
+    quotes for strings. Numeric-looking tokens become int/float; anything
+    else stays a string."""
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s
+
+
+def _build_constraint(kind: str, **opts) -> str:
+    """Inverse of _parse_constraint: builds the trailing '// <constraint>'
+    text (without the leading //) used by AddParameterDialog/insert_
+    parameter/replace_parameter. Returns '' for a kind with no annotation
+    (plain number, checkbox, unconstrained string)."""
+    if kind in ('slider', 'vector'):
+        return f"[{_format_value(opts['min'])}:{_format_value(opts['step'])}:{_format_value(opts['max'])}]"
+    if kind == 'dropdown':
+        parts = [
+            value if label == value else f"{value}:{label}"
+            for value, label in opts['options']
+        ]
+        return f"[{', '.join(parts)}]"
+    if kind == 'string' and opts.get('maxlen'):
+        return str(opts['maxlen'])
+    return ''
 
 
 # ---------------------------------------------------------------------------
@@ -469,8 +615,20 @@ class CustomizerPane(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
+        add_row = QHBoxLayout()
+        add_row.setContentsMargins(6, 0, 6, 6)
+        self._add_param_btn = QPushButton("+")
+        self._add_param_btn.setToolTip("Add a new parameter")
+        self._add_param_btn.setFixedWidth(28)
+        self._add_param_btn.clicked.connect(self._on_add_parameter)
+        add_row.addWidget(self._add_param_btn)
+        add_row.addStretch()
+        add_row_widget = QWidget()
+        add_row_widget.setLayout(add_row)
+
         preset_row = QHBoxLayout()
         preset_row.setContentsMargins(6, 6, 6, 0)
+        preset_row.addWidget(QLabel("Presets"))
         self._preset_combo = QComboBox()
         self._preset_combo.currentIndexChanged.connect(self._on_preset_selected)
         preset_row.addWidget(self._preset_combo, 1)
@@ -479,15 +637,15 @@ class CustomizerPane(QWidget):
         self._preset_save_as_btn.setFixedWidth(28)
         self._preset_save_as_btn.clicked.connect(self._on_preset_save_as)
         preset_row.addWidget(self._preset_save_as_btn)
-        self._preset_update_btn = QPushButton("Update")
-        self._preset_update_btn.setToolTip("Overwrite the selected preset with current values")
-        self._preset_update_btn.clicked.connect(self._on_preset_update)
-        preset_row.addWidget(self._preset_update_btn)
         self._preset_delete_btn = QPushButton("−")
         self._preset_delete_btn.setToolTip("Delete the selected preset")
         self._preset_delete_btn.setFixedWidth(28)
         self._preset_delete_btn.clicked.connect(self._on_preset_delete)
         preset_row.addWidget(self._preset_delete_btn)
+        self._preset_update_btn = QPushButton("Update")
+        self._preset_update_btn.setToolTip("Overwrite the selected preset with current values")
+        self._preset_update_btn.clicked.connect(self._on_preset_update)
+        preset_row.addWidget(self._preset_update_btn)
         self._preset_row_widget = QWidget()
         self._preset_row_widget.setLayout(preset_row)
         outer.addWidget(self._preset_row_widget)
@@ -508,6 +666,8 @@ class CustomizerPane(QWidget):
         self._empty_label.setWordWrap(True)
         self._empty_label.setEnabled(False)
         outer.addWidget(self._empty_label)
+
+        outer.addWidget(add_row_widget)
 
         self._tab_widget.hide()
         self._preset_row_widget.hide()
@@ -608,6 +768,10 @@ class CustomizerPane(QWidget):
                 self._widgets.setdefault(p.name, []).append(w)
                 lbl = QLabel(p.description)
                 lbl.setWordWrap(True)
+                lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                lbl.customContextMenuRequested.connect(
+                    lambda pos, lbl=lbl, name=p.name: self._on_param_context_menu(lbl, name, pos)
+                )
                 form.addRow(lbl, w)
 
             scroll = QScrollArea()
@@ -664,6 +828,78 @@ class CustomizerPane(QWidget):
         if new_source != self._source:
             self._source = new_source
             self.source_changed.emit(new_source)
+
+    # ------------------------------------------------------------------
+    # Parameter Editor (create/edit/delete parameter *definitions*)
+    # ------------------------------------------------------------------
+
+    def _current_tab_name(self) -> str:
+        idx = self._tab_widget.currentIndex()
+        if idx < 0:
+            return 'Parameters'
+        return self._tab_widget.tabText(idx) or 'Parameters'
+
+    def _apply_new_source(self, new_source: str):
+        if new_source == self._source:
+            return
+        self._source = new_source
+        new_params = scan_parameters(new_source)
+        self._params = new_params
+        self._rebuild_ui()
+        self.source_changed.emit(new_source)
+
+    def _on_add_parameter(self):
+        from belfryscad.window.customizer_param_dialog import ParameterEditorDialog
+
+        tabs = list(dict.fromkeys(p.tab for p in self._params))
+        dlg = ParameterEditorDialog(
+            existing_tabs=tabs, existing_names=[p.name for p in self._params],
+            default_tab=self._current_tab_name(), parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        result = dlg.result_values()
+        if result is None:
+            return
+        name, default, description, tab, constraint = result
+        new_source = insert_parameter(self._source, name, default, description, tab, constraint)
+        self._apply_new_source(new_source)
+
+    def _on_param_context_menu(self, label: QLabel, name: str, pos):
+        menu = QMenu(self)
+        menu.addAction("Edit Parameter…", lambda: self._on_edit_parameter(name))
+        menu.addAction("Delete Parameter…", lambda: self._on_delete_parameter(name))
+        menu.exec(label.mapToGlobal(pos))
+
+    def _on_edit_parameter(self, name: str):
+        from belfryscad.window.customizer_param_dialog import ParameterEditorDialog
+
+        param = next((p for p in self._params if p.name == name), None)
+        if param is None:
+            return
+        tabs = list(dict.fromkeys(p.tab for p in self._params))
+        dlg = ParameterEditorDialog(
+            existing_tabs=tabs, existing_names=[p.name for p in self._params],
+            editing=param, parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        result = dlg.result_values()
+        if result is None:
+            return
+        _name, default, description, _tab, constraint = result
+        new_source = replace_parameter(self._source, name, default, description, constraint)
+        self._apply_new_source(new_source)
+
+    def _on_delete_parameter(self, name: str):
+        reply = QMessageBox.question(
+            self, "Delete Parameter", f"Delete parameter {name!r}? This removes it from the source.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        new_source = delete_parameter(self._source, name)
+        self._apply_new_source(new_source)
 
     # ------------------------------------------------------------------
     # Presets
