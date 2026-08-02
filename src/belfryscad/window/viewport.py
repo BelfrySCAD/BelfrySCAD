@@ -171,8 +171,8 @@ class Viewport(QOpenGLWidget):
         if self._ctx:
             self._ctx.viewport = (0, 0, w, h)
             self._renderer.set_viewport(w, h)
-        if self._debug_paused:
-            self._position_pause_label()
+        if self._debug_paused or self._render_busy or self._debug_busy:
+            self._position_busy_label()
         self.size_changed.emit(w, h)
 
     def paintGL(self):
@@ -279,18 +279,23 @@ class Viewport(QOpenGLWidget):
         if paused:
             self._busy_label.setPixmap(_recolored_icon_pixmap("pause", 24, Qt.GlobalColor.white))
             self._busy_label.adjustSize()
-            self._position_pause_label()
+            self._position_busy_label()
             self._busy_label.show()
         else:
             self._busy_label.hide()
 
-    def _position_pause_label(self):
+    def _position_busy_label(self):
         """Upper-right corner, same margin as the perspective button's
-        upper-left placement. Re-called from resizeGL (in addition to the
-        one-off call from set_debug_paused) so the indicator stays inside
-        the viewport -- its position is computed from self.width(), which
-        is stale the moment the viewport is resized while paused; nothing
-        else re-triggers set_debug_paused mid-pause to recompute it."""
+        upper-left placement -- shared by the debug-paused indicator and
+        the render/debug busy countdown overlay (_update_busy_overlay), so
+        neither ever covers the model itself (the previous centered
+        placement was directly in the way, especially noticeable on a slow
+        render where the model behind it is visible again for only a
+        fraction of a second per frame during animation playback). Also
+        re-called from resizeGL so the indicator stays inside the viewport
+        -- its position is computed from self.width(), which goes stale the
+        moment the viewport is resized while the label is showing; nothing
+        else re-triggers a reposition mid-render/mid-pause."""
         margin = 12
         x = self.width() - self._busy_label.width() - margin
         y = margin
@@ -324,9 +329,7 @@ class Viewport(QOpenGLWidget):
         else:
             self._busy_label.setText(f" {int(elapsed)}s {self._spinner_frames[frame]}")
         self._busy_label.adjustSize()
-        x = (self.width() - self._busy_label.width()) // 2
-        y = (self.height() - self._busy_label.height()) // 2
-        self._busy_label.move(x, y)
+        self._position_busy_label()
 
     # ------------------------------------------------------------------
     # Spin

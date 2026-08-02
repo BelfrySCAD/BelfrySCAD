@@ -1576,7 +1576,14 @@ class MainWindow(QMainWindow):
         render_id = self._render_id
         tab.editor.clear_errors()
         self._console.clear()
-        self._viewport.load_geometry([])
+        # Deliberately NOT self._viewport.load_geometry([]) here -- the
+        # previous render's geometry stays visible (with the busy overlay on
+        # top) until this one's new geometry is ready to replace it, in
+        # _on_render_done. Matches CLAUDE.md's own "display last valid
+        # geometry while code is invalid" requirement, which clearing here
+        # violated for the whole render duration, not just error cases --
+        # most visible during animation playback on a slow model, where the
+        # viewport was empty for seconds at a time between frames.
         self.log("Rendering…")
 
         cancel = threading.Event()
