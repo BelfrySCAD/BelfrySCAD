@@ -907,11 +907,19 @@ class SceneRenderer:
             self._ctx.polygon_offset = (0.0, 0.0)
 
     def paint(self, bg_color: tuple = None, qt_fbo_id: int = 0,
-              extra_paint=None):
+              extra_paint=None, fbo: Optional[mgl.Framebuffer] = None):
         if self._ctx is None or self._prog is None:
             return
 
-        fbo = self._ctx.detect_framebuffer(qt_fbo_id)
+        # `fbo`, when given, targets it directly instead of looking one up
+        # by Qt's own OpenGL framebuffer id -- used for headless/offscreen
+        # rendering (a standalone moderngl context has no Qt-managed
+        # default framebuffer at all), see belfryscad.headless_render.
+        # Every live GUI call site is unaffected: they never pass `fbo`, so
+        # this falls through to the original Qt-framebuffer lookup exactly
+        # as before.
+        if fbo is None:
+            fbo = self._ctx.detect_framebuffer(qt_fbo_id)
         fbo.use()
         # depth_mask lives on Framebuffer, not Context -- _paint_scene's
         # translucent passes need it to disable depth writes while blending.

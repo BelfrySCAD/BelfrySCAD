@@ -8,7 +8,8 @@ def _parse_args(argv):
     parser = argparse.ArgumentParser(prog="belfryscad", add_help=False)
     parser.add_argument("file", nargs="?")
     parser.add_argument("-o", "--output", metavar="FILE",
-                         help="Render FILE headlessly and export to this path (.stl/.obj/.3mf); no GUI window opens")
+                         help="Render FILE headlessly and export to this path (.stl/.obj/.3mf/.png); "
+                              "no GUI window opens")
     parser.add_argument("-D", dest="defines", action="append", default=[], metavar="var=value",
                          help="Override a top-level variable (repeatable). Only applies together with -o")
     parser.add_argument("--render", action="store_true",
@@ -34,6 +35,16 @@ def _parse_args(argv):
                               "bounding-box. Only applies together with -o")
     parser.add_argument("--summary-file", dest="summary_file", metavar="FILE",
                          help="Write --summary as JSON to FILE ('-' for stdout) instead of printing it plainly")
+    parser.add_argument("--imgsize", metavar="W,H", default="1024,768",
+                         help="=width,height of exported .png (default 1024,768)")
+    parser.add_argument("--camera", metavar="SPEC",
+                         help="Camera for .png export: =tx,ty,tz,rx,ry,rz,dist or =eye_x,y,z,center_x,y,z")
+    parser.add_argument("--autocenter", action="store_true", help="Center the camera on the object (.png only)")
+    parser.add_argument("--viewall", action="store_true", help="Fit the camera to the whole object (.png only)")
+    parser.add_argument("--projection", metavar="(o)rtho|(p)erspective", help="Camera projection for .png export")
+    parser.add_argument("--view", metavar="OPTS",
+                         help="Comma-separated: axes, crosshairs, edges, scales, wireframe (.png only)")
+    parser.add_argument("--colorscheme", metavar="NAME", help="Color theme for .png export")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -120,28 +131,43 @@ def main():
 
     if args.output:
         # Headless export: deliberately never imports PySide6/creates a
-        # QApplication -- no display or GPU needed, just the evaluator +
-        # plain file I/O (see belfryscad.headless/belfryscad.exporters).
+        # QApplication for mesh output (no display or GPU needed -- see
+        # belfryscad.headless/belfryscad.exporters). .png output is the one
+        # exception: it genuinely needs Qt (QImage/QPainter for axis-label
+        # textures) and an offscreen GL context -- see
+        # belfryscad.headless_render's own module doc comment.
         if not args.file:
             print("belfryscad: -o/--output requires an input .scad file", file=sys.stderr)
             raise SystemExit(1)
-        common = dict(
-            defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings,
-            export_format=args.export_format, backend=args.backend,
-        )
+        common = dict(defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings, backend=args.backend)
+        if args.output.lower().endswith(".png"):
+            png_common = dict(
+                common, imgsize=args.imgsize, camera=args.camera, autocenter=args.autocenter,
+                viewall=args.viewall, projection=args.projection, view=args.view, colorscheme=args.colorscheme,
+            )
+            if args.animate is not None:
+                from belfryscad.headless_render import render_png_animation
+                raise SystemExit(render_png_animation(
+                    args.file, args.output, args.animate, animate_dir=args.animate_dir, **png_common))
+            from belfryscad.headless_render import render_png
+            raise SystemExit(render_png(args.file, args.output, **png_common))
+
+        mesh_common = dict(common, export_format=args.export_format)
         if args.animate is not None:
             from belfryscad.headless import render_and_export_animation
             raise SystemExit(render_and_export_animation(
-                args.file, args.output, args.animate, animate_dir=args.animate_dir, **common))
+                args.file, args.output, args.animate, animate_dir=args.animate_dir, **mesh_common))
         from belfryscad.headless import render_and_export
         raise SystemExit(render_and_export(
-            args.file, args.output, summary=args.summary, summary_file=args.summary_file, **common))
+            args.file, args.output, summary=args.summary, summary_file=args.summary_file, **mesh_common))
 
     _only_with_output = {
         "-D": args.defines, "--animate/--animate_dir": args.animate is not None or args.animate_dir,
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
         "--summary/--summary-file": args.summary or args.summary_file,
+        "--imgsize/--camera/--autocenter/--viewall/--projection/--view/--colorscheme":
+            args.camera or args.autocenter or args.viewall or args.projection or args.view or args.colorscheme,
     }
     ignored = [name for name, used in _only_with_output.items() if used]
     if ignored:
