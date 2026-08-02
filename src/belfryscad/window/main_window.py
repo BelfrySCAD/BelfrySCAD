@@ -148,6 +148,12 @@ class FileTab(QWidget):
         self.file_path = None
         self.is_modified = False
         self.root_scope = None
+        # The temp file most recently parsed for this tab's root_scope --
+        # _RenderWorker always parses a temp copy of the live buffer (see
+        # its own doc comment), so AST node .position.origin values for
+        # this tab's own top-level code point here, not at file_path. Kept
+        # around so _go_to_definition can recognize "this tab" either way.
+        self._last_parse_path = None
         self._last_text = ""
         self._last_cursor = 0
         self._suppress_text_undo = False
@@ -187,10 +193,11 @@ class _RenderCallback(QObject):
             self._mw._console.append_output(captured.rstrip())
             self._mw._parse_error_to_editor(self._file_tab, captured)
 
-    @Slot(object, object)
-    def on_ast_ready(self, nodes, root_scope):
+    @Slot(object, object, str)
+    def on_ast_ready(self, nodes, root_scope, parse_path: str):
         if self._render_id == self._mw._render_id:
             self._file_tab.root_scope = root_scope
+            self._file_tab._last_parse_path = parse_path
             self._file_tab.editor.update_user_names(root_scope)
 
     @Slot(object, object, float, object, object, object)
@@ -209,7 +216,7 @@ class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
-    ast_ready = Signal(object, object)   # (nodes, root_scope) — emitted after successful parse
+    ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
     finished = Signal(object, object, float, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
@@ -229,8 +236,9 @@ class _RenderWorker(QObject):
         try:
             self._do_render()
         finally:
-            # The C++ evaluator reads the file at eval time, so a temp file
-            # for an unsaved buffer must outlive _do_render -- clean it up here.
+            # The C++ evaluator reads the file at eval time, so the temp
+            # file _do_render always writes the live buffer to must outlive
+            # it -- clean it up here.
             if self._tmp_path:
                 import os as _os
                 try:
@@ -246,18 +254,22 @@ class _RenderWorker(QObject):
 
         _t0 = _time.perf_counter()
 
-        # Write an unsaved buffer to a temp .scad so the C++ parser/evaluator
-        # (both path-based) can read it; run()'s finally unlinks it. A saved
-        # file is read in place. The C++ parser resolves use/include itself.
-        if self._file_path:
-            parse_path = self._file_path
-        else:
-            _tmp = tempfile.NamedTemporaryFile(
-                suffix=".scad", mode="w", encoding="utf-8", delete=False
-            )
-            _tmp.write(self._source)
-            _tmp.close()
-            parse_path = self._tmp_path = _tmp.name
+        # Always render *self._source* (the live editor buffer captured by
+        # _render() at trigger time), never self._file_path's on-disk
+        # content directly -- F6/Render must reflect unsaved edits, not
+        # just whatever was last saved. A temp .scad is written either way
+        # (the C++ parser/evaluator are both path-based) and unlinked in
+        # run()'s finally. When the tab has a real file_path, the temp file
+        # goes in *that* file's own directory so relative use/include
+        # statements still resolve (same convention as
+        # belfryscad.headless's CLI -D handling, _prepare_source).
+        tmp_dir = str(Path(self._file_path).parent) if self._file_path else None
+        _tmp = tempfile.NamedTemporaryFile(
+            suffix=".scad", mode="w", encoding="utf-8", delete=False, dir=tmp_dir
+        )
+        _tmp.write(self._source)
+        _tmp.close()
+        parse_path = self._tmp_path = _tmp.name
 
         # --- Parse (C++) ---
         try:
@@ -269,7 +281,7 @@ class _RenderWorker(QObject):
             self.logged.emit(f"Parse error: {e}")
             return
 
-        self.ast_ready.emit(None, root_scope)
+        self.ast_ready.emit(None, root_scope, parse_path)
 
         if self._cancel.is_set():
             return
@@ -962,6 +974,9 @@ class MainWindow(QMainWindow):
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
+        tab.editor.edit_parameter_requested.connect(
+            lambda word, t=tab: self._edit_customizer_parameter(t, word)
+        )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
@@ -1178,6 +1193,9 @@ class MainWindow(QMainWindow):
         )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
+        )
+        tab.editor.edit_parameter_requested.connect(
+            lambda word, t=tab: self._edit_customizer_parameter(t, word)
         )
         tab.editor.print_to_console.connect(self._on_debug_print)
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
@@ -1783,7 +1801,15 @@ class MainWindow(QMainWindow):
         else:
             def_resolved = str(Path(def_file).resolve())
             tab_resolved = str(Path(tab.file_path).resolve())
-            if def_resolved == tab_resolved:
+            # _RenderWorker always parses a temp copy of the live buffer
+            # (see its own doc comment), so a definition in *this* tab's
+            # own top-level code reports origin as tab._last_parse_path,
+            # not tab.file_path itself -- accept either as "this tab".
+            tab_parse_resolved = (
+                str(Path(tab._last_parse_path).resolve())
+                if getattr(tab, '_last_parse_path', None) else None
+            )
+            if def_resolved == tab_resolved or def_resolved == tab_parse_resolved:
                 target_tab = tab
             else:
                 for i in range(self._tabs.count()):
@@ -1805,6 +1831,46 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(target_tab)
         if idx >= 0:
             self._tabs.setCurrentIndex(idx)
+
+    def _edit_customizer_parameter(self, tab, word: str):
+        """CodeEditor's "Edit Parameter '<word>'..." context-menu action --
+        the same ParameterEditorDialog CustomizerPane's own right-click menu
+        opens, reachable directly from any use of the name in the code
+        editor (not just its declaration line, and not just from the
+        Customizer dock)."""
+        from belfryscad.window.customizer import scan_parameters, replace_parameter
+        from belfryscad.window.customizer_param_dialog import ParameterEditorDialog
+
+        source = tab.editor.toPlainText()
+        params = scan_parameters(source)
+        param = next((p for p in params if p.name == word), None)
+        if param is None:
+            return
+        tabs = list(dict.fromkeys(p.tab for p in params))
+        dlg = ParameterEditorDialog(
+            existing_tabs=tabs, existing_names=[p.name for p in params],
+            editing=param, parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        result = dlg.result_values()
+        if result is None:
+            return
+        _name, default, description, _tab, constraint = result
+        new_source = replace_parameter(source, word, default, description, constraint)
+        if tab is self._current_tab():
+            self._on_customizer_source_changed(new_source)
+        else:
+            # _on_customizer_source_changed always targets _current_tab();
+            # editing a parameter from a background tab's editor (e.g. one
+            # opened via Go to Definition into a use<>d library file) needs
+            # its own direct write, with no Customizer-pane/render-timer
+            # side effects on a tab that isn't even visible.
+            cursor_pos = tab.editor.textCursor().position()
+            tab.editor.setPlainText(new_source)
+            cursor = tab.editor.textCursor()
+            cursor.setPosition(min(cursor_pos, len(new_source)))
+            tab.editor.setTextCursor(cursor)
 
     def _current_editor(self):
         tab = self._current_tab()
