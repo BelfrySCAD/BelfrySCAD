@@ -98,6 +98,7 @@ class ParameterEditorDialog(QDialog):
         w = QWidget()
         f = QFormLayout(w)
         f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        f.setVerticalSpacing(4)
         for label, field in rows:
             if label is None:
                 f.addRow(field)
@@ -134,13 +135,6 @@ class ParameterEditorDialog(QDialog):
         self._check_default = QCheckBox("Default checked")
         self._stack.addWidget(self._make_page([(None, self._check_default)]))
 
-        self._dropdown_paired_check = QCheckBox("Separate label from value")
-        self._dropdown_paired_check.setToolTip(
-            "Off: each option's displayed text is also its value (e.g. [a, b, c]).\n"
-            "On: give each option its own internal value, distinct from what's displayed."
-        )
-        self._dropdown_paired_check.toggled.connect(self._on_dropdown_mode_toggled)
-
         self._dropdown_table = QTableWidget(0, 2)
         self._dropdown_table.setHorizontalHeaderLabels(["Label", "Value"])
         self._dropdown_table.verticalHeader().setVisible(False)
@@ -160,16 +154,22 @@ class ParameterEditorDialog(QDialog):
         self._dropdown_remove_row_btn.setFlat(True)
         self._dropdown_remove_row_btn.setToolTip("Remove the selected option")
         self._dropdown_remove_row_btn.clicked.connect(self._on_dropdown_remove_row)
+        self._dropdown_paired_check = QCheckBox("Separate label from value")
+        self._dropdown_paired_check.setToolTip(
+            "Off: each option's displayed text is also its value (e.g. [a, b, c]).\n"
+            "On: give each option its own internal value, distinct from what's displayed."
+        )
+        self._dropdown_paired_check.toggled.connect(self._on_dropdown_mode_toggled)
         dropdown_btn_row = QHBoxLayout()
         dropdown_btn_row.addWidget(self._dropdown_add_row_btn)
         dropdown_btn_row.addWidget(self._dropdown_remove_row_btn)
         dropdown_btn_row.addStretch()
+        dropdown_btn_row.addWidget(self._dropdown_paired_check)
         dropdown_btn_widget = QWidget()
         dropdown_btn_widget.setLayout(dropdown_btn_row)
         self._dropdown_default = QComboBox()
         self._dropdown_default.setMinimumWidth(300)
         self._stack.addWidget(self._make_page([
-            (None, self._dropdown_paired_check),
             ("Options:", self._dropdown_table), ("", dropdown_btn_widget),
             ("Default:", self._dropdown_default),
         ]))
