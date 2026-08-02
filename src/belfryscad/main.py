@@ -14,6 +14,11 @@ def _parse_args(argv):
     parser.add_argument("--render", action="store_true",
                          help="Accepted for OpenSCAD CLI compatibility -- BelfrySCAD has no separate "
                               "preview mode, so this has no effect (headless export always fully renders)")
+    parser.add_argument("--animate", type=int, metavar="N",
+                         help="Export N animated frames ($t = i/N) instead of a single render. "
+                              "Only applies together with -o; frames are named {stem}{00000..N-1}{ext}")
+    parser.add_argument("--animate_dir", metavar="DIR",
+                         help="Write --animate frames to DIR instead of -o's own directory")
     parser.add_argument("-h", "--help", action="store_true")
     # parse_known_args, not parse_args: GUI-launched app bundles can receive
     # OS-injected arguments unrelated to this app (e.g. macOS LaunchServices'
@@ -76,11 +81,17 @@ def main():
         if not args.file:
             print("belfryscad: -o/--output requires an input .scad file", file=sys.stderr)
             raise SystemExit(1)
+        if args.animate is not None:
+            from belfryscad.headless import render_and_export_animation
+            raise SystemExit(render_and_export_animation(
+                args.file, args.output, args.animate, defines=args.defines, animate_dir=args.animate_dir))
         from belfryscad.headless import render_and_export
         raise SystemExit(render_and_export(args.file, args.output, defines=args.defines))
 
     if args.defines:
         print("belfryscad: -D only applies together with -o/--output; ignoring", file=sys.stderr)
+    if args.animate is not None or args.animate_dir:
+        print("belfryscad: --animate/--animate_dir only apply together with -o/--output; ignoring", file=sys.stderr)
 
     _run_gui(args.file)
 
