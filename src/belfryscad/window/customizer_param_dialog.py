@@ -92,14 +92,17 @@ class ParameterEditorDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _make_page(self, rows) -> QWidget:
+        # A label of None spans the field across both columns (no
+        # indent); "" still occupies the (blank) label column, so the
+        # field lines up with labeled rows above/below it.
         w = QWidget()
         f = QFormLayout(w)
         f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         for label, field in rows:
-            if label:
-                f.addRow(label, field)
-            else:
+            if label is None:
                 f.addRow(field)
+            else:
+                f.addRow(label, field)
         return w
 
     def _spin(self, minimum=-1e9, maximum=1e9, value=0.0, decimals=6) -> QDoubleSpinBox:
@@ -125,26 +128,36 @@ class ParameterEditorDialog(QDialog):
         self._stack.addWidget(self._make_page([
             ("Min:", self._slider_min), ("Max:", self._slider_max),
             ("Step:", self._slider_step), ("Default:", self._slider_default),
-            ("", self._slider_int),
+            (None, self._slider_int),
         ]))
 
         self._check_default = QCheckBox("Default checked")
-        self._stack.addWidget(self._make_page([("", self._check_default)]))
+        self._stack.addWidget(self._make_page([(None, self._check_default)]))
+
+        self._dropdown_paired_check = QCheckBox("Separate label from value")
+        self._dropdown_paired_check.setToolTip(
+            "Off: each option's displayed text is also its value (e.g. [a, b, c]).\n"
+            "On: give each option its own internal value, distinct from what's displayed."
+        )
+        self._dropdown_paired_check.toggled.connect(self._on_dropdown_mode_toggled)
 
         self._dropdown_table = QTableWidget(0, 2)
         self._dropdown_table.setHorizontalHeaderLabels(["Label", "Value"])
         self._dropdown_table.verticalHeader().setVisible(False)
         self._dropdown_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._dropdown_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._dropdown_table.setColumnHidden(1, True)  # simple (unpaired) mode by default
         self._dropdown_table.setMinimumWidth(300)
         self._dropdown_table.setMinimumHeight(120)
         self._dropdown_table.itemChanged.connect(self._refresh_dropdown_default)
         self._dropdown_add_row_btn = QPushButton("+")
         self._dropdown_add_row_btn.setFixedWidth(28)
+        self._dropdown_add_row_btn.setFlat(True)
         self._dropdown_add_row_btn.setToolTip("Add an option")
         self._dropdown_add_row_btn.clicked.connect(self._on_dropdown_add_row)
         self._dropdown_remove_row_btn = QPushButton("−")
         self._dropdown_remove_row_btn.setFixedWidth(28)
+        self._dropdown_remove_row_btn.setFlat(True)
         self._dropdown_remove_row_btn.setToolTip("Remove the selected option")
         self._dropdown_remove_row_btn.clicked.connect(self._on_dropdown_remove_row)
         dropdown_btn_row = QHBoxLayout()
@@ -156,6 +169,7 @@ class ParameterEditorDialog(QDialog):
         self._dropdown_default = QComboBox()
         self._dropdown_default.setMinimumWidth(300)
         self._stack.addWidget(self._make_page([
+            (None, self._dropdown_paired_check),
             ("Options:", self._dropdown_table), ("", dropdown_btn_widget),
             ("Default:", self._dropdown_default),
         ]))
@@ -187,7 +201,7 @@ class ParameterEditorDialog(QDialog):
             w.setEnabled(False)
             self._vector_range_check.toggled.connect(w.setEnabled)
         self._stack.addWidget(self._make_page([
-            ("Components:", self._vector_components), ("", self._vector_range_check),
+            ("Components:", self._vector_components), (None, self._vector_range_check),
             ("Min:", self._vector_min), ("Max:", self._vector_max), ("Step:", self._vector_step),
         ]))
 
@@ -197,6 +211,10 @@ class ParameterEditorDialog(QDialog):
 
     def _on_type_changed(self, idx: int):
         self._stack.setCurrentIndex(idx)
+
+    def _on_dropdown_mode_toggled(self, checked: bool):
+        self._dropdown_table.setColumnHidden(1, not checked)
+        self._refresh_dropdown_default()
 
     def _on_dropdown_add_row(self):
         row = self._dropdown_table.rowCount()
@@ -217,26 +235,39 @@ class ParameterEditorDialog(QDialog):
         self._refresh_dropdown_default()
 
     def _set_dropdown_rows(self, options: list[tuple[str, str]]):
+        # Column 0 always shows the label text (equal to the value in
+        # simple/unpaired mode) -- never blanked, unlike the old paired-
+        # only table where a blank meant "same as the (only shown) value".
         self._dropdown_table.blockSignals(True)
         self._dropdown_table.setRowCount(0)
         for value, label in options:
             row = self._dropdown_table.rowCount()
             self._dropdown_table.insertRow(row)
-            self._dropdown_table.setItem(row, 0, QTableWidgetItem('' if label == value else label))
+            self._dropdown_table.setItem(row, 0, QTableWidgetItem(label))
             self._dropdown_table.setItem(row, 1, QTableWidgetItem(value))
         self._dropdown_table.blockSignals(False)
         self._refresh_dropdown_default()
 
     def _dropdown_options_list(self) -> list[tuple[str, str]]:
+        paired = self._dropdown_paired_check.isChecked()
         options = []
         for row in range(self._dropdown_table.rowCount()):
+            label_item = self._dropdown_table.item(row, 0)
+            label_text = label_item.text().strip() if label_item else ''
+            if not paired:
+                # Simple mode: the label IS the value (e.g. real OpenSCAD's
+                # bare [a, b, c] constraint) -- the Value column is hidden
+                # and ignored regardless of any stale text left in it from
+                # a prior paired-mode edit.
+                if not label_text:
+                    continue
+                options.append((label_text, label_text))
+                continue
             value_item = self._dropdown_table.item(row, 1)
             value = value_item.text().strip() if value_item else ''
             if not value:
                 continue
-            label_item = self._dropdown_table.item(row, 0)
-            label = (label_item.text().strip() if label_item else '') or value
-            options.append((value, label))
+            options.append((value, label_text or value))
         return options
 
     def _refresh_dropdown_default(self):
@@ -265,6 +296,7 @@ class ParameterEditorDialog(QDialog):
                 self._vector_step.setValue(spec['step'])
         elif spec['type'] == 'dropdown':
             self._type_combo.setCurrentText("Dropdown")
+            self._dropdown_paired_check.setChecked(any(v != lbl for v, lbl in spec['options']))
             self._set_dropdown_rows(spec['options'])
             idx = self._dropdown_default.findData(str(val))
             if idx >= 0:
