@@ -18,6 +18,13 @@ def _parse_args(argv):
     parser.add_argument("-P", "--param-set", dest="param_set", metavar="NAME",
                          help="Name of the parameter set to apply from -p's FILE. -D overrides take "
                               "precedence over same-named preset values. Only applies together with -o")
+    parser.add_argument("-d", "--deps", dest="deps_file", metavar="FILE",
+                         help="Write a Makefile-style dependency rule to FILE, listing every use/include/"
+                              "import() target found. Only applies together with -o")
+    parser.add_argument("-m", "--make-cmd", dest="make_cmd", metavar="CMD",
+                         help="Shell command run as 'CMD <path>' for the input file, or any import()/"
+                              "surface()/*_extrude(file=...) target, that doesn't exist yet, before "
+                              "evaluation. Only applies together with -o")
     parser.add_argument("--render", action="store_true",
                          help="Accepted for OpenSCAD CLI compatibility -- BelfrySCAD has no separate "
                               "preview mode, so this has no effect (headless export always fully renders)")
@@ -167,6 +174,10 @@ def main():
             preset_defines = [f"{k}={format_value(v)}" for k, v in presets[args.param_set].items()]
             args.defines = preset_defines + args.defines
 
+        if args.make_cmd:
+            from belfryscad.scad_deps import run_make_for_missing
+            run_make_for_missing(args.file, args.make_cmd)
+
         common = dict(defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings, backend=args.backend)
         if args.output.lower().endswith(".png"):
             png_common = dict(
@@ -175,23 +186,37 @@ def main():
             )
             if args.animate is not None:
                 from belfryscad.headless_render import render_png_animation
-                raise SystemExit(render_png_animation(
-                    args.file, args.output, args.animate, animate_dir=args.animate_dir, **png_common))
-            from belfryscad.headless_render import render_png
-            raise SystemExit(render_png(args.file, args.output, summary=args.summary,
-                                         summary_file=args.summary_file, **png_common))
+                code = render_png_animation(
+                    args.file, args.output, args.animate, animate_dir=args.animate_dir, **png_common)
+            else:
+                from belfryscad.headless_render import render_png
+                code = render_png(args.file, args.output, summary=args.summary,
+                                   summary_file=args.summary_file, **png_common)
+        else:
+            mesh_common = dict(common, export_format=args.export_format)
+            if args.animate is not None:
+                from belfryscad.headless import render_and_export_animation
+                code = render_and_export_animation(
+                    args.file, args.output, args.animate, animate_dir=args.animate_dir, **mesh_common)
+            else:
+                from belfryscad.headless import render_and_export
+                code = render_and_export(
+                    args.file, args.output, summary=args.summary, summary_file=args.summary_file, **mesh_common)
 
-        mesh_common = dict(common, export_format=args.export_format)
-        if args.animate is not None:
-            from belfryscad.headless import render_and_export_animation
-            raise SystemExit(render_and_export_animation(
-                args.file, args.output, args.animate, animate_dir=args.animate_dir, **mesh_common))
-        from belfryscad.headless import render_and_export
-        raise SystemExit(render_and_export(
-            args.file, args.output, summary=args.summary, summary_file=args.summary_file, **mesh_common))
+        if args.deps_file:
+            # Static, source-scan-derived -- doesn't need a successful
+            # render, and real OpenSCAD writes deps regardless of whether
+            # the render itself succeeded (src/openscad.cc calls
+            # write_deps() unconditionally after cmdline()).
+            from belfryscad.scad_deps import scan_dependencies, write_deps_file
+            if not write_deps_file(args.deps_file, [args.output], scan_dependencies(args.file)):
+                code = 1
+
+        raise SystemExit(code)
 
     _only_with_output = {
         "-D": args.defines, "-p/-P": args.param_file or args.param_set,
+        "-d/--deps": args.deps_file, "-m/--make-cmd": args.make_cmd,
         "--animate/--animate_dir": args.animate is not None or args.animate_dir,
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
