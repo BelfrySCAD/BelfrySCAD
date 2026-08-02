@@ -201,13 +201,10 @@ class ParameterEditorDialog(QDialog):
     def _on_dropdown_add_row(self):
         row = self._dropdown_table.rowCount()
         self._dropdown_table.insertRow(row)
-        self._dropdown_table.setItem(row, 0, QTableWidgetItem())
         item = QTableWidgetItem()
-        self._dropdown_table.setItem(row, 1, item)
-        # Focus Value (required -- a row with no value is skipped entirely,
-        # see _dropdown_options_list), not Label (optional, falls back to
-        # the value when blank).
-        self._dropdown_table.setCurrentCell(row, 1)
+        self._dropdown_table.setItem(row, 0, item)
+        self._dropdown_table.setItem(row, 1, QTableWidgetItem())
+        self._dropdown_table.setCurrentCell(row, 0)
         self._dropdown_table.editItem(item)
 
     def _on_dropdown_remove_row(self):
