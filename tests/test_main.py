@@ -1,9 +1,12 @@
-"""Tests for belfryscad.main's -p/-P (Customizer parameter set) CLI
-resolution -- the rest of main.py's argparse/dispatch isn't otherwise
-covered at this layer (see tests/test_headless.py and
-tests/test_headless_render.py for the export functions themselves)."""
+"""Tests for belfryscad.main's -p/-P (Customizer parameter set) and
+-d/-m (Makefile deps/missing-file) CLI resolution -- the rest of main.py's
+argparse/dispatch isn't otherwise covered at this layer (see
+tests/test_headless.py and tests/test_headless_render.py for the export
+functions themselves, tests/test_scad_deps.py for scan_dependencies/
+write_deps_file/run_make_for_missing in isolation)."""
 
 import json
+import os
 import struct
 
 import pytest
@@ -100,3 +103,36 @@ class TestParamSet:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert "Nonexistent" in err and "Big" in err
+
+
+class TestDepsAndMake:
+    def test_deps_file_written(self, tmp_path, monkeypatch):
+        (tmp_path / "lib.scad").write_text("module m() { cube(1); }\n")
+        src = tmp_path / "main.scad"
+        src.write_text("use <lib.scad>\nm();\n")
+        out = tmp_path / "out.stl"
+        deps = tmp_path / "out.deps"
+        monkeypatch.setattr(
+            "sys.argv",
+            ["belfryscad", "-o", str(out), "-d", str(deps), str(src)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert deps.read_text() == f"{out}: \\\n\t{src} \\\n\t{tmp_path / 'lib.scad'}\n"
+
+    def test_make_cmd_generates_missing_input(self, tmp_path, monkeypatch):
+        src = tmp_path / "generated.scad"
+        gen = tmp_path / "gen.sh"
+        gen.write_text(f'#!/bin/sh\nprintf "cube(1);\\n" > "$1"\n')
+        os.chmod(gen, 0o755)
+        out = tmp_path / "out.stl"
+        monkeypatch.setattr(
+            "sys.argv",
+            ["belfryscad", "-o", str(out), "-m", str(gen), str(src)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert src.exists()
+        assert out.exists()
