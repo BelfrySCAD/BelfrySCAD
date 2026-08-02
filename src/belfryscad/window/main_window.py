@@ -424,7 +424,7 @@ class MainWindow(QMainWindow):
 
     # Debounce interval for Customizer-triggered auto-render -- see
     # _on_customizer_source_changed.
-    _CUSTOMIZER_RENDER_DELAY_MS = 5000
+    _CUSTOMIZER_RENDER_DELAY_MS = 2000
 
     def __init__(self):
         super().__init__()
