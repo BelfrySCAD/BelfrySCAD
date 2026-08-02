@@ -12,9 +12,12 @@ used a hardcoded (-1e9, 1e9) range regardless of what the comment said.
 a list (confirmed below), so the bug was entirely in the widget-dispatch/
 `_VectorWidget` layer, not the parsing layer these tests cover -- verified
 separately via a throwaway Qt script per this project's convention."""
+import json
+
 from belfryscad.window.customizer import (
     _parse_literal, _format_value, _parse_constraint, _default_step,
     scan_parameters, write_back_value,
+    preset_path_for, load_presets, save_presets,
 )
 
 
@@ -150,3 +153,46 @@ class TestWriteBackValue:
     def test_unknown_name_returns_source_unchanged(self):
         source = 'width = 10;\n'
         assert write_back_value(source, 'nonexistent', 5) == source
+
+
+class TestPresetPathFor:
+    def test_swaps_scad_extension_for_json(self):
+        assert preset_path_for('/tmp/model.scad') == '/tmp/model.json'
+
+    def test_no_extension(self):
+        assert preset_path_for('/tmp/model') == '/tmp/model.json'
+
+
+class TestPresetIO:
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert load_presets(str(tmp_path / 'nope.json')) == {}
+
+    def test_roundtrip(self, tmp_path):
+        path = str(tmp_path / 'model.json')
+        presets = {
+            'Small': {'width': 5, 'name': 'a', 'flag': True, 'pos': [1, 2, 3]},
+            'Large': {'width': 50.5, 'name': 'b', 'flag': False, 'pos': [10, 20, 30]},
+        }
+        save_presets(path, presets)
+        assert load_presets(path) == presets
+
+    def test_values_stored_as_scad_literal_syntax(self, tmp_path):
+        path = str(tmp_path / 'model.json')
+        save_presets(path, {'Preset1': {'width': 5, 'name': 'hi', 'flag': True}})
+        data = json.loads((tmp_path / 'model.json').read_text())
+        assert data['parameterSets']['Preset1'] == {
+            'width': '5', 'name': '"hi"', 'flag': 'true',
+        }
+        assert data['fileFormatVersion'] == '1'
+
+    def test_corrupt_json_returns_empty(self, tmp_path):
+        path = tmp_path / 'model.json'
+        path.write_text('not json{{{')
+        assert load_presets(str(path)) == {}
+
+    def test_unparseable_values_skipped(self, tmp_path):
+        path = tmp_path / 'model.json'
+        path.write_text(json.dumps({
+            'parameterSets': {'P': {'good': '5', 'bad': 'some_var'}},
+        }))
+        assert load_presets(str(path)) == {'P': {'good': 5}}
