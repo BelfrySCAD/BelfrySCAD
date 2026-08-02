@@ -614,6 +614,7 @@ class CustomizerPane(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
 
         add_row = QHBoxLayout()
         add_row.setContentsMargins(6, 0, 6, 6)
