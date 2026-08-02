@@ -317,3 +317,13 @@ class TestSummary:
         src.write_text("cube(1);\n")
         code = render_and_export(str(src), str(tmp_path / "out.stl"), summary="nonsense")
         assert code == 1
+
+    def test_area(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube([10, 5, 3]);\n")
+        summary_path = tmp_path / "summary.json"
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), summary="area",
+                                  summary_file=str(summary_path))
+        assert code == 0
+        data = json.loads(summary_path.read_text())
+        assert data["area"] == pytest.approx(2 * (10 * 5 + 10 * 3 + 5 * 3))
