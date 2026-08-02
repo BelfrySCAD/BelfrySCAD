@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signa
 import threading
 import time
 
+from belfryscad import exporters
 from belfryscad.window.editor import CodeEditor
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.window.viewport import Viewport
@@ -1342,153 +1343,21 @@ class MainWindow(QMainWindow):
         ext = Path(path).suffix.lower()
         try:
             if ext == ".3mf":
-                self._write_3mf(path, bodies)
+                exporters.write_3mf(path, bodies)
             else:
-                # STL/OBJ are triangle soups -- merging the already-final body
-                # meshes is plain index-offset concatenation (no CSG), so no
-                # manifold3d needed now that bodies carry raw arrays.
-                import numpy as np
-                from types import SimpleNamespace
-                parts_v, parts_t, voff = [], [], 0
-                for b in bodies:
-                    if b.body.is_empty():
-                        continue
-                    m = b.body.to_mesh()
-                    v = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
-                    t = np.asarray(m.tri_verts, dtype=np.int64) + voff
-                    parts_v.append(v)
-                    parts_t.append(t)
-                    voff += len(v)
-                if not parts_v:
+                mesh = exporters.merge_bodies_to_mesh(bodies)
+                if mesh is None:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
-                mesh = SimpleNamespace(vert_properties=np.vstack(parts_v), tri_verts=np.vstack(parts_t))
                 if ext == ".obj":
-                    self._write_obj(path, mesh)
+                    exporters.write_obj(path, mesh)
                 else:
                     if not path.endswith(".stl"):
                         path += ".stl"
-                    self._write_stl(path, mesh)
+                    exporters.write_stl(path, mesh)
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
-
-    @staticmethod
-    def _write_stl(path: str, mesh):
-        import struct
-        import numpy as np
-
-        verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
-        tris = np.asarray(mesh.tri_verts, dtype=np.int32)
-
-        v0 = verts[tris[:, 0]]
-        v1 = verts[tris[:, 1]]
-        v2 = verts[tris[:, 2]]
-
-        normals = np.cross(v1 - v0, v2 - v0).astype(np.float32)
-        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-        normals /= np.where(lengths > 0, lengths, 1.0)
-
-        dtype = np.dtype([
-            ("normal", np.float32, (3,)),
-            ("v0",     np.float32, (3,)),
-            ("v1",     np.float32, (3,)),
-            ("v2",     np.float32, (3,)),
-            ("attr",   np.uint16),
-        ])
-        data = np.zeros(len(tris), dtype=dtype)
-        data["normal"] = normals
-        data["v0"] = v0
-        data["v1"] = v1
-        data["v2"] = v2
-
-        with open(path, "wb") as f:
-            f.write(b"\0" * 80)
-            f.write(struct.pack("<I", len(tris)))
-            f.write(data.tobytes())
-
-    @staticmethod
-    def _write_obj(path: str, mesh):
-        import numpy as np
-
-        verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
-        tris = np.asarray(mesh.tri_verts, dtype=np.int32)
-
-        with open(path, "w", encoding="utf-8") as f:
-            for v in verts:
-                f.write(f"v {v[0]:.6g} {v[1]:.6g} {v[2]:.6g}\n")
-            f.write("\n")
-            for tri in tris:
-                f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
-
-    @staticmethod
-    def _write_3mf(path: str, bodies):
-        import lib3mf
-        import numpy as np
-
-        _FA3 = type(lib3mf.Position().Coordinates)
-        _UI3 = type(lib3mf.Triangle().Indices)
-
-        def _identity_transform():
-            t = lib3mf.Transform()
-            _col = type(t.Fields[0])
-            t.Fields[0] = _col(1, 0, 0)
-            t.Fields[1] = _col(0, 1, 0)
-            t.Fields[2] = _col(0, 0, 1)
-            t.Fields[3] = _col(0, 0, 0)
-            return t
-
-        wrapper = lib3mf.Wrapper()
-        model = wrapper.CreateModel()
-
-        for colored_body in bodies:
-            if colored_body.body.is_empty():
-                continue
-
-            mesh3d = colored_body.body.to_mesh()
-            verts = np.asarray(mesh3d.vert_properties[:, :3], dtype=np.float32)
-            tris  = np.asarray(mesh3d.tri_verts, dtype=np.int32)
-            if len(tris) == 0:
-                continue
-
-            mesh_obj = model.AddMeshObject()
-
-            positions = []
-            for v in verts:
-                p = lib3mf.Position()
-                p.Coordinates = _FA3(float(v[0]), float(v[1]), float(v[2]))
-                positions.append(p)
-
-            triangles = []
-            for t in tris:
-                tri = lib3mf.Triangle()
-                tri.Indices = _UI3(int(t[0]), int(t[1]), int(t[2]))
-                triangles.append(tri)
-
-            mesh_obj.SetGeometry(positions, triangles)
-
-            rgba = colored_body.color or (0.8, 0.8, 0.8, 1.0)
-            cg = model.AddColorGroup()
-            c = lib3mf.Color()
-            c.Red   = max(0, min(255, int(rgba[0] * 255)))
-            c.Green = max(0, min(255, int(rgba[1] * 255)))
-            c.Blue  = max(0, min(255, int(rgba[2] * 255)))
-            c.Alpha = max(0, min(255, int(rgba[3] * 255)))
-            color_id = cg.AddColor(c)
-            cg_uid   = cg.GetUniqueResourceID()
-
-            props = []
-            for _ in range(len(tris)):
-                tp = lib3mf.TriangleProperties()
-                tp.ResourceID  = cg_uid
-                tp.PropertyIDs = _UI3(color_id, color_id, color_id)
-                props.append(tp)
-            mesh_obj.SetAllTriangleProperties(props)
-
-            model.AddBuildItem(mesh_obj, _identity_transform())
-
-        writer = model.QueryWriter("3mf")
-        writer.WriteToFile(path)
 
     # ------------------------------------------------------------------
     # Render
