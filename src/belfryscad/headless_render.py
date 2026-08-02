@@ -157,9 +157,16 @@ def _make_offscreen_renderer(opts: _RenderOptions):
     app = QGuiApplication.instance() or QGuiApplication([sys.argv[0]])
     try:
         ctx = moderngl.create_context(standalone=True, require=330)
-    except Exception as e:
-        print(f"belfryscad: could not create an offscreen OpenGL context: {e}", file=sys.stderr)
-        return None
+    except Exception as first_error:
+        # moderngl's default standalone backend is GLX on Linux, which needs
+        # a real X server -- unavailable on a headless CI runner. Retry with
+        # EGL (surfaceless, no X11 needed), confirmed on GitHub Actions'
+        # ubuntu-latest with libegl1 installed.
+        try:
+            ctx = moderngl.create_context(standalone=True, require=330, backend="egl")
+        except Exception:
+            print(f"belfryscad: could not create an offscreen OpenGL context: {first_error}", file=sys.stderr)
+            return None
 
     renderer = SceneRenderer()
     renderer.initialize(ctx)

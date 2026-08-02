@@ -11,8 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Qt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+      - name: Install Qt/GL dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libgl1-mesa-dri
 
       - uses: astral-sh/setup-uv@v7
         with:
