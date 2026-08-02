@@ -4,8 +4,9 @@ they're usable from both the GUI (MainWindow._export) and headless CLI export
 """
 
 
-def write_stl(path: str, mesh):
-    import struct
+def _stl_triangles(mesh):
+    """(verts_per_tri_v0, v1, v2, face_normals) -- shared by write_stl and
+    write_stl_ascii."""
     import numpy as np
 
     verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
@@ -18,6 +19,14 @@ def write_stl(path: str, mesh):
     normals = np.cross(v1 - v0, v2 - v0).astype(np.float32)
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
     normals /= np.where(lengths > 0, lengths, 1.0)
+    return v0, v1, v2, normals
+
+
+def write_stl(path: str, mesh):
+    import struct
+    import numpy as np
+
+    v0, v1, v2, normals = _stl_triangles(mesh)
 
     dtype = np.dtype([
         ("normal", np.float32, (3,)),
@@ -26,7 +35,7 @@ def write_stl(path: str, mesh):
         ("v2",     np.float32, (3,)),
         ("attr",   np.uint16),
     ])
-    data = np.zeros(len(tris), dtype=dtype)
+    data = np.zeros(len(v0), dtype=dtype)
     data["normal"] = normals
     data["v0"] = v0
     data["v1"] = v1
@@ -34,8 +43,31 @@ def write_stl(path: str, mesh):
 
     with open(path, "wb") as f:
         f.write(b"\0" * 80)
-        f.write(struct.pack("<I", len(tris)))
+        f.write(struct.pack("<I", len(v0)))
         f.write(data.tobytes())
+
+
+def write_stl_ascii(path: str, mesh):
+    """OpenSCAD-compatible ASCII STL -- `solid OpenSCAD_Model` / one `facet
+    normal .. outer loop .. vertex x3 .. endloop endfacet` block per
+    triangle / `endsolid`. Format confirmed directly against real
+    OpenSCAD.app's own -o out.stl default output."""
+    v0, v1, v2, normals = _stl_triangles(mesh)
+
+    def fmt(v):
+        return " ".join(repr(float(c)) for c in v)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("solid OpenSCAD_Model\n")
+        for n, a, b, c in zip(normals, v0, v1, v2):
+            f.write(f"  facet normal {fmt(n)}\n")
+            f.write("    outer loop\n")
+            f.write(f"      vertex {fmt(a)}\n")
+            f.write(f"      vertex {fmt(b)}\n")
+            f.write(f"      vertex {fmt(c)}\n")
+            f.write("    endloop\n")
+            f.write("  endfacet\n")
+        f.write("endsolid OpenSCAD_Model\n")
 
 
 def write_obj(path: str, mesh):

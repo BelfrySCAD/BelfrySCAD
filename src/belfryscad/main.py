@@ -19,6 +19,23 @@ def _parse_args(argv):
                               "Only applies together with -o; frames are named {stem}{00000..N-1}{ext}")
     parser.add_argument("--animate_dir", metavar="DIR",
                          help="Write --animate frames to DIR instead of -o's own directory")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                         help="Quiet mode -- don't print anything except errors. Only applies together with -o")
+    parser.add_argument("--hardwarnings", action="store_true",
+                         help="Stop on the first warning (treated as a fatal error). Only applies together with -o")
+    parser.add_argument("--export-format", dest="export_format", metavar="FORMAT",
+                         help="'asciistl' or 'binstl' -- overrides .stl export format (default binstl). "
+                              "Only applies together with -o")
+    parser.add_argument("--backend", metavar="NAME",
+                         help="Accepted for OpenSCAD CLI compatibility -- must be 'Manifold' "
+                              "(BelfrySCAD has no CGAL backend). Only applies together with -o")
+    parser.add_argument("--summary", metavar="KEYS",
+                         help="Comma-separated summary info to print after export: all, time, geometry, "
+                              "bounding-box. Only applies together with -o")
+    parser.add_argument("--summary-file", dest="summary_file", metavar="FILE",
+                         help="Write --summary as JSON to FILE ('-' for stdout) instead of printing it plainly")
+    parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
+    parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
     # parse_known_args, not parse_args: GUI-launched app bundles can receive
     # OS-injected arguments unrelated to this app (e.g. macOS LaunchServices'
@@ -69,10 +86,37 @@ def _run_gui(initial_file: str | None):
     os._exit(code)
 
 
+def _belfryscad_version() -> str:
+    import importlib.metadata
+    try:
+        return importlib.metadata.version("belfryscad")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _print_info():
+    import platform
+    print(f"BelfrySCAD {_belfryscad_version()}")
+    print(f"Python {platform.python_version()} ({platform.platform()})")
+    for pkg in ("PySide6", "moderngl", "openscad_cpp_evaluator", "manifold3d", "numpy"):
+        import importlib.metadata
+        try:
+            print(f"{pkg} {importlib.metadata.version(pkg)}")
+        except importlib.metadata.PackageNotFoundError:
+            print(f"{pkg} not installed")
+
+
 def main():
     setproctitle.setproctitle("BelfrySCAD")
     sys.setrecursionlimit(10000)
     args = _parse_args(sys.argv[1:])
+
+    if args.version:
+        print(f"BelfrySCAD {_belfryscad_version()}")
+        raise SystemExit(0)
+    if args.info:
+        _print_info()
+        raise SystemExit(0)
 
     if args.output:
         # Headless export: deliberately never imports PySide6/creates a
@@ -81,17 +125,27 @@ def main():
         if not args.file:
             print("belfryscad: -o/--output requires an input .scad file", file=sys.stderr)
             raise SystemExit(1)
+        common = dict(
+            defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings,
+            export_format=args.export_format, backend=args.backend,
+        )
         if args.animate is not None:
             from belfryscad.headless import render_and_export_animation
             raise SystemExit(render_and_export_animation(
-                args.file, args.output, args.animate, defines=args.defines, animate_dir=args.animate_dir))
+                args.file, args.output, args.animate, animate_dir=args.animate_dir, **common))
         from belfryscad.headless import render_and_export
-        raise SystemExit(render_and_export(args.file, args.output, defines=args.defines))
+        raise SystemExit(render_and_export(
+            args.file, args.output, summary=args.summary, summary_file=args.summary_file, **common))
 
-    if args.defines:
-        print("belfryscad: -D only applies together with -o/--output; ignoring", file=sys.stderr)
-    if args.animate is not None or args.animate_dir:
-        print("belfryscad: --animate/--animate_dir only apply together with -o/--output; ignoring", file=sys.stderr)
+    _only_with_output = {
+        "-D": args.defines, "--animate/--animate_dir": args.animate is not None or args.animate_dir,
+        "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
+        "--export-format": args.export_format, "--backend": args.backend,
+        "--summary/--summary-file": args.summary or args.summary_file,
+    }
+    ignored = [name for name, used in _only_with_output.items() if used]
+    if ignored:
+        print(f"belfryscad: {', '.join(ignored)} only apply together with -o/--output; ignoring", file=sys.stderr)
 
     _run_gui(args.file)
 

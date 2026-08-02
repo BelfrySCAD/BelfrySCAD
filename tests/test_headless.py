@@ -4,6 +4,7 @@ the GUI code this is directly pytest-testable -- see test_customizer.py's
 own module docstring for why the rest of the suite avoids real Qt widgets.
 """
 
+import json
 import struct
 
 import pytest
@@ -194,3 +195,125 @@ class TestRenderAndExportAnimation:
         assert (tmp_path / "out00001.stl").exists()
         assert (tmp_path / "out00002.stl").exists()
         assert (tmp_path / "out00003.stl").exists()
+
+
+class TestQuiet:
+    def test_quiet_suppresses_success_message(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), quiet=True)
+        assert code == 0
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == ""
+
+    def test_quiet_suppresses_warnings_but_not_errors(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("x = 1;\nx = 2;\ncube(x);\n")  # triggers a WARNING
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), quiet=True)
+        assert code == 0
+        out, err = capsys.readouterr()
+        assert "WARNING" not in err
+
+    def test_not_quiet_prints_success_message(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"))
+        assert code == 0
+        out, _err = capsys.readouterr()
+        assert "Exported to" in out
+
+
+class TestHardWarnings:
+    def test_stops_on_first_warning(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("x = 1;\nx = 2;\ncube(x);\n")  # triggers a WARNING
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), hard_warnings=True)
+        assert code == 1
+        assert not (tmp_path / "out.stl").exists()
+        _out, err = capsys.readouterr()
+        assert "WARNING" in err
+
+    def test_no_warning_still_succeeds(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), hard_warnings=True)
+        assert code == 0
+
+
+class TestExportFormat:
+    def test_asciistl_produces_ascii_output(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        out = tmp_path / "out.stl"
+        code = render_and_export(str(src), str(out), export_format="asciistl")
+        assert code == 0
+        text = out.read_text()
+        assert text.startswith("solid OpenSCAD_Model\n")
+        assert text.rstrip().endswith("endsolid OpenSCAD_Model")
+
+    def test_binstl_is_default_binary(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        out = tmp_path / "out.stl"
+        code = render_and_export(str(src), str(out), export_format="binstl")
+        assert code == 0
+        assert out.read_bytes()[:5] != b"solid"
+
+    def test_invalid_value_fails(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), export_format="nope")
+        assert code == 1
+
+    def test_ignored_for_non_stl(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.obj"), export_format="asciistl")
+        assert code == 0  # warns, doesn't fail
+        _out, err = capsys.readouterr()
+        assert "only applies to .stl" in err
+
+
+class TestBackend:
+    def test_manifold_accepted(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), backend="Manifold")
+        assert code == 0
+
+    def test_cgal_rejected(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), backend="CGAL")
+        assert code == 1
+
+
+class TestSummary:
+    def test_all_prints_to_stdout(self, tmp_path, capsys):
+        src = tmp_path / "in.scad"
+        src.write_text("cube([10, 5, 3]);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), summary="all")
+        assert code == 0
+        out, _err = capsys.readouterr()
+        assert "geometry:" in out
+        assert "bounding-box:" in out
+        assert "time:" in out
+
+    def test_summary_file_writes_json(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube([10, 5, 3]);\n")
+        summary_path = tmp_path / "summary.json"
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), summary="geometry,bounding-box",
+                                  summary_file=str(summary_path))
+        assert code == 0
+        data = json.loads(summary_path.read_text())
+        assert data["geometry"] == {"bodies": 1, "facets": 12, "vertices": 8}
+        assert data["bounding-box"]["max"] == [10.0, 5.0, 3.0]
+        assert "time" not in data  # only the requested keys
+
+    def test_unknown_key_fails(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export(str(src), str(tmp_path / "out.stl"), summary="nonsense")
+        assert code == 1
