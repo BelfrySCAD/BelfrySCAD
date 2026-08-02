@@ -38,6 +38,15 @@ class AnimatePane(QWidget):
         self._playing = False
         self._dumping = False
 
+        # Set by the host (MainWindow) to `lambda: bool(self._render_jobs)` --
+        # lets a tick that lands while the previous frame's render is still
+        # in flight DEFER rather than either overlap it (unsafe -- see
+        # resume_deferred_advance's own doc comment) or skip it outright
+        # (which would silently drop steps from the sequence). None means
+        # "never busy" (e.g. in a host that doesn't wire this up).
+        self.render_busy_check = None
+        self._pending_advance = None  # None / "current" / "next" -- see _try_advance/_try_render_now
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
 
@@ -169,12 +178,19 @@ class AnimatePane(QWidget):
             # grabFramebuffer() can pump the event loop, and an overlapping
             # timer-driven render can reenter the GL context mid-grab.
             self._timer.start()
-        self.frame_changed.emit(self.current_t())
+            # Route through the same busy-check as every later tick (see
+            # _try_render_now's own doc comment) -- Play can land while a
+            # render triggered by something else entirely (opening the file,
+            # an edit) is still in flight.
+            self._try_render_now()
+        else:
+            self.frame_changed.emit(self.current_t())
 
     def pause(self):
         if not self._playing:
             return
         self._playing = False
+        self._pending_advance = None
         self._timer.stop()
         was_dumping = self._dumping
         self._dumping = False
@@ -228,7 +244,75 @@ class AnimatePane(QWidget):
     # ------------------------------------------------------------------
 
     def _on_tick(self):
+        self._try_advance()
+
+    def _try_advance(self):
+        """Advance to the next frame now, or defer it if the previous frame's
+        render is still in flight.
+
+        openscad_cpp_evaluator's parser isn't safe for concurrent invocation
+        from separate threads (confirmed directly -- overlapping renders on
+        the same file corrupt each other's parse and can segfault). A model
+        slow enough to render across more than one tick at the configured
+        FPS must not get a second render started on top of the first, but
+        it also must not silently DROP that step from the sequence (unlike
+        an earlier version of this fix, which skipped the tick outright) --
+        every step 0..steps-1 still gets rendered, in order, just at
+        whatever pace the model can actually sustain. See
+        resume_deferred_advance's own doc comment for the other half of
+        this mechanism.
+
+        Never OVERWRITES an already-pending request: the timer keeps
+        ticking at its own interval regardless of render state, so several
+        ticks can land while the same render is still in flight. Once one
+        of them has queued a request, later ones finding the identical
+        busy render must leave it alone -- e.g. a "next" tick clobbering an
+        earlier still-undelivered "current" request (queued by play(), see
+        _try_render_now()) would skip the very first frame outright, never
+        having actually rendered it.
+        """
+        if self.render_busy_check and self.render_busy_check():
+            if self._pending_advance is None:
+                self._pending_advance = "next"
+            return
+        self._pending_advance = None
         self.advance_frame()
+
+    def _try_render_now(self):
+        """Emit frame_changed for the CURRENT step, or defer it if a render
+        is still in flight -- play()'s own counterpart to _try_advance()
+        (which is for a later tick, and always steps forward first). Used
+        for the very first frame of a playback run, which can otherwise
+        start overlapping a render triggered by something else entirely
+        (opening the file, an edit) that just hasn't finished yet.
+        """
+        if self.render_busy_check and self.render_busy_check():
+            if self._pending_advance is None:
+                self._pending_advance = "current"
+            return
+        self._pending_advance = None
+        self._update_time_display()
+        self.frame_changed.emit(self.current_t())
+
+    def resume_deferred_advance(self):
+        """Called by the host once an in-flight render has fully finished --
+        performs whichever frame trigger (_try_advance/_try_render_now) got
+        deferred while it was running, if any.
+
+        Only relevant to ordinary (non-dumping) playback: dumping already
+        paces itself by render completion (MainWindow calls advance_frame()
+        directly from _on_render_thread_done, never via the timer -- see
+        play()'s own `if not self._dumping: self._timer.start()`), so this
+        is a no-op whenever _dumping is set.
+        """
+        if not self._playing or self._dumping or not self._pending_advance:
+            return
+        pending, self._pending_advance = self._pending_advance, None
+        if pending == "next":
+            self.advance_frame()
+        else:
+            self._update_time_display()
+            self.frame_changed.emit(self.current_t())
 
     def advance_frame(self):
         """Move to the next frame and emit frame_changed.

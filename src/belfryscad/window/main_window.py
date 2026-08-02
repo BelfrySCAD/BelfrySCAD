@@ -571,6 +571,7 @@ class MainWindow(QMainWindow):
 
         # --- Animate dock (right, bottom — tabbed with Customizer) ---
         self._animate_pane = AnimatePane()
+        self._animate_pane.render_busy_check = lambda: bool(self._render_jobs)
         self._animate_pane.frame_changed.connect(self._on_animate_frame)
         self._animate_pane.dump_started.connect(self._on_dump_started, Qt.ConnectionType.QueuedConnection)
         self._animate_pane.dump_finished.connect(self._on_dump_finished)
@@ -1598,6 +1599,12 @@ class MainWindow(QMainWindow):
         def _cleanup_job(job=job):
             if job in self._render_jobs:
                 self._render_jobs.remove(job)
+            if not self._render_jobs:
+                # Only now is it safe to start another render (see
+                # AnimatePane.render_busy_check/resume_deferred_advance's own
+                # doc comments) -- resume a step deferred by animation
+                # playback while this one was in flight, if any.
+                self._animate_pane.resume_deferred_advance()
 
         # callback lives in the main thread; Qt auto-uses QueuedConnection for all
         # of these cross-thread connections, so all slots run on the main thread.
@@ -1614,20 +1621,6 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_animate_frame(self, t: float):
-        if self._render_jobs:
-            # A previous frame's render is still in flight (its worker
-            # thread hasn't reached a cancellation checkpoint yet, or hasn't
-            # even started) -- skip this tick rather than starting an
-            # overlapping one. openscad_cpp_evaluator's parser isn't safe
-            # for concurrent invocation from separate threads: a model slow
-            # enough to render across more than one animation tick (the
-            # timer fires unconditionally at the configured FPS regardless
-            # of render speed) corrupts the in-flight parse and can crash
-            # the whole process. The next tick retries against whatever $t
-            # is current by then, so playback naturally throttles to
-            # whatever FPS the model can actually sustain instead of queuing
-            # up ever more overlapping renders.
-            return
         if self._animate_pane.is_dumping():
             self._dump_frame = self._animate_pane.current_step()
         self._render()
