@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from belfryscad.headless import build_define_prelude, render_and_export
+from belfryscad.headless import build_define_prelude, render_and_export, render_and_export_animation
 
 
 class TestBuildDefinePrelude:
@@ -137,3 +137,60 @@ class TestRenderAndExport:
         text = out.read_text()
         assert text.startswith("v ")
         assert "\nf " in text
+
+
+class TestRenderAndExportAnimation:
+    def test_frame_filenames_and_dollar_t_progression(self, tmp_path):
+        # File naming (5-digit zero-padded, {stem}{i}{ext}) and $t = i/steps
+        # both confirmed directly against real OpenSCAD.app (`--animate 5
+        # -o out.stl` -> out00000.stl .. out00004.stl, same width for
+        # --animate 150 too).
+        src = tmp_path / "in.scad"
+        src.write_text("translate([$t*10, 0, 0]) cube(2);\n")
+        out = tmp_path / "out.stl"
+        code = render_and_export_animation(str(src), str(out), 5)
+        assert code == 0
+        names = sorted(p.name for p in tmp_path.glob("out*.stl"))
+        assert names == [f"out{i:05d}.stl" for i in range(5)]
+        assert _stl_vertex_xs(tmp_path / "out00000.stl") == {0, 2}
+        assert _stl_vertex_xs(tmp_path / "out00001.stl") == {2, 4}  # $t=0.2 -> x offset 2
+        assert _stl_vertex_xs(tmp_path / "out00004.stl") == {8, 10}  # $t=0.8 -> x offset 8
+
+    def test_animate_dir_routes_frames_elsewhere(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        out_dir = tmp_path / "out"
+        frames_dir = tmp_path / "frames"
+        code = render_and_export_animation(str(src), str(out_dir / "out.stl"), 3, animate_dir=str(frames_dir))
+        assert code == 0
+        assert sorted(p.name for p in frames_dir.glob("*.stl")) == [f"out{i:05d}.stl" for i in range(3)]
+        assert not out_dir.exists()  # never created -- animate_dir wins, matches -o's own dir being unused
+
+    def test_define_applies_to_every_frame(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("translate([$t*10 + offset, 0, 0]) cube(2);\n")
+        out = tmp_path / "out.stl"
+        code = render_and_export_animation(str(src), str(out), 2, defines=["offset=100"])
+        assert code == 0
+        assert _stl_vertex_xs(tmp_path / "out00000.stl") == {100, 102}
+        assert _stl_vertex_xs(tmp_path / "out00001.stl") == {105, 107}  # $t=0.5 -> +5, plus offset
+
+    def test_zero_steps_fails(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text("cube(1);\n")
+        code = render_and_export_animation(str(src), str(tmp_path / "out.stl"), 0)
+        assert code == 1
+
+    def test_one_bad_frame_does_not_abort_the_rest(self, tmp_path):
+        # A model that only has geometry for $t > 0 -- frame 0 fails (no
+        # geometry), the rest should still render, and the overall exit
+        # code should reflect the one failure.
+        src = tmp_path / "in.scad"
+        src.write_text("if ($t > 0) cube(1);\n")
+        out = tmp_path / "out.stl"
+        code = render_and_export_animation(str(src), str(out), 4)
+        assert code == 1
+        assert not (tmp_path / "out00000.stl").exists()
+        assert (tmp_path / "out00001.stl").exists()
+        assert (tmp_path / "out00002.stl").exists()
+        assert (tmp_path / "out00003.stl").exists()
