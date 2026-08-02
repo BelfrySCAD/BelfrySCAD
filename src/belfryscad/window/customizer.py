@@ -628,6 +628,7 @@ class CustomizerPane(QWidget):
 
         preset_row = QHBoxLayout()
         preset_row.setContentsMargins(6, 6, 6, 0)
+        preset_row.setSpacing(2)
         preset_row.addWidget(QLabel("Presets"))
         self._preset_combo = QComboBox()
         self._preset_combo.currentIndexChanged.connect(self._on_preset_selected)
