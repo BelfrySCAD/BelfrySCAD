@@ -19,6 +19,7 @@ from belfryscad.window.viewport import Viewport
 from belfryscad.window.data_viewers import (
     _diamond_faces, _dodecahedron_faces, _lit_marker_triangles,
 )
+from belfryscad.window.ai_secrets import get_api_key, set_api_key, delete_api_key
 
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
@@ -31,6 +32,10 @@ _DEFAULTS = {
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
+    "ai/activeProvider": "openai",
+    "ai/openaiBaseUrl": "https://api.openai.com/v1",
+    "ai/openaiModel": "",
+    "ai/anthropicModel": "",
 }
 
 
@@ -197,6 +202,84 @@ class PreferencesDialog(QDialog):
         tabs.tabBar().moveTab(1, 0)  # Viewport first
         tabs.setCurrentIndex(0)     # ...and selected by default
 
+        # --- AI tab ---
+        ai_tab = QWidget()
+        ai_outer = QVBoxLayout(ai_tab)
+        ai_outer.setSpacing(8)
+
+        top_form = QFormLayout()
+        top_form.setSpacing(8)
+        self._ai_provider = QComboBox()
+        self._ai_provider.addItem("OpenAI-protocol", "openai")
+        self._ai_provider.addItem("Anthropic (Claude)", "anthropic")
+        current_provider = s.value("ai/activeProvider", _DEFAULTS["ai/activeProvider"])
+        idx = self._ai_provider.findData(current_provider)
+        self._ai_provider.setCurrentIndex(idx if idx >= 0 else 0)
+        top_form.addRow("Active provider:", self._ai_provider)
+        ai_outer.addLayout(top_form)
+
+        # Only the active provider's fields are shown -- the dropdown above
+        # picks which section is visible, not just which one is "active"
+        # for API calls.
+        self._openai_section = QWidget()
+        openai_form = QFormLayout(self._openai_section)
+        openai_form.setContentsMargins(0, 0, 0, 0)
+        openai_form.setSpacing(8)
+
+        self._openai_base_url = QLineEdit(s.value("ai/openaiBaseUrl", _DEFAULTS["ai/openaiBaseUrl"]))
+        self._openai_base_url.setMinimumWidth(220)
+        self._openai_base_url.editingFinished.connect(
+            lambda: self._emit("ai/openaiBaseUrl", self._openai_base_url.text())
+        )
+        openai_form.addRow("Base URL:", self._openai_base_url)
+
+        self._openai_model = QLineEdit(s.value("ai/openaiModel", _DEFAULTS["ai/openaiModel"]))
+        self._openai_model.setMinimumWidth(220)
+        self._openai_model.setPlaceholderText("e.g. gpt-4o")
+        self._openai_model.editingFinished.connect(
+            lambda: self._emit("ai/openaiModel", self._openai_model.text())
+        )
+        openai_form.addRow("Model:", self._openai_model)
+
+        self._openai_key = QLineEdit(get_api_key("openai") or "")
+        self._openai_key.setMinimumWidth(220)
+        self._openai_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._openai_key.editingFinished.connect(
+            lambda: self._set_ai_key("openai", self._openai_key.text())
+        )
+        openai_form.addRow("API key:", self._openai_key)
+
+        ai_outer.addWidget(self._openai_section)
+
+        self._anthropic_section = QWidget()
+        anthropic_form = QFormLayout(self._anthropic_section)
+        anthropic_form.setContentsMargins(0, 0, 0, 0)
+        anthropic_form.setSpacing(8)
+
+        self._anthropic_model = QLineEdit(s.value("ai/anthropicModel", _DEFAULTS["ai/anthropicModel"]))
+        self._anthropic_model.setMinimumWidth(220)
+        self._anthropic_model.setPlaceholderText("e.g. claude-opus-5")
+        self._anthropic_model.editingFinished.connect(
+            lambda: self._emit("ai/anthropicModel", self._anthropic_model.text())
+        )
+        anthropic_form.addRow("Model:", self._anthropic_model)
+
+        self._anthropic_key = QLineEdit(get_api_key("anthropic") or "")
+        self._anthropic_key.setMinimumWidth(220)
+        self._anthropic_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._anthropic_key.editingFinished.connect(
+            lambda: self._set_ai_key("anthropic", self._anthropic_key.text())
+        )
+        anthropic_form.addRow("API key:", self._anthropic_key)
+
+        ai_outer.addWidget(self._anthropic_section)
+        ai_outer.addStretch()
+
+        self._ai_provider.currentIndexChanged.connect(self._on_ai_provider_changed)
+        self._update_ai_section_visibility()
+
+        tabs.addTab(ai_tab, "AI")
+
         # --- Close button ---
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
@@ -204,6 +287,26 @@ class PreferencesDialog(QDialog):
 
     def _emit(self, key, value):
         save_preferences({key: value})
+        if self._on_change:
+            self._on_change()
+
+    def _update_ai_section_visibility(self):
+        provider = self._ai_provider.currentData()
+        self._openai_section.setVisible(provider == "openai")
+        self._anthropic_section.setVisible(provider == "anthropic")
+
+    def _on_ai_provider_changed(self):
+        self._update_ai_section_visibility()
+        self._emit("ai/activeProvider", self._ai_provider.currentData())
+
+    def _set_ai_key(self, provider: str, key: str):
+        # API keys go through the OS keychain (ai_secrets), not
+        # save_preferences/QSettings -- this is the one exception to every
+        # other control here saving through _emit.
+        if key:
+            set_api_key(provider, key)
+        else:
+            delete_api_key(provider)
         if self._on_change:
             self._on_change()
 
