@@ -263,6 +263,7 @@ class Camera:
     def __init__(self):
         self.azimuth = 295.0
         self.elevation = 35.0
+        self.roll = 0.0
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         self.fov = self.DEFAULT_FOV
@@ -273,15 +274,95 @@ class Camera:
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
         self.screen_dpi = 96.0           # physical DPI, updated from QScreen at pref-apply
 
+    def _rolled_up(self, forward: np.ndarray) -> np.ndarray:
+        """World-up ([0,0,1]) rotated by self.roll (degrees) around the
+        current view direction -- lets the "Orbit" drag mode tilt the
+        horizon freely, unlike the default "Turntable" mode which always
+        keeps Z level. Eye position stays purely spherical (azimuth/
+        elevation/distance); roll only ever affects the up vector fed
+        into _look_at."""
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        if not self.roll:
+            return up
+        norm = np.linalg.norm(forward)
+        if norm < 1e-9:
+            return up
+        return _rotate_around_axis(up, forward / norm, math.radians(self.roll))
+
+    def orbit_free(self, dx_deg: float, dy_deg: float) -> None:
+        """True trackball/arcball rotation for the "Orbit" drag mode
+        (Shift+drag) -- unlike azimuth/elevation drag (Turntable mode,
+        always relative to the fixed world-up), this rotates the camera
+        around ITS OWN current up/right axes, determined fresh each call:
+        dx_deg rotates the eye around the current up ("vertical") axis,
+        dy_deg rotates it around the current right ("horizontal") axis,
+        target stays fixed (centered) throughout. Successive calls compose
+        in the camera's own local frame, and there's no elevation clamp --
+        the view can tumble all the way through either pole with no
+        gimbal-style jump, unlike Turntable mode's azimuth/elevation.
+
+        azimuth/elevation/roll are re-derived from the resulting
+        orientation afterward (see _set_from_eye_and_up) so every other
+        consumer (view presets, $vpr, zoom-to-point, Turntable dragging
+        picking back up afterward) keeps reading/writing the same three
+        fields unchanged -- Orbit mode is a different *update rule* for
+        the same state, not a separate camera representation."""
+        eye = self.eye_position()
+        offset = eye - self.target
+        distance = float(np.linalg.norm(offset))
+        if distance < 1e-9:
+            return
+        forward = -offset / distance  # target - eye, normalized
+        up = self._rolled_up(forward)
+        right = np.cross(forward, up)
+        r_len = np.linalg.norm(right)
+        if r_len < 1e-8:
+            right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            right = right / r_len
+        true_up = np.cross(right, forward)
+
+        offset = _rotate_around_axis(offset, true_up, math.radians(dx_deg))
+        offset = _rotate_around_axis(offset, right, math.radians(dy_deg))
+        new_up = _rotate_around_axis(true_up, right, math.radians(dy_deg))
+
+        self._set_from_eye_and_up(self.target + offset, new_up)
+
+    def _set_from_eye_and_up(self, eye: np.ndarray, up: np.ndarray) -> None:
+        """Back-computes azimuth/elevation/distance/roll from an explicit
+        eye position + up vector -- the inverse of eye_position()/
+        _rolled_up(), used by orbit_free() to fold a free trackball
+        rotation back into this camera's normal (az/el/roll) state."""
+        offset = eye - self.target
+        distance = float(np.linalg.norm(offset))
+        if distance < 1e-9:
+            return
+        self.distance = distance
+        d = offset / distance
+        self.elevation = math.degrees(math.asin(max(-1.0, min(1.0, float(d[2])))))
+        self.azimuth = math.degrees(math.atan2(float(d[1]), float(d[0])))
+
+        forward = -d
+        right_natural = np.cross(forward, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        rn_len = np.linalg.norm(right_natural)
+        if rn_len < 1e-8:
+            right_natural = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            right_natural = right_natural / rn_len
+        natural_up = np.cross(right_natural, forward)
+
+        up_len = np.linalg.norm(up)
+        if up_len < 1e-9:
+            return
+        up_norm = up / up_len
+        cos_t = float(np.dot(natural_up, up_norm))
+        sin_t = float(np.dot(np.cross(natural_up, up_norm), forward))
+        self.roll = math.degrees(math.atan2(sin_t, cos_t))
+
     def view_matrix(self) -> np.ndarray:
-        az = math.radians(self.azimuth)
-        el = math.radians(self.elevation)
-        eye = self.target + self.distance * np.array([
-            math.cos(el) * math.cos(az),
-            math.cos(el) * math.sin(az),
-            math.sin(el),
-        ], dtype=np.float32)
-        return _look_at(eye, self.target, np.array([0, 0, 1], dtype=np.float32))
+        eye = self.eye_position()
+        up = self._rolled_up(self.target - eye)
+        return _look_at(eye, self.target, up)
 
     def clip_planes(self) -> tuple[float, float]:
         """(near, far), scaled to self.distance rather than fixed constants.
@@ -394,7 +475,7 @@ class Camera:
         right_vec = view[0, :3].astype(np.float32)
         half = self.distance * stereo_eye_sep * 0.5
         eye = self.eye_position()
-        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        up = self._rolled_up(self.target - eye)
         right_eye = _look_at(eye + right_vec * half, self.target, up)
         left_eye  = _look_at(eye - right_vec * half, self.target, up)
         return right_eye, left_eye  # left panel = right eye (cross-eye)
@@ -1936,6 +2017,14 @@ def nearest_segment_index(points: np.ndarray, segments: list, ray_origin: np.nda
 # ------------------------------------------------------------------
 # Math helpers
 # ------------------------------------------------------------------
+
+def _rotate_around_axis(v: np.ndarray, axis: np.ndarray, theta: float) -> np.ndarray:
+    """Rodrigues' rotation formula: rotates vector v by theta radians
+    around axis (must already be a unit vector)."""
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    return (v * cos_t + np.cross(axis, v) * sin_t +
+            axis * np.dot(axis, v) * (1 - cos_t)).astype(np.float32)
+
 
 def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     f = target - eye

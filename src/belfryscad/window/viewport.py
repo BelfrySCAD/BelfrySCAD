@@ -355,6 +355,7 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         if preset != "all":
             cam.fov = cam.DEFAULT_FOV
+            cam.roll = 0.0  # named views are always level, never rolled
         if preset == "top":
             # Not exactly 90: _look_at's world-up ([0,0,1]) becomes parallel
             # to the forward vector at precisely elevation=+-90 (gimbal
@@ -520,8 +521,16 @@ class Viewport(QOpenGLWidget):
                 return
             if not self._orbit_enabled:
                 return
-            cam.azimuth -= dx * 0.5
-            cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # "Orbit" mode: true trackball rotation around the camera's
+                # own current up/right axes (see Camera.orbit_free's own
+                # doc comment) -- unlike Turntable mode below, this has no
+                # elevation clamp and composes in the camera's local frame
+                # rather than a fixed world one.
+                cam.orbit_free(-dx * 0.5, -dy * 0.5)
+            else:
+                cam.azimuth -= dx * 0.5
+                cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
         elif self._mouse_button == Qt.MouseButton.RightButton:
             az = np.radians(cam.azimuth)
             el = np.radians(cam.elevation)
