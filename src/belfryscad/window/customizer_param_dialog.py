@@ -16,7 +16,7 @@ from typing import Any, Optional
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QHBoxLayout, QHeaderView, QLineEdit,
-    QMessageBox, QPushButton, QSizePolicy, QSpinBox, QStackedWidget,
+    QMessageBox, QPushButton, QSpinBox, QStackedWidget,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -143,17 +143,6 @@ class ParameterEditorDialog(QDialog):
         self._dropdown_table.setColumnHidden(1, True)  # simple (unpaired) mode by default
         self._dropdown_table.setMinimumWidth(300)
         self._dropdown_table.setMinimumHeight(120)
-        # QTableWidget defaults to Expanding vertically, which grabs any
-        # leftover dialog height and stretches the (mostly-empty) table
-        # far past its content -- the resulting whitespace inside the
-        # table's own border reads as "space before the buttons" even
-        # though it's really just an oversized table. Preferred alone
-        # wasn't enough to stop this under the real macOS/Aqua style (only
-        # verified fixed offscreen, where the effect didn't reproduce) --
-        # setMaximumHeight is a hard, style-independent ceiling regardless
-        # of what's still driving the extra growth.
-        self._dropdown_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._dropdown_table.setMaximumHeight(150)
         self._dropdown_table.itemChanged.connect(self._refresh_dropdown_default)
         self._dropdown_add_row_btn = QPushButton("+")
         self._dropdown_add_row_btn.setFixedWidth(28)
@@ -172,6 +161,7 @@ class ParameterEditorDialog(QDialog):
         )
         self._dropdown_paired_check.toggled.connect(self._on_dropdown_mode_toggled)
         dropdown_btn_row = QHBoxLayout()
+        dropdown_btn_row.setContentsMargins(0, 0, 0, 9)
         dropdown_btn_row.addWidget(self._dropdown_add_row_btn)
         dropdown_btn_row.addWidget(self._dropdown_remove_row_btn)
         dropdown_btn_row.addStretch()
