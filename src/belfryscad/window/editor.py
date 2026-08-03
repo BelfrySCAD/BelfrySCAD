@@ -894,6 +894,37 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(new_text)
 
+    def _reformat_selection(self, start: int, end: int, selected_text: str):
+        """Reformat Selection context-menu action: replace [start, end) with
+        format_scad's pretty-printed output, re-based to the selection's own
+        current indentation (so reformatting a nested block doesn't yank it
+        out to column 0)."""
+        from belfryscad.window.scad_format import format_scad
+        block = self.document().findBlock(start)
+        prefix = block.text()[:start - block.position()]
+        base_indent = prefix if prefix.strip() == "" else ""
+        formatted = format_scad(selected_text, self._indent_size)
+        # split() (not splitlines()) keeps a trailing '' entry when
+        # formatted ends in '\n' (the normal case), so the reformatted
+        # block's own trailing newline is preserved and doesn't glue its
+        # last line to whatever follows the selection.
+        lines = formatted.split("\n")
+        # The first line continues from whatever indentation the document
+        # already has immediately before `start` (untouched -- it's outside
+        # the replaced span), so only later lines need base_indent added.
+        new_lines = lines[:1] + [base_indent + ln if ln else ln for ln in lines[1:]]
+        new_text = "\n".join(new_lines)
+        # format_scad always ends non-empty output in '\n'; match the
+        # original selection's own trailing-newline-or-not (tolerating
+        # trailing indentation *after* that newline, e.g. a selection
+        # ending "...;\n  " right before an unselected "}") so we don't
+        # introduce a blank line by doubling up with whatever follows.
+        had_trailing_newline = bool(re.search(r'\n[ \t]*$', selected_text))
+        if not had_trailing_newline and new_text.endswith("\n"):
+            new_text = new_text[:-1]
+        self.replace_span(start, end, new_text)
+        self.source_edited_externally.emit()
+
     def _indent_lines(self):
         cursor = self.textCursor()
         spaces = " " * self._indent_size
@@ -1232,6 +1263,20 @@ class CodeEditor(QPlainTextEdit):
                 word = '$' + word
 
         menu = self.createStandardContextMenu()
+
+        sel_cursor = self.textCursor()
+        if not self.isReadOnly() and sel_cursor.hasSelection():
+            selected_text = sel_cursor.selectedText().replace(' ', '\n')
+            from belfryscad.window.scad_format import can_format
+            if can_format(selected_text):
+                menu.addSeparator()
+                act = QAction("Reformat Selection", self)
+                act.triggered.connect(
+                    lambda checked=False, s=sel_cursor.selectionStart(),
+                    e=sel_cursor.selectionEnd(), t=selected_text:
+                        self._reformat_selection(s, e, t)
+                )
+                menu.addAction(act)
 
         is_identifier = bool(word and re.match(r'^\$?[A-Za-z_][A-Za-z0-9_]*$', word))
 
