@@ -61,6 +61,29 @@ _RING_PERP2 = [
 ]
 
 
+def _outer_ring_roll_delta_deg(x: float, y: float, dx: float, dy: float,
+                                width: float, height: float) -> float | None:
+    """Shift+drag "Orbit" mode: if (x, y) -- the drag's new mouse position --
+    falls in the outer 20% of the viewport's inscribed circle, returns the
+    on-screen (clockwise-positive) angle the mouse just swept around the
+    viewport center, for rolling the view like a dial rim; otherwise None
+    (drag is close enough to center for the normal trackball tilt instead).
+    Screen y grows downward, so an increasing atan2(y, x) angle already
+    reads as clockwise motion -- no extra sign flip needed here."""
+    cx, cy = width / 2.0, height / 2.0
+    radius = min(width, height) / 2.0
+    if radius <= 0:
+        return None
+    nx, ny = (x - cx) / radius, (y - cy) / radius
+    if (nx * nx + ny * ny) ** 0.5 < 0.8:
+        return None
+    old_x, old_y = x - dx, y - dy
+    angle_old = math.atan2(old_y - cy, old_x - cx)
+    angle_new = math.atan2(y - cy, x - cx)
+    delta = (angle_new - angle_old + math.pi) % (2 * math.pi) - math.pi
+    return math.degrees(delta)
+
+
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
@@ -522,12 +545,18 @@ class Viewport(QOpenGLWidget):
             if not self._orbit_enabled:
                 return
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                # "Orbit" mode: true trackball rotation around the camera's
-                # own current up/right axes (see Camera.orbit_free's own
-                # doc comment) -- unlike Turntable mode below, this has no
-                # elevation clamp and composes in the camera's local frame
-                # rather than a fixed world one.
-                cam.orbit_free(-dx * 0.5, -dy * 0.5)
+                roll_delta = _outer_ring_roll_delta_deg(
+                    pos.x(), pos.y(), dx, dy, self.width(), self.height())
+                if roll_delta is not None:
+                    cam.roll -= roll_delta
+                else:
+                    # "Orbit" mode: true trackball rotation around the
+                    # camera's own current up/right axes (see
+                    # Camera.orbit_free's own doc comment) -- unlike
+                    # Turntable mode below, this has no elevation clamp and
+                    # composes in the camera's local frame rather than a
+                    # fixed world one.
+                    cam.orbit_free(-dx * 0.5, -dy * 0.5)
             else:
                 cam.azimuth -= dx * 0.5
                 cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
