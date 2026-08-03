@@ -6,14 +6,17 @@ Detailed design for viewport interaction, selection, and gizmo-driven AST edits.
 
 | Input | Action |
 |---|---|
-| Left-button drag | Orbit |
+| Left-button drag | Orbit (Turntable) |
+| Shift+left-button drag | Orbit (trackball) |
 | Option+left-button drag | Rotate lighting |
 | Right-button drag | Pan |
 | Scroll wheel | Zoom centered on the cursor (adjusts `$vpd` distance and, since the zoomed-toward point generally isn't `$vpt`, `$vpt` too — see `Viewport._zoom_to_cursor`/`Camera.zoom_to_point`) |
 | Shift+scroll wheel | Adjust FOV (adjusts `$vpf`; clamped 1°–120°) |
-| Trackpad click+drag | Orbit |
+| Trackpad click+drag | Orbit (Turntable) |
 | Trackpad two-finger scroll | Pan |
 | Trackpad pinch | Zoom |
+
+**Turntable vs orbit (trackball)**: plain left-drag ("Turntable" mode) always keeps world-Z level — horizontal movement spins `Camera.azimuth` around world-Z, vertical movement tilts `Camera.elevation` (clamped ±89° to avoid `_look_at`'s gimbal-lock fallback at the exact pole). Shift+left-drag is a true trackball/arcball rotation (`Camera.orbit_free`) instead: each call re-derives the camera's *own current* up ("vertical") and right ("horizontal") axes from its current eye/target/roll, then rotates the eye around those two axes by the drag delta — horizontal movement orbits around the current up axis, vertical movement around the current right axis — with the target always staying centered in the viewport. Unlike Turntable mode, there is no elevation clamp: the view can tumble continuously through either pole with no jump (the *derived* azimuth number can flip when crossing a pole, which is expected and harmless since azimuth/elevation/roll are all re-derived fresh from the resulting orientation via `Camera._set_from_eye_and_up` rather than accumulated). This composes in the camera's own local frame from call to call, so successive small drags stack the way a physical trackball would, rather than being Euler angles applied against a fixed world frame. `roll` (the third, Y component of `$vpr`, applied via Rodrigues' rotation in `Camera._rolled_up` — verified pixel-for-pixel against real OpenSCAD.app's `--camera`/`$vpr` rendering) is what orbit_free's horizontal drag actually changes when the camera isn't level; it never affects eye position on its own, only the up vector fed to `_look_at`. Any named view preset (Top/Front/Iso/etc., `Viewport.set_view_preset`) resets `roll` to 0 — presets are always level.
 
 ## Selection
 

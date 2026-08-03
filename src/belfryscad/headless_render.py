@@ -63,6 +63,7 @@ def _apply_camera_translate_rot_dist(camera, tx, ty, tz, rx, ry, rz, dist):
     import numpy as np
     camera.target = np.array([tx, ty, tz], dtype=np.float32)
     camera.elevation = (90.0 - rx) % 360.0
+    camera.roll = ry % 360.0
     camera.azimuth = (rz + 270.0) % 360.0
     camera.distance = max(0.1, dist)
 

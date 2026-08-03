@@ -1001,11 +1001,12 @@ class MainWindow(QMainWindow):
         cam = self._viewport._renderer.camera
         vpt = np.asarray(cam.target)
         vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
+        vpr_y = ((float(cam.roll)) % 360.0 + 360.0) % 360.0
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
         vpd = float(cam.distance)
         vpf = float(cam.fov)
         self._vpt_label.setText(f"  Viewport: translate = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]")
-        self._vpr_label.setText(f"  rotate = [{vpr_x:.1f}, 0.0, {vpr_z:.1f}]")
+        self._vpr_label.setText(f"  rotate = [{vpr_x:.1f}, {vpr_y:.1f}, {vpr_z:.1f}]")
         self._vpd_label.setText(f"  dist = {vpd:.1f}")
         self._vpf_label.setText(f"  FoV = {vpf:.1f}")
 
@@ -1014,10 +1015,11 @@ class MainWindow(QMainWindow):
         cam = self._viewport._renderer.camera
         vpt = np.asarray(cam.target)
         vpr_x = ((90.0 - float(cam.elevation)) % 360.0 + 360.0) % 360.0
+        vpr_y = ((float(cam.roll)) % 360.0 + 360.0) % 360.0
         vpr_z = ((float(cam.azimuth) - 270.0) % 360.0 + 360.0) % 360.0
         return {
             "$vpt": f"$vpt = [{vpt[0]:.2f}, {vpt[1]:.2f}, {vpt[2]:.2f}]",
-            "$vpr": f"$vpr = [{vpr_x:.1f}, 0.0, {vpr_z:.1f}]",
+            "$vpr": f"$vpr = [{vpr_x:.1f}, {vpr_y:.1f}, {vpr_z:.1f}]",
             "$vpd": f"$vpd = {float(cam.distance):.1f}",
             "$vpf": f"$vpf = {float(cam.fov):.1f}",
         }
@@ -1426,9 +1428,12 @@ class MainWindow(QMainWindow):
             v = vp["$vpr"]
             if isinstance(v, (list, tuple)) and len(v) == 3:
                 new_elev = (90.0 - float(v[0])) % 360.0
+                new_roll = float(v[1]) % 360.0
                 new_az   = (float(v[2]) + 270.0) % 360.0
-                if not math.isclose(cam.elevation, new_elev) or not math.isclose(cam.azimuth, new_az):
+                if (not math.isclose(cam.elevation, new_elev) or not math.isclose(cam.roll, new_roll)
+                        or not math.isclose(cam.azimuth, new_az)):
                     cam.elevation = new_elev
+                    cam.roll      = new_roll
                     cam.azimuth   = new_az
                     changed = True
 

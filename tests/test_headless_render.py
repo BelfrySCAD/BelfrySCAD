@@ -95,6 +95,7 @@ class TestApplyCamera:
     class _FakeCamera:
         target = None
         elevation = None
+        roll = None
         azimuth = None
         distance = None
         orthographic = False
@@ -104,6 +105,11 @@ class TestApplyCamera:
         _apply_camera(cam, "0,0,0,0,0,0,50")
         assert cam.distance == 50
         assert list(cam.target) == [0, 0, 0]
+
+    def test_translate_rot_dist_form_sets_roll(self):
+        cam = self._FakeCamera()
+        _apply_camera(cam, "0,0,0,60,30,30,80")
+        assert cam.roll == pytest.approx(30.0)
 
     def test_eye_center_form(self):
         cam = self._FakeCamera()

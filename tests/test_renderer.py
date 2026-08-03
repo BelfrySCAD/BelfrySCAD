@@ -172,6 +172,143 @@ class TestCameraViewMatrixContinuity:
             assert np.linalg.norm(near_pole - after_drag) < 0.02, f"discontinuity at azimuth={az}"
 
 
+class TestCameraRoll:
+    """Camera.roll -- the third axis $vpr's Y component maps to (alongside
+    elevation/X and azimuth/Z), and the axis Camera.orbit_free's "Orbit"
+    drag mode (see TestCameraOrbitFree below) derives as part of its
+    result. Sign/magnitude verified by rendering the same scene+camera
+    through both BelfrySCAD's --camera CLI flag and real OpenSCAD.app's
+    identical --camera rot_y component and comparing the resulting images
+    pixel-for-pixel (not just reasoned about) -- see
+    project_orbit_rotation_mode memory."""
+
+    def test_roll_zero_matches_no_roll(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance, cam.roll = 270, 0, 50.0, 0.0
+        m1 = cam.view_matrix()
+        cam.roll = 360.0  # equivalent angle
+        m2 = cam.view_matrix()
+        assert np.allclose(m1, m2, atol=1e-5)
+
+    def test_roll_does_not_move_the_eye(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 270, 0, 50.0
+        cam.roll = 0.0
+        eye_before = cam.eye_position().copy()
+        cam.roll = 45.0
+        eye_after = cam.eye_position()
+        assert np.allclose(eye_before, eye_after)
+
+    def test_roll_90_rotates_right_and_up_as_expected(self):
+        # az=270, el=0 -> eye at (0,-distance,0), forward=+Y, so with no
+        # roll: right=(1,0,0), up=(0,0,1) (world-up, unrolled).
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 270, 0, 50.0
+        cam.roll = 0.0
+        m0 = cam.view_matrix()
+        assert np.allclose(m0[0, :3], [1, 0, 0], atol=1e-5)
+        assert np.allclose(m0[1, :3], [0, 0, 1], atol=1e-5)
+
+        # Rotating the up vector 90 deg around the +Y forward axis (right-
+        # hand rule) sends world-up (0,0,1) -> (1,0,0), and right rotates
+        # the same way: (1,0,0) -> (0,0,-1).
+        cam.roll = 90.0
+        m90 = cam.view_matrix()
+        assert np.allclose(m90[0, :3], [0, 0, -1], atol=1e-5)
+        assert np.allclose(m90[1, :3], [1, 0, 0], atol=1e-5)
+
+    def test_roll_180_flips_up(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 270, 0, 50.0
+        cam.roll = 0.0
+        up0 = cam.view_matrix()[1, :3].copy()
+        cam.roll = 180.0
+        up180 = cam.view_matrix()[1, :3]
+        assert np.allclose(up0, -up180, atol=1e-5)
+
+    def test_stereo_view_matrices_respect_roll(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 270, 0, 50.0
+        cam.stereo = True
+        cam.roll = 90.0
+        right_eye, left_eye = cam.stereo_view_matrices(800, 600)
+        # Both stereo eyes' up row should match the same rolled up vector
+        # the mono view_matrix() produces (not the un-rolled world-up).
+        mono_up = cam.view_matrix()[1, :3]
+        assert np.allclose(right_eye[1, :3], mono_up, atol=1e-4)
+        assert np.allclose(left_eye[1, :3], mono_up, atol=1e-4)
+
+
+class TestCameraOrbitFree:
+    """Camera.orbit_free -- true trackball rotation for the "Orbit"
+    Shift+drag mode: rotates around the camera's OWN current up/right
+    axes each call (composing in the local frame), unlike Turntable
+    mode's azimuth/elevation drag, which is always relative to fixed
+    world-Z. No clamp -- the view can tumble through either pole
+    continuously (a discontinuity in the *derived azimuth number* when
+    crossing a pole is expected and fine; the actual 3D view must stay
+    continuous, which is what these tests check)."""
+
+    def test_horizontal_only_rotates_azimuth_keeps_roll_and_elevation(self):
+        # Hand-derived: az=270,el=0,roll=0,dist=50 -> eye=(0,-50,0). A pure
+        # 90 deg horizontal orbit rotates that offset around world-Z (true_up
+        # is already (0,0,1) here) to (50,0,0) -- eye on +X, i.e. az=0,
+        # el=0, roll=0, exactly a +90 deg azimuth shift with nothing else
+        # touched.
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.roll, cam.distance = 270, 0, 0, 50.0
+        cam.orbit_free(90, 0)
+        assert (cam.azimuth + 180) % 360 - 180 == approx(0.0, abs=1e-3)
+        assert cam.elevation == approx(0.0, abs=1e-4)
+        assert cam.roll == approx(0.0, abs=1e-4)
+        assert cam.distance == approx(50.0, abs=1e-4)
+
+    def test_distance_is_preserved(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.roll, cam.distance = 37.0, 12.0, 5.0, 80.0
+        cam.orbit_free(23.0, -17.0)
+        assert cam.distance == approx(80.0, abs=1e-3)
+
+    def test_no_net_rotation_when_dx_dy_zero(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.roll, cam.distance = 123.0, -20.0, 40.0, 30.0
+        cam.orbit_free(0, 0)
+        assert cam.azimuth % 360 == approx(123.0 % 360, abs=1e-3)
+        assert cam.elevation == approx(-20.0, abs=1e-3)
+        assert cam.roll % 360 == approx(40.0 % 360, abs=1e-3)
+
+    def test_composes_through_the_pole_without_a_jump_in_the_view(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.roll, cam.distance = 0.0, 80.0, 0.0, 50.0
+        prev_eye = cam.eye_position().copy()
+        for _ in range(20):
+            cam.orbit_free(0, 2.0)
+            eye = cam.eye_position()
+            # Small step -> small change in eye position, no jump, and it
+            # stays on the sphere of the given radius around target
+            # throughout (this is the actual "no gimbal lock" guarantee --
+            # Turntable mode instead clamps elevation to avoid ever
+            # reaching this regime at all).
+            assert np.linalg.norm(eye - prev_eye) < 5.0
+            assert np.linalg.norm(eye - cam.target) == approx(50.0, abs=1e-2)
+            prev_eye = eye.copy()
+
+    def test_round_trip_set_from_eye_and_up_matches_forward_state(self):
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.roll, cam.distance = 142.0, 31.0, 17.0, 65.0
+        eye = cam.eye_position()
+        up = cam._rolled_up(cam.target - eye)
+
+        cam2 = Camera()
+        cam2.target = cam.target.copy()
+        cam2._set_from_eye_and_up(eye, up)
+
+        assert cam2.azimuth % 360 == approx(cam.azimuth % 360, abs=1e-3)
+        assert cam2.elevation == approx(cam.elevation, abs=1e-3)
+        assert cam2.roll % 360 == approx(cam.roll % 360, abs=1e-3)
+        assert cam2.distance == approx(cam.distance, abs=1e-3)
+
+
 def _forward(cam: Camera) -> np.ndarray:
     az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
     return -np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)],
