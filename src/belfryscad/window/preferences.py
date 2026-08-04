@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
     QPushButton, QLineEdit, QListWidget, QListWidgetItem, QColorDialog, QMessageBox,
-    QFileDialog, QSplitter,
+    QFileDialog, QSplitter, QApplication,
 )
 from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtCore import QSettings, Qt, Signal
@@ -20,6 +20,10 @@ from belfryscad.window.data_viewers import (
     _diamond_faces, _dodecahedron_faces, _lit_marker_triangles,
 )
 from belfryscad.window.ai_secrets import get_api_key, set_api_key, delete_api_key
+from belfryscad.window.ai_providers import (
+    PRESETS, base_url_key, list_model_capabilities, list_models, model_key,
+    preset_for,
+)
 
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
@@ -33,9 +37,6 @@ _DEFAULTS = {
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
-    "ai/openaiBaseUrl": "https://api.openai.com/v1",
-    "ai/openaiModel": "",
-    "ai/anthropicModel": "",
 }
 
 
@@ -204,84 +205,56 @@ class PreferencesDialog(QDialog):
 
         # --- AI tab ---
         ai_tab = QWidget()
-        ai_outer = QVBoxLayout(ai_tab)
-        ai_outer.setSpacing(8)
+        ai_form = QFormLayout(ai_tab)
+        ai_form.setSpacing(8)
 
-        top_form = QFormLayout()
-        top_form.setSpacing(8)
-        self._ai_provider = QComboBox()
-        self._ai_provider.addItem("OpenAI-protocol", "openai")
-        self._ai_provider.addItem("Anthropic (Claude)", "anthropic")
-        current_provider = s.value("ai/activeProvider", _DEFAULTS["ai/activeProvider"])
-        idx = self._ai_provider.findData(current_provider)
-        self._ai_provider.setCurrentIndex(idx if idx >= 0 else 0)
-        top_form.addRow("Active provider:", self._ai_provider)
-        ai_outer.addLayout(top_form)
+        # One dropdown of known services rather than a bare URL field. The
+        # fields below reflect whichever is selected and are stored per
+        # preset, so switching services doesn't clobber the other's model
+        # or key.
+        self._ai_preset = QComboBox()
+        for preset in PRESETS:
+            self._ai_preset.addItem(preset.label, preset.id)
+        current = s.value("ai/activeProvider", _DEFAULTS["ai/activeProvider"])
+        idx = self._ai_preset.findData(current)
+        self._ai_preset.setCurrentIndex(idx if idx >= 0 else 0)
+        ai_form.addRow("Service:", self._ai_preset)
 
-        # Only the active provider's fields are shown -- the dropdown above
-        # picks which section is visible, not just which one is "active"
-        # for API calls.
-        self._openai_section = QWidget()
-        openai_form = QFormLayout(self._openai_section)
-        openai_form.setContentsMargins(0, 0, 0, 0)
-        openai_form.setSpacing(8)
+        self._ai_base_url = QLineEdit()
+        self._ai_base_url.setMinimumWidth(220)
+        self._ai_base_url.editingFinished.connect(self._save_ai_base_url)
+        ai_form.addRow("Base URL:", self._ai_base_url)
 
-        self._openai_base_url = QLineEdit(s.value("ai/openaiBaseUrl", _DEFAULTS["ai/openaiBaseUrl"]))
-        self._openai_base_url.setMinimumWidth(220)
-        self._openai_base_url.setToolTip(
-            "Any OpenAI-protocol server. For Ollama use "
-            "http://localhost:11434/v1 and leave the API key blank."
-        )
-        self._openai_base_url.editingFinished.connect(
-            lambda: self._emit("ai/openaiBaseUrl", self._openai_base_url.text())
-        )
-        openai_form.addRow("Base URL:", self._openai_base_url)
+        # Editable: "Fetch" fills it from the server's /models endpoint when
+        # one is available, but the field stays free-text because not every
+        # OpenAI-protocol server implements that (and Anthropic isn't one).
+        model_row = QHBoxLayout()
+        model_row.setSpacing(6)
+        self._ai_model = QComboBox()
+        self._ai_model.setEditable(True)
+        self._ai_model.setMinimumWidth(220)
+        self._ai_model.currentTextChanged.connect(self._save_ai_model)
+        model_row.addWidget(self._ai_model, 1)
+        self._ai_fetch_models = QPushButton("Fetch")
+        self._ai_fetch_models.setToolTip(
+            "List the models this server offers (OpenAI-protocol only).")
+        self._ai_fetch_models.clicked.connect(self._fetch_ai_models)
+        model_row.addWidget(self._ai_fetch_models)
+        ai_form.addRow("Model:", model_row)
 
-        self._openai_model = QLineEdit(s.value("ai/openaiModel", _DEFAULTS["ai/openaiModel"]))
-        self._openai_model.setMinimumWidth(220)
-        self._openai_model.setPlaceholderText("e.g. gpt-4o")
-        self._openai_model.editingFinished.connect(
-            lambda: self._emit("ai/openaiModel", self._openai_model.text())
-        )
-        openai_form.addRow("Model:", self._openai_model)
+        self._ai_key = QLineEdit()
+        self._ai_key.setMinimumWidth(220)
+        self._ai_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._ai_key.editingFinished.connect(self._save_ai_key)
+        ai_form.addRow("API key:", self._ai_key)
 
-        self._openai_key = QLineEdit(get_api_key("openai") or "")
-        self._openai_key.setMinimumWidth(220)
-        self._openai_key.setPlaceholderText("(not needed for local servers)")
-        self._openai_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._openai_key.editingFinished.connect(
-            lambda: self._set_ai_key("openai", self._openai_key.text())
-        )
-        openai_form.addRow("API key:", self._openai_key)
+        self._ai_note = QLabel()
+        self._ai_note.setWordWrap(True)
+        self._ai_note.setEnabled(False)
+        ai_form.addRow("", self._ai_note)
 
-        ai_outer.addWidget(self._openai_section)
-
-        self._anthropic_section = QWidget()
-        anthropic_form = QFormLayout(self._anthropic_section)
-        anthropic_form.setContentsMargins(0, 0, 0, 0)
-        anthropic_form.setSpacing(8)
-
-        self._anthropic_model = QLineEdit(s.value("ai/anthropicModel", _DEFAULTS["ai/anthropicModel"]))
-        self._anthropic_model.setMinimumWidth(220)
-        self._anthropic_model.setPlaceholderText("e.g. claude-opus-5")
-        self._anthropic_model.editingFinished.connect(
-            lambda: self._emit("ai/anthropicModel", self._anthropic_model.text())
-        )
-        anthropic_form.addRow("Model:", self._anthropic_model)
-
-        self._anthropic_key = QLineEdit(get_api_key("anthropic") or "")
-        self._anthropic_key.setMinimumWidth(220)
-        self._anthropic_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._anthropic_key.editingFinished.connect(
-            lambda: self._set_ai_key("anthropic", self._anthropic_key.text())
-        )
-        anthropic_form.addRow("API key:", self._anthropic_key)
-
-        ai_outer.addWidget(self._anthropic_section)
-        ai_outer.addStretch()
-
-        self._ai_provider.currentIndexChanged.connect(self._on_ai_provider_changed)
-        self._update_ai_section_visibility()
+        self._ai_preset.currentIndexChanged.connect(self._on_ai_preset_changed)
+        self._load_ai_preset_fields()
 
         tabs.addTab(ai_tab, "AI")
 
@@ -295,25 +268,140 @@ class PreferencesDialog(QDialog):
         if self._on_change:
             self._on_change()
 
-    def _update_ai_section_visibility(self):
-        provider = self._ai_provider.currentData()
-        self._openai_section.setVisible(provider == "openai")
-        self._anthropic_section.setVisible(provider == "anthropic")
+    # -- AI tab -------------------------------------------------------------
+    #
+    # Everything is stored per preset (model, base URL, and the API key --
+    # which lives in the OS keychain under the preset id, so keys for
+    # different services coexist and swapping services keeps both).
 
-    def _on_ai_provider_changed(self):
-        self._update_ai_section_visibility()
-        self._emit("ai/activeProvider", self._ai_provider.currentData())
+    def _current_ai_preset(self):
+        return preset_for(self._ai_preset.currentData())
 
-    def _set_ai_key(self, provider: str, key: str):
+    def _load_ai_preset_fields(self):
+        """Repopulate the fields from whichever preset is selected. Guarded
+        against re-entrancy: setting the widgets fires their own change
+        signals, which would otherwise write one preset's values under
+        another's keys."""
+        self._loading_ai = True
+        try:
+            p = self._current_ai_preset()
+            s = QSettings("BelfrySCAD", "BelfrySCAD")
+            self._ai_base_url.setText(s.value(base_url_key(p.id), p.base_url))
+            self._ai_base_url.setPlaceholderText(p.base_url or "https://…/v1")
+
+            self._ai_model.clear()
+            self._ai_model.setEditText(s.value(model_key(p.id), ""))
+            self._ai_model.lineEdit().setPlaceholderText(p.model_hint)
+
+            self._ai_key.setText(get_api_key(p.id) or "")
+            self._ai_key.setPlaceholderText(
+                "" if p.needs_key else "(not needed for this service)")
+
+            anthropic = p.protocol == "anthropic"
+            self._ai_base_url.setEnabled(not anthropic)
+            self._ai_fetch_models.setEnabled(not anthropic)
+            if anthropic:
+                self._ai_note.setText(
+                    "Tried in order: ANTHROPIC_API_KEY, then the `claude` CLI "
+                    "if installed (needs no key), then the key above.")
+            elif not p.needs_key:
+                self._ai_note.setText("Local server — an API key is usually not needed.")
+            else:
+                self._ai_note.setText("")
+        finally:
+            self._loading_ai = False
+
+    def _on_ai_preset_changed(self):
+        self._emit("ai/activeProvider", self._ai_preset.currentData())
+        self._load_ai_preset_fields()
+
+    def _save_ai_base_url(self):
+        if not getattr(self, "_loading_ai", False):
+            self._emit(base_url_key(self._current_ai_preset().id),
+                       self._ai_base_url.text().strip())
+
+    def _current_model_id(self) -> str:
+        """The model id, never the decorated label. List entries display a
+        "(vision)" marker but keep the real id in item data; anything the
+        user typed themselves is taken verbatim."""
+        i = self._ai_model.currentIndex()
+        if i >= 0 and self._ai_model.itemText(i) == self._ai_model.currentText():
+            data = self._ai_model.itemData(i)
+            if data:
+                return str(data)
+        return self._ai_model.currentText().strip()
+
+    def _save_ai_model(self):
+        if not getattr(self, "_loading_ai", False):
+            self._emit(model_key(self._current_ai_preset().id),
+                       self._current_model_id())
+
+    def _save_ai_key(self):
         # API keys go through the OS keychain (ai_secrets), not
-        # save_preferences/QSettings -- this is the one exception to every
-        # other control here saving through _emit.
+        # save_preferences/QSettings -- the one exception to every other
+        # control here saving through _emit.
+        if getattr(self, "_loading_ai", False):
+            return
+        preset_id = self._current_ai_preset().id
+        key = self._ai_key.text().strip()
         if key:
-            set_api_key(provider, key)
+            set_api_key(preset_id, key)
         else:
-            delete_api_key(provider)
+            delete_api_key(preset_id)
         if self._on_change:
             self._on_change()
+
+    def _fetch_ai_models(self):
+        p = self._current_ai_preset()
+        base = self._ai_base_url.text().strip() or p.base_url
+        if not base:
+            self._ai_note.setText("Set a Base URL first.")
+            return
+        keep = self._current_model_id()
+        self._ai_note.setText("Fetching models…")
+        QApplication.processEvents()
+        try:
+            models = list_models(base, get_api_key(p.id) or "")
+        except Exception as e:      # noqa: BLE001 -- reported, not raised
+            self._ai_note.setText(f"Couldn't list models: {e}")
+            return
+        if not models:
+            self._ai_note.setText("Server returned no models.")
+            return
+
+        # Where capabilities are known (Ollama reports them; the
+        # OpenAI-protocol /models endpoint doesn't), hide models without
+        # tool support entirely -- the pane always sends tools, so those
+        # fail the whole request rather than merely working less well.
+        caps = list_model_capabilities(base)
+        hidden = 0
+        if caps:
+            usable = [m for m in models if "tools" in caps.get(m, set())]
+            hidden = len(models) - len(usable)
+            models = usable
+        if not models:
+            self._ai_note.setText(
+                f"None of this server's {hidden} models support tool calling.")
+            return
+
+        self._loading_ai = True
+        try:
+            self._ai_model.clear()
+            for m in models:
+                # Display may carry a "(vision)" marker, so the real id is
+                # kept in item data -- see _current_model_id.
+                label = m + ("  (vision)" if "vision" in caps.get(m, set()) else "")
+                self._ai_model.addItem(label, m)
+            self._ai_model.setEditText(keep or models[0])
+        finally:
+            self._loading_ai = False
+        self._save_ai_model()
+        note = f"{len(models)} usable models."
+        if hidden:
+            note += f"  ({hidden} hidden: no tool support.)"
+        if caps:
+            note += "  “(vision)” models can also use view_viewport."
+        self._ai_note.setText(note)
 
     _MANAGE_THEMES = "Manage Color Themes..."  # trailing combo entry, after a separator
 

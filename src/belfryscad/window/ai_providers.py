@@ -35,6 +35,99 @@ MAX_TOKENS = 4096
 _TIMEOUT = 120
 
 
+@dataclass(frozen=True)
+class Preset:
+    """A known service, so the user picks a name instead of typing a URL.
+
+    `protocol` selects the wire format ("openai" or "anthropic"); every
+    non-Anthropic service here speaks the OpenAI protocol. `base_url` is a
+    starting value the user can still edit -- "custom" exists precisely for
+    anything not listed. `model_hint` is only placeholder text: model IDs
+    change far too often to hard-code as defaults.
+    """
+    id: str
+    label: str
+    protocol: str
+    base_url: str
+    model_hint: str
+    needs_key: bool = True
+
+
+# Base URLs verified reachable (an auth/validation error rather than a 404).
+PRESETS: list[Preset] = [
+    Preset("anthropic", "Claude (Anthropic)", "anthropic",
+           "https://api.anthropic.com/v1", "e.g. claude-opus-5", needs_key=False),
+    Preset("openai", "ChatGPT (OpenAI)", "openai",
+           "https://api.openai.com/v1", "e.g. gpt-4o"),
+    Preset("google", "Gemma / Gemini (Google AI)", "openai",
+           "https://generativelanguage.googleapis.com/v1beta/openai",
+           "e.g. gemma-3-27b-it"),
+    Preset("moonshot", "Kimi (Moonshot)", "openai",
+           "https://api.moonshot.ai/v1", "e.g. kimi-k2-0711-preview"),
+    Preset("ollama", "Ollama (local)", "openai",
+           "http://localhost:11434/v1", "a model with the 'tools' capability",
+           needs_key=False),
+    Preset("custom", "Custom (OpenAI-protocol)", "openai",
+           "", "any model the server offers"),
+]
+
+PRESETS_BY_ID = {p.id: p for p in PRESETS}
+
+
+def preset_for(preset_id: str) -> Preset:
+    return PRESETS_BY_ID.get(preset_id, PRESETS_BY_ID["openai"])
+
+
+# Per-preset settings keys. Kept here (not in preferences.py) so the chat
+# pane and the Preferences dialog can't drift apart on where a value lives.
+def model_key(preset_id: str) -> str:
+    return f"ai/model/{preset_id}"
+
+
+def base_url_key(preset_id: str) -> str:
+    return f"ai/baseUrl/{preset_id}"
+
+
+def list_model_capabilities(base_url: str) -> dict[str, set[str]]:
+    """{model id: capabilities} from an Ollama server's native /api/tags.
+
+    The OpenAI-protocol /models endpoint reports ids only, so this is the
+    one place capability data is actually available -- and it matters:
+    a model without "tools" fails the whole request, since the chat pane
+    always sends tools. Returns {} for any server that isn't Ollama.
+    """
+    root = _normalize_openai_base(base_url)
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    try:
+        with urlopen(Request(root + "/api/tags"), timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:      # noqa: BLE001 -- not Ollama, or not reachable
+        return {}
+    caps = {}
+    for m in data.get("models", []):
+        name = m.get("name") or m.get("model")
+        if name:
+            caps[name] = set(m.get("capabilities") or [])
+    return caps
+
+
+def list_models(base_url: str, api_key: str = "") -> list[str]:
+    """Model IDs from an OpenAI-protocol server's /models endpoint, for the
+    Preferences model dropdown. Raises on failure -- the caller reports it
+    and leaves the field free-text, since not every server implements this
+    (Anthropic doesn't use this protocol at all)."""
+    url = _normalize_openai_base(base_url) + "/models"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = Request(url, headers=headers)
+    with urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+    return sorted(ids)
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -49,6 +142,10 @@ class ChatMessage:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None             # set when role == "tool"
     tool_name: str | None = None                # OpenAI wants this on tool results
+    # (base64, mime) images carried by a user message. Tool results can't
+    # hold images in the OpenAI protocol, so a viewport grab is delivered
+    # as a follow-up user message instead -- see ai_chat's worker.
+    images: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -101,6 +198,13 @@ def _openai_messages(messages: list[ChatMessage]) -> list[dict]:
                     for c in m.tool_calls
                 ],
             })
+        elif m.images:
+            content = ([{"type": "text", "text": m.text}] if m.text else []) + [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                for b64, mime in m.images
+            ]
+            out.append({"role": m.role, "content": content})
         else:
             out.append({"role": m.role, "content": m.text})
     return out
@@ -208,6 +312,13 @@ def _anthropic_messages(messages: list[ChatMessage]) -> list[dict]:
             blocks += [{"type": "tool_use", "id": c.id, "name": c.name,
                         "input": c.arguments} for c in m.tool_calls]
             out.append({"role": "assistant", "content": blocks})
+        elif m.images:
+            blocks = [{"type": "image", "source": {
+                "type": "base64", "media_type": mime, "data": b64}}
+                for b64, mime in m.images]
+            if m.text:
+                blocks.append({"type": "text", "text": m.text})
+            out.append({"role": m.role, "content": blocks})
         else:
             out.append({"role": m.role, "content": m.text})
     return out

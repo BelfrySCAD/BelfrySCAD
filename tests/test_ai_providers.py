@@ -13,7 +13,8 @@ from belfryscad.window import ai_providers
 from belfryscad.window.ai_providers import (
     ChatMessage, ToolCall,
     _anthropic_messages, _openai_messages,
-    _http_error_message, _normalize_openai_base,
+    PRESETS, PROVIDERS, _http_error_message, _normalize_openai_base,
+    base_url_key, model_key, preset_for,
     _parse_anthropic_sse_lines, _parse_openai_sse_lines,
     stream_openai,
 )
@@ -312,3 +313,161 @@ class TestHttpErrorMessages:
     def test_other_errors_pass_detail_through(self):
         msg = _http_error_message(_FakeHTTPError(500), _FakeReq(), "boom")
         assert "HTTP 500" in msg and "boom" in msg
+
+
+class TestPresets:
+    """Preset services, so the user picks a name instead of typing a URL.
+    Base URLs were each confirmed to be a real endpoint (an auth or
+    validation error rather than a 404) rather than written from memory."""
+
+    def test_requested_services_present(self):
+        ids = {p.id for p in PRESETS}
+        assert {"openai", "google", "moonshot", "anthropic", "ollama", "custom"} <= ids
+
+    def test_every_preset_has_a_protocol_we_implement(self):
+        assert all(p.protocol in PROVIDERS for p in PRESETS)
+
+    def test_only_anthropic_uses_the_anthropic_protocol(self):
+        assert [p.id for p in PRESETS if p.protocol == "anthropic"] == ["anthropic"]
+
+    def test_base_urls_are_absolute_except_custom(self):
+        for p in PRESETS:
+            if p.id == "custom":
+                assert p.base_url == ""     # user supplies it
+            else:
+                assert p.base_url.startswith("http")
+
+    def test_local_services_dont_require_a_key(self):
+        assert preset_for("ollama").needs_key is False
+
+    def test_unknown_id_falls_back(self):
+        assert preset_for("nope").id == "openai"
+
+    def test_settings_keys_are_namespaced_per_preset(self):
+        # Distinct keys are what let several services be configured at once.
+        assert model_key("openai") != model_key("moonshot")
+        assert base_url_key("openai") != base_url_key("moonshot")
+        assert model_key("openai").startswith("ai/")
+
+
+class TestListModels:
+    def test_parses_and_sorts_ids(self, monkeypatch):
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"data":[{"id":"b"},{"id":"a"},{"no":"id"}]}'
+
+        monkeypatch.setattr(ai_providers, "urlopen", lambda req, timeout=None: _Resp())
+        assert ai_providers.list_models("http://x/v1") == ["a", "b"]
+
+    def test_sends_key_when_present(self, monkeypatch):
+        captured = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"data":[]}'
+
+        def fake(req, timeout=None):
+            captured["req"] = req
+            return _Resp()
+
+        monkeypatch.setattr(ai_providers, "urlopen", fake)
+        ai_providers.list_models("http://x/v1", "sk-1")
+        assert captured["req"].headers["Authorization"] == "Bearer sk-1"
+        assert captured["req"].full_url == "http://x/v1/models"
+
+
+class TestImageMessages:
+    """A viewport grab can't ride inside a tool result in either chat
+    protocol, so it's delivered as a following user message. Each protocol
+    spells that differently."""
+
+    def test_openai_uses_image_url_data_uri(self):
+        msgs = [ChatMessage(role="user", text="look", images=[("QUJD", "image/png")])]
+        content = _openai_messages(msgs)[0]["content"]
+        assert content[0] == {"type": "text", "text": "look"}
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "data:image/png;base64,QUJD"
+
+    def test_anthropic_uses_a_base64_source_block(self):
+        msgs = [ChatMessage(role="user", text="look", images=[("QUJD", "image/png")])]
+        content = _anthropic_messages(msgs)[0]["content"]
+        assert content[0] == {"type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": "QUJD"}}
+        assert content[1] == {"type": "text", "text": "look"}
+
+    def test_image_only_message_omits_empty_text(self):
+        msgs = [ChatMessage(role="user", text="", images=[("QUJD", "image/png")])]
+        assert len(_openai_messages(msgs)[0]["content"]) == 1
+        assert len(_anthropic_messages(msgs)[0]["content"]) == 1
+
+    def test_messages_without_images_are_unchanged(self):
+        msgs = [ChatMessage(role="user", text="hi")]
+        assert _openai_messages(msgs) == [{"role": "user", "content": "hi"}]
+        assert _anthropic_messages(msgs) == [{"role": "user", "content": "hi"}]
+
+
+class TestModelCapabilities:
+    """Ollama's native /api/tags is the only place capability data is
+    available -- the OpenAI-protocol /models endpoint reports ids only.
+    It matters because a model without "tools" fails the whole request,
+    since the pane always sends tools."""
+
+    def _fake_tags(self, monkeypatch, payload):
+        captured = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return payload
+
+        def fake(req, timeout=None):
+            captured["url"] = req.full_url
+            return _Resp()
+
+        monkeypatch.setattr(ai_providers, "urlopen", fake)
+        return captured
+
+    def test_parses_capabilities(self, monkeypatch):
+        self._fake_tags(monkeypatch, b'''{"models":[
+            {"name":"a","capabilities":["completion","tools","vision"]},
+            {"name":"b","capabilities":["completion"]}]}''')
+        caps = ai_providers.list_model_capabilities("http://localhost:11434/v1")
+        assert caps["a"] == {"completion", "tools", "vision"}
+        assert caps["b"] == {"completion"}
+
+    def test_strips_v1_to_reach_the_native_api(self, monkeypatch):
+        cap = self._fake_tags(monkeypatch, b'{"models":[]}')
+        ai_providers.list_model_capabilities("http://localhost:11434/v1")
+        assert cap["url"] == "http://localhost:11434/api/tags"
+
+    def test_bare_host_also_works(self, monkeypatch):
+        cap = self._fake_tags(monkeypatch, b'{"models":[]}')
+        ai_providers.list_model_capabilities("http://localhost:11434")
+        assert cap["url"] == "http://localhost:11434/api/tags"
+
+    def test_non_ollama_server_yields_nothing(self, monkeypatch):
+        def boom(req, timeout=None):
+            raise OSError("404")
+        monkeypatch.setattr(ai_providers, "urlopen", boom)
+        assert ai_providers.list_model_capabilities("https://api.openai.com/v1") == {}
+
+    def test_missing_capabilities_key_is_an_empty_set(self, monkeypatch):
+        self._fake_tags(monkeypatch, b'{"models":[{"name":"a"}]}')
+        assert ai_providers.list_model_capabilities("http://x/v1")["a"] == set()
