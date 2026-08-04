@@ -9,10 +9,13 @@ reassembling them wrong is the most likely place for a silent bug.
 """
 import json
 
+from belfryscad.window import ai_providers
 from belfryscad.window.ai_providers import (
     ChatMessage, ToolCall,
     _anthropic_messages, _openai_messages,
+    _http_error_message, _normalize_openai_base,
     _parse_anthropic_sse_lines, _parse_openai_sse_lines,
+    stream_openai,
 )
 
 
@@ -189,3 +192,123 @@ class TestWireFormatTranslation:
         msgs = [ChatMessage(role="user", text="hi")]
         assert _openai_messages(msgs) == [{"role": "user", "content": "hi"}]
         assert _anthropic_messages(msgs) == [{"role": "user", "content": "hi"}]
+
+
+class TestOpenAIRequestBuilding:
+    """The Authorization header must be omitted entirely when no key is set,
+    so local OpenAI-protocol servers (Ollama, LM Studio, llama.cpp) work --
+    verified live against a real Ollama server during development."""
+
+    def _capture(self, monkeypatch, api_key):
+        captured = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return iter([b'data: [DONE]\n'])
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            return _FakeResp()
+
+        monkeypatch.setattr(ai_providers, "urlopen", fake_urlopen)
+        list(stream_openai("http://localhost:11434/v1", api_key, "m",
+                           [ChatMessage(role="user", text="hi")], []))
+        return captured["req"]
+
+    def test_no_auth_header_when_key_is_empty(self, monkeypatch):
+        req = self._capture(monkeypatch, "")
+        assert not any(h.lower() == "authorization" for h in req.headers)
+
+    def test_auth_header_present_when_key_is_set(self, monkeypatch):
+        req = self._capture(monkeypatch, "sk-abc")
+        assert req.headers["Authorization"] == "Bearer sk-abc"
+
+    def test_url_is_chat_completions(self, monkeypatch):
+        req = self._capture(monkeypatch, "")
+        assert req.full_url == "http://localhost:11434/v1/chat/completions"
+
+    def test_trailing_slash_in_base_url_tolerated(self, monkeypatch):
+        captured = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return iter([b'data: [DONE]\n'])
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            return _FakeResp()
+
+        monkeypatch.setattr(ai_providers, "urlopen", fake_urlopen)
+        list(stream_openai("http://localhost:11434/v1/", "", "m",
+                           [ChatMessage(role="user", text="hi")], []))
+        assert captured["req"].full_url == "http://localhost:11434/v1/chat/completions"
+
+
+class TestBaseUrlNormalization:
+    """A bare host (no path) gets the conventional /v1 appended. Typing
+    "http://localhost:11434" for Ollama is the natural thing to do, and
+    without this it fails with a router-level "404 page not found" that
+    names nothing useful. Confirmed against a real Ollama server: the bare
+    form 404s, the /v1 form works."""
+
+    def test_bare_host_gets_v1(self):
+        assert _normalize_openai_base("http://localhost:11434") == "http://localhost:11434/v1"
+
+    def test_trailing_slash_bare_host_gets_v1(self):
+        assert _normalize_openai_base("http://localhost:11434/") == "http://localhost:11434/v1"
+
+    def test_existing_v1_untouched(self):
+        assert _normalize_openai_base("https://api.openai.com/v1") == "https://api.openai.com/v1"
+
+    def test_custom_path_untouched(self):
+        assert _normalize_openai_base("http://host/openai/v1") == "http://host/openai/v1"
+
+    def test_whitespace_stripped(self):
+        assert _normalize_openai_base("  http://localhost:11434  ") == "http://localhost:11434/v1"
+
+
+class _FakeHTTPError:
+    def __init__(self, code):
+        self.code = code
+
+
+class _FakeReq:
+    full_url = "http://localhost:11434/chat/completions"
+
+
+class TestHttpErrorMessages:
+    """Ollama reports "this model can't do tool calling" two different ways;
+    the second is a Jinja traceback from its tool-parser generation that
+    names nothing actionable. Both were reproduced against a real Ollama
+    server (kitsune-qwable and Silvia respectively)."""
+
+    def test_explicit_no_tools_support_is_explained(self):
+        detail = '{"error":{"message":"Silvia:latest does not support tools"}}'
+        msg = _http_error_message(_FakeHTTPError(400), _FakeReq(), detail)
+        assert msg.startswith("This model can't do tool calling")
+        assert "tools" in msg
+
+    def test_jinja_parser_failure_is_explained(self):
+        detail = ("Unable to generate parser for this template. Automatic "
+                  "generate parser for this template failed: raise_exception")
+        msg = _http_error_message(_FakeHTTPError(400), _FakeReq(), detail)
+        assert msg.startswith("This model can't do tool calling")
+
+    def test_404_names_the_url(self):
+        msg = _http_error_message(_FakeHTTPError(404), _FakeReq(), "404 page not found")
+        assert "http://localhost:11434/chat/completions" in msg
+        assert "Base URL" in msg
+
+    def test_401_points_at_the_api_key(self):
+        msg = _http_error_message(_FakeHTTPError(401), _FakeReq(), "unauthorized")
+        assert "API key" in msg
+
+    def test_other_errors_pass_detail_through(self):
+        msg = _http_error_message(_FakeHTTPError(500), _FakeReq(), "boom")
+        assert "HTTP 500" in msg and "boom" in msg

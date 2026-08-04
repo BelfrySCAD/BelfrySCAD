@@ -16,6 +16,7 @@ from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
+from belfryscad.window.ai_chat import AIChatPane
 from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
@@ -139,12 +140,21 @@ class _GizmoCmd(QUndoCommand):
 
 class FileTab(QWidget):
     """Per-editor-tab widget: holds only the CodeEditor and per-file metadata."""
+
+    # Stable per-tab id handed to the AI chat pane's tools. A real counter,
+    # not id(self): CPython reuses object ids after a tab is closed, so a
+    # stale tool-call reference could otherwise silently hit a different
+    # tab. In-memory only -- chat sessions don't outlive the app.
+    _next_chat_id = 1
+
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.editor = CodeEditor()
         layout.addWidget(self.editor)
+        self.chat_id = FileTab._next_chat_id
+        FileTab._next_chat_id += 1
         self.file_path = None
         self.is_modified = False
         self.root_scope = None
@@ -596,6 +606,18 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._customizer_dock, self._animate_dock)
         self._animate_dock.hide()
 
+        # --- AI Chat dock (right, bottom — tabbed with Customizer/Animate) ---
+        self._ai_chat_pane = AIChatPane()
+        self._ai_chat_pane.send_requested.connect(self._on_ai_send)
+        self._ai_chat_pane.proposal_accepted.connect(self._on_ai_proposal_accepted)
+
+        self._ai_chat_dock = QDockWidget("AI Chat", self)
+        self._ai_chat_dock.setObjectName("AIChatDock")
+        self._ai_chat_dock.setWidget(self._ai_chat_pane)
+        self._ai_chat_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.tabifyDockWidget(self._customizer_dock, self._ai_chat_dock)
+        self._ai_chat_dock.hide()
+
         # --- Console dock (bottom) ---
         self._console = ConsoleWidget()
         self._console.setReadOnly(True)
@@ -863,6 +885,10 @@ class MainWindow(QMainWindow):
         self._act_show_customizer = self._customizer_dock.toggleViewAction()
         self._act_show_customizer.setText("Show Customizer")
         view_menu.addAction(self._act_show_customizer)
+
+        self._act_show_ai_chat = self._ai_chat_dock.toggleViewAction()
+        self._act_show_ai_chat.setText("Show AI Chat")
+        view_menu.addAction(self._act_show_ai_chat)
 
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
 
@@ -1836,6 +1862,71 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(target_tab)
         if idx >= 0:
             self._tabs.setCurrentIndex(idx)
+
+    # ------------------------------------------------------------------
+    # AI chat pane
+    # ------------------------------------------------------------------
+
+    def _on_ai_send(self, text: str):
+        """Build the tool context on this (the GUI) thread, then hand it to
+        the pane to run the turn in a worker. The snapshot is taken fresh
+        per turn precisely so tool handlers never touch a live editor from
+        the worker thread -- same reason _RenderWorker gets plain source
+        text rather than the widget."""
+        from belfryscad.window.library_manager import _library_dir
+        from belfryscad.window.ai_tools import AIToolContext, TabSnapshot
+
+        tabs = []
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is None:
+                continue
+            if tab.file_path and not tab.file_path.lower().endswith(".scad"):
+                continue
+            tabs.append(TabSnapshot(
+                id=tab.chat_id,
+                name=tab.display_name(),
+                path=tab.file_path,
+                modified=tab.is_modified,
+                text=tab.editor.toPlainText(),
+            ))
+        ctx = AIToolContext(library_dir=_library_dir(), open_tabs=tabs)
+        self._ai_chat_pane.start_turn(text, ctx)
+
+    def _tab_by_chat_id(self, chat_id: int):
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is not None and tab.chat_id == chat_id:
+                return tab
+        return None
+
+    def _on_ai_proposal_accepted(self, proposal):
+        """Apply a change the user accepted in the chat pane's review bar.
+        Goes through replace_span + source_edited_externally, the same path
+        "Edit as..."/"Reformat Selection" use, so it lands as one clean undo
+        step and triggers a re-render."""
+        if proposal.kind == "edit":
+            tab = self._tab_by_chat_id(proposal.tab_id)
+            if tab is None:
+                self.log("AI: that script is no longer open; change not applied.")
+                return
+            if tab.editor.isReadOnly():
+                self.log("AI: that script is read-only; change not applied.")
+                return
+            tab.editor.replace_span(0, len(tab.editor.toPlainText()),
+                                    proposal.new_content)
+            tab.editor.source_edited_externally.emit()
+            idx = self._tabs.indexOf(tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+        else:
+            # New script: open it as an unsaved tab and let the user choose
+            # where it goes -- never write to disk unprompted.
+            self._new_document()
+            tab = self._current_tab()
+            if tab is not None:
+                tab.editor.setPlainText(proposal.new_content)
+                tab.editor.source_edited_externally.emit()
 
     def _edit_customizer_parameter(self, tab, word: str):
         """CodeEditor's "Edit Parameter '<word>'..." context-menu action --
