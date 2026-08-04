@@ -1629,6 +1629,11 @@ class MainWindow(QMainWindow):
         frame's worker thread never starts while the previous one is still
         touching the parser — see AnimatePane.play()/advance_frame().
         """
+        # Release any AI follow-up that was waiting on a render: by now the
+        # geometry is loaded, so the viewport grab and the measurements it
+        # takes will reflect this render.
+        self._ai_chat_pane.on_render_finished()
+
         if self._animate_pane.is_dumping() and self._dump_dir:
             try:
                 frame = self._dump_frame
@@ -1890,8 +1895,181 @@ class MainWindow(QMainWindow):
                 modified=tab.is_modified,
                 text=tab.editor.toPlainText(),
             ))
-        ctx = AIToolContext(library_dir=_library_dir(), open_tabs=tabs)
+        png, note = self._capture_viewport_png()
+        ctx = AIToolContext(library_dir=_library_dir(), open_tabs=tabs,
+                            viewport_png=png, viewport_note=note,
+                            geometry_summary=self._geometry_summary(),
+                            console_text=self._console_tail(),
+                            capture_view=self._capture_view_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
+
+    _AI_CONSOLE_LINES = 200
+    _AI_CONSOLE_CHARS = 20_000
+
+    def _console_tail(self) -> str:
+        """The end of the console for the read_console tool. Read here on
+        the GUI thread, and capped: a long session's console can run to
+        megabytes, and only the last render's output is of any use."""
+        try:
+            text = self._console.toPlainText()
+        except Exception:      # noqa: BLE001 -- the turn proceeds without it
+            return ""
+        lines = text.splitlines()
+        clipped = len(lines) > self._AI_CONSOLE_LINES
+        tail = "\n".join(lines[-self._AI_CONSOLE_LINES:])
+        if len(tail) > self._AI_CONSOLE_CHARS:
+            tail = tail[-self._AI_CONSOLE_CHARS:]
+            clipped = True
+        return ("(earlier output omitted)\n" + tail) if clipped else tail
+
+    def _geometry_summary(self) -> str:
+        """Measurements of the last render, as plain text for the
+        describe_geometry tool. Computed here on the GUI thread: Manifold
+        objects are never handed to the worker."""
+        bodies = getattr(self, "_bodies", None)
+        if not bodies:
+            return ""
+        lines, total_v, total_a = [], 0.0, 0.0
+        lo = [float("inf")] * 3
+        hi = [float("-inf")] * 3
+        for i, cb in enumerate(bodies):
+            try:
+                m = cb.body
+                if m.is_empty():
+                    continue
+                v, a = m.volume(), m.surface_area()
+                bb = m.bounding_box()
+                total_v += v
+                total_a += a
+                for k in range(3):
+                    lo[k] = min(lo[k], bb[k])
+                    hi[k] = max(hi[k], bb[k + 3])
+                lines.append(
+                    f"  body {i + 1}: volume {v:.3f}, surface area {a:.3f}, "
+                    f"size {bb[3] - bb[0]:.3f} x {bb[4] - bb[1]:.3f} x "
+                    f"{bb[5] - bb[2]:.3f}, {m.num_tri()} triangles, "
+                    f"genus {m.genus()}")
+            except Exception:      # noqa: BLE001 -- report what we can
+                continue
+        if not lines:
+            return ""
+        return "\n".join([
+            f"Rendered model: {len(lines)} solid part(s).",
+            f"Total volume {total_v:.3f}, total surface area {total_a:.3f}.",
+            f"Overall bounding box: [{lo[0]:.3f}, {lo[1]:.3f}, {lo[2]:.3f}] to "
+            f"[{hi[0]:.3f}, {hi[1]:.3f}, {hi[2]:.3f}] "
+            f"(size {hi[0] - lo[0]:.3f} x {hi[1] - lo[1]:.3f} x {hi[2] - lo[2]:.3f}).",
+            "Genus counts through-holes: 0 means none.",
+            "Per part:",
+            *lines,
+        ])
+
+    # Named camera angles for the AI's view_viewport tool, as
+    # (azimuth, elevation). Matches the View menu's own presets.
+    _AI_VIEW_ANGLES = {
+        "front": (270, 0), "back": (90, 0), "left": (180, 0), "right": (0, 0),
+        "top": (270, 89), "bottom": (270, -89), "iso": (315, 35),
+    }
+
+    def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
+        """Called from the AI worker thread. Hands the request to the GUI
+        thread (only it may touch GL) and waits for the image. Safe from
+        deadlock because the GUI thread never waits on the worker."""
+        import threading
+        from PySide6.QtCore import QMetaObject
+        self._ai_view_request = {"view": view, "overrides": overrides or {},
+                                 "done": threading.Event(), "result": None}
+        QMetaObject.invokeMethod(self, "_service_ai_view_request",
+                                 Qt.ConnectionType.QueuedConnection)
+        if not self._ai_view_request["done"].wait(20):
+            return None
+        return self._ai_view_request["result"]
+
+    @Slot()
+    def _service_ai_view_request(self):
+        """GUI thread: point the camera at the requested angle, grab, and put
+        it back. grabFramebuffer() renders offscreen and we restore before
+        returning to the event loop, so the visible viewport never flickers."""
+        req = getattr(self, "_ai_view_request", None)
+        if not req:
+            return
+        renderer = self._viewport._renderer
+        cam = renderer.camera
+        # Everything touched here is restored in the finally block: these
+        # overrides colour one AI-requested image only, never the user's
+        # own display settings.
+        saved = (cam.azimuth, cam.elevation, cam.roll, cam.orthographic,
+                 renderer.show_axes, renderer.show_edges)
+        ov = req.get("overrides") or {}
+        try:
+            az, el = self._AI_VIEW_ANGLES.get(
+                req["view"], (cam.azimuth, cam.elevation))
+            if ov.get("azimuth") is not None or ov.get("elevation") is not None:
+                # An explicit angle wins over the named view.
+                az = ov.get("azimuth", cam.azimuth)
+                el = ov.get("elevation", cam.elevation)
+                if az is None:
+                    az = cam.azimuth
+                if el is None:
+                    el = cam.elevation
+            cam.azimuth, cam.elevation, cam.roll = az, el, 0.0
+            if ov.get("projection") is not None:
+                cam.orthographic = ov["projection"] == "orthographic"
+            if ov.get("axes") is not None:
+                renderer.show_axes = bool(ov["axes"])
+            if ov.get("edges") is not None:
+                renderer.show_edges = bool(ov["edges"])
+
+            png, _note = self._capture_viewport_png()
+            if png:
+                import base64
+                req["result"] = (base64.b64encode(png).decode("ascii"),
+                                 self._describe_ai_view(req["view"], ov, az, el))
+        except Exception as e:      # noqa: BLE001 -- the tool reports failure
+            self.log(f"AI: could not render the {req['view']} view: {e}")
+        finally:
+            (cam.azimuth, cam.elevation, cam.roll, cam.orthographic,
+             renderer.show_axes, renderer.show_edges) = saved
+            req["done"].set()
+
+    @staticmethod
+    def _describe_ai_view(view: str, ov: dict, az: float, el: float) -> str:
+        """Caption telling the model exactly what it's looking at -- it
+        can't tell an orthographic view from a perspective one by eye."""
+        if ov.get("azimuth") is not None or ov.get("elevation") is not None:
+            head = f"View at azimuth {az:.0f}°, elevation {el:.0f}°"
+        else:
+            head = f"{view.capitalize()} view"
+        extra = []
+        if ov.get("projection"):
+            extra.append(ov["projection"])
+        if ov.get("axes") is not None:
+            extra.append("axes on" if ov["axes"] else "axes off")
+        if ov.get("edges") is not None:
+            extra.append("edges on" if ov["edges"] else "edges off")
+        return f"{head} ({', '.join(extra)})" if extra else head
+
+    _AI_VIEWPORT_MAX_PX = 1024
+
+    def _capture_viewport_png(self) -> tuple[bytes | None, str]:
+        """Grab the viewport for the view_viewport tool. Must happen here,
+        on the GUI thread -- grabFramebuffer() touches the GL context. Taken
+        once per turn alongside the text snapshot, and scaled down: a retina
+        viewport is far larger than any model needs and costs prompt tokens
+        for nothing."""
+        from belfryscad.window.ai_tools import image_to_png
+        try:
+            png = image_to_png(self._viewport.grabFramebuffer(),
+                               self._AI_VIEWPORT_MAX_PX)
+            if png is None:
+                return None, ""
+            cam = self._viewport._renderer.camera
+            note = (f"Rendered viewport, azimuth {cam.azimuth:.0f}°, "
+                    f"elevation {cam.elevation:.0f}°")
+            return png, note
+        except Exception as e:      # noqa: BLE001 -- the turn proceeds without it
+            self.log(f"AI: could not capture the viewport: {e}")
+            return None, ""
 
     def _tab_by_chat_id(self, chat_id: int):
         for i in range(self._tabs.count()):

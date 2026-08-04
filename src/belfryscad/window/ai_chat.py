@@ -10,25 +10,42 @@ each turn (see ai_tools' module docstring).
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from html import escape
 
 from PySide6.QtCore import QObject, QSettings, QThread, QTimer, Qt, Signal, Slot
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QFont, QKeyEvent, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
     QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from belfryscad.window.ai_providers import (
-    PROVIDERS, ChatMessage, ToolCall,
+    PRESETS, PROVIDERS, ChatMessage, ToolCall, base_url_key, model_key,
+    preset_for,
 )
+from belfryscad.window.ai_cli import ClaudeCliSession, find_claude_cli
+from belfryscad.window.ai_mcp import McpToolServer
 from belfryscad.window.ai_secrets import get_api_key
 from belfryscad.window.ai_tools import (
-    SYSTEM_PROMPT, TOOLS, AIToolContext, Proposal, run_tool,
+    MODE_ACCEPT, MODE_AUTO, MODE_LABELS, MODE_MANUAL, MODE_PLAN, MODES,
+    TRIGGER_RENDER,
+    SYSTEM_PROMPT, TOOLS, AIToolContext, Followup, Proposal, ToolImage,
+    run_tool,
 )
 from belfryscad.window.console import ConsoleWidget
+
+
+def escape_md(text: str) -> str:
+    """Neutralise Markdown in our own status lines (file names can contain
+    underscores and asterisks). Model output is deliberately NOT escaped --
+    rendering its Markdown is the point."""
+    out = []
+    for ch in text:
+        out.append("\\" + ch if ch in "\\`*_{}[]()#+-.!" else ch)
+    return "".join(out)
 
 # Stops a runaway model from looping on tools forever. Generous enough that
 # a legitimate read-several-files-then-propose turn never hits it.
@@ -43,7 +60,26 @@ _TOOL_ACTIVITY = {
     "read_open_script": "Reading your script",
     "propose_script_edit": "Preparing an edit",
     "propose_new_script": "Preparing a new script",
+    "view_viewport": "Looking at the model",
+    "describe_geometry": "Measuring the geometry",
+    "schedule_followup": "Scheduling a follow-up",
 }
+
+# A model can schedule itself, so cap how many turns can chain
+# without the user saying anything -- an unattended loop against a
+# paid API is the failure mode worth designing against. Reset by
+# any message the user types.
+_MAX_CHAINED_FOLLOWUPS = 5
+
+# A render-triggered follow-up that never sees a render would sit
+# there forever; give up rather than leave a zombie in the bar.
+_RENDER_WAIT_TIMEOUT = 900
+
+# Once the render lands, still pause before firing: it gives the viewport a
+# moment to settle and, more importantly, leaves a visible window in which
+# the user can cancel rather than the next turn starting the instant a
+# render finishes.
+_RENDER_SETTLE_DELAY = 5
 
 
 class _AIWorker(QObject):
@@ -54,12 +90,13 @@ class _AIWorker(QObject):
     thinking = Signal()              # waiting on the model, nothing to show yet
     tool_started = Signal(str)       # tool name; the pane maps it to a phrase
     proposal_ready = Signal(object)  # Proposal
+    followup_ready = Signal(object)  # Followup, or None to cancel
     errored = Signal(str)
     done = Signal()
 
     def __init__(self, provider: str, base_url: str, api_key: str, model: str,
                  messages: list[ChatMessage], ctx: AIToolContext,
-                 cancel: threading.Event):
+                 cancel: threading.Event, cli_session=None, user_text: str = ""):
         super().__init__()
         self._provider = provider
         self._base_url = base_url
@@ -68,6 +105,11 @@ class _AIWorker(QObject):
         self._messages = list(messages)
         self._ctx = ctx
         self._cancel = cancel
+        # When set, talk to the claude CLI coprocess instead of an HTTP
+        # provider; it keeps its own conversation state, so only this
+        # turn's text is sent.
+        self._cli_session = cli_session
+        self._user_text = user_text
 
     @Slot()
     def run(self):
@@ -79,6 +121,9 @@ class _AIWorker(QObject):
             self.done.emit()
 
     def _run_loop(self):
+        if self._cli_session is not None:
+            self._run_cli_turn()
+            return
         stream = PROVIDERS[self._provider]
         for _round in range(_MAX_TOOL_ROUNDS):
             if self._cancel.is_set():
@@ -109,11 +154,60 @@ class _AIWorker(QObject):
                     return
                 self.tool_started.emit(call.name)
                 result = run_tool(self._ctx, call.name, call.arguments)
-                self._messages.append(ChatMessage(
-                    role="tool", text=result,
-                    tool_call_id=call.id, tool_name=call.name))
+                if isinstance(result, ToolImage):
+                    # Neither protocol accepts an image *inside* a tool
+                    # result, so acknowledge the call as text and deliver
+                    # the picture as the following user message.
+                    self._messages.append(ChatMessage(
+                        role="tool", text=f"{result.caption} (image attached below)",
+                        tool_call_id=call.id, tool_name=call.name))
+                    self._messages.append(ChatMessage(
+                        role="user", text="",
+                        images=[(result.data_b64, result.mime)]))
+                else:
+                    self._messages.append(ChatMessage(
+                        role="tool", text=result,
+                        tool_call_id=call.id, tool_name=call.name))
         self.errored.emit(
             f"Stopped after {_MAX_TOOL_ROUNDS} tool rounds without finishing.")
+
+    def _run_cli_turn(self):
+        """The claude-CLI transport runs its own tool loop (against our MCP
+        server), so there's exactly one pass here and no tool dispatch --
+        tool_running events are report-only, for the activity line."""
+        self.thinking.emit()
+        for ev in self._cli_session.send_turn(self._user_text, self._cancel):
+            if self._cancel.is_set():
+                return
+            if ev.kind == "text_delta":
+                self.text_delta.emit(ev.text)
+            elif ev.kind == "tool_running":
+                self.tool_started.emit(ev.text)
+            elif ev.kind == "error":
+                self.errored.emit(ev.error or "unknown error")
+                return
+
+
+def resolve_anthropic_transport() -> tuple[str, str]:
+    """How to reach Claude, in the order the user asked for:
+
+    1. ANTHROPIC_API_KEY in the environment -> direct HTTP with that key.
+    2. a `claude` CLI on PATH -> coprocess, which carries its own
+       subscription auth and needs no key at all.
+    3. a key entered in Preferences (the OS keychain) -> direct HTTP.
+
+    Returns (transport, api_key) where transport is "http", "cli" or
+    "none"; api_key is empty for "cli".
+    """
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if env_key:
+        return "http", env_key
+    if find_claude_cli():
+        return "cli", ""
+    stored = get_api_key("anthropic") or ""
+    if stored:
+        return "http", stored
+    return "none", ""
 
 
 def diff_to_html(diff_text: str) -> str:
@@ -196,18 +290,22 @@ class DiffReviewDialog(QDialog):
 
 
 class _ChatInput(QPlainTextEdit):
-    """Chat entry box: Cmd/Ctrl+Return sends, plain Return still newlines."""
+    """Chat entry box: Return sends, Shift+Return inserts a newline."""
 
     def __init__(self, on_send, parent=None):
         super().__init__(parent)
         self._on_send = on_send
 
     def keyPressEvent(self, event):
-        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and event.modifiers() & (Qt.KeyboardModifier.ControlModifier
-                                         | Qt.KeyboardModifier.MetaModifier)):
-            self._on_send()
-            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Fall through to the default newline insertion, but strip
+                # the modifier: QPlainTextEdit ignores Shift+Return.
+                event = QKeyEvent(event.type(), event.key(),
+                                  Qt.KeyboardModifier.NoModifier, "\n")
+            else:
+                self._on_send()
+                return
         super().keyPressEvent(event)
 
 
@@ -227,6 +325,7 @@ class AIChatPane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._messages: list[ChatMessage] = []
+        self._entries: list[tuple[str, str]] = []
         self._pending: list[Proposal] = []
         self._thread: QThread | None = None
         self._worker: _AIWorker | None = None
@@ -236,6 +335,15 @@ class AIChatPane(QWidget):
         self._reply_text = ""
         self._awaiting_first_token = False
         self._review_dialog: DiffReviewDialog | None = None
+        self._followup: Followup | None = None
+        self._followup_due = 0.0
+        self._followup_chain = 0
+        self._followup_released = False
+        self._followup_timer = QTimer(self)
+        self._followup_timer.setInterval(1000)
+        self._followup_timer.timeout.connect(self._tick_followup)
+        self._cli_session: ClaudeCliSession | None = None
+        self._mcp_server: McpToolServer | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -244,22 +352,36 @@ class AIChatPane(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         self._provider = QComboBox()
-        self._provider.addItem("OpenAI-protocol", "openai")
-        self._provider.addItem("Anthropic (Claude)", "anthropic")
+        for _p in PRESETS:
+            self._provider.addItem(_p.label, _p.id)
         s = QSettings("BelfrySCAD", "BelfrySCAD")
         idx = self._provider.findData(s.value("ai/activeProvider", "openai"))
         self._provider.setCurrentIndex(idx if idx >= 0 else 0)
         self._provider.currentIndexChanged.connect(self._on_provider_changed)
         top.addWidget(self._provider)
+
+        self._mode = QComboBox()
+        for m in MODES:
+            self._mode.addItem(MODE_LABELS[m], m)
+        mi = self._mode.findData(s.value("ai/mode", MODE_MANUAL))
+        self._mode.setCurrentIndex(mi if mi >= 0 else 1)
+        self._mode.setToolTip(
+            "Plan: describe changes only.\n"
+            "Manual: review every change as a diff.\n"
+            "Accept Edits: apply changes immediately.\n"
+            "Auto: apply changes and let follow-ups keep looping.")
+        self._mode.currentIndexChanged.connect(self._on_mode_changed)
+        top.addWidget(self._mode)
+
         top.addStretch()
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.clicked.connect(self._clear_conversation)
         top.addWidget(self._clear_btn)
         layout.addLayout(top)
 
-        self._transcript = ConsoleWidget()
+        self._transcript = QTextBrowser()
         self._transcript.setReadOnly(True)
-        self._transcript.setFont(QFont("Menlo", 11))
+        self._transcript.setOpenExternalLinks(True)
         layout.addWidget(self._transcript, 1)
 
         # Live activity line. A local model can sit silent for a minute or
@@ -293,10 +415,25 @@ class AIChatPane(QWidget):
         self._review_bar.hide()
         layout.addWidget(self._review_bar)
 
+        # Pending follow-up: always visible and always cancellable, so a
+        # model that schedules itself can never do so behind the user's back.
+        self._followup_bar = QWidget()
+        fu = QHBoxLayout(self._followup_bar)
+        fu.setContentsMargins(0, 0, 0, 0)
+        fu.setSpacing(6)
+        self._followup_label = QLabel()
+        self._followup_label.setWordWrap(True)
+        fu.addWidget(self._followup_label, 1)
+        cancel_fu = QPushButton("Cancel")
+        cancel_fu.clicked.connect(lambda: self._cancel_followup(say=True))
+        fu.addWidget(cancel_fu)
+        self._followup_bar.hide()
+        layout.addWidget(self._followup_bar)
+
         bottom = QHBoxLayout()
         bottom.setSpacing(6)
         self._input = _ChatInput(self._on_send)
-        self._input.setPlaceholderText("Ask about your model…  (Cmd+Return to send)")
+        self._input.setPlaceholderText("Ask about your model…  (Return to send, Shift+Return for a new line)")
         self._input.setMaximumHeight(72)
         bottom.addWidget(self._input, 1)
         self._send_btn = QPushButton("Send")
@@ -306,24 +443,73 @@ class AIChatPane(QWidget):
 
     # -- transcript helpers -------------------------------------------------
 
-    def _say(self, text: str):
-        self._transcript.append_output(text)
-        self._inline_open = False
+    def _say(self, text: str, kind: str = "note"):
+        self._entries.append((kind, text))
+        self._render_transcript()
 
-    def _append_inline(self, text: str):
-        """Append without starting a new block -- ConsoleWidget.append_output
-        always begins one, which would put every streamed token on its own
-        line. The first delta after any non-streamed output (a tool line, a
-        diff) does start a new block, so resumed text doesn't run onto the
-        end of whatever preceded it."""
-        if not getattr(self, "_inline_open", False):
-            self._transcript.append_output("")
-            self._inline_open = True
-        cursor = QTextCursor(self._transcript.document())
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
+    def _render_transcript(self):
+        """Rebuild the whole transcript as Markdown.
+
+        Markdown can't be rendered a token at a time, so a reply streams in
+        as plain text (see _append_inline) and only becomes formatted once
+        it's complete -- or when anything else forces a rebuild, which is
+        why the in-progress reply is included here too.
+        """
+        parts = []
+        for kind, text in self._entries:
+            if kind == "user":
+                if parts:
+                    # A paragraph holding only a non-breaking space: extra
+                    # blank lines collapse in Markdown, so this is what
+                    # actually opens up space before each new request.
+                    parts.append(" ")
+                parts.append(f"**You:** {text}")
+            elif kind == "assistant":
+                parts.append(text)
+            else:
+                parts.append(f"*{escape_md(text)}*")
+        if self._reply_text:
+            parts.append(self._reply_text)
+        bar = self._transcript.verticalScrollBar()
+        follow, parked = self._at_end(), bar.value()
+        self._transcript.setMarkdown("\n\n".join(parts))
+        self._inline_open = bool(self._reply_text)
+        if follow:
+            self._scroll_to_end()
+        else:
+            # setMarkdown rebuilds the document and resets the scrollbar to
+            # 0. Entries are only ever appended, so earlier content keeps
+            # its position and the old offset still points at whatever the
+            # user was reading.
+            bar.setValue(parked)
+
+    def _at_end(self) -> bool:
+        """Whether the transcript is scrolled to the bottom. A couple of
+        pixels of slack because the scrollbar's maximum shifts as content
+        is added and rounding can leave it a hair short."""
+        bar = self._transcript.verticalScrollBar()
+        return bar.value() >= bar.maximum() - 2
+
+    def _scroll_to_end(self):
         bar = self._transcript.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def _append_inline(self, text: str):
+        """Append a streamed chunk as plain text, without re-rendering the
+        document -- doing a full Markdown pass per token would be far too
+        slow. _render_transcript formats it properly once the reply ends."""
+        # Only follow the output if the user was already at the bottom --
+        # otherwise streaming text would drag them away from whatever they
+        # scrolled back to read.
+        follow = self._at_end()
+        cursor = QTextCursor(self._transcript.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not self._inline_open:
+            cursor.insertBlock()
+            self._inline_open = True
+        cursor.insertText(text)
+        if follow:
+            self._scroll_to_end()
 
     # -- sending ------------------------------------------------------------
 
@@ -335,7 +521,12 @@ class AIChatPane(QWidget):
         if not text:
             return
         self._input.clear()
-        self._say(f"› {text}")
+        self._followup_chain = 0     # user is engaged again
+        self._say(text, kind="user")
+        # Sending is an explicit "I'm done reading back there" -- jump to the
+        # new message even if they'd scrolled up, unlike arriving output,
+        # which only follows when already at the bottom.
+        self._scroll_to_end()
         self.send_requested.emit(text)
 
     def start_turn(self, user_text: str, ctx: AIToolContext):
@@ -343,46 +534,92 @@ class AIChatPane(QWidget):
         snapshot it just built on the GUI thread."""
         if self._streaming:
             return
-        provider = self._provider.currentData()
+        preset = preset_for(self._provider.currentData())
+        provider = preset.protocol
         s = QSettings("BelfrySCAD", "BelfrySCAD")
-        if provider == "openai":
-            base_url = s.value("ai/openaiBaseUrl", "https://api.openai.com/v1")
-            model = s.value("ai/openaiModel", "")
+        base_url = s.value(base_url_key(preset.id), preset.base_url)
+        model = s.value(model_key(preset.id), "")
+        cli_session = None
+        if provider == "anthropic":
+            transport, api_key = resolve_anthropic_transport()
+            if transport == "none":
+                self._say("No way to reach Claude: set ANTHROPIC_API_KEY, "
+                          "install the `claude` CLI, or enter an API key in "
+                          "Preferences → AI.")
+                return
+            if transport == "cli":
+                cli_session = self._ensure_cli_session(ctx, model)
+                if cli_session is None:
+                    return
+            elif not model:
+                self._say("No model set for this provider — see Preferences → AI.")
+                return
         else:
-            base_url = "https://api.anthropic.com/v1"
-            model = s.value("ai/anthropicModel", "")
-        # An empty key is only fatal for Anthropic. OpenAI-protocol servers
-        # running locally (Ollama, LM Studio, llama.cpp) accept requests
-        # with no Authorization header at all; hosted OpenAI will answer a
-        # keyless request with a 401 we surface verbatim.
-        api_key = get_api_key(provider) or ""
-        if not api_key and provider == "anthropic":
-            self._say("No API key set for this provider — see Preferences → AI.")
-            return
-        if not model:
-            self._say("No model set for this provider — see Preferences → AI.")
-            return
+            # Keys are stored per preset, so several services can be set up
+            # at once and switching between them keeps each one's key. An
+            # empty key is only fatal for Anthropic: local OpenAI-protocol
+            # servers (Ollama, LM Studio, llama.cpp) accept requests with no
+            # Authorization header at all, and a hosted service answers a
+            # keyless request with a 401 we surface verbatim.
+            api_key = get_api_key(preset.id) or ""
+            if not base_url:
+                self._say("No Base URL set for this service — see Preferences → AI.")
+                return
+            if not model:
+                self._say("No model set for this provider — see Preferences → AI.")
+                return
 
         self._messages.append(ChatMessage(role="user", text=user_text))
         ctx.on_proposal = self._on_worker_proposal
+        ctx.on_followup = self._on_worker_followup
+        ctx.mode = self.mode()
+        if self._mcp_server is not None:
+            self._mcp_server.context = ctx   # fresh snapshot for CLI tool calls
         self._cancel = threading.Event()
         self._set_streaming(True)
         self._inline_open = False  # first delta opens its own line
 
         worker = _AIWorker(provider, base_url, api_key, model,
-                           self._messages, ctx, self._cancel)
+                           self._messages, ctx, self._cancel,
+                           cli_session=cli_session, user_text=user_text)
         thread = QThread()
         worker.moveToThread(thread)
         worker.text_delta.connect(self._on_text_delta, Qt.ConnectionType.QueuedConnection)
         worker.thinking.connect(self._on_thinking, Qt.ConnectionType.QueuedConnection)
         worker.tool_started.connect(self._on_tool_started, Qt.ConnectionType.QueuedConnection)
         worker.proposal_ready.connect(self._on_proposal, Qt.ConnectionType.QueuedConnection)
+        worker.followup_ready.connect(self._on_followup, Qt.ConnectionType.QueuedConnection)
         worker.errored.connect(self._on_error, Qt.ConnectionType.QueuedConnection)
         worker.done.connect(self._on_done, Qt.ConnectionType.QueuedConnection)
         thread.started.connect(worker.run)
         self._thread, self._worker = thread, worker
         self._reply_text = ""
         thread.start()
+
+    def _ensure_cli_session(self, ctx, model: str):
+        """Spin up (once per conversation) the MCP tool server and the
+        `claude` coprocess. The CLI keeps its own conversation state, so
+        the session is reused across turns and only torn down on Clear."""
+        if self._cli_session is not None:
+            return self._cli_session
+        try:
+            if self._mcp_server is None:
+                self._mcp_server = McpToolServer()
+                self._mcp_server.start()
+            self._mcp_server.context = ctx
+            self._cli_session = ClaudeCliSession(
+                SYSTEM_PROMPT, self._mcp_server.url, model=model)
+        except OSError as e:
+            self._say(f"Could not start the claude CLI bridge: {e}")
+            self._cli_session = None
+            return None
+        self._say("(using the claude CLI — no API key needed)")
+        return self._cli_session
+
+    def _stop_cli_session(self):
+        if self._cli_session is not None:
+            self._cli_session.stop()
+            self._cli_session = None
 
     def _cancel_turn(self):
         self._cancel.set()
@@ -434,16 +671,115 @@ class AIChatPane(QWidget):
         self._awaiting_first_token = True
         self._set_status("Thinking")
 
+    def _on_worker_followup(self, followup):
+        # Worker thread -- hop to the GUI thread via the signal.
+        if self._worker is not None:
+            self._worker.followup_ready.emit(followup)
+
     def _on_worker_proposal(self, proposal: Proposal):
         # Called on the worker thread -- hop to the GUI thread via the signal.
         if self._worker is not None:
             self._worker.proposal_ready.emit(proposal)
 
     @Slot(object)
+    def _on_followup(self, followup):
+        if followup is None:
+            self._cancel_followup(say=True)
+            return
+        if (self.mode() != MODE_AUTO
+                and self._followup_chain >= _MAX_CHAINED_FOLLOWUPS):
+            self._say(f"Follow-up not scheduled: {_MAX_CHAINED_FOLLOWUPS} ran "
+                      f"back to back already. Send a message to continue.")
+            return
+        self._followup = followup
+        self._followup_released = False
+        if followup.trigger == TRIGGER_RENDER:
+            # No countdown -- on_render_finished() fires it. The deadline is
+            # only a backstop against waiting forever for a render that
+            # never comes.
+            self._followup_due = time.monotonic() + _RENDER_WAIT_TIMEOUT
+        else:
+            self._followup_due = time.monotonic() + followup.delay_s
+        self._tick_followup()
+        self._followup_bar.show()
+        self._followup_timer.start()
+
+    def _tick_followup(self):
+        fu = self._followup
+        if fu is None:
+            return
+        left = self._followup_due - time.monotonic()
+
+        if fu.trigger == TRIGGER_RENDER:
+            if not self._followup_released:
+                # Still waiting for a render; the deadline is only a backstop.
+                if left > 0:
+                    self._followup_label.setText(
+                        f"After the next render: {fu.prompt}")
+                    return
+                self._say("Follow-up dropped: no render happened in time.")
+                self._cancel_followup()
+                return
+            if left > 0:
+                # Released, now serving the settle delay.
+                self._followup_label.setText(
+                    f"Render finished; following up in {int(left) + 1}s: "
+                    f"{fu.prompt}")
+                return
+        elif left > 0:
+            self._followup_label.setText(
+                f"Follow-up in {int(left)}s: {fu.prompt}")
+            return
+
+        # Due. Don't interrupt a turn already running -- wait for the next tick.
+        if self._streaming:
+            return
+        followup, self._followup = self._followup, None
+        self._followup_timer.stop()
+        self._followup_bar.hide()
+        self._followup_chain += 1
+        self._say(followup.prompt, kind="user")
+        self.send_requested.emit(followup.prompt)
+
+    def on_render_finished(self):
+        """Called by MainWindow when a render completes. Releases a
+        follow-up that was waiting for one -- by which point the viewport
+        image and the geometry measurements reflect the new model."""
+        fu = self._followup
+        if (fu is None or fu.trigger != TRIGGER_RENDER
+                or self._followup_released):
+            return
+        self._followup_released = True
+        self._followup_due = time.monotonic() + _RENDER_SETTLE_DELAY
+        self._tick_followup()      # show the countdown straight away
+
+    def _cancel_followup(self, say: bool = False):
+        had = self._followup is not None
+        self._followup = None
+        self._followup_released = False
+        self._followup_timer.stop()
+        self._followup_bar.hide()
+        if had and say:
+            self._say("Follow-up cancelled.")
+
+    def mode(self) -> str:
+        return self._mode.currentData() or MODE_MANUAL
+
+    def _on_mode_changed(self):
+        QSettings("BelfrySCAD", "BelfrySCAD").setValue("ai/mode", self.mode())
+        self._say(f"Mode: {MODE_LABELS[self.mode()]}.")
+
+    @Slot(object)
     def _on_proposal(self, proposal: Proposal):
+        target = proposal.filename or "script"
+        if self.mode() in (MODE_ACCEPT, MODE_AUTO):
+            # Applied straight away, but still through the editor's normal
+            # edit path -- so Undo takes it back like any other change.
+            self._say(f"Applied: {proposal.summary} ({target})")
+            self.proposal_accepted.emit(proposal)
+            return
         # One transcript line only -- the diff itself goes in the review
         # dialog, not into the conversation.
-        target = proposal.filename or "script"
         self._say(f"Proposed: {proposal.summary} ({target})")
         self._pending.append(proposal)
         self._refresh_review_bar()
@@ -458,6 +794,11 @@ class AIChatPane(QWidget):
         if self._reply_text:
             self._messages.append(
                 ChatMessage(role="assistant", text=self._reply_text))
+            # Promote the streamed plain text to a real entry, then rebuild
+            # so it finally renders as Markdown.
+            text, self._reply_text = self._reply_text, ""
+            self._entries.append(("assistant", text))
+            self._render_transcript()
         thread, worker = self._thread, self._worker
         self._thread = self._worker = None
         if thread is not None:
@@ -521,7 +862,13 @@ class AIChatPane(QWidget):
     def _clear_conversation(self):
         if self._review_dialog is not None:
             self._review_dialog.close()   # its finished handler clears the ref
+        # The CLI holds the conversation, so clearing here means ending it.
+        self._stop_cli_session()
+        self._cancel_followup()
+        self._followup_chain = 0
         self._messages.clear()
+        self._entries.clear()
+        self._reply_text = ""
         self._pending.clear()
         self._refresh_review_bar()
         self._transcript.clear()
