@@ -228,6 +228,10 @@ class PreferencesDialog(QDialog):
 
         self._openai_base_url = QLineEdit(s.value("ai/openaiBaseUrl", _DEFAULTS["ai/openaiBaseUrl"]))
         self._openai_base_url.setMinimumWidth(220)
+        self._openai_base_url.setToolTip(
+            "Any OpenAI-protocol server. For Ollama use "
+            "http://localhost:11434/v1 and leave the API key blank."
+        )
         self._openai_base_url.editingFinished.connect(
             lambda: self._emit("ai/openaiBaseUrl", self._openai_base_url.text())
         )
@@ -243,6 +247,7 @@ class PreferencesDialog(QDialog):
 
         self._openai_key = QLineEdit(get_api_key("openai") or "")
         self._openai_key.setMinimumWidth(220)
+        self._openai_key.setPlaceholderText("(not needed for local servers)")
         self._openai_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._openai_key.editingFinished.connect(
             lambda: self._set_ai_key("openai", self._openai_key.text())

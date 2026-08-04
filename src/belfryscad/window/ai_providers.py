@@ -27,6 +27,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -139,6 +140,20 @@ def _parse_openai_sse_lines(lines: Iterable[str]) -> Iterator[StreamEvent]:
     yield StreamEvent(kind="done")
 
 
+def _normalize_openai_base(base_url: str) -> str:
+    """Add the conventional /v1 when the URL is a bare host.
+
+    The OpenAI convention is that the base URL already includes the version
+    segment, but a bare "http://localhost:11434" is the natural thing to
+    type for a local server, and it fails with an unhelpful router-level
+    "404 page not found" rather than anything naming the real problem. A
+    URL that already carries a path (/v1, /openai/v1, ...) is left alone.
+    """
+    url = base_url.strip().rstrip("/")
+    path = urlsplit(url).path
+    return url if path else url + "/v1"
+
+
 def stream_openai(base_url: str, api_key: str, model: str,
                   messages: list[ChatMessage], tools: list[dict],
                   system: str = "",
@@ -158,11 +173,16 @@ def stream_openai(base_url: str, api_key: str, model: str,
                           "parameters": t["json_schema"]}}
             for t in tools
         ]
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        # Omitted entirely when unset, rather than sent empty: local
+        # OpenAI-protocol servers (Ollama, LM Studio, llama.cpp) need no
+        # key, and some reject a malformed Bearer header outright.
+        headers["Authorization"] = f"Bearer {api_key}"
     req = Request(
-        base_url.rstrip("/") + "/chat/completions",
+        _normalize_openai_base(base_url) + "/chat/completions",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {api_key}"},
+        headers=headers,
     )
     yield from _stream_request(req, _parse_openai_sse_lines, cancel)
 
@@ -261,6 +281,28 @@ def stream_anthropic(base_url: str, api_key: str, model: str,
 
 # --------------------------------------------------------------------------
 
+def _http_error_message(e, req, detail: str) -> str:
+    """Lead with a plain-language cause where the server's own wording is
+    unhelpful, then the raw detail. Both of the substrings matched here are
+    how Ollama reports "this model can't do tool calling" -- the second is a
+    Jinja traceback from its tool-parser generation, which names nothing a
+    user could act on."""
+    if ("does not support tools" in detail
+            or "generate parser for this template" in detail):
+        return ("This model can't do tool calling, which the chat pane needs "
+                "in order to read your scripts and propose edits. Choose a "
+                "model that advertises the \"tools\" capability — for Ollama, "
+                "`ollama show <model>` lists it.\n\n"
+                f"Server said: HTTP {e.code}: {detail[:300]}")
+    msg = f"HTTP {e.code}: {detail[:500]}"
+    if e.code == 404:
+        msg += (f"\n(Requested {req.full_url} — check the Base URL in "
+                f"Preferences → AI.)")
+    if e.code in (401, 403):
+        msg += "\n(Check the API key in Preferences → AI.)"
+    return msg
+
+
 def _stream_request(req, parser, cancel: threading.Event | None) -> Iterator[StreamEvent]:
     """Shared transport: run `req`, feed its decoded lines through `parser`,
     and turn network/HTTP failures into an error StreamEvent rather than an
@@ -270,8 +312,8 @@ def _stream_request(req, parser, cancel: threading.Event | None) -> Iterator[Str
             for event in parser(_cancellable(_decoded_lines(resp), cancel)):
                 yield event
     except HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")[:500]
-        yield StreamEvent(kind="error", error=f"HTTP {e.code}: {detail}")
+        detail = e.read().decode("utf-8", errors="replace")
+        yield StreamEvent(kind="error", error=_http_error_message(e, req, detail))
     except URLError as e:
         yield StreamEvent(kind="error", error=f"Connection failed: {e.reason}")
     except Exception as e:  # noqa: BLE001 -- surfaced in the chat pane
