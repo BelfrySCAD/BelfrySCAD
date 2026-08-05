@@ -7,12 +7,28 @@ import numpy as np
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel, QPushButton
 from PySide6.QtCore import Qt, QPoint, QSize, Signal, QTimer
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QPixmap, QIcon
+from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
+                            QPainter, QPixmap, QIcon)
 
 from belfryscad.engine.renderer import SceneRenderer
 from belfryscad.window.debugger import _debug_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
+
+# Ignore near-zero scroll deltas, which otherwise jitter the camera.
+_WHEEL_DEADSPOT = 5
+
+# Trackpad axis conventions vary by platform, and on macOS the pan sign
+# also flips with the user's "natural scrolling" preference -- which Qt
+# folds into pixelDelta() rather than exposing separately. Both were
+# settled on a real trackpad, not derived: Qt's RotateNativeGesture
+# value() turned out to be clockwise-positive on macOS, the same sense
+# _outer_ring_roll_delta_deg already uses, so it needs no flip on the way
+# into `cam.roll -= ...` (an earlier -1.0 here rotated the wrong way).
+# These stay named constants because they're the only plausible thing to
+# change if a future Qt or platform reverses either convention.
+_TRACKPAD_PAN_SIGN = 1.0
+_ROTATE_GESTURE_SIGN = 1.0
 
 
 def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor, prefix: str = "debug") -> QPixmap:
@@ -561,32 +577,125 @@ class Viewport(QOpenGLWidget):
                 cam.azimuth -= dx * 0.5
                 cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
         elif self._mouse_button == Qt.MouseButton.RightButton:
-            az = np.radians(cam.azimuth)
-            el = np.radians(cam.elevation)
-            right = np.array([-np.sin(az), np.cos(az), 0], dtype=np.float32)
-            up_approx = np.array([
-                -np.sin(el) * np.cos(az),
-                -np.sin(el) * np.sin(az),
-                np.cos(el),
-            ], dtype=np.float32)
-            scale = cam.distance * 0.001 * self._pan_speed
-            cam.target -= right * dx * scale
-            cam.target += up_approx * dy * scale
+            self._pan_by(dx, dy)
 
         self.camera_changed.emit()
         self.update()
+
+    def _pan_by(self, dx: float, dy: float):
+        """Slide the camera target so on-screen content follows a drag of
+        (dx, dy) screen pixels. Shared by right-button drag and trackpad
+        two-finger scroll — same gesture, two input devices."""
+        cam = self._renderer.camera
+        az = np.radians(cam.azimuth)
+        el = np.radians(cam.elevation)
+        right = np.array([-np.sin(az), np.cos(az), 0], dtype=np.float32)
+        up_approx = np.array([
+            -np.sin(el) * np.cos(az),
+            -np.sin(el) * np.sin(az),
+            np.cos(el),
+        ], dtype=np.float32)
+        scale = cam.distance * 0.001 * self._pan_speed
+        cam.target -= right * dx * scale
+        cam.target += up_approx * dy * scale
 
     def wheelEvent(self, event: QWheelEvent):
-        delta = event.angleDelta().y()
+        """Mouse wheel zooms; trackpad two-finger scroll pans.
+
+        `pixelDelta()` is the only reliable way Qt distinguishes the two:
+        a trackpad reports a real per-pixel scroll offset, while a mouse
+        wheel fills in `angleDelta()` alone (1/8-degree notch units) and
+        leaves pixelDelta null. They want opposite things — a wheel notch
+        is a discrete zoom step, whereas two-finger scroll is a continuous
+        1:1 drag of the content, which is what every other viewer on the
+        platform does with it. Cmd+scroll zooms on a trackpad, matching the
+        same convention.
+        """
         cam = self._renderer.camera
-        deadspot = 5
-        factor = 1.01 if delta < -deadspot else 0.99 if delta > deadspot else 1.0
-        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            cam.fov = max(1.0, min(120.0, cam.fov * factor))
+        pixel = event.pixelDelta()
+        mods = event.modifiers()
+        is_trackpad = not pixel.isNull()
+
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            delta = pixel.y() if is_trackpad else event.angleDelta().y()
+            if abs(delta) <= _WHEEL_DEADSPOT:
+                return
+            cam.fov = max(1.0, min(120.0, cam.fov * (0.99 if delta > 0 else 1.01)))
+            self._on_zoom_changed()
+        elif is_trackpad and not (mods & Qt.KeyboardModifier.ControlModifier):
+            # Pan only slides the target; apparent scale is unchanged, so
+            # no _on_zoom_changed() here -- which matters, since a trackpad
+            # pan fires a great many events and rebuilding screen-space
+            # markers on each would be pure waste.
+            self._pan_by(_TRACKPAD_PAN_SIGN * pixel.x(), _TRACKPAD_PAN_SIGN * pixel.y())
         else:
-            self._zoom_to_cursor(factor, event.position().toPoint())
+            delta = pixel.y() if is_trackpad else event.angleDelta().y()
+            # Fixed 1% step with a deadspot, deliberately not proportional
+            # to the delta: one wheel notch should always be one consistent
+            # zoom increment, and near-zero deltas otherwise jitter.
+            if abs(delta) <= _WHEEL_DEADSPOT:
+                return
+            self._zoom_to_cursor(0.99 if delta > 0 else 1.01, event.position().toPoint())
+            self._on_zoom_changed()
+
         self.camera_changed.emit()
         self.update()
+
+    def _on_zoom_changed(self):
+        """Called after anything that changes the camera's apparent scale
+        (wheel/pinch zoom, FOV). No-op here; data-viewer subclasses that
+        size vertex markers in screen space override it to rebuild them.
+
+        A hook rather than each subclass overriding wheelEvent, because
+        zoom now arrives by two routes -- the wheel and a pinch gesture,
+        which never touches wheelEvent -- and markers must track both."""
+
+    def event(self, event):
+        """Route macOS/Windows multi-touch gestures, which arrive as
+        QNativeGestureEvent rather than through any typed handler."""
+        if isinstance(event, QNativeGestureEvent) and self._handle_native_gesture(event):
+            return True
+        return super().event(event)
+
+    def _handle_native_gesture(self, event: QNativeGestureEvent) -> bool:
+        cam = self._renderer.camera
+        gesture = event.gestureType()
+
+        if gesture == Qt.NativeGestureType.ZoomNativeGesture:
+            # value() is an incremental magnification fraction (+0.05 means
+            # "grow 5%"), but _zoom_to_cursor takes a distance multiplier,
+            # where smaller means closer -- hence the reciprocal, not 1-value.
+            # Guard the degenerate <= -1 case rather than dividing by zero.
+            value = event.value()
+            if value <= -0.99:
+                return True
+            self._zoom_to_cursor(1.0 / (1.0 + value), event.position().toPoint())
+            self._on_zoom_changed()
+        elif gesture == Qt.NativeGestureType.RotateNativeGesture:
+            if not self._orbit_enabled:
+                return True
+            # Same convention as Shift+drag's outer-ring roll: the applied
+            # angle is clockwise-positive on screen and subtracted, since
+            # increasing cam.roll spins the *up vector* clockwise and so
+            # makes the scene appear to turn the other way.
+            cam.roll -= _ROTATE_GESTURE_SIGN * event.value()
+        elif gesture == Qt.NativeGestureType.SmartZoomNativeGesture:
+            # Two-finger double tap -- the platform gesture for "fit the
+            # content", which is exactly View All. set_view_preset already
+            # emits/repaints; the reframe changes distance, so markers need
+            # the same rebuild a zoom gets.
+            self.set_view_preset("all")
+            self._on_zoom_changed()
+            return True
+        else:
+            # Begin/End bracket the sequence above and carry no value of
+            # their own; swipe/pan natives are unused. Swallow them so the
+            # platform keeps delivering the rest of the sequence.
+            return True
+
+        self.camera_changed.emit()
+        self.update()
+        return True
 
     def _zoom_to_cursor(self, factor: float, pos: QPoint):
         """Dolly by `factor` centered on the cursor rather than cam.target

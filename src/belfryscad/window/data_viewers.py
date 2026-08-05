@@ -2080,11 +2080,13 @@ class _VNFViewport(Viewport):
         if self._show_unselected:
             self._build_unselected_markers()
 
-    def wheelEvent(self, event):
-        # Unlike frame_scene above, this is a genuine external Qt event --
-        # never called from inside another makeCurrent'd block -- so it
-        # does need its own bracket.
-        super().wheelEvent(event)
+    def _on_zoom_changed(self):
+        # Screen-space marker sizes depend on camera distance/FOV, so they
+        # have to be rebuilt whenever those change -- by wheel OR by a
+        # pinch gesture, which never reaches wheelEvent. Hooking the base
+        # class's notification covers both. Unlike frame_scene above, this
+        # runs from a genuine external Qt event, never from inside another
+        # makeCurrent'd block, so it does need its own bracket.
         if self._vert_indices or self._show_unselected:
             self.makeCurrent()
             if self._vert_indices:
@@ -3619,11 +3621,13 @@ class _PathViewport(Viewport):
             if self._selected_indices:
                 self._build_sel_markers()
 
-    def wheelEvent(self, event):
-        # Unlike frame_scene above, this is a genuine external Qt event --
-        # never called from inside another makeCurrent'd block -- so it
-        # does need its own bracket.
-        super().wheelEvent(event)
+    def _on_zoom_changed(self):
+        # Screen-space marker sizes depend on camera distance/FOV, so they
+        # have to be rebuilt whenever those change -- by wheel OR by a
+        # pinch gesture, which never reaches wheelEvent. Hooking the base
+        # class's notification covers both. Unlike frame_scene above, this
+        # runs from a genuine external Qt event, never from inside another
+        # makeCurrent'd block, so it does need its own bracket.
         if len(self._path_pts) > 0:
             self.makeCurrent()
             self._build_point_markers()
@@ -4720,11 +4724,13 @@ class _GridViewport(Viewport):
             if self._selected_indices:
                 self._build_sel_markers()
 
-    def wheelEvent(self, event):
-        # Unlike frame_scene above, this is a genuine external Qt event --
-        # never called from inside another makeCurrent'd block -- so it
-        # does need its own bracket.
-        super().wheelEvent(event)
+    def _on_zoom_changed(self):
+        # Screen-space marker sizes depend on camera distance/FOV, so they
+        # have to be rebuilt whenever those change -- by wheel OR by a
+        # pinch gesture, which never reaches wheelEvent. Hooking the base
+        # class's notification covers both. Unlike frame_scene above, this
+        # runs from a genuine external Qt event, never from inside another
+        # makeCurrent'd block, so it does need its own bracket.
         if len(self._all_pts) > 0:
             self.makeCurrent()
             self._build_point_markers()
@@ -5476,11 +5482,13 @@ class _RegionViewport(Viewport):
             if self._selected_indices:
                 self._build_sel_markers()
 
-    def wheelEvent(self, event):
-        # Unlike frame_scene above, this is a genuine external Qt event --
-        # never called from inside another makeCurrent'd block -- so it
-        # does need its own bracket.
-        super().wheelEvent(event)
+    def _on_zoom_changed(self):
+        # Screen-space marker sizes depend on camera distance/FOV, so they
+        # have to be rebuilt whenever those change -- by wheel OR by a
+        # pinch gesture, which never reaches wheelEvent. Hooking the base
+        # class's notification covers both. Unlike frame_scene above, this
+        # runs from a genuine external Qt event, never from inside another
+        # makeCurrent'd block, so it does need its own bracket.
         if len(self._all_pts) > 0:
             self.makeCurrent()
             self._build_point_markers()
