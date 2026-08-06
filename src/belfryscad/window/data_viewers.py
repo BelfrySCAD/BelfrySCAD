@@ -1261,6 +1261,8 @@ class ProfileViewer(QDialog):
         root_node = self._paths[0]
         root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "100.0",
                                  f"{root_node['cumulative_time'] * 1000:.2f}", "", "", "", "", ""])
+        for col in (1, 2, 3, 4, 7):
+            root.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         root.setData(0, Qt.ItemDataRole.UserRole, 0)
         self._tree.addTopLevelItem(root)
         self._add_tree_children(root, 0)
