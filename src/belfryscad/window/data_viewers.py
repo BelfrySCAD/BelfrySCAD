@@ -1046,12 +1046,9 @@ class _NumericTableWidgetItem(QTableWidgetItem):
     displayed text -- setSortingEnabled's default comparison is
     lexical/string-based, which would sort "100.0" before "20.0". No
     sortable-column precedent exists elsewhere in this file; this is the
-    minimal fix (one method), not a new dependency.
+    minimal fix (one method), not a new dependency."""
 
-    `value` is any comparable -- Line passes a (line, column) tuple so two
-    call sites on one line sort in source order rather than arbitrarily."""
-
-    def __init__(self, value, text: str):
+    def __init__(self, value: float, text: str):
         super().__init__(text)
         self._value = value
         self.setFlags(self.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1077,8 +1074,8 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _SELF_MS_COL = 5
-    _SEARCH_COLS = (0, 1, 9)  # Name, Caller, Caller File
+    _SELF_MS_COL = 6
+    _SEARCH_COLS = (0, 1, 10)  # Name, Caller, Caller File
 
     def __init__(self, result: "ProfileResult", parent=None,
                  path_labels: "dict[str, str] | None" = None,
@@ -1145,7 +1142,7 @@ class ProfileViewer(QDialog):
         # Caller File goes last and takes the spare width: it is the widest
         # and most variable column, so anywhere else it either gets clipped
         # or shoves the numbers off to the right.
-        cols = ["Name", "Caller", "Kind", "Line", "Calls",
+        cols = ["Name", "Caller", "Kind", "Line", "Col", "Calls",
                 "Self (ms)", "Self %", "Total (ms)", "Total %", "Caller File"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
@@ -1192,8 +1189,8 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(site.name),
                 QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
-                _NumericTableWidgetItem((site.call_line, site.call_column),
-                                         f"{site.call_line}:{site.call_column}"),
+                _NumericTableWidgetItem(site.call_line, str(site.call_line)),
+                _NumericTableWidgetItem(site.call_column, str(site.call_column)),
                 _NumericTableWidgetItem(site.call_count, str(site.call_count)),
                 _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
                 _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
@@ -1202,7 +1199,7 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(self._display_path(site.call_origin)),
             ]
             for col, item in enumerate(values):
-                if col in (0, 1, 2, 9):   # the text columns
+                if col in (0, 1, 2, 10):   # the text columns
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
             # setSortingEnabled(True) reorders the table's *visual* rows
@@ -1244,12 +1241,12 @@ class ProfileViewer(QDialog):
 
         self._tree = QTreeWidget()
         self._tree.setFont(QFont("Menlo", 11))
-        self._tree.setColumnCount(8)
+        self._tree.setColumnCount(9)
         # Cost first, identity after: the reason to open this tab is to find
         # where the time went, so Total % leads and the descriptive columns
-        # (Kind, Line, File) trail.
+        # (Kind, Line, Col, File) trail.
         self._tree.setHeaderLabels(
-            ["Name", "Total %", "Total (ms)", "Self (ms)", "Calls", "Kind", "Line", "File"])
+            ["Name", "Total %", "Total (ms)", "Self (ms)", "Calls", "Kind", "Line", "Col", "File"])
         self._tree.setUniformRowHeights(True)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._tree_context_menu)
@@ -1265,8 +1262,8 @@ class ProfileViewer(QDialog):
 
         root_node = self._paths[0]
         root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "100.0",
-                                 f"{root_node['cumulative_time'] * 1000:.2f}", "", "", "", "", ""])
-        for col in (1, 2, 3, 4, 6):
+                                 f"{root_node['cumulative_time'] * 1000:.2f}", "", "", "", "", "", ""])
+        for col in (1, 2, 3, 4, 6, 7):
             root.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         root.setData(0, Qt.ItemDataRole.UserRole, 0)
         self._tree.addTopLevelItem(root)
@@ -1290,10 +1287,11 @@ class ProfileViewer(QDialog):
                 f"{n['self_time'] * 1000:.2f}",
                 str(n["call_count"]),
                 n["kind"],
-                f"{n['call_line']}:{n['call_column']}",
+                str(n["call_line"]),
+                str(n["call_column"]),
                 self._display_path(n["call_origin"]),
             ])
-            for col in (1, 2, 3, 4, 6):
+            for col in (1, 2, 3, 4, 6, 7):
                 item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item.setData(0, Qt.ItemDataRole.UserRole, i)
             parent_item.addChild(item)

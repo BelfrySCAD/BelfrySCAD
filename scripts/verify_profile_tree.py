@@ -63,7 +63,7 @@ def walk(v, item, depth=0, out=None, budget=None):
         if budget[0] < 0:
             out.append("RUNAWAY")
             return out
-        out.append(f"{'  ' * depth}{c.text(0)} (line {c.text(6)}, n={c.text(4)})")
+        out.append(f"{'  ' * depth}{c.text(0)} (line {c.text(6)}:{c.text(7)}, n={c.text(4)})")
         v._tree.expandItem(c)
         app.processEvents()
         walk(v, c, depth + 1, out, budget)
