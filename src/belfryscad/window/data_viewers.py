@@ -1239,16 +1239,14 @@ class ProfileViewer(QDialog):
                 "data aggregated per call site."))
             return page
 
-        vbox.addWidget(QLabel(
-            "Time is this call's own, on this path. A row entered more than "
-            "once (a loop, or recursion folded into one row) shows the total "
-            "over those entries in Calls."))
-
         self._tree = QTreeWidget()
         self._tree.setFont(QFont("Menlo", 11))
         self._tree.setColumnCount(8)
+        # Cost first, identity after: the reason to open this tab is to find
+        # where the time went, so Total % leads and the descriptive columns
+        # (Kind, File, Line) trail.
         self._tree.setHeaderLabels(
-            ["Name", "Kind", "Calls", "Total (ms)", "Total %", "Self (ms)", "Line", "File"])
+            ["Name", "Total %", "Total (ms)", "Self (ms)", "Calls", "Kind", "File", "Line"])
         self._tree.setUniformRowHeights(True)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._tree_context_menu)
@@ -1257,12 +1255,12 @@ class ProfileViewer(QDialog):
         # produces ~9000 nodes and most branches are never opened.
         self._tree.itemExpanded.connect(self._on_tree_expand)
         self._tree.setColumnWidth(0, 300)
-        self._tree.setColumnWidth(7, 220)
+        self._tree.setColumnWidth(6, 220)
         vbox.addWidget(self._tree)
 
         root_node = self._paths[0]
-        root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "", "",
-                                 f"{root_node['cumulative_time'] * 1000:.2f}", "100.0", "", "", ""])
+        root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "100.0",
+                                 f"{root_node['cumulative_time'] * 1000:.2f}", "", "", "", "", ""])
         root.setData(0, Qt.ItemDataRole.UserRole, 0)
         self._tree.addTopLevelItem(root)
         self._add_tree_children(root, 0)
@@ -1280,15 +1278,15 @@ class ProfileViewer(QDialog):
             pct = 100 * n["cumulative_time"] / total if total > 0 else 0.0
             item = QTreeWidgetItem([
                 n["name"],
-                n["kind"],
-                str(n["call_count"]),
-                f"{cum_ms:.2f}",
                 f"{pct:.1f}",
+                f"{cum_ms:.2f}",
                 f"{n['self_time'] * 1000:.2f}",
-                str(n["call_line"]),
+                str(n["call_count"]),
+                n["kind"],
                 self._display_path(n["call_origin"]),
+                str(n["call_line"]),
             ])
-            for col in (2, 3, 4, 5, 6):
+            for col in (1, 2, 3, 4, 7):
                 item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item.setData(0, Qt.ItemDataRole.UserRole, i)
             parent_item.addChild(item)

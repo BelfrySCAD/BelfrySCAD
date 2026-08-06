@@ -63,7 +63,7 @@ def walk(v, item, depth=0, out=None, budget=None):
         if budget[0] < 0:
             out.append("RUNAWAY")
             return out
-        out.append(f"{'  ' * depth}{c.text(0)} (line {c.text(6)}, n={c.text(2)})")
+        out.append(f"{'  ' * depth}{c.text(0)} (line {c.text(7)}, n={c.text(4)})")
         v._tree.expandItem(c)
         app.processEvents()
         walk(v, c, depth + 1, out, budget)
@@ -85,7 +85,7 @@ if model:
     check("root is <toplevel>", root.text(0) == "<toplevel>", root.text(0))
     check("root has children", root.childCount() > 0)
 
-    totals = [float(root.child(i).text(3)) for i in range(root.childCount())]
+    totals = [float(root.child(i).text(2)) for i in range(root.childCount())]  # Total (ms)
     check("children sorted by total desc", totals == sorted(totals, reverse=True), str(totals))
 
     # Rows index the evaluator's own tree; times must contain the subtree.
