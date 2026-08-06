@@ -1089,7 +1089,10 @@ class ProfileViewer(QDialog):
         self._path_labels = dict(path_labels or {})
         self._trim_prefix = trim_prefix.rstrip("/") + "/" if trim_prefix else ""
         self.setWindowTitle("Profile Report")
-        self.resize(900, 500)
+        # Wide enough that the ten columns fit without horizontal scrolling
+        # or hand-resizing on first open -- Name and Caller File are both
+        # long, and the eight numeric columns after them add up.
+        self.resize(1233, 500)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._result = result
 
