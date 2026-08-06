@@ -1041,18 +1041,6 @@ class ListViewer(QDialog):
 # Profile Viewer
 # ---------------------------------------------------------------------------
 
-def _call_site_key(site) -> tuple:
-    """Identity of a profiled call site: which call, written where.
-
-    The profiler keys sites by (caller, callee, file, line), so this is
-    exactly what distinguishes one `foo()` in the source from another --
-    and therefore what a cycle check has to compare. Comparing names
-    instead conflates a module that calls itself with one that merely
-    appears twice in a chain of children.
-    """
-    return (site.caller_name, site.name, site.call_origin, site.call_line)
-
-
 class _NumericTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem that sorts by a numeric value instead of its
     displayed text -- setSortingEnabled's default comparison is
@@ -1226,52 +1214,35 @@ class ProfileViewer(QDialog):
 
     # -- Call tree ---------------------------------------------------------
     #
-    # The profiler records one CallSiteProfile per call LOCATION -- keyed by
-    # (caller, callee, file, line) -- so the sites already form a call graph:
-    # an edge from `caller_name` to `name`. This view walks that graph from
-    # <toplevel> so you can see what called what, rather than only which
-    # names are expensive in aggregate.
+    # Built from ProfileResult.paths -- the evaluator's calling-context tree
+    # (evaluator >= 0.19.0). Each node is one call site on ONE path from
+    # <toplevel>, so a row's times are that path's own, not a total across
+    # every caller of the name.
     #
-    # Two honest limits, both surfaced in the UI rather than papered over:
-    #
-    #  * It is a graph, not a tree. A function called from three places has
-    #    the same children under all three, and those children's times are
-    #    totals across every caller -- not the slice belonging to this path.
-    #    Only the row's OWN Total/Self is specific to that call site.
-    #  * A cycle would expand forever, so a call SITE already on the path
-    #    from the root is shown but not expanded, marked with a ↻.
-    #
-    #    Keyed on the site -- (caller, callee, file, line) -- not on the
-    #    name, because those are different things. `module foo(x) { if
-    #    (x<10) foo(x+1); }` revisits the SAME site every level and must
-    #    stop. `foo() foo() foo();` written across lines produces three
-    #    DIFFERENT foo->foo sites (one per line): finite nesting a name-
-    #    keyed guard would wrongly cut off at the first repeat, hiding the
-    #    rest of the chain.
-
-    _TREE_TOPLEVEL = "<toplevel>"
+    # This used to be reconstructed here from `caller_name` edges, which
+    # made a graph rather than a tree: a callee appeared under every caller
+    # with the same children, its nested times were totals across all of
+    # them, and a cycle guard was needed to stop recursion unrolling
+    # forever. None of that applies now -- the data is already a finite,
+    # acyclic tree with recursion folded into single nodes.
 
     def _build_tree_tab(self, result: "ProfileResult") -> QWidget:
         page = QWidget()
         vbox = QVBoxLayout(page)
         vbox.setContentsMargins(0, 0, 0, 0)
 
-        note = QLabel(
-            "Expand to see what each call ran. Total/Self on a row are that "
-            "call site's own; a nested row's times are totals across every "
-            "caller of that name.  ↻ marks a call site already open further "
-            "up this branch -- a real cycle, not expanded again."
-        )
-        note.setWordWrap(True)
-        vbox.addWidget(note)
+        self._paths = list(getattr(result, "paths", None) or [])
+        if not self._paths:
+            vbox.addWidget(QLabel(
+                "No call tree in this profile — it was produced by an "
+                "evaluator older than 0.19.0. The flat view has the same "
+                "data aggregated per call site."))
+            return page
 
-        # caller name -> its call sites, most expensive first, so the
-        # interesting branch is always the top child.
-        self._by_caller: dict = {}
-        for site in result.call_sites:
-            self._by_caller.setdefault(site.caller_name, []).append(site)
-        for sites in self._by_caller.values():
-            sites.sort(key=lambda x: x.cumulative_time, reverse=True)
+        vbox.addWidget(QLabel(
+            "Time is this call's own, on this path. A row entered more than "
+            "once (a loop, or recursion folded into one row) shows the total "
+            "over those entries in Calls."))
 
         self._tree = QTreeWidget()
         self._tree.setFont(QFont("Menlo", 11))
@@ -1282,78 +1253,76 @@ class ProfileViewer(QDialog):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._tree_context_menu)
         self._tree.itemDoubleClicked.connect(self._tree_goto)
-        # Children are attached on first expand, not up front: the graph can
-        # be deep and repetitive (a few hundred sites here expand into
-        # far more tree rows), and most branches are never opened.
+        # Children attach on first expand: a modest BOSL2 model already
+        # produces ~9000 nodes and most branches are never opened.
         self._tree.itemExpanded.connect(self._on_tree_expand)
         self._tree.setColumnWidth(0, 300)
         self._tree.setColumnWidth(7, 220)
         vbox.addWidget(self._tree)
 
-        root = QTreeWidgetItem([self._TREE_TOPLEVEL, "", "", "", "", "", "", ""])
-        root.setData(0, Qt.ItemDataRole.UserRole, None)
+        root_node = self._paths[0]
+        root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "", "",
+                                 f"{root_node['cumulative_time'] * 1000:.2f}", "100.0", "", "", ""])
+        root.setData(0, Qt.ItemDataRole.UserRole, 0)
         self._tree.addTopLevelItem(root)
-        self._add_tree_children(root, self._TREE_TOPLEVEL, ())
+        self._add_tree_children(root, 0)
         root.setExpanded(True)
         return page
 
-    def _add_tree_children(self, parent: QTreeWidgetItem, caller: str, path: tuple):
-        resolve = self._result.resolve_time
-        for site in self._by_caller.get(caller, ()):
-            cum_ms = site.cumulative_time * 1000
-            pct = 100 * site.cumulative_time / resolve if resolve > 0 else 0.0
-            key = _call_site_key(site)
-            recursive = key in path
+    def _add_tree_children(self, parent_item: QTreeWidgetItem, index: int):
+        """Attach one level of children of paths[index]."""
+        total = self._paths[0]["cumulative_time"] or 0.0
+        kids = sorted(self._paths[index]["children"],
+                       key=lambda i: -self._paths[i]["cumulative_time"])
+        for i in kids:
+            n = self._paths[i]
+            cum_ms = n["cumulative_time"] * 1000
+            pct = 100 * n["cumulative_time"] / total if total > 0 else 0.0
             item = QTreeWidgetItem([
-                site.name + ("  \u21bb" if recursive else ""),
-                site.kind,
-                str(site.call_count),
+                n["name"],
+                n["kind"],
+                str(n["call_count"]),
                 f"{cum_ms:.2f}",
                 f"{pct:.1f}",
-                f"{site.self_time * 1000:.2f}",
-                str(site.call_line),
-                self._display_path(site.call_origin),
+                f"{n['self_time'] * 1000:.2f}",
+                str(n["call_line"]),
+                self._display_path(n["call_origin"]),
             ])
             for col in (2, 3, 4, 5, 6):
                 item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            item.setData(0, Qt.ItemDataRole.UserRole, site)
-            # The call sites this row was reached through -- needed to
-            # detect a cycle for ITS children. Site keys, not names: see the
-            # section comment above for why `foo() foo();` must not be
-            # mistaken for `foo()` calling itself.
-            item.setData(0, Qt.ItemDataRole.UserRole + 1, path + (key,))
-            parent.addChild(item)
-            if not recursive and self._by_caller.get(site.name):
-                # Placeholder so the expand arrow appears; replaced by the
-                # real children the first time it is opened.
-                item.addChild(QTreeWidgetItem(["…"]))
+            item.setData(0, Qt.ItemDataRole.UserRole, i)
+            parent_item.addChild(item)
+            if n["children"]:
+                item.addChild(QTreeWidgetItem(["\u2026"]))   # expand arrow; filled on open
 
     def _on_tree_expand(self, item: QTreeWidgetItem):
         if item.childCount() != 1 or item.child(0).text(0) != "\u2026":
             return   # already populated (or genuinely has one child)
+        index = item.data(0, Qt.ItemDataRole.UserRole)
+        if index is None:
+            return
         item.takeChildren()
-        site = item.data(0, Qt.ItemDataRole.UserRole)
-        path = item.data(0, Qt.ItemDataRole.UserRole + 1) or ()
-        if site is not None:
-            self._add_tree_children(item, site.name, path)
+        self._add_tree_children(item, index)
+
+    def _tree_node(self, item: QTreeWidgetItem) -> "dict | None":
+        index = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        return self._paths[index] if index is not None and index < len(self._paths) else None
 
     def _tree_goto(self, item: QTreeWidgetItem, _col: int = 0):
-        site = item.data(0, Qt.ItemDataRole.UserRole)
-        if site is not None:
-            self.navigate_requested.emit(site.call_origin, site.call_line)
+        n = self._tree_node(item)
+        if n and n.get("call_origin"):
+            self.navigate_requested.emit(n["call_origin"], n["call_line"])
 
     def _tree_context_menu(self, pos):
-        item = self._tree.itemAt(pos)
-        site = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
-        if site is None:
+        n = self._tree_node(self._tree.itemAt(pos))
+        if not n or not n.get("call_origin"):
             return
         menu = QMenu(self._tree)
         menu.addAction("Go to Call Site",
-                        lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
-        decl_origin = getattr(site, "decl_origin", "")
-        if decl_origin:
-            menu.addAction(f"Go to Declaration of '{site.name}'",
-                            lambda: self.navigate_requested.emit(decl_origin, site.decl_line))
+                        lambda: self.navigate_requested.emit(n["call_origin"], n["call_line"]))
+        if n.get("decl_origin"):
+            menu.addAction(f"Go to Declaration of '{n['name']}'",
+                            lambda: self.navigate_requested.emit(n["decl_origin"], n["decl_line"]))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _display_path(self, origin: str) -> str:
