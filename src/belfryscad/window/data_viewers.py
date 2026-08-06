@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
     QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
+    QTreeWidget, QTreeWidgetItem,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
@@ -1109,6 +1110,18 @@ class ProfileViewer(QDialog):
         )
         layout.addWidget(summary)
 
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs)
+        # The tree goes first and shows by default: the flat table is every
+        # call site at once, which answers "what is slow" but not "slow
+        # because of what" -- for that you need to see what called what.
+        self._tabs.addTab(self._build_tree_tab(result), "Call Tree")
+
+        flat_page = QWidget()
+        flat_layout = QVBoxLayout(flat_page)
+        flat_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs.addTab(flat_page, "All Call Sites")
+
         search_row = QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
         self._search_mode = QComboBox()
@@ -1121,7 +1134,7 @@ class ProfileViewer(QDialog):
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._apply_search_filter)
         search_row.addWidget(self._search, 1)
-        layout.addLayout(search_row)
+        flat_layout.addLayout(search_row)
         self._search_mode.currentIndexChanged.connect(self._apply_search_filter)
 
         self._table = QTableWidget()
@@ -1151,7 +1164,7 @@ class ProfileViewer(QDialog):
         header.resizeSection(1, 140)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(4, 220)
-        layout.addWidget(self._table)
+        flat_layout.addWidget(self._table)
 
         self._populate(result)
         self._table.setSortingEnabled(True)
@@ -1198,6 +1211,127 @@ class ProfileViewer(QDialog):
             # parallel list by row" pattern every other viewer here uses
             # only happens to work because none of their tables sort).
             self._table.item(row, 0).setData(Qt.ItemDataRole.UserRole, site)
+
+    # -- Call tree ---------------------------------------------------------
+    #
+    # The profiler records one CallSiteProfile per call LOCATION -- keyed by
+    # (caller, callee, file, line) -- so the sites already form a call graph:
+    # an edge from `caller_name` to `name`. This view walks that graph from
+    # <toplevel> so you can see what called what, rather than only which
+    # names are expensive in aggregate.
+    #
+    # Two honest limits, both surfaced in the UI rather than papered over:
+    #
+    #  * It is a graph, not a tree. A function called from three places has
+    #    the same children under all three, and those children's times are
+    #    totals across every caller -- not the slice belonging to this path.
+    #    Only the row's OWN Total/Self is specific to that call site.
+    #  * Recursion would expand forever, so a name already on the path from
+    #    the root is shown but not expanded, marked with a ↻.
+
+    _TREE_TOPLEVEL = "<toplevel>"
+
+    def _build_tree_tab(self, result: "ProfileResult") -> QWidget:
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setContentsMargins(0, 0, 0, 0)
+
+        note = QLabel(
+            "Expand to see what each call ran. Total/Self on a row are that "
+            "call site's own; a nested row's times are totals across every "
+            "caller of that name.  ↻ marks recursion (not expanded further)."
+        )
+        note.setWordWrap(True)
+        vbox.addWidget(note)
+
+        # caller name -> its call sites, most expensive first, so the
+        # interesting branch is always the top child.
+        self._by_caller: dict = {}
+        for site in result.call_sites:
+            self._by_caller.setdefault(site.caller_name, []).append(site)
+        for sites in self._by_caller.values():
+            sites.sort(key=lambda x: x.cumulative_time, reverse=True)
+
+        self._tree = QTreeWidget()
+        self._tree.setFont(QFont("Menlo", 11))
+        self._tree.setColumnCount(8)
+        self._tree.setHeaderLabels(
+            ["Name", "Kind", "Calls", "Total (ms)", "Total %", "Self (ms)", "Line", "File"])
+        self._tree.setUniformRowHeights(True)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._tree_context_menu)
+        self._tree.itemDoubleClicked.connect(self._tree_goto)
+        # Children are attached on first expand, not up front: the graph can
+        # be deep and repetitive (a few hundred sites here expand into
+        # far more tree rows), and most branches are never opened.
+        self._tree.itemExpanded.connect(self._on_tree_expand)
+        self._tree.setColumnWidth(0, 300)
+        self._tree.setColumnWidth(7, 220)
+        vbox.addWidget(self._tree)
+
+        root = QTreeWidgetItem([self._TREE_TOPLEVEL, "", "", "", "", "", "", ""])
+        root.setData(0, Qt.ItemDataRole.UserRole, None)
+        self._tree.addTopLevelItem(root)
+        self._add_tree_children(root, self._TREE_TOPLEVEL, (self._TREE_TOPLEVEL,))
+        root.setExpanded(True)
+        return page
+
+    def _add_tree_children(self, parent: QTreeWidgetItem, caller: str, path: tuple):
+        resolve = self._result.resolve_time
+        for site in self._by_caller.get(caller, ()):
+            cum_ms = site.cumulative_time * 1000
+            pct = 100 * site.cumulative_time / resolve if resolve > 0 else 0.0
+            recursive = site.name in path
+            item = QTreeWidgetItem([
+                site.name + ("  \u21bb" if recursive else ""),
+                site.kind,
+                str(site.call_count),
+                f"{cum_ms:.2f}",
+                f"{pct:.1f}",
+                f"{site.self_time * 1000:.2f}",
+                str(site.call_line),
+                self._display_path(site.call_origin),
+            ])
+            for col in (2, 3, 4, 5, 6):
+                item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item.setData(0, Qt.ItemDataRole.UserRole, site)
+            # The path this row was reached by -- needed to detect recursion
+            # for ITS children, since the same name can be non-recursive
+            # under a different branch.
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, path + (site.name,))
+            parent.addChild(item)
+            if not recursive and self._by_caller.get(site.name):
+                # Placeholder so the expand arrow appears; replaced by the
+                # real children the first time it is opened.
+                item.addChild(QTreeWidgetItem(["…"]))
+
+    def _on_tree_expand(self, item: QTreeWidgetItem):
+        if item.childCount() != 1 or item.child(0).text(0) != "\u2026":
+            return   # already populated (or genuinely has one child)
+        item.takeChildren()
+        site = item.data(0, Qt.ItemDataRole.UserRole)
+        path = item.data(0, Qt.ItemDataRole.UserRole + 1) or ()
+        if site is not None:
+            self._add_tree_children(item, site.name, path)
+
+    def _tree_goto(self, item: QTreeWidgetItem, _col: int = 0):
+        site = item.data(0, Qt.ItemDataRole.UserRole)
+        if site is not None:
+            self.navigate_requested.emit(site.call_origin, site.call_line)
+
+    def _tree_context_menu(self, pos):
+        item = self._tree.itemAt(pos)
+        site = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        if site is None:
+            return
+        menu = QMenu(self._tree)
+        menu.addAction("Go to Call Site",
+                        lambda: self.navigate_requested.emit(site.call_origin, site.call_line))
+        decl_origin = getattr(site, "decl_origin", "")
+        if decl_origin:
+            menu.addAction(f"Go to Declaration of '{site.name}'",
+                            lambda: self.navigate_requested.emit(decl_origin, site.decl_line))
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _display_path(self, origin: str) -> str:
         """How a call site's file is shown. Navigation still uses the raw
