@@ -1041,6 +1041,18 @@ class ListViewer(QDialog):
 # Profile Viewer
 # ---------------------------------------------------------------------------
 
+def _call_site_key(site) -> tuple:
+    """Identity of a profiled call site: which call, written where.
+
+    The profiler keys sites by (caller, callee, file, line), so this is
+    exactly what distinguishes one `foo()` in the source from another --
+    and therefore what a cycle check has to compare. Comparing names
+    instead conflates a module that calls itself with one that merely
+    appears twice in a chain of children.
+    """
+    return (site.caller_name, site.name, site.call_origin, site.call_line)
+
+
 class _NumericTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem that sorts by a numeric value instead of its
     displayed text -- setSortingEnabled's default comparison is
@@ -1226,8 +1238,16 @@ class ProfileViewer(QDialog):
     #    the same children under all three, and those children's times are
     #    totals across every caller -- not the slice belonging to this path.
     #    Only the row's OWN Total/Self is specific to that call site.
-    #  * Recursion would expand forever, so a name already on the path from
-    #    the root is shown but not expanded, marked with a ↻.
+    #  * A cycle would expand forever, so a call SITE already on the path
+    #    from the root is shown but not expanded, marked with a ↻.
+    #
+    #    Keyed on the site -- (caller, callee, file, line) -- not on the
+    #    name, because those are different things. `module foo(x) { if
+    #    (x<10) foo(x+1); }` revisits the SAME site every level and must
+    #    stop. `foo() foo() foo();` written across lines produces three
+    #    DIFFERENT foo->foo sites (one per line): finite nesting a name-
+    #    keyed guard would wrongly cut off at the first repeat, hiding the
+    #    rest of the chain.
 
     _TREE_TOPLEVEL = "<toplevel>"
 
@@ -1239,7 +1259,8 @@ class ProfileViewer(QDialog):
         note = QLabel(
             "Expand to see what each call ran. Total/Self on a row are that "
             "call site's own; a nested row's times are totals across every "
-            "caller of that name.  ↻ marks recursion (not expanded further)."
+            "caller of that name.  ↻ marks a call site already open further "
+            "up this branch -- a real cycle, not expanded again."
         )
         note.setWordWrap(True)
         vbox.addWidget(note)
@@ -1272,7 +1293,7 @@ class ProfileViewer(QDialog):
         root = QTreeWidgetItem([self._TREE_TOPLEVEL, "", "", "", "", "", "", ""])
         root.setData(0, Qt.ItemDataRole.UserRole, None)
         self._tree.addTopLevelItem(root)
-        self._add_tree_children(root, self._TREE_TOPLEVEL, (self._TREE_TOPLEVEL,))
+        self._add_tree_children(root, self._TREE_TOPLEVEL, ())
         root.setExpanded(True)
         return page
 
@@ -1281,7 +1302,8 @@ class ProfileViewer(QDialog):
         for site in self._by_caller.get(caller, ()):
             cum_ms = site.cumulative_time * 1000
             pct = 100 * site.cumulative_time / resolve if resolve > 0 else 0.0
-            recursive = site.name in path
+            key = _call_site_key(site)
+            recursive = key in path
             item = QTreeWidgetItem([
                 site.name + ("  \u21bb" if recursive else ""),
                 site.kind,
@@ -1295,10 +1317,11 @@ class ProfileViewer(QDialog):
             for col in (2, 3, 4, 5, 6):
                 item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item.setData(0, Qt.ItemDataRole.UserRole, site)
-            # The path this row was reached by -- needed to detect recursion
-            # for ITS children, since the same name can be non-recursive
-            # under a different branch.
-            item.setData(0, Qt.ItemDataRole.UserRole + 1, path + (site.name,))
+            # The call sites this row was reached through -- needed to
+            # detect a cycle for ITS children. Site keys, not names: see the
+            # section comment above for why `foo() foo();` must not be
+            # mistaken for `foo()` calling itself.
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, path + (key,))
             parent.addChild(item)
             if not recursive and self._by_caller.get(site.name):
                 # Placeholder so the expand arrow appears; replaced by the

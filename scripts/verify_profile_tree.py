@@ -88,6 +88,56 @@ print(f"  ({len(recursive_rows)} recursive rows marked)")
 site = root.child(0).data(0, Qt.ItemDataRole.UserRole)
 check("rows carry their site for navigation", site is not None and bool(site.call_origin))
 
+# -- cycle guard: recursion vs. child nesting ----------------------------
+#
+# These are different things and the guard must tell them apart:
+#   module foo(x) { ... foo(x+1); }   revisits the SAME call site forever
+#   foo() foo() foo();                is three DIFFERENT foo->foo sites
+# A name-keyed guard cuts the second one off at the first repeat, hiding
+# the rest of the chain. Keying on the call site fixes that.
+import tempfile, os
+
+def _tree_for_source(src):
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "case.scad")
+    with open(path, "w") as fh:
+        fh.write(src)
+    e = Evaluator(profile=True)
+    e.evaluate(path)
+    return ProfileViewer(e.profile_result)
+
+def _walk(v, item, depth=0, out=None, budget=None):
+    out = [] if out is None else out
+    budget = [400] if budget is None else budget
+    for i in range(item.childCount()):
+        c = item.child(i)
+        budget[0] -= 1
+        if budget[0] < 0:
+            out.append("RUNAWAY")
+            return out
+        out.append(f"{'  ' * depth}{c.text(0)} (line {c.text(6)})")
+        v._tree.expandItem(c)
+        app.processEvents()
+        _walk(v, c, depth + 1, out, budget)
+    return out
+
+print()
+rec = _walk(_tree_for_source(
+    "module foo(x) { cube(1); if (x < 5) translate([0,0,2]) foo(x + 1); }\nfoo(0);\n"),
+    None) if False else None
+vr = _tree_for_source(
+    "module foo(x) { cube(1); if (x < 5) translate([0,0,2]) foo(x + 1); }\nfoo(0);\n")
+rec = _walk(vr, vr._tree.topLevelItem(0))
+check("true recursion is marked and stopped",
+      any("\u21bb" in l for l in rec) and not any("RUNAWAY" in l for l in rec), str(rec))
+
+vc = _tree_for_source(
+    "module foo() { cube(1); translate([0,0,2]) children(); }\nfoo()\n    foo()\n        foo();\n")
+nest = _walk(vc, vc._tree.topLevelItem(0))
+check("child nesting terminates", not any("RUNAWAY" in l for l in nest), str(nest))
+check("child nesting still reaches its distinct later call site",
+      any("line 4" in l for l in nest), str(nest))
+
 print()
 print("ALL PASS" if ok else "FAILURES ABOVE")
 sys.exit(0 if ok else 1)
