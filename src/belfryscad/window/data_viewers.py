@@ -1154,12 +1154,13 @@ class ProfileViewer(QDialog):
         self._table.customContextMenuRequested.connect(self._context_menu)
         self._table.cellDoubleClicked.connect(self._goto_call_site)
         header = self._table.horizontalHeader()
-        # Interactive (the default), not Stretch -- Stretch fills available
-        # space but also disables user drag-resizing for that section
-        # entirely, which is the opposite of what these two variable-length
-        # text columns need. Just give them a wider starting width.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 160)
+        # Name absorbs the window's spare width. Every other column here is
+        # either a number or a short token, so growing the last one (the
+        # default) just pads a percentage out to nothing useful.
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # The rest stay Interactive so they can still be drag-resized --
+        # dragging one of them takes the space out of Name.
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(1, 140)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
@@ -1254,7 +1255,9 @@ class ProfileViewer(QDialog):
         # Children attach on first expand: a modest BOSL2 model already
         # produces ~9000 nodes and most branches are never opened.
         self._tree.itemExpanded.connect(self._on_tree_expand)
-        self._tree.setColumnWidth(0, 300)
+        # Name absorbs spare width; see the flat table's header for why.
+        self._tree.header().setStretchLastSection(False)
+        self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tree.setColumnWidth(6, 220)
         vbox.addWidget(self._tree)
 
