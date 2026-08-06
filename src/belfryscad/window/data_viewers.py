@@ -14,6 +14,7 @@ Data viewer windows launched from the debugger's variable context menu.
 from __future__ import annotations
 import ast
 import bisect
+import csv
 import copy
 import math
 import re
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
     QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
-    QTreeWidget, QTreeWidgetItem,
+    QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
@@ -1171,11 +1172,83 @@ class ProfileViewer(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        export = QPushButton("Export CSV…")
+        export.clicked.connect(self._export_csv)
+        btn_row.addWidget(export)
         btn_row.addStretch()
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self.close)
         btn_row.addWidget(dismiss)
         layout.addLayout(btn_row)
+
+    # Rows come from self._result / self._paths, not from the widgets: the
+    # tree attaches children lazily on expand, so walking QTreeWidgetItems
+    # would export only whatever the user happened to have opened.
+    def _csv_rows(self):
+        """(header, rows) for whichever tab is showing."""
+        resolve = self._result.resolve_time
+        pct = lambda t: 100 * t / resolve if resolve > 0 else 0.0   # noqa: E731
+
+        if self._tabs.currentIndex() != 0:
+            header = ["name", "caller", "kind", "line", "column", "file",
+                      "calls", "self_ms", "self_pct", "total_ms", "total_pct"]
+            rows = [
+                [s.name, s.caller_name, s.kind, s.call_line, s.call_column,
+                 self._display_path(s.call_origin), s.call_count,
+                 f"{s.self_time * 1000:.3f}", f"{pct(s.self_time):.2f}",
+                 f"{s.cumulative_time * 1000:.3f}", f"{pct(s.cumulative_time):.2f}"]
+                for s in self._result.call_sites
+            ]
+            return header, rows
+
+        # Tree: depth plus the caller chain, so a row stays interpretable
+        # once a spreadsheet sorts the nesting away.
+        header = ["depth", "path", "name", "kind", "line", "column", "file",
+                  "calls", "self_ms", "total_ms", "total_pct"]
+        rows = []
+        total = self._paths[0]["cumulative_time"] or 0.0
+        root_name = self._paths[0].get("name") or "<toplevel>"
+        stack = [(0, 0, root_name)]   # (index, depth, path-so-far)
+        while stack:
+            i, depth, chain = stack.pop()
+            n = self._paths[i]
+            if i == 0:
+                rows.append([0, "", root_name, "", "", "", "", "",
+                             f"{n['self_time'] * 1000:.3f}",
+                             f"{n['cumulative_time'] * 1000:.3f}", "100.00"])
+            else:
+                cum = n["cumulative_time"]
+                rows.append([depth, chain, n["name"], n["kind"], n["call_line"],
+                             n["call_column"], self._display_path(n["call_origin"]),
+                             n["call_count"], f"{n['self_time'] * 1000:.3f}",
+                             f"{cum * 1000:.3f}",
+                             f"{100 * cum / total if total > 0 else 0.0:.2f}"])
+                chain = f"{chain}/{n['name']}"
+            # Reversed: pop() is LIFO, so this emits children in the same
+            # cost order the tree shows them in.
+            for c in sorted(n["children"], key=lambda j: self._paths[j]["cumulative_time"]):
+                stack.append((c, depth + 1, chain))
+        return header, rows
+
+    def _export_csv(self):
+        which = "call_tree" if self._tabs.currentIndex() == 0 else "call_sites"
+        path, _ = QFileDialog.getSaveFileName(self, "Export Profile CSV",
+                                               f"profile_{which}.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        header, rows = self._csv_rows()
+        try:
+            # newline="" per the csv module's own docs -- without it the
+            # writer's \r\n meets the text layer's translation and every
+            # row ends up blank-line separated on Windows.
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(header)
+                w.writerows(rows)
+        except OSError as e:
+            QMessageBox.warning(self, "Export Failed", f"Could not write {path}:\n{e}")
 
     def _populate(self, result: "ProfileResult"):
         resolve_time = result.resolve_time
