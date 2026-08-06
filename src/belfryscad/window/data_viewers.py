@@ -1074,10 +1074,20 @@ class ProfileViewer(QDialog):
     navigate_requested = Signal(str, int)  # (file_path, line)
 
     _SELF_MS_COL = 6
-    _SEARCH_COLS = (0, 1, 3)  # Name, Caller, Caller File
+    _SEARCH_COLS = (0, 1, 4)  # Name, Caller, Caller File
 
-    def __init__(self, result: "ProfileResult", parent=None):
+    def __init__(self, result: "ProfileResult", parent=None,
+                 path_labels: "dict[str, str] | None" = None,
+                 trim_prefix: str = ""):
+        """`path_labels` maps a raw path the evaluator reported to a
+        friendlier name -- used for the temp .scad each render writes the
+        live editor buffer to, which is what call sites in an unsaved tab
+        are attributed to. `trim_prefix` (the OpenSCAD library directory)
+        is stripped from any path under it, so a BOSL2 call site reads
+        `BOSL2/vnf.scad` rather than an absolute path nobody can scan."""
         super().__init__(parent)
+        self._path_labels = dict(path_labels or {})
+        self._trim_prefix = trim_prefix.rstrip("/") + "/" if trim_prefix else ""
         self.setWindowTitle("Profile Report")
         self.resize(900, 500)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1113,7 +1123,10 @@ class ProfileViewer(QDialog):
 
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
-        cols = ["Name", "Caller", "Kind", "Caller File", "Line", "Calls",
+        # Line sits before Caller File: the file is the widest, most
+        # variable column, and a line number pushed out past it is
+        # awkward to scan back to.
+        cols = ["Name", "Caller", "Kind", "Line", "Caller File", "Calls",
                 "Self (ms)", "Self %", "Total (ms)", "Total %"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
@@ -1133,8 +1146,8 @@ class ProfileViewer(QDialog):
         header.resizeSection(0, 160)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(1, 140)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(3, 220)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(4, 220)
         layout.addWidget(self._table)
 
         self._populate(result)
@@ -1161,8 +1174,8 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(site.name),
                 QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
-                QTableWidgetItem(site.call_origin),
                 _NumericTableWidgetItem(site.call_line, str(site.call_line)),
+                QTableWidgetItem(self._display_path(site.call_origin)),
                 _NumericTableWidgetItem(site.call_count, str(site.call_count)),
                 _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
                 _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
@@ -1170,7 +1183,7 @@ class ProfileViewer(QDialog):
                 _NumericTableWidgetItem(cum_pct, f"{cum_pct:.1f}"),
             ]
             for col, item in enumerate(values):
-                if col < 4:
+                if col in (0, 1, 2, 4):   # the text columns
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
             # setSortingEnabled(True) reorders the table's *visual* rows
@@ -1182,6 +1195,18 @@ class ProfileViewer(QDialog):
             # parallel list by row" pattern every other viewer here uses
             # only happens to work because none of their tables sort).
             self._table.item(row, 0).setData(Qt.ItemDataRole.UserRole, site)
+
+    def _display_path(self, origin: str) -> str:
+        """How a call site's file is shown. Navigation still uses the raw
+        `site.call_origin`, so shortening here never breaks jumping to it."""
+        if not origin:
+            return ""
+        label = self._path_labels.get(origin)
+        if label is not None:
+            return label
+        if self._trim_prefix and origin.startswith(self._trim_prefix):
+            return origin[len(self._trim_prefix):]
+        return origin
 
     def _site_at_row(self, row: int) -> "CallSiteProfile | None":
         item = self._table.item(row, 0)
