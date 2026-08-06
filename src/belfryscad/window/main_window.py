@@ -2322,8 +2322,18 @@ class MainWindow(QMainWindow):
         resolved = str(Path(file_path).resolve())
         for i in range(self._tabs.count()):
             t = self._tabs.widget(i)
-            if t and t.file_path and str(Path(t.file_path).resolve()) == resolved:
-                return t, i
+            if not t:
+                continue
+            # _last_parse_path as well as file_path: a modified tab renders
+            # from a temp copy of its live buffer, so anything reporting a
+            # source location -- a profile call site, an error -- names that
+            # temp path, not the tab's own. Matching only file_path missed
+            # every such row, and the fallback open below cannot rescue it
+            # either: the temp file is unlinked once the render ends, so the
+            # read fails and the caller silently does nothing.
+            for p in (t.file_path, getattr(t, '_last_parse_path', None)):
+                if p and str(Path(p).resolve()) == resolved:
+                    return t, i
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
