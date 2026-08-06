@@ -1046,9 +1046,12 @@ class _NumericTableWidgetItem(QTableWidgetItem):
     displayed text -- setSortingEnabled's default comparison is
     lexical/string-based, which would sort "100.0" before "20.0". No
     sortable-column precedent exists elsewhere in this file; this is the
-    minimal fix (one method), not a new dependency."""
+    minimal fix (one method), not a new dependency.
 
-    def __init__(self, value: float, text: str):
+    `value` is any comparable -- Line passes a (line, column) tuple so two
+    call sites on one line sort in source order rather than arbitrarily."""
+
+    def __init__(self, value, text: str):
         super().__init__(text)
         self._value = value
         self.setFlags(self.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1189,7 +1192,8 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(site.name),
                 QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
-                _NumericTableWidgetItem(site.call_line, str(site.call_line)),
+                _NumericTableWidgetItem((site.call_line, site.call_column),
+                                         f"{site.call_line}:{site.call_column}"),
                 _NumericTableWidgetItem(site.call_count, str(site.call_count)),
                 _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
                 _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
@@ -1286,7 +1290,7 @@ class ProfileViewer(QDialog):
                 f"{n['self_time'] * 1000:.2f}",
                 str(n["call_count"]),
                 n["kind"],
-                str(n["call_line"]),
+                f"{n['call_line']}:{n['call_column']}",
                 self._display_path(n["call_origin"]),
             ])
             for col in (1, 2, 3, 4, 6):
