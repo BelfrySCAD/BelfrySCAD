@@ -1074,8 +1074,8 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _SELF_MS_COL = 6
-    _SEARCH_COLS = (0, 1, 4)  # Name, Caller, Caller File
+    _SELF_MS_COL = 5
+    _SEARCH_COLS = (0, 1, 9)  # Name, Caller, Caller File
 
     def __init__(self, result: "ProfileResult", parent=None,
                  path_labels: "dict[str, str] | None" = None,
@@ -1139,11 +1139,11 @@ class ProfileViewer(QDialog):
 
         self._table = QTableWidget()
         self._table.setFont(QFont("Menlo", 11))
-        # Line sits before Caller File: the file is the widest, most
-        # variable column, and a line number pushed out past it is
-        # awkward to scan back to.
-        cols = ["Name", "Caller", "Kind", "Line", "Caller File", "Calls",
-                "Self (ms)", "Self %", "Total (ms)", "Total %"]
+        # Caller File goes last and takes the spare width: it is the widest
+        # and most variable column, so anywhere else it either gets clipped
+        # or shoves the numbers off to the right.
+        cols = ["Name", "Caller", "Kind", "Line", "Calls",
+                "Self (ms)", "Self %", "Total (ms)", "Total %", "Caller File"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
         self._table.verticalHeader().setVisible(False)
@@ -1154,17 +1154,15 @@ class ProfileViewer(QDialog):
         self._table.customContextMenuRequested.connect(self._context_menu)
         self._table.cellDoubleClicked.connect(self._goto_call_site)
         header = self._table.horizontalHeader()
-        # Name absorbs the window's spare width. Every other column here is
-        # either a number or a short token, so growing the last one (the
-        # default) just pads a percentage out to nothing useful.
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        # The rest stay Interactive so they can still be drag-resized --
-        # dragging one of them takes the space out of Name.
+        # Caller File is last and absorbs the window's spare width. Name and
+        # Caller just start wide; they stay Interactive so they can be
+        # drag-resized. (QTableView defaults stretchLastSection to False --
+        # unlike QTreeView, which is why the tree needs no such call.)
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(0, 220)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(1, 140)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(4, 220)
+        header.resizeSection(1, 160)
         flat_layout.addWidget(self._table)
 
         self._populate(result)
@@ -1192,15 +1190,15 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
                 _NumericTableWidgetItem(site.call_line, str(site.call_line)),
-                QTableWidgetItem(self._display_path(site.call_origin)),
                 _NumericTableWidgetItem(site.call_count, str(site.call_count)),
                 _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
                 _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
                 _NumericTableWidgetItem(cum_ms, f"{cum_ms:.2f}"),
                 _NumericTableWidgetItem(cum_pct, f"{cum_pct:.1f}"),
+                QTableWidgetItem(self._display_path(site.call_origin)),
             ]
             for col, item in enumerate(values):
-                if col in (0, 1, 2, 4):   # the text columns
+                if col in (0, 1, 2, 9):   # the text columns
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
             # setSortingEnabled(True) reorders the table's *visual* rows
@@ -1245,9 +1243,9 @@ class ProfileViewer(QDialog):
         self._tree.setColumnCount(8)
         # Cost first, identity after: the reason to open this tab is to find
         # where the time went, so Total % leads and the descriptive columns
-        # (Kind, File, Line) trail.
+        # (Kind, Line, File) trail.
         self._tree.setHeaderLabels(
-            ["Name", "Total %", "Total (ms)", "Self (ms)", "Calls", "Kind", "File", "Line"])
+            ["Name", "Total %", "Total (ms)", "Self (ms)", "Calls", "Kind", "Line", "File"])
         self._tree.setUniformRowHeights(True)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._tree_context_menu)
@@ -1255,16 +1253,16 @@ class ProfileViewer(QDialog):
         # Children attach on first expand: a modest BOSL2 model already
         # produces ~9000 nodes and most branches are never opened.
         self._tree.itemExpanded.connect(self._on_tree_expand)
-        # Name absorbs spare width; see the flat table's header for why.
-        self._tree.header().setStretchLastSection(False)
-        self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._tree.setColumnWidth(6, 220)
+        # File is last, so stretchLastSection (Qt's default) hands it the
+        # spare width -- it is the widest and most variable column. Name just
+        # starts wide, and stays draggable.
+        self._tree.setColumnWidth(0, 300)
         vbox.addWidget(self._tree)
 
         root_node = self._paths[0]
         root = QTreeWidgetItem([root_node.get("name") or "<toplevel>", "100.0",
                                  f"{root_node['cumulative_time'] * 1000:.2f}", "", "", "", "", ""])
-        for col in (1, 2, 3, 4, 7):
+        for col in (1, 2, 3, 4, 6):
             root.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         root.setData(0, Qt.ItemDataRole.UserRole, 0)
         self._tree.addTopLevelItem(root)
@@ -1288,10 +1286,10 @@ class ProfileViewer(QDialog):
                 f"{n['self_time'] * 1000:.2f}",
                 str(n["call_count"]),
                 n["kind"],
-                self._display_path(n["call_origin"]),
                 str(n["call_line"]),
+                self._display_path(n["call_origin"]),
             ])
-            for col in (1, 2, 3, 4, 7):
+            for col in (1, 2, 3, 4, 6):
                 item.setTextAlignment(col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item.setData(0, Qt.ItemDataRole.UserRole, i)
             parent_item.addChild(item)
