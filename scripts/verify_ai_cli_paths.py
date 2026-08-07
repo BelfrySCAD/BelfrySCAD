@@ -41,6 +41,11 @@ def main():
     s = QSettings("BelfrySCAD", "BelfrySCAD")
     saved_pref = s.value(CLI_PATH_KEY, "")
     saved_path = os.environ.get("PATH", "")
+    # Selecting a preset writes ai/activeProvider, so without restoring it
+    # a run leaves the dialog opening on whatever this test last chose --
+    # which silently broke the Claude-side checks on the next run.
+    saved_provider = s.value("ai/activeProvider", "openai")
+    saved_copilot = s.value("ai/copilotCliPath", "")
 
     with tempfile.TemporaryDirectory() as td:
         real = Path(td) / "claude"
@@ -108,6 +113,12 @@ def main():
             # --- Preferences reports which one will be used --------------
             from belfryscad.window.preferences import PreferencesDialog
             dlg = PreferencesDialog()
+            # Explicit, not inherited from whatever is persisted: these
+            # checks are about the Claude row.
+            dlg._ai_preset.setCurrentIndex(dlg._ai_preset.findData("anthropic"))
+            app.processEvents()
+            dlg._ai_cli_path.setText(str(real))
+            dlg._update_ai_cli_status()
             check("Preferences shows the configured path in its status line",
                   str(real) in dlg._ai_cli_status.text(), dlg._ai_cli_status.text())
 
@@ -232,6 +243,8 @@ def main():
         finally:
             os.environ["PATH"] = saved_path
             s.setValue(CLI_PATH_KEY, saved_pref)
+            s.setValue("ai/activeProvider", saved_provider)
+            s.setValue("ai/copilotCliPath", saved_copilot)
             s.sync()
 
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
