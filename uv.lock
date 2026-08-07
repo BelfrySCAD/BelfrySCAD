@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "belfryscad"
-version = "0.39.1"
+version = "0.40.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -59,7 +59,7 @@ requires-dist = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-cpp-evaluator", specifier = ">=0.21.0" },
+    { name = "openscad-cpp-evaluator", specifier = ">=0.22.0" },
     { name = "pyside6" },
     { name = "setproctitle", specifier = ">=1.3.7" },
 ]
