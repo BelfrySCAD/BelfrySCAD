@@ -16,6 +16,7 @@ initialize, notifications/initialized, tools/list, tools/call. It binds to
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -63,6 +64,21 @@ class McpToolServer(ThreadingHTTPServer):
     even though they now run on an HTTP worker thread."""
 
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """Swallow a client that hung up; report anything else.
+
+        Guarded here rather than around the individual reads and writes,
+        because a dropped connection surfaces from several places -- writing
+        a reply, and reading the next request on a kept-alive one. An
+        earlier attempt wrapped only the reply path and left the read path
+        still printing a full traceback into the user's console, looking
+        like a crash.
+        """
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
 
     def __init__(self):
         super().__init__(("127.0.0.1", 0), _Handler)

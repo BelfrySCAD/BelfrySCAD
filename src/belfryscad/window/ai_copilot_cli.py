@@ -88,7 +88,7 @@ class CopilotCliSession:
         self._session_id: str | None = None
         self._proc: subprocess.Popen | None = None
 
-    def _command(self, text: str) -> list[str]:
+    def _command(self, text: str, attachments: "list[str] | None" = None) -> list[str]:
         # Inline JSON, not a file: --additional-mcp-config augments
         # ~/.copilot/mcp-config.json for this session only, so the user's own
         # MCP setup is neither read into ours nor written over.
@@ -105,6 +105,10 @@ class CopilotCliSession:
             "--allow-all-tools",
             "--no-color",
         ]
+        for path in (attachments or []):
+            # --attachment wants a path, not bytes, so an attached image is
+            # written to a temp file for the life of the turn.
+            cmd += ["--attachment", path]
         if self._session_id:
             cmd += ["--session-id", self._session_id]
         if self._model:
@@ -127,11 +131,13 @@ class CopilotCliSession:
                 pass
 
     def send_turn(self, text: str,
-                  cancel: threading.Event | None = None) -> Iterator[StreamEvent]:
+                  cancel: threading.Event | None = None,
+                  images: "list[tuple[str, str]] | None" = None) -> Iterator[StreamEvent]:
         """Run one turn and yield events until it ends."""
+        tmp = self._write_attachments(images or [])
         try:
             self._proc = subprocess.Popen(
-                self._command(text), stdin=subprocess.DEVNULL,
+                self._command(text, tmp), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1, cwd=self._cwd,
             )
@@ -167,6 +173,27 @@ class CopilotCliSession:
         self.stop()
         yield StreamEvent(kind="error",
                           error=f"copilot CLI exited unexpectedly. {err}".strip())
+
+    @staticmethod
+    def _write_attachments(images: list) -> list[str]:
+        """Attached images as temp files, for --attachment.
+
+        Left on disk rather than cleaned up here: the CLI reads them after
+        this returns, and they are small and in the system temp directory.
+        """
+        import base64
+        import tempfile
+        out = []
+        for b64, mime in images:
+            suffix = ".png" if "png" in mime else ".jpg"
+            try:
+                fd, path = tempfile.mkstemp(prefix="belfryscad_att_", suffix=suffix)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(base64.b64decode(b64))
+                out.append(path)
+            except (OSError, ValueError):
+                continue        # one unwritable attachment must not kill the turn
+        return out
 
     def _translate(self, ev: dict) -> Iterator[StreamEvent]:
         """One JSONL event -> zero or more StreamEvents."""
