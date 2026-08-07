@@ -37,6 +37,8 @@ different tab are both out of scope (see the dialog's own doc comment).
 """
 
 import re
+
+from openscad_cpp_evaluator import parse_ast_string
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -78,7 +80,136 @@ def _valid_param_name(name: str) -> bool:
 
 
 def scan_parameters(source: str) -> list[ParameterDef]:
-    """Return top-level parameter variable definitions from *source*."""
+    """Return top-level parameter variable definitions from *source*.
+
+    Uses the real parser (openscad_cpp_evaluator.parse_ast_string) so that
+    "top-level" is decided by the grammar rather than by counting braces,
+    and an assignment can span lines or carry comments inside it. Falls
+    back to the line scanner below whenever the source doesn't parse --
+    which, since this runs on every editor keystroke, is a large fraction
+    of the time. See _scan_parameters_lines for why that matters.
+    """
+    try:
+        nodes = parse_ast_string(source, True)
+    except Exception:
+        # Any parse failure (mid-typing, usually) -- not just ParseError,
+        # since a scan must never be able to take the editor down.
+        return _scan_parameters_lines(source)
+
+    params: list[ParameterDef] = []
+    current_tab = 'Parameters'
+    hidden = False
+    prev_desc = ''
+    prev_desc_end = 0   # source offset just past the description comment
+
+    for node in nodes:
+        kind = node['kind']
+        pos = node['position']
+
+        if kind == 'CommentSpan':
+            # Tab-group header: /* [TabName] */
+            tab_m = re.match(r'^\s*\[([^\]]*)\]\s*$', node['text'])
+            if tab_m:
+                tab_name = tab_m.group(1).strip()
+                if tab_name.lower() == 'hidden':
+                    hidden = True
+                elif tab_name.lower() == 'global':
+                    current_tab, hidden = 'Global', False
+                else:
+                    current_tab, hidden = tab_name or 'Parameters', False
+            prev_desc = ''
+            continue
+
+        if kind == 'CommentLine':
+            # A trailing `// [1:50]` is NOT a node -- the parser only emits
+            # standalone line comments -- so anything reaching here is a
+            # description sitting above an assignment.
+            prev_desc = node['text'].strip()
+            prev_desc_end = pos['end_offset']
+            continue
+
+        if kind == 'BlankLine':
+            prev_desc = ''
+            continue
+
+        if hidden or kind != 'Assignment':
+            prev_desc = ''
+            continue
+
+        # A comment only describes the assignment if it sits IMMEDIATELY
+        # above it. The parser emits BlankLine nodes only between runs of
+        # comments, never between a comment and the statement below, so the
+        # gap has to be read from the source itself -- which the spans make
+        # straightforward. Without this, a commented-out line of code two
+        # lines up ("//skip=true;" in ntest4.scad) becomes the description.
+        if prev_desc and re.search(r'\n\s*\n', source[prev_desc_end:pos['start_offset']]):
+            prev_desc = ''
+
+        name = node['name']['name']
+        if not _valid_param_name(name):
+            prev_desc = ''
+            continue
+
+        # Reuse the ORIGINAL source text of the value rather than
+        # re-deriving it from the parsed AST node: parse_literal decides
+        # int-vs-float from the spelling ("20" vs "20.0"), which drives the
+        # widget's step size, and a parsed double has already lost that.
+        # The span also covers a multi-line vector literal for free.
+        #
+        # StringLiteral is the one exception: its span covers only the
+        # opening quote (a parser quirk -- every other literal kind spans
+        # correctly), so take its already-decoded `val`, which is exactly
+        # what parse_literal would have returned anyway.
+        # A comment adjacent to the value wraps it in a CommentedExpr (only
+        # when parsing with comments enabled, which is why the tab-group and
+        # description handling above needs them). Unwrap to reach the real
+        # literal -- a trailing `// [1:50]` on a numeric assignment happens
+        # to survive without this because CommentedExpr's own span still
+        # covers the number, but a string's does not.
+        expr_node = node['expr']
+        while expr_node['kind'] == 'CommentedExpr':
+            expr_node = expr_node['expr']
+
+        if expr_node['kind'] == 'StringLiteral':
+            val = expr_node['val']
+        else:
+            expr = expr_node['position']
+            val = _parse_literal(source[expr['start_offset']:expr['end_offset']])
+        if val is None:
+            prev_desc = ''
+            continue
+
+        # The trailing constraint comment is dropped by the parser, so
+        # recover it from the source: everything after this statement up to
+        # the end of its line.
+        line_end = source.find('\n', pos['end_offset'])
+        tail = source[pos['end_offset']:line_end if line_end != -1 else len(source)]
+        constraint_m = re.match(r'\s*//\s*(.*?)\s*$', tail)
+
+        params.append(ParameterDef(
+            name=name,
+            default=val,
+            description=prev_desc or name,
+            tab=current_tab,
+            constraint=constraint_m.group(1) if constraint_m else '',
+            line_num=pos['line'] - 1,   # ParameterDef.line_num is 0-indexed
+        ))
+        prev_desc = ''
+
+    return params
+
+
+def _scan_parameters_lines(source: str) -> list[ParameterDef]:
+    """Line-based fallback for source that doesn't parse.
+
+    Kept because scan_parameters runs on every keystroke, so the source is
+    incomplete much of the time. A tolerant scanner keeps the form
+    populated while you type; the strict parser would empty it on any
+    syntax error anywhere in the file, rebuilding the whole pane each time.
+    Correspondingly this is only ever reached with broken source, so its
+    own blind spots (multi-line assignments, comments mid-statement) no
+    longer matter -- the AST path above handles those whenever it can run.
+    """
     params: list[ParameterDef] = []
     lines = source.split('\n')
     current_tab = 'Parameters'

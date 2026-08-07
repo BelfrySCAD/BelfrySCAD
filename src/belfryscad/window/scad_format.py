@@ -4,12 +4,14 @@
 Scope is deliberately limited to *structural* formatting -- statement/block
 indentation, brace placement (K&R-style, `} else {` merged onto one line),
 one statement per line, and collapsing runs of blank lines to at most one.
-Anything inside parens/brackets (function args, vector literals, list
-comprehensions, ...) is copied through verbatim, newlines and all, rather
-than reflowed -- OpenSCAD has no accessible full-fidelity AST via
-openscad_cpp_evaluator (RootScope only exposes a name->definition symbol
-table, for Go to Definition, not a walkable statement tree), so this works
-directly off a token stream instead of round-tripping through an AST.
+Structural formatting is done on a token stream. Separator spacing inside
+argument lists and vector literals is then normalised from the AST
+(`_space_separators`), which is possible because
+`openscad_cpp_evaluator.parse_ast_string` exposes every node's source span:
+each argument's own text is taken VERBATIM from its span, so nothing is
+re-serialised and no expression printer is needed -- only the commas
+between them are rewritten. Anything this pass can't account for is left
+exactly as the user wrote it.
 Semicolons/braces are only treated as structural at paren/bracket depth 0,
 which is always correct for valid OpenSCAD grammar (neither ever nests
 inside a `(...)`/`[...]`).
@@ -17,8 +19,6 @@ inside a `(...)`/`[...]`).
 from __future__ import annotations
 
 import re
-import tempfile
-from pathlib import Path
 
 _TOKEN_RE = re.compile(r'''
       (?P<ws>\s+)
@@ -41,21 +41,22 @@ def _tokenize(text: str) -> list[tuple[str, str]]:
 
 def can_format(text: str) -> bool:
     """Whether `text` parses standalone as its own tiny .scad file -- the
-    gate for whether the "Reformat Selection" menu item is offered at all."""
+    gate for whether the "Reformat Selection" menu item is offered at all.
+
+    Parses the string directly. This used to write a NamedTemporaryFile and
+    parse that, because the only parse entry point took a path; parse_ast_string
+    removes the file I/O, and with it the delete-on-failure cleanup and the
+    chance of leaving a stray file behind. It runs on every right-click in
+    the editor, so the saving is worth having.
+    """
     if not text.strip():
         return False
-    from openscad_cpp_evaluator import parse as _oce_parse, ParseError
-    with tempfile.NamedTemporaryFile(suffix=".scad", mode="w", encoding="utf-8",
-                                      delete=False) as f:
-        f.write(text)
-        tmp_path = f.name
+    from openscad_cpp_evaluator import ParseError, parse_ast_string
     try:
-        _oce_parse(tmp_path)
+        parse_ast_string(text)
         return True
     except ParseError:
         return False
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
 
 
 def format_scad(text: str, indent_size: int = 4) -> str:
@@ -179,4 +180,158 @@ def format_scad(text: str, indent_size: int = 4) -> str:
         i += 1
 
     flush()
-    return "\n".join(out) + ("\n" if out else "")
+    formatted = "\n".join(out) + ("\n" if out else "")
+
+    # Separator spacing is a second, AST-driven pass over the already
+    # structurally-formatted text (see _space_separators). Gated on the
+    # result still parsing to the same shape: this function REPLACES the
+    # user's selection, so a bad rewrite silently corrupts their code.
+    # Any doubt at all and the token-formatted text is returned unchanged.
+    spaced = _space_separators(formatted)
+    return spaced if _same_shape(formatted, spaced) else formatted
+
+
+# ---------------------------------------------------------------------------
+# AST-driven separator spacing
+# ---------------------------------------------------------------------------
+
+# Node kinds whose children are a comma-separated list the user sees as one
+# "argument list": a call's arguments, and a vector/list-comprehension's
+# elements. Mapped to the dict key holding that list.
+_SEPARATED_LISTS = {
+    "ModularCall": "arguments",
+    "PrimaryCall": "arguments",
+    "ListComprehension": "elements",
+    "ModularEcho": "arguments",
+    "ModularAssert": "arguments",
+    "EchoOp": "arguments",
+    "AssertOp": "arguments",
+    "FunctionLiteral": "parameters",
+    "ModuleDeclaration": "parameters",
+    "FunctionDeclaration": "parameters",
+}
+
+
+def _walk(node, out: list) -> None:
+    """Collect every dict node in the tree, parents before children."""
+    if isinstance(node, dict) and "kind" in node:
+        out.append(node)
+        for key, val in node.items():
+            if key not in ("kind", "position"):
+                _walk(val, out)
+    elif isinstance(node, list):
+        for item in node:
+            _walk(item, out)
+
+
+def _space_separators(text: str) -> str:
+    """Normalise `a,b` to `a, b` between arguments and vector elements.
+
+    Works purely on spans: each item's own source text is copied verbatim,
+    and only the gap BETWEEN two consecutive items is rewritten. Nothing is
+    re-serialised, so `1.500`, `1e3`, comments and hand-formatting inside an
+    argument all survive untouched.
+
+    A gap is only touched when it is exactly a comma surrounded by plain
+    horizontal whitespace. Any gap containing a newline (a deliberately
+    wrapped list) or a comment is left alone -- those are choices the user
+    made, and this pass has no business overriding them.
+    """
+    from openscad_cpp_evaluator import ParseError, parse_ast_string
+
+    try:
+        nodes = parse_ast_string(text, True)
+    except ParseError:
+        return text
+
+    flat: list = []
+    _walk(nodes, flat)
+
+    # (start, end, replacement) for each gap, collected across the whole
+    # tree then applied back-to-front so earlier offsets stay valid.
+    edits: list[tuple[int, int, str]] = []
+    for node in flat:
+        key = _SEPARATED_LISTS.get(node["kind"])
+        if not key:
+            continue
+        items = node.get(key) or []
+
+        # A string literal's span currently covers only its opening quote
+        # (a parser bug, openscad_cpp_evaluator <= 0.17.0), which drags the
+        # enclosing argument's end_offset back into the middle of the
+        # string. Every offset derived from such an item is then wrong, so
+        # skip the whole list rather than trust any gap in it -- without
+        # this, `f("h,l,height,length", x)` had a comma rewritten INSIDE
+        # the string, silently changing its value (caught on BOSL2's
+        # isosurface.scad).
+        # A string literal's span currently covers only its opening quote
+        # (a parser bug, openscad_cpp_evaluator <= 0.17.0). That drags the
+        # enclosing item's end_offset into the middle of the string, and an
+        # outer list's offsets with it, so a "gap" can land inside string
+        # CONTENT. An unbalanced quote count in an item's own span text is
+        # the tell. Caught on BOSL2's isosurface.scad, where a comma inside
+        # "h,l,height,length" was being rewritten -- silently changing the
+        # string's value.
+        if any(text[i["position"]["start_offset"]:i["position"]["end_offset"]].count('"') % 2
+               for i in items):
+            continue
+
+        for left, right in zip(items, items[1:]):
+            gap_start = left["position"]["end_offset"]
+            gap_end = right["position"]["start_offset"]
+            if gap_start >= gap_end:
+                continue  # spans touch or overlap -- nothing to normalise
+            gap = text[gap_start:gap_end]
+            if gap == ", ":
+                continue  # already correct; skip the no-op edit
+            if '"' in gap:
+                continue  # belt-and-braces: never rewrite across a string
+            if re.fullmatch(r"[ \t]*,[ \t]*", gap):
+                edits.append((gap_start, gap_end, ", "))
+
+    if not edits:
+        return text
+
+    out = text
+    for start, end, replacement in sorted(edits, reverse=True):
+        out = out[:start] + replacement + out[end:]
+
+    # Self-verify rather than trusting the span arithmetic above. This
+    # rewrites a user's source, and the spans it relies on have already
+    # been shown to be wrong in at least one case; a structural check
+    # costs one extra parse and makes the function safe by construction
+    # whatever else turns out to be off. Callers get the input back
+    # unchanged rather than a plausible-looking corruption.
+    return out if _same_shape(text, out) else text
+
+
+def _shape(text: str):
+    """A structure-only fingerprint of `text`'s AST: node kinds and nesting,
+    with every position and literal value dropped. Two sources with the same
+    fingerprint differ at most in whitespace between tokens."""
+    from openscad_cpp_evaluator import parse_ast_string
+
+    def walk(node):
+        if isinstance(node, dict) and "kind" in node:
+            return (node["kind"], tuple(
+                walk(v) for k, v in sorted(node.items()) if k not in ("kind", "position")))
+        if isinstance(node, list):
+            return tuple(walk(x) for x in node)
+        return node
+
+    return walk(parse_ast_string(text, True))
+
+
+def _same_shape(before: str, after: str) -> bool:
+    """Whether a rewrite left the parse tree structurally identical.
+
+    The safety gate on any transformation applied to a user's selection: if
+    a rewrite drops an argument, moves a comment, or changes an operator's
+    grouping, the fingerprints diverge and the rewrite is discarded. A parse
+    failure on either side counts as unsafe.
+    """
+    from openscad_cpp_evaluator import ParseError
+    try:
+        return _shape(before) == _shape(after)
+    except (ParseError, Exception):
+        return False

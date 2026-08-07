@@ -339,6 +339,10 @@ class AIChatPane(QWidget):
         self._followup_due = 0.0
         self._followup_chain = 0
         self._followup_released = False
+        # When the last render finished, and when the current turn began.
+        # A render-triggered follow-up compares the two: see _on_followup.
+        self._last_render_at = 0.0
+        self._turn_started_at = 0.0
         self._followup_timer = QTimer(self)
         self._followup_timer.setInterval(1000)
         self._followup_timer.timeout.connect(self._tick_followup)
@@ -534,6 +538,7 @@ class AIChatPane(QWidget):
         snapshot it just built on the GUI thread."""
         if self._streaming:
             return
+        self._turn_started_at = time.monotonic()
         preset = preset_for(self._provider.currentData())
         provider = preset.protocol
         s = QSettings("BelfrySCAD", "BelfrySCAD")
@@ -694,10 +699,25 @@ class AIChatPane(QWidget):
         self._followup = followup
         self._followup_released = False
         if followup.trigger == TRIGGER_RENDER:
-            # No countdown -- on_render_finished() fires it. The deadline is
-            # only a backstop against waiting forever for a render that
-            # never comes.
-            self._followup_due = time.monotonic() + _RENDER_WAIT_TIMEOUT
+            if self._last_render_at > self._turn_started_at:
+                # A render already finished during THIS turn -- the one
+                # reflecting the edit the model just applied, which is
+                # exactly what it asked to be woken for. Release now rather
+                # than wait for another that nothing will trigger.
+                #
+                # The common case in Accept Edits/Auto mode, not an edge
+                # case: applying an edit starts a render that finishes in
+                # milliseconds, while the schedule_followup tool call only
+                # arrives after a round-trip to the model. Waiting would sit
+                # at "After the next render" for the full 900s backstop and
+                # look exactly like the follow-up never firing.
+                self._followup_released = True
+                self._followup_due = time.monotonic() + _RENDER_SETTLE_DELAY
+            else:
+                # No countdown -- on_render_finished() releases it. The
+                # deadline is only a backstop against waiting forever for a
+                # render that never comes.
+                self._followup_due = time.monotonic() + _RENDER_WAIT_TIMEOUT
         else:
             self._followup_due = time.monotonic() + followup.delay_s
         self._tick_followup()
@@ -745,6 +765,9 @@ class AIChatPane(QWidget):
         """Called by MainWindow when a render completes. Releases a
         follow-up that was waiting for one -- by which point the viewport
         image and the geometry measurements reflect the new model."""
+        # Recorded unconditionally: a follow-up scheduled LATER in the same
+        # turn needs to know this render already happened (see _on_followup).
+        self._last_render_at = time.monotonic()
         fu = self._followup
         if (fu is None or fu.trigger != TRIGGER_RENDER
                 or self._followup_released):
