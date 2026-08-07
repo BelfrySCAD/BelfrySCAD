@@ -37,6 +37,13 @@ MULTI = [{"question": "Which features?", "multiSelect": True,
 
 BOTH = ONE + MULTI
 
+DETAILED = [{"question": "Which approach?", "header": "Approach",
+             "options": [
+                 {"label": "Extrude", "description": "2D then up",
+                  "detail": "# Extrude\n\nDraw the profile once, `linear_extrude` it.\n\n- cheap\n- no draft"},
+                 {"label": "Revolve", "description": "Spin a profile",
+                  "detail": "# Revolve\n\n`rotate_extrude` around Z.\n\nGood for anything round."}]}]
+
 failures = []
 
 
@@ -144,6 +151,94 @@ def main():
     check("answers come back per question, in order",
           a[0]["selected"] == ["Millimetres"] and a[1]["selected"] == ["Counterbores"],
           str(a))
+    dlg.close()
+
+    # --- descriptions sit under the option, wrapped ------------------------
+    from PySide6.QtWidgets import QLabel, QTextBrowser
+    dlg = AIQuestionDialog(ONE)
+    dlg.show()
+    app.processEvents()
+    b = dlg._blocks[0]
+    check("the option button carries only the label",
+          b.buttons[0].text() == "Millimetres", repr(b.buttons[0].text()))
+    descs = [w for w in b.findChildren(QLabel) if w.text() == "The usual"]
+    check("the description is its own label, not button text", len(descs) == 1)
+    if descs:
+        d = descs[0]
+        check("the description wraps", d.wordWrap())
+        check("the description is indented under the option",
+              d.contentsMargins().left() > 0, str(d.contentsMargins().left()))
+        by = b.buttons[0].mapTo(b, b.buttons[0].rect().topLeft()).y()
+        dy = d.mapTo(b, d.rect().topLeft()).y()
+        check("the description sits below its option", dy > by, f"btn y={by} desc y={dy}")
+    check("a plain question has no detail pane", b.detail_pane is None)
+    dlg.close()
+
+    # --- long form: detail beside the options ------------------------------
+    dlg = AIQuestionDialog(DETAILED)
+    dlg.show()
+    app.processEvents()
+    b = dlg._blocks[0]
+    check("a question with detail uses the long form", b.detailed)
+    check("it has a detail pane", isinstance(b.detail_pane, QTextBrowser))
+    check("every option is still visible alongside it", len(b.buttons) == 2)
+    if b.detail_pane is not None:
+        px = b.detail_pane.mapTo(b, b.detail_pane.rect().topLeft()).x()
+        bx = b.buttons[0].mapTo(b, b.buttons[0].rect().topLeft()).x()
+        check("the pane is beside the options, not below", px > bx, f"opts x={bx} pane x={px}")
+        check("it starts on the first option's detail",
+              "Extrude" in b.detail_pane.toPlainText(), b.detail_pane.toPlainText()[:40])
+        b.buttons[1].setChecked(True)
+        app.processEvents()
+        txt = b.detail_pane.toPlainText()
+        check("choosing an option shows that option's detail",
+              "rotate_extrude" in txt and "linear_extrude" not in txt, txt[:60])
+        check("the markdown is rendered, not shown raw", "# Revolve" not in txt, txt[:40])
+    dlg.close()
+
+    # --- one tab per question, left/right between them ---------------------
+    dlg = AIQuestionDialog(BOTH)
+    dlg.show()
+    app.processEvents()
+    check("each question gets its own tab", dlg._tabs.count() == 2)
+    check("tabs are labelled by header where given",
+          dlg._tabs.tabText(0) == "Units", dlg._tabs.tabText(0))
+    check("a question without a header still gets a meaningful label",
+          dlg._tabs.tabText(1) and "Question" not in dlg._tabs.tabText(1),
+          dlg._tabs.tabText(1))
+    check("the first tab is showing", dlg._tabs.currentIndex() == 0)
+
+    key(dlg, Qt.Key.Key_Right)
+    app.processEvents()
+    check("right arrow moves to the next tab", dlg._tabs.currentIndex() == 1)
+    check("focus follows the tab",
+          dlg.focusWidget() in dlg._blocks[1].buttons, str(dlg.focusWidget()))
+    key(dlg, Qt.Key.Key_Left)
+    app.processEvents()
+    check("left arrow moves back", dlg._tabs.currentIndex() == 0)
+    key(dlg, Qt.Key.Key_Left)
+    app.processEvents()
+    check("left from the first tab wraps to the last", dlg._tabs.currentIndex() == 1)
+
+    # Up/Down must still work on the page it landed on, not have been
+    # traded away for the tab navigation.
+    dlg._tabs.setCurrentIndex(1)
+    dlg._blocks[1].buttons[0].setFocus()
+    key(dlg, Qt.Key.Key_Space)
+    key(dlg, Qt.Key.Key_Down)
+    key(dlg, Qt.Key.Key_Space)
+    app.processEvents()
+    check("up/down still moves within a question after the tab change",
+          dlg._blocks[1].answer()["selected"] == ["Fillets", "Chamfers"],
+          str(dlg._blocks[1].answer()))
+    check("answers are collected from every tab, not just the visible one",
+          len(dlg.answers) == 2)
+    dlg.close()
+
+    dlg = AIQuestionDialog(ONE)
+    dlg.show()
+    app.processEvents()
+    check("a single question hides the tab bar", not dlg._tabs.tabBar().isVisible())
     dlg.close()
 
     # --- the tool contract -------------------------------------------------

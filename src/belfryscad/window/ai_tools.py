@@ -630,7 +630,11 @@ TOOLS: list[dict] = [
             "it; a habit of asking is not.\n\n"
             "Every option needs a label and a short description of what "
             "choosing it means. Set multiSelect when the choices genuinely "
-            "combine."),
+            "combine. Where the difference between options is more than a "
+            "line can carry, give each one 'detail' as well -- markdown "
+            "shown beside the list.\n\n"
+            "Each question gets its own tab, so ask them together rather "
+            "than one at a time."),
         "json_schema": {
             "type": "object",
             "properties": {
@@ -667,7 +671,19 @@ TOOLS: list[dict] = [
                                         "label": {"type": "string",
                                                   "description": "The choice itself, a few words."},
                                         "description": {"type": "string",
-                                                        "description": "What choosing it means."},
+                                                        "description": ("One line on what choosing "
+                                                                        "it means. Shown under the "
+                                                                        "option.")},
+                                        "detail": {"type": "string",
+                                                   "description": (
+                                                       "Optional. Longer markdown -- a sketch of "
+                                                       "the result, a code fragment, the "
+                                                       "trade-off spelled out. Shown in a pane "
+                                                       "beside the options, so the user can read "
+                                                       "about one without losing sight of the "
+                                                       "others. Give it to every option of a "
+                                                       "question or none, since they are read "
+                                                       "against each other.")},
                                     },
                                     "required": ["label"],
                                 },
