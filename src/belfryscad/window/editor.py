@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
-    QAction, QFontMetricsF, QTextDocument,
+    QAction, QFontMetricsF, QTextDocument, QPixmap, QIcon, QPen,
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
 
@@ -381,14 +381,10 @@ class FindBar(QWidget):
         self._btn_case = QPushButton("Aa")
         self._btn_case.setCheckable(True)
         self._btn_case.setToolTip("Match Case")
-        self._btn_word = QPushButton("ab")
+        self._btn_word = QPushButton()
         self._btn_word.setCheckable(True)
         self._btn_word.setToolTip("Match Whole Word")
-        # Underlined via the font, not markup -- QPushButton renders plain
-        # text, and the underline has to span both letters as one rule.
-        _word_font = self._btn_word.font()
-        _word_font.setUnderline(True)
-        self._btn_word.setFont(_word_font)
+        self._refresh_word_icon()
         self._btn_regex = QPushButton(".*")
         self._btn_regex.setCheckable(True)
         self._btn_regex.setToolTip("Use Regular Expression")
@@ -445,6 +441,50 @@ class FindBar(QWidget):
     # ------------------------------------------------------------------
     # Show / hide
     # ------------------------------------------------------------------
+
+    def _refresh_word_icon(self):
+        """Paint the Match Whole Word icon: 'ab' with a rule beneath it.
+
+        Drawn rather than set as underlined text -- macOS's native button
+        style renders the label through the system and drops the font's
+        underline attribute, so a QFont with setUnderline(True) reads as
+        plain 'ab'. Checking font().underline() only confirms the property
+        was stored, not that anything appears.
+        """
+        w, h = 18, 14
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = QPixmap(int(w * dpr), int(h * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+
+        font = QFont(self.font())
+        font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))
+        color = self.palette().buttonText().color()
+
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setFont(font)
+        painter.setPen(color)
+        fm = painter.fontMetrics()
+        text = "ab"
+        tw = fm.horizontalAdvance(text)
+        x = (w - tw) / 2
+        baseline = h - 4                      # leave room for the rule below
+        painter.drawText(QPoint(int(x), int(baseline)), text)
+        painter.setPen(QPen(color, 1.2))
+        painter.drawLine(int(x), h - 2, int(x + tw), h - 2)
+        painter.end()
+
+        self._btn_word.setIcon(QIcon(pm))
+        self._btn_word.setIconSize(QSize(w, h))
+
+    def changeEvent(self, event):
+        # Repaint the icon when the palette flips (macOS light/dark), or it
+        # keeps the old text colour and can end up invisible.
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "_btn_word"):
+            self._refresh_word_icon()
 
     def _on_disclose_toggled(self, expanded: bool):
         self._btn_disclose.setText("▼" if expanded else "▶")

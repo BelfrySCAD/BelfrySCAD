@@ -56,10 +56,41 @@ def main():
               btn.width() >= need + 4, f"width {btn.width()} vs label {need}")
 
     # --- disclosure triangle ------------------------------------------
-    check("the whole-word label is 'ab'", bar._btn_word.text() == "ab", repr(bar._btn_word.text()))
-    check("the whole-word label is underlined", bar._btn_word.font().underline())
-    check("neighbouring buttons are NOT underlined",
-          not bar._btn_case.font().underline() and not bar._btn_regex.font().underline())
+    # Inspect the rendered pixels, not the property. A QFont with
+    # setUnderline(True) stores fine and draws nothing on macOS's native
+    # button style, so font().underline() would pass on an icon that is
+    # visibly wrong -- which is exactly what shipped first.
+    icon = bar._btn_word.icon()
+    check("whole-word button carries an icon", not icon.isNull())
+    if not icon.isNull():
+        img = icon.pixmap(bar._btn_word.iconSize()).toImage()
+        w, h = img.width(), img.height()
+        rows = []
+        for y in range(h):
+            n = sum(1 for x in range(w) if img.pixelColor(x, y).alpha() > 40)
+            rows.append(n)
+        ink = [y for y, n in enumerate(rows) if n > 0]
+        check("the icon has visible ink", bool(ink), f"row counts {rows}")
+        if ink:
+            # Split the ink into bands separated by blank rows. A correct
+            # icon has exactly two: the glyphs, then the rule under them.
+            # Comparing single rows does not work -- the pen is 1.2px and
+            # covers two rows, so half the rule reads as a "glyph row".
+            bands = [[ink[0]]]
+            for y in ink[1:]:
+                if y == bands[-1][-1] + 1:
+                    bands[-1].append(y)
+                else:
+                    bands.append([y])
+            check("glyphs and rule are separate bands", len(bands) == 2, f"bands {bands}")
+            if len(bands) == 2:
+                glyphs, rule = bands
+                check("the rule sits below the glyphs", rule[0] > glyphs[-1], f"{bands}")
+                check("the rule is wider than any glyph row",
+                      max(rows[y] for y in rule) > max(rows[y] for y in glyphs),
+                      f"rule {[rows[y] for y in rule]} vs glyphs {[rows[y] for y in glyphs]}")
+    check("the whole-word button has no stray text label",
+          bar._btn_word.text() == "", repr(bar._btn_word.text()))
 
     check("opened with show_find(): collapsed", not bar._btn_disclose.isChecked())
     check("collapsed hides the replace row", bar._replace_widget.isHidden())
