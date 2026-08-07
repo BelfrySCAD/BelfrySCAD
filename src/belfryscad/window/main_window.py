@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QApplication, QMenu,
+    QDockWidget, QApplication, QMenu, QDialog,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -1935,7 +1935,8 @@ class MainWindow(QMainWindow):
                             viewport_png=png, viewport_note=note,
                             geometry_summary=self._geometry_summary(),
                             console_text=self._console_tail(),
-                            capture_view=self._capture_view_threadsafe)
+                            capture_view=self._capture_view_threadsafe,
+                            ask_user=self._ask_user_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2005,6 +2006,78 @@ class MainWindow(QMainWindow):
         "front": (270, 0), "back": (90, 0), "left": (180, 0), "right": (0, 0),
         "top": (270, 89), "bottom": (270, -89), "iso": (315, 35),
     }
+
+    def _ask_user_threadsafe(self, questions: list) -> bool:
+        """Called from the AI worker thread. Hands the questions to the GUI
+        thread and returns at once.
+
+        Nothing waits. Blocking here would hold a tool call -- and on the CLI
+        transports an MCP request -- open for however long the user takes to
+        think, which outlasts client read timeouts and pins a worker thread
+        on something that is not work. The answer comes back as an ordinary
+        user message instead, and dismissing the question cancels the turn
+        that asked it.
+        """
+        from PySide6.QtCore import QMetaObject
+        if getattr(self, "_ai_ask_dialog", None) is not None:
+            return False
+        self._ai_ask_pending = questions
+        QMetaObject.invokeMethod(self, "_service_ai_ask_request",
+                                 Qt.ConnectionType.QueuedConnection)
+        return True
+
+    @Slot()
+    def _service_ai_ask_request(self):
+        """GUI thread: put the questions on screen, modeless."""
+        questions = getattr(self, "_ai_ask_pending", None)
+        if not questions:
+            return
+        self._ai_ask_pending = None
+        try:
+            from belfryscad.window.ai_question_dialog import AIQuestionDialog
+            dlg = AIQuestionDialog(questions, parent=self)
+        except Exception as e:      # noqa: BLE001
+            self.log(f"AI question dialog failed: {e}")
+            return
+        self._ai_ask_dialog = dlg
+        dlg.finished.connect(lambda code, d=dlg: self._on_ai_ask_finished(code, d))
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_ai_ask_finished(self, code, dlg):
+        self._ai_ask_dialog = None
+        pane = getattr(self, "_ai_chat_pane", None)
+        if pane is None:
+            return
+        if code != QDialog.DialogCode.Accepted:
+            # Dismissed. Stop the work that asked -- carrying on would mean
+            # proceeding with exactly the guess the question existed to avoid.
+            pane.cancel_turn()
+            return
+        text = self._format_ai_answers(dlg.questions, dlg.answers)
+        if text:
+            pane.submit_user_text(text)
+        else:
+            # Accepted with nothing chosen and nothing typed. Treated as a
+            # dismissal rather than sent as an empty answer, which would read
+            # to the model as "none of the above".
+            pane.cancel_turn()
+
+    @staticmethod
+    def _format_ai_answers(questions: list, answers: list) -> str:
+        """The answers as the user would have typed them."""
+        lines = []
+        for spec, ans in zip(questions, answers):
+            picked = ans.get("selected") or []
+            note = (ans.get("note") or "").strip()
+            if not picked and not note:
+                continue
+            body = ", ".join(picked) if picked else ""
+            if note:
+                body = f"{body} ({note})" if body else note
+            lines.append(f"{spec.get('question', '').strip()} {body}".strip())
+        return "\n".join(lines)
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI
