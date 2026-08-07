@@ -1075,7 +1075,7 @@ class ProfileViewer(QDialog):
 
     navigate_requested = Signal(str, int)  # (file_path, line)
 
-    _SELF_MS_COL = 6
+    _SELF_MS_COL = 4
     _SEARCH_COLS = (0, 1, 10)  # Name, Caller, Caller File
 
     def __init__(self, result: "ProfileResult", parent=None,
@@ -1142,9 +1142,11 @@ class ProfileViewer(QDialog):
         self._table.setFont(QFont("Menlo", 11))
         # Caller File goes last and takes the spare width: it is the widest
         # and most variable column, so anywhere else it either gets clipped
-        # or shoves the numbers off to the right.
-        cols = ["Name", "Caller", "Kind", "Line", "Col", "Calls",
-                "Self (ms)", "Self %", "Total (ms)", "Total %", "Caller File"]
+        # or shoves the numbers off to the right. Line and Col sit right
+        # before it -- together they are one location, read as a unit.
+        cols = ["Name", "Caller", "Kind", "Calls",
+                "Self (ms)", "Self %", "Total (ms)", "Total %",
+                "Line", "Col", "Caller File"]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
         self._table.verticalHeader().setVisible(False)
@@ -1267,13 +1269,13 @@ class ProfileViewer(QDialog):
                 QTableWidgetItem(site.name),
                 QTableWidgetItem(site.caller_name),
                 QTableWidgetItem(site.kind),
-                _NumericTableWidgetItem(site.call_line, str(site.call_line)),
-                _NumericTableWidgetItem(site.call_column, str(site.call_column)),
                 _NumericTableWidgetItem(site.call_count, str(site.call_count)),
                 _NumericTableWidgetItem(self_ms, f"{self_ms:.2f}"),
                 _NumericTableWidgetItem(self_pct, f"{self_pct:.1f}"),
                 _NumericTableWidgetItem(cum_ms, f"{cum_ms:.2f}"),
                 _NumericTableWidgetItem(cum_pct, f"{cum_pct:.1f}"),
+                _NumericTableWidgetItem(site.call_line, str(site.call_line)),
+                _NumericTableWidgetItem(site.call_column, str(site.call_column)),
                 QTableWidgetItem(self._display_path(site.call_origin)),
             ]
             for col, item in enumerate(values):

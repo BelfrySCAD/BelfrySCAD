@@ -14,7 +14,7 @@ TMP = "/Users/gminette/models/tmpab12cd.scad"
 def site(name, origin, line):
     s = types.SimpleNamespace()
     s.name, s.caller_name, s.kind = name, "caller", "module"
-    s.call_origin, s.call_line, s.call_count = origin, line, 3
+    s.call_origin, s.call_line, s.call_column, s.call_count = origin, line, 5, 3
     s.self_time, s.cumulative_time = 0.001, 0.002
     return s
 
@@ -28,12 +28,13 @@ v = ProfileViewer(result, path_labels={TMP: "untitled-3.scad *"}, trim_prefix=LI
 hdr = [v._table.horizontalHeaderItem(c).text() for c in range(v._table.columnCount())]
 print("columns:", hdr)
 ok = True
-ok &= hdr[3] == "Line" and hdr[4] == "Caller File"
-print(("PASS " if hdr[3]=="Line" and hdr[4]=="Caller File" else "FAIL ") + "Line precedes Caller File")
+loc_ok = hdr[8:11] == ["Line", "Col", "Caller File"]
+ok &= loc_ok
+print(("PASS " if loc_ok else "FAIL ") + "Line, Col then Caller File, at the end")
 
 rows = {}
 for r in range(v._table.rowCount()):
-    rows[v._table.item(r, 0).text()] = (v._table.item(r, 3).text(), v._table.item(r, 4).text())
+    rows[v._table.item(r, 0).text()] = (v._table.item(r, 8).text(), v._table.item(r, 10).text())
 for name, (line, path) in sorted(rows.items()):
     print(f"   {name:8} line={line:<5} file={path}")
 
