@@ -549,8 +549,10 @@ class AIChatPane(QWidget):
             transport, api_key = resolve_anthropic_transport()
             if transport == "none":
                 self._say("No way to reach Claude: set ANTHROPIC_API_KEY, "
-                          "install the `claude` CLI, or enter an API key in "
-                          "Preferences → AI.")
+                          "enter an API key in Preferences → AI, or install "
+                          "the `claude` CLI. If it is installed but not on "
+                          "PATH, point at it with Preferences → AI → "
+                          "Claude CLI.")
                 return
             if transport == "cli":
                 cli_session = self._ensure_cli_session(ctx, model)

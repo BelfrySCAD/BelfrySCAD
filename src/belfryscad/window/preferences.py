@@ -1,4 +1,7 @@
 import json
+import os
+import shutil
+from pathlib import Path
 
 import numpy as np
 
@@ -24,6 +27,13 @@ from belfryscad.window.ai_providers import (
     PRESETS, base_url_key, list_model_capabilities, list_models, model_key,
     preset_for,
 )
+from belfryscad.window.ai_cli import CLI_PATH_KEY
+
+
+def _which_claude() -> str | None:
+    """PATH only -- deliberately not find_claude_cli(), which prefers the
+    configured path. This page needs to report the two separately."""
+    return shutil.which("claude")
 
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
@@ -37,6 +47,7 @@ _DEFAULTS = {
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
+    "ai/claudeCliPath": "",   # empty -> look on PATH
 }
 
 
@@ -248,6 +259,29 @@ class PreferencesDialog(QDialog):
         self._ai_key.editingFinished.connect(self._save_ai_key)
         ai_form.addRow("API key:", self._ai_key)
 
+        # Only meaningful for Claude, which can run through the CLI instead
+        # of an API key. Shown for every service anyway rather than appearing
+        # and vanishing as the dropdown changes -- it is the row someone
+        # goes looking for precisely when the CLI was not found.
+        cli_row = QHBoxLayout()
+        cli_row.setSpacing(6)
+        self._ai_cli_path = QLineEdit()
+        self._ai_cli_path.setMinimumWidth(220)
+        self._ai_cli_path.setPlaceholderText("Found on PATH" if _which_claude()
+                                              else "Not found on PATH — set it here")
+        self._ai_cli_path.setText(s.value(CLI_PATH_KEY, ""))
+        self._ai_cli_path.editingFinished.connect(self._save_ai_cli_path)
+        cli_row.addWidget(self._ai_cli_path, 1)
+        browse = QPushButton("Choose…")
+        browse.clicked.connect(self._browse_ai_cli_path)
+        cli_row.addWidget(browse)
+        ai_form.addRow("Claude CLI:", cli_row)
+
+        self._ai_cli_status = QLabel()
+        self._ai_cli_status.setWordWrap(True)
+        ai_form.addRow("", self._ai_cli_status)
+        self._update_ai_cli_status()
+
         self._ai_note = QLabel()
         self._ai_note.setWordWrap(True)
         self._ai_note.setEnabled(False)
@@ -269,6 +303,42 @@ class PreferencesDialog(QDialog):
             self._on_change()
 
     # -- AI tab -------------------------------------------------------------
+
+    def _save_ai_cli_path(self):
+        path = self._ai_cli_path.text().strip()
+        QSettings("BelfrySCAD", "BelfrySCAD").setValue(CLI_PATH_KEY, path)
+        self._update_ai_cli_status()
+
+    def _browse_ai_cli_path(self):
+        start = self._ai_cli_path.text().strip() or _which_claude() or str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(self, "Choose the claude CLI", start)
+        if not path:
+            return
+        self._ai_cli_path.setText(path)
+        self._save_ai_cli_path()
+
+    def _update_ai_cli_status(self):
+        """Say which claude will actually be used, and why."""
+        configured = self._ai_cli_path.text().strip()
+        found = _which_claude()
+        if configured:
+            if not Path(configured).is_file():
+                self._ai_cli_status.setText("⚠ No file at that path — falling back to PATH.")
+            elif not os.access(configured, os.X_OK):
+                self._ai_cli_status.setText("⚠ That file is not executable — falling back to PATH.")
+            else:
+                self._ai_cli_status.setText(f"Using {configured}")
+                self._ai_cli_status.setEnabled(True)
+                return
+            self._ai_cli_status.setEnabled(True)
+            return
+        if found:
+            self._ai_cli_status.setText(f"Using {found} (from PATH)")
+        else:
+            self._ai_cli_status.setText(
+                "No claude CLI on PATH. Choose one to use Claude without an API key.")
+        self._ai_cli_status.setEnabled(bool(found))
+
     #
     # Everything is stored per preset (model, base URL, and the API key --
     # which lives in the OS keychain under the preset id, so keys for
