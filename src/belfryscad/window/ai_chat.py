@@ -11,6 +11,7 @@ each turn (see ai_tools' module docstring).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import threading
 import time
 from html import escape
@@ -97,7 +98,8 @@ class _AIWorker(QObject):
 
     def __init__(self, provider: str, base_url: str, api_key: str, model: str,
                  messages: list[ChatMessage], ctx: AIToolContext,
-                 cancel: threading.Event, cli_session=None, user_text: str = ""):
+                 cancel: threading.Event, cli_session=None, user_text: str = "",
+                 images: "list[tuple[str, str]] | None" = None):
         super().__init__()
         self._provider = provider
         self._base_url = base_url
@@ -111,6 +113,9 @@ class _AIWorker(QObject):
         # turn's text is sent.
         self._cli_session = cli_session
         self._user_text = user_text
+        # Only the CLI transports need these separately; the HTTP path reads
+        # them off the ChatMessage it was handed.
+        self._images = list(images or [])
 
     @Slot()
     def run(self):
@@ -177,7 +182,8 @@ class _AIWorker(QObject):
         server), so there's exactly one pass here and no tool dispatch --
         tool_running events are report-only, for the activity line."""
         self.thinking.emit()
-        for ev in self._cli_session.send_turn(self._user_text, self._cancel):
+        for ev in self._cli_session.send_turn(self._user_text, self._cancel,
+                                               images=self._images):
             if self._cancel.is_set():
                 return
             if ev.kind == "text_delta":
@@ -290,12 +296,132 @@ class DiffReviewDialog(QDialog):
         self.close()
 
 
+# Text-ish files are inlined into the message rather than attached: no
+# provider takes arbitrary bytes, but every one of them reads text. The
+# extension decides how the fence is labelled, nothing more.
+_TEXT_SUFFIXES = {
+    ".scad": "openscad", ".txt": "", ".md": "markdown", ".csv": "csv",
+    ".json": "json", ".log": "", ".py": "python", ".yaml": "yaml",
+    ".yml": "yaml", ".toml": "toml", ".ini": "", ".cfg": "", ".sh": "bash",
+    ".dat": "", ".xml": "xml", ".html": "html", ".css": "css", ".js": "javascript",
+}
+# A dropped file bigger than this is truncated rather than sent whole: a
+# multi-megabyte log would swallow the context window and the answer with it.
+_TEXT_MAX_CHARS = 60_000
+
+# What a dropped or pasted image is re-encoded to. Anthropic resizes
+# anything larger than this anyway, and an unscaled phone photo is several
+# megabytes of request for no extra detail.
+_IMAGE_MAX_EDGE = 1568
+
+
+def _encode_image(img) -> "tuple[str, str] | None":
+    """QImage -> (base64 png, mime), scaled down if oversized."""
+    import base64
+    from PySide6.QtCore import QBuffer
+    if img.isNull():
+        return None
+    if max(img.width(), img.height()) > _IMAGE_MAX_EDGE:
+        img = img.scaled(_IMAGE_MAX_EDGE, _IMAGE_MAX_EDGE,
+                         Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    # QBuffer() with no argument, using its own internal QByteArray. Passing
+    # one in -- QBuffer(QByteArray()) -- hands it a temporary that Python
+    # frees the moment the call returns, and the buffer then writes into
+    # freed memory. That segfaults, though not reliably enough to notice by
+    # hand: it survived every isolated try and only fell over in the test.
+    buf = QBuffer()
+    buf.open(QBuffer.OpenModeFlag.WriteOnly)
+    if not img.save(buf, "PNG"):
+        return None
+    return base64.b64encode(buf.data().data()).decode("ascii"), "image/png"
+
+
 class _ChatInput(QPlainTextEdit):
-    """Chat entry box: Return sends, Shift+Return inserts a newline."""
+    """Chat entry box: Return sends, Shift+Return inserts a newline.
+
+    Also takes images, by drop or paste. Without this the default handling
+    inserts a file:// URL, which reads like an attachment and is nothing of
+    the sort -- the model cannot open it.
+    """
+
+    images_added = Signal(list)   # [(name, b64, mime)]
+    text_added = Signal(list)     # [(name, language, text)]
 
     def __init__(self, on_send, parent=None):
         super().__init__(parent)
         self._on_send = on_send
+        self.setAcceptDrops(True)
+
+    def _harvest(self, mime):
+        """(images, texts) found in `mime`.
+
+        images: (name, b64, mime-type)   texts: (name, language, content)
+        """
+        from PySide6.QtGui import QImage
+        images, texts = [], []
+        if mime.hasImage():
+            # A drag straight from a browser or screenshot tool: pixels, no
+            # file behind them.
+            enc = _encode_image(QImage(mime.imageData()))
+            if enc:
+                images.append(("pasted image", *enc))
+        for url in (mime.urls() if mime.hasUrls() else []):
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            img = QImage(str(path))
+            if not img.isNull():
+                enc = _encode_image(img)
+                if enc:
+                    images.append((path.name, *enc))
+                continue
+            lang = _TEXT_SUFFIXES.get(path.suffix.lower())
+            if lang is None:
+                continue        # binary, or unknown: left for the caller to report
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if len(body) > _TEXT_MAX_CHARS:
+                body = body[:_TEXT_MAX_CHARS] + "\n… (truncated)"
+            texts.append((path.name, lang, body))
+        return images, texts
+
+    def dragEnterEvent(self, event):
+        md = event.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(u.isLocalFile() for u in md.urls())):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        md = event.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(u.isLocalFile() for u in md.urls())):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def _take(self, mime) -> bool:
+        images, texts = self._harvest(mime)
+        if images:
+            self.images_added.emit(images)
+        if texts:
+            self.text_added.emit(texts)
+        return bool(images or texts)
+
+    def dropEvent(self, event):
+        if self._take(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        # Nothing we can send. Falls through to the default, which drops the
+        # path in as text -- still the most useful thing to do with a file
+        # the model cannot read.
+        super().dropEvent(event)
+
+    def insertFromMimeData(self, source):
+        if not self._take(source):
+            super().insertFromMimeData(source)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -334,6 +460,8 @@ class AIChatPane(QWidget):
         self._streaming = False
         # An ask_user answer that arrived while a turn was still running.
         self._pending_user_text = ""
+        # Images attached to the message being sent, handed to start_turn.
+        self._pending_images: list[tuple[str, str]] = []
         self._inline_open = False
         self._reply_text = ""
         self._awaiting_first_token = False
@@ -439,7 +567,22 @@ class AIChatPane(QWidget):
 
         bottom = QHBoxLayout()
         bottom.setSpacing(6)
+        # Attachment bar: hidden until something is dropped or pasted.
+        # Above the input so a chip cannot be mistaken for part of the
+        # message being typed.
+        self._attach_bar = QWidget()
+        self._attach_row = QHBoxLayout(self._attach_bar)
+        self._attach_row.setContentsMargins(0, 0, 0, 0)
+        self._attach_row.setSpacing(4)
+        self._attach_row.addStretch()
+        self._attach_bar.hide()
+        layout.addWidget(self._attach_bar)
+        # [(name, kind, payload)] -- kind "image": (b64, mime); "text": (lang, body)
+        self._attachments: list[tuple] = []
+
         self._input = _ChatInput(self._on_send)
+        self._input.images_added.connect(self._on_images_added)
+        self._input.text_added.connect(self._on_text_added)
         self._input.setPlaceholderText("Ask about your model…  (Return to send, Shift+Return for a new line)")
         self._input.setMaximumHeight(72)
         bottom.addWidget(self._input, 1)
@@ -520,21 +663,85 @@ class AIChatPane(QWidget):
 
     # -- sending ------------------------------------------------------------
 
+    # -- attachments --------------------------------------------------------
+
+    def _on_images_added(self, items):
+        for name, b64, mime in items:
+            self._attachments.append((name, "image", (b64, mime)))
+        self._refresh_attachments()
+
+    def _on_text_added(self, items):
+        for name, lang, body in items:
+            self._attachments.append((name, "text", (lang, body)))
+        self._refresh_attachments()
+
+    def _refresh_attachments(self):
+        while self._attach_row.count() > 1:      # keep the trailing stretch
+            item = self._attach_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for i, (name, kind, _payload) in enumerate(self._attachments):
+            chip = QPushButton(f"{'🖼' if kind == 'image' else '📄'} {name}  ✕")
+            chip.setFlat(True)
+            chip.setToolTip("Remove this attachment")
+            chip.clicked.connect(lambda _c=False, n=i: self._drop_attachment(n))
+            self._attach_row.insertWidget(i, chip)
+        self._attach_bar.setVisible(bool(self._attachments))
+
+    def _drop_attachment(self, i: int):
+        if 0 <= i < len(self._attachments):
+            del self._attachments[i]
+        self._refresh_attachments()
+
+    def _take_attachments(self):
+        items, self._attachments = self._attachments, []
+        self._refresh_attachments()
+        return items
+
+    # -- sending ------------------------------------------------------------
+
     def _on_send(self):
         if self._streaming:
             self._cancel_turn()
             return
         text = self._input.toPlainText().strip()
-        if not text:
+        if not text and not self._attachments:
             return
         self._input.clear()
         self._followup_chain = 0     # user is engaged again
-        self._say(text, kind="user")
+        shown, sent, images = self._compose(text, self._take_attachments())
+        self._pending_images = images
+        # The transcript gets the summary, the model the whole thing: a 60k
+        # file pasted into the log would bury the conversation it belongs to.
+        self._say(shown, kind="user")
         # Sending is an explicit "I'm done reading back there" -- jump to the
         # new message even if they'd scrolled up, unlike arriving output,
         # which only follows when already at the bottom.
         self._scroll_to_end()
-        self.send_requested.emit(text)
+        self.send_requested.emit(sent)
+
+    @staticmethod
+    def _compose(text: str, attachments: list):
+        """(transcript text, text for the model, images).
+
+        Text files are inlined into the message rather than attached. No
+        provider takes arbitrary bytes, but all of them read text, so this
+        works the same on every transport instead of needing one path each.
+        """
+        images = [payload for _n, kind, payload in attachments if kind == "image"]
+        files = [(n, *payload) for n, kind, payload in attachments if kind == "text"]
+
+        shown = [text] if text else []
+        for name, _lang, body in files:
+            shown.append(f"📄 {name} ({len(body):,} chars)")
+        for name, _p in [(n, p) for n, k, p in attachments if k == "image"]:
+            shown.append(f"🖼 {name}")
+
+        sent = [text] if text else []
+        for name, lang, body in files:
+            sent.append(f"{name}:\n```{lang}\n{body}\n```")
+        return "\n".join(shown), "\n\n".join(sent), images
 
     def start_turn(self, user_text: str, ctx: AIToolContext):
         """Called by MainWindow in response to send_requested, with a context
@@ -593,7 +800,10 @@ class AIChatPane(QWidget):
                 self._say("No model set for this provider — see Preferences → AI.")
                 return
 
-        self._messages.append(ChatMessage(role="user", text=user_text))
+        images, self._pending_images = getattr(self, "_pending_images", []), []
+        self._messages.append(ChatMessage(role="user", text=user_text, images=images))
+        # `images` is used again below, for the CLI transports -- they are
+        # handed the turn's text directly and never see self._messages.
         ctx.on_proposal = self._on_worker_proposal
         ctx.on_followup = self._on_worker_followup
         ctx.mode = self.mode()
@@ -605,7 +815,8 @@ class AIChatPane(QWidget):
 
         worker = _AIWorker(provider, base_url, api_key, model,
                            self._messages, ctx, self._cancel,
-                           cli_session=cli_session, user_text=user_text)
+                           cli_session=cli_session, user_text=user_text,
+                           images=images)
         thread = QThread()
         worker.moveToThread(thread)
         worker.text_delta.connect(self._on_text_delta, Qt.ConnectionType.QueuedConnection)

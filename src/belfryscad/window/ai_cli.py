@@ -118,14 +118,21 @@ class ClaudeCliSession:
                 pass
 
     def send_turn(self, text: str,
-                  cancel: threading.Event | None = None) -> Iterator[StreamEvent]:
+                  cancel: threading.Event | None = None,
+                  images: "list[tuple[str, str]] | None" = None) -> Iterator[StreamEvent]:
         """Send one user message and yield events until the turn ends."""
         try:
             self._ensure_started()
             proc = self._proc
             assert proc is not None and proc.stdin is not None
-            msg = {"type": "user", "message": {
-                "role": "user", "content": [{"type": "text", "text": text}]}}
+            content: list[dict] = [{"type": "text", "text": text}]
+            for b64, mime in (images or []):
+                # Same block shape the HTTP transport builds -- the CLI
+                # speaks the Anthropic message format over stdin, so an
+                # attached image needs no separate path.
+                content.append({"type": "image", "source": {
+                    "type": "base64", "media_type": mime, "data": b64}})
+            msg = {"type": "user", "message": {"role": "user", "content": content}}
             proc.stdin.write(json.dumps(msg) + "\n")
             proc.stdin.flush()
         except (OSError, BrokenPipeError) as e:
