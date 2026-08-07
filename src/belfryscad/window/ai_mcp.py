@@ -16,6 +16,7 @@ initialize, notifications/initialized, tools/list, tools/call. It binds to
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -49,22 +50,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, payload: dict):
         body = json.dumps(payload).encode("utf-8")
-        try:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            # The client gave up while we were working. Nothing to send it
-            # and nothing to fix -- but BaseHTTPRequestHandler would print
-            # the whole traceback to the console, which lands in front of
-            # the user as though the app had broken.
-            #
-            # ask_user makes this ordinary rather than rare: it holds the
-            # request open for as long as the user takes to answer, which
-            # can outlast a client's read timeout.
-            pass
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class McpToolServer(ThreadingHTTPServer):
@@ -74,6 +64,21 @@ class McpToolServer(ThreadingHTTPServer):
     even though they now run on an HTTP worker thread."""
 
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """Swallow a client that hung up; report anything else.
+
+        Guarded here rather than around the individual reads and writes,
+        because a dropped connection surfaces from several places -- writing
+        a reply, and reading the next request on a kept-alive one. An
+        earlier attempt wrapped only the reply path and left the read path
+        still printing a full traceback into the user's console, looking
+        like a crash.
+        """
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
 
     def __init__(self):
         super().__init__(("127.0.0.1", 0), _Handler)
