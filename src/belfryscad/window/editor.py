@@ -375,7 +375,12 @@ class FindBar(QWidget):
 
         self._find_input = QLineEdit()
         self._find_input.setPlaceholderText("Find")
-        self._find_input.setMinimumWidth(160)
+        # 48, not 160: the toggles are fixed-size now, so the fields are the
+        # only widgets that can give. A 160 floor made the row wider than a
+        # narrow editor could hold, and the layout ran the buttons over the
+        # field instead. It still gets every pixel that is spare, since a
+        # QLineEdit expands by default.
+        self._find_input.setMinimumWidth(48)
         find_row.addWidget(self._find_input)
 
         self._match_label = QLabel()
@@ -418,7 +423,7 @@ class FindBar(QWidget):
 
         self._replace_input = QLineEdit()
         self._replace_input.setPlaceholderText("Replace")
-        self._replace_input.setMinimumWidth(160)
+        self._replace_input.setMinimumWidth(48)
         replace_row.addWidget(self._replace_input)
 
         # Icons, not text: "Replace" and "Replace All" are wide enough that
@@ -1362,8 +1367,13 @@ class CodeEditor(QPlainTextEdit):
             return
         bar_w = bar.sizeHint().width()
         bar_h = bar.sizeHint().height()
-        x = max(self.line_number_area_width() + 2, self.width() - bar_w - 4)
-        bar.setGeometry(x, 2, min(bar_w, self.width() - self.line_number_area_width() - 6), bar_h)
+        avail = self.width() - self.line_number_area_width() - 6
+        # Never below minimumSizeHint: squeezing past it does not shrink the
+        # children, it overlaps them. Better to run off the right edge of a
+        # very narrow editor than to draw the buttons on top of the field.
+        width = max(bar.minimumSizeHint().width(), min(bar_w, avail))
+        x = max(self.line_number_area_width() + 2, self.width() - width - 4)
+        bar.setGeometry(x, 2, width, bar_h)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

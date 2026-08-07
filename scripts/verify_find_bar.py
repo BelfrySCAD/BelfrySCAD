@@ -157,6 +157,36 @@ def main():
     check("replace buttons keep their width in a narrow editor",
           narrow == wide, f"{wide} -> {narrow}")
 
+    # --- nothing may overlap at any width -----------------------------
+    # The actual failure mode: fixed-size buttons plus a 160px floor on the
+    # fields made the row wider than a narrow editor, and the layout ran the
+    # buttons over the field rather than shrinking anything.
+    def overlaps(width):
+        ed.resize(width, 400)
+        ed._reposition_find_bar()
+        app.processEvents()
+        rows = [
+            [bar._btn_disclose, bar._find_input, bar._match_label, bar._btn_prev,
+             bar._btn_next, bar._btn_case, bar._btn_word, bar._btn_regex, bar._btn_close],
+            [bar._replace_input, bar._btn_replace, bar._btn_replace_all],
+        ]
+        bad = []
+        for row in rows:
+            geos = [(w, w.mapTo(bar, w.rect().topLeft()).x(), w.width()) for w in row]
+            geos.sort(key=lambda g: g[1])
+            for (wa, xa, wida), (wb, xb, _) in zip(geos, geos[1:]):
+                if xa + wida > xb:
+                    bad.append(f"{wa.__class__.__name__}@{xa}+{wida} over {wb.__class__.__name__}@{xb}")
+        return bad
+
+    for width in (900, 600, 420, 340, 300):
+        bad = overlaps(width)
+        check(f"no widget overlap at editor width {width}", not bad, "; ".join(bad[:2]))
+
+    check("the find field still has usable width when roomy",
+          (ed.resize(900, 400), ed._reposition_find_bar(), app.processEvents(),
+           bar._find_input.width())[-1] >= 120, f"{bar._find_input.width()}px")
+
     # --- Match Whole Word --------------------------------------------
     def count(term, word=False, case=False, regex=False):
         bar._find_input.setText(term)
