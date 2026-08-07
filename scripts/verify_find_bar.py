@@ -55,6 +55,35 @@ def main():
         check(f"{name} ({btn.text()!r}) is wide enough for its label",
               btn.width() >= need + 4, f"width {btn.width()} vs label {need}")
 
+    # --- disclosure triangle ------------------------------------------
+    check("the whole-word label is 'ab'", bar._btn_word.text() == "ab", repr(bar._btn_word.text()))
+    check("the whole-word label is underlined", bar._btn_word.font().underline())
+    check("neighbouring buttons are NOT underlined",
+          not bar._btn_case.font().underline() and not bar._btn_regex.font().underline())
+
+    check("opened with show_find(): collapsed", not bar._btn_disclose.isChecked())
+    check("collapsed hides the replace row", bar._replace_widget.isHidden())
+    check("collapsed arrow points right", bar._btn_disclose.text() == "\u25b6", repr(bar._btn_disclose.text()))
+
+    bar._btn_disclose.setChecked(True)
+    app.processEvents()
+    check("expanding shows the replace row", not bar._replace_widget.isHidden())
+    check("expanded arrow points down", bar._btn_disclose.text() == "\u25bc", repr(bar._btn_disclose.text()))
+
+    bar._btn_disclose.setChecked(False)
+    app.processEvents()
+    check("collapsing hides the replace row again", bar._replace_widget.isHidden())
+
+    # Opening straight into replace must leave the arrow agreeing with it.
+    ed.show_find(replace=True)
+    app.processEvents()
+    check("show_find(replace=True) expands the triangle", bar._btn_disclose.isChecked())
+    check("show_find(replace=True) shows the replace row", not bar._replace_widget.isHidden())
+    ed.show_find()
+    app.processEvents()
+    check("reopening as find-only collapses it again",
+          not bar._btn_disclose.isChecked() and bar._replace_widget.isHidden())
+
     # --- Match Whole Word --------------------------------------------
     def count(term, word=False, case=False, regex=False):
         bar._find_input.setText(term)

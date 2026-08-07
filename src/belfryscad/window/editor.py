@@ -356,6 +356,16 @@ class FindBar(QWidget):
         find_row = QHBoxLayout()
         find_row.setSpacing(2)
 
+        # Disclosure triangle: collapsed shows Find alone, expanded reveals
+        # the Replace row. Sits left of the field, where the thing it
+        # expands begins.
+        self._btn_disclose = QPushButton("▶")
+        self._btn_disclose.setCheckable(True)
+        self._btn_disclose.setFlat(True)
+        self._btn_disclose.setFixedSize(18, 22)
+        self._btn_disclose.setToolTip("Show Replace")
+        find_row.addWidget(self._btn_disclose)
+
         self._find_input = QLineEdit()
         self._find_input.setPlaceholderText("Find")
         self._find_input.setMinimumWidth(160)
@@ -371,9 +381,14 @@ class FindBar(QWidget):
         self._btn_case = QPushButton("Aa")
         self._btn_case.setCheckable(True)
         self._btn_case.setToolTip("Match Case")
-        self._btn_word = QPushButton("W")
+        self._btn_word = QPushButton("ab")
         self._btn_word.setCheckable(True)
         self._btn_word.setToolTip("Match Whole Word")
+        # Underlined via the font, not markup -- QPushButton renders plain
+        # text, and the underline has to span both letters as one rule.
+        _word_font = self._btn_word.font()
+        _word_font.setUnderline(True)
+        self._btn_word.setFont(_word_font)
         self._btn_regex = QPushButton(".*")
         self._btn_regex.setCheckable(True)
         self._btn_regex.setToolTip("Use Regular Expression")
@@ -416,6 +431,7 @@ class FindBar(QWidget):
         self._find_input.textChanged.connect(self._on_search_changed)
         self._find_input.returnPressed.connect(self._find_next)
         self._btn_case.toggled.connect(self._on_search_changed)
+        self._btn_disclose.toggled.connect(self._on_disclose_toggled)
         self._btn_word.toggled.connect(self._on_search_changed)
         self._btn_regex.toggled.connect(self._on_search_changed)
         self._btn_prev.clicked.connect(self._find_prev)
@@ -430,11 +446,24 @@ class FindBar(QWidget):
     # Show / hide
     # ------------------------------------------------------------------
 
+    def _on_disclose_toggled(self, expanded: bool):
+        self._btn_disclose.setText("▼" if expanded else "▶")
+        self._btn_disclose.setToolTip("Hide Replace" if expanded else "Show Replace")
+        self._replace_widget.setVisible(expanded)
+        # The bar changes height, so it has to be re-measured and re-placed
+        # or it overlaps the text or leaves a gap.
+        self.adjustSize()
+        self._editor._reposition_find_bar()
+
     def open_find(self):
+        self._btn_disclose.setChecked(False)
         self._replace_widget.hide()
         self._show_and_focus()
 
     def open_replace(self):
+        # setChecked drives _on_disclose_toggled, which does the showing --
+        # one path, so the arrow can never disagree with what is visible.
+        self._btn_disclose.setChecked(True)
         self._replace_widget.show()
         self._show_and_focus()
 
