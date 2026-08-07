@@ -122,6 +122,41 @@ def main():
     check("reopening as find-only collapses it again",
           not bar._btn_disclose.isChecked() and bar._replace_widget.isHidden())
 
+    # --- replace buttons ----------------------------------------------
+    ed.show_find(replace=True)
+    app.processEvents()
+    for name in ("_btn_replace", "_btn_replace_all"):
+        btn = getattr(bar, name)
+        check(f"{name} has an icon and no text label",
+              not btn.icon().isNull() and btn.text() == "", repr(btn.text()))
+        check(f"{name} has a tooltip naming what it does", bool(btn.toolTip()))
+        img = btn.icon().pixmap(btn.iconSize()).toImage()
+        ink = sum(1 for y in range(img.height()) for x in range(img.width())
+                  if img.pixelColor(x, y).alpha() > 60)
+        check(f"{name} icon actually draws something", ink > 20, f"{ink} pixels")
+        # Nothing may touch the edge, or it reads as clipped.
+        edge = any(img.pixelColor(x, y).alpha() > 60
+                   for x in range(img.width()) for y in (0, img.height() - 1))
+        check(f"{name} icon is not clipped at the top or bottom edge", not edge)
+
+    # The reported bug: at a narrow width the labels were cut mid-word
+    # ("eplace Al"). _reposition_find_bar clamps the bar's geometry to the
+    # editor's width, and the bar's layout then squeezes its children --
+    # text buttons went 85->79 and 116->78. It has to go through show() and
+    # that method; resizing the editor alone does not re-lay-out the bar,
+    # and a check written that way passes even on the broken version.
+    ed.resize(900, 400)
+    ed.show()
+    ed._reposition_find_bar()
+    app.processEvents()
+    wide = [getattr(bar, n).width() for n in ("_btn_replace", "_btn_replace_all")]
+    ed.resize(300, 400)
+    ed._reposition_find_bar()
+    app.processEvents()
+    narrow = [getattr(bar, n).width() for n in ("_btn_replace", "_btn_replace_all")]
+    check("replace buttons keep their width in a narrow editor",
+          narrow == wide, f"{wide} -> {narrow}")
+
     # --- Match Whole Word --------------------------------------------
     def count(term, word=False, case=False, regex=False):
         bar._find_input.setText(term)

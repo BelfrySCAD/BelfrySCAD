@@ -421,8 +421,18 @@ class FindBar(QWidget):
         self._replace_input.setMinimumWidth(160)
         replace_row.addWidget(self._replace_input)
 
-        self._btn_replace = QPushButton("Replace")
-        self._btn_replace_all = QPushButton("Replace All")
+        # Icons, not text: "Replace" and "Replace All" are wide enough that
+        # a narrow editor squeezed them until the labels were cut mid-word
+        # ("eplace Al"). A fixed-size icon button cannot be squeezed, so the
+        # row stops depending on how much width is left over.
+        self._btn_replace = QPushButton()
+        self._btn_replace.setToolTip("Replace")
+        self._btn_replace_all = QPushButton()
+        self._btn_replace_all.setToolTip("Replace All")
+        for btn in (self._btn_replace, self._btn_replace_all):
+            btn.setFlat(True)
+            btn.setFixedSize(24, 22)
+        self._refresh_replace_icons()
         replace_row.addWidget(self._btn_replace)
         replace_row.addWidget(self._btn_replace_all)
         replace_row.addStretch()
@@ -448,6 +458,51 @@ class FindBar(QWidget):
     # ------------------------------------------------------------------
     # Show / hide
     # ------------------------------------------------------------------
+
+    # 16x16 viewBox. {c} is substituted with the palette's button-text
+    # colour -- an SVG has no way to inherit it, and a fixed hex would
+    # vanish against a dark background.
+    _SVG_REPLACE = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+        '<path d="M2 3.5 H8.5 a3 3 0 0 1 3 3 V8.2" fill="none" stroke="{c}"'
+        ' stroke-width="1.3" stroke-linecap="round"/>'
+        '<path d="M9.6 6.9 L11.5 8.9 L13.4 6.9" fill="none" stroke="{c}"'
+        ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect x="8.3" y="9.6" width="6.4" height="4.2" rx="1"'
+        ' fill="none" stroke="{c}" stroke-width="1.3"/>'
+        '</svg>'
+    )
+    # Same arrow, two stacked targets -- "all of them" rather than one.
+    _SVG_REPLACE_ALL = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+        '<path d="M1.6 2.6 H8 a3 3 0 0 1 3 3 V6.6" fill="none" stroke="{c}"'
+        ' stroke-width="1.2" stroke-linecap="round"/>'
+        '<path d="M9.3 5.5 L11 7.2 L12.7 5.5" fill="none" stroke="{c}"'
+        ' stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect x="5.4" y="7.9" width="6.0" height="3.1" rx="0.8"'
+        ' fill="none" stroke="{c}" stroke-width="1.2"/>'
+        '<rect x="8.4" y="11.0" width="6.0" height="3.1" rx="0.8"'
+        ' fill="none" stroke="{c}" stroke-width="1.2"/>'
+        '</svg>'
+    )
+
+    def _svg_icon(self, svg: str, w: int, h: int) -> QIcon:
+        from PySide6.QtSvg import QSvgRenderer
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = QPixmap(int(w * dpr), int(h * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        QSvgRenderer(svg.format(c=self.palette().buttonText().color().name()).encode()).render(painter)
+        painter.end()
+        return QIcon(pm)
+
+    def _refresh_replace_icons(self):
+        for btn, svg in ((self._btn_replace, self._SVG_REPLACE),
+                          (self._btn_replace_all, self._SVG_REPLACE_ALL)):
+            btn.setIcon(self._svg_icon(svg, 16, 16))
+            btn.setIconSize(QSize(16, 16))
 
     def _refresh_word_icon(self):
         """Paint the Match Whole Word icon: 'ab' with a rule beneath it.
@@ -492,6 +547,7 @@ class FindBar(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange and hasattr(self, "_btn_word"):
             self._refresh_word_icon()
+            self._refresh_replace_icons()
 
     def _on_disclose_toggled(self, expanded: bool):
         self._btn_disclose.setText("▼" if expanded else "▶")
