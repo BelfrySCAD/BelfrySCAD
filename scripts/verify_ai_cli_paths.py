@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A configured claude CLI path must be honoured, and validated.
+"""Configured CLI paths (Claude, Copilot) must be honoured, and validated.
 
 The point of the setting is the case where PATH has no `claude` at all, so
 the interesting checks are the ones with PATH empty. A stored path that no
@@ -163,6 +163,62 @@ def main():
             check("Claude keeps its key field even though it needs no key",
                   PRESETS_BY_ID["anthropic"].accepts_key
                   and not PRESETS_BY_ID["anthropic"].needs_key)
+            dlg._ai_preset.setCurrentIndex(dlg._ai_preset.findData("anthropic"))
+            app.processEvents()
+
+            # --- Copilot: same row, different key and label --------------
+            from belfryscad.window.ai_copilot_cli import (
+                CLI_PATH_KEY as COPILOT_KEY, _is_github_copilot, find_copilot_cli)
+
+            i = dlg._ai_preset.findData("copilot")
+            check("there is a Copilot preset", i >= 0)
+            dlg._ai_preset.setCurrentIndex(i)
+            app.processEvents()
+            check("the CLI row shows for Copilot", not dlg._ai_cli_row.isHidden())
+            check("the CLI row relabels itself for Copilot",
+                  dlg._ai_cli_label.text() == "Copilot CLI:", dlg._ai_cli_label.text())
+            check("Copilot has no API key field", dlg._ai_key.isHidden())
+            check("Copilot has no base URL to edit", not dlg._ai_base_url.isEnabled())
+
+            check("the two CLI paths use separate settings keys",
+                  COPILOT_KEY != CLI_PATH_KEY, f"{COPILOT_KEY} vs {CLI_PATH_KEY}")
+
+            dlg._ai_cli_path.setText(str(real))
+            dlg._save_ai_cli_path()
+            check("editing under Copilot writes the Copilot key",
+                  QSettings("BelfrySCAD", "BelfrySCAD").value(COPILOT_KEY, "") == str(real))
+
+            dlg._ai_preset.setCurrentIndex(dlg._ai_preset.findData("anthropic"))
+            app.processEvents()
+            check("switching back shows the Claude key's value, not Copilot's",
+                  dlg._ai_cli_path.text() != str(real) or
+                  QSettings("BelfrySCAD", "BelfrySCAD").value(CLI_PATH_KEY, "") == str(real),
+                  dlg._ai_cli_path.text())
+
+            # The AWS collision: a `copilot` that is not GitHub's must not
+            # be accepted, or the transport launches an ECS deployment tool.
+            aws = Path(td) / "aws_copilot"
+            aws.write_text("#!/bin/sh\necho 'copilot version: 1.34.1'\n")
+            aws.chmod(aws.stat().st_mode | stat.S_IXUSR)
+            gh = Path(td) / "gh_copilot"
+            gh.write_text("#!/bin/sh\necho 'GitHub Copilot CLI 1.0.78.'\n")
+            gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
+            check("an AWS copilot is not mistaken for GitHub's",
+                  not _is_github_copilot(str(aws)))
+            check("a GitHub copilot is recognised", _is_github_copilot(str(gh)))
+
+            os.environ["PATH"] = ""
+            QSettings("BelfrySCAD", "BelfrySCAD").setValue(COPILOT_KEY, str(aws))
+            QSettings("BelfrySCAD", "BelfrySCAD").sync()
+            check("a configured AWS copilot is rejected, not returned",
+                  find_copilot_cli() is None, str(find_copilot_cli()))
+            QSettings("BelfrySCAD", "BelfrySCAD").setValue(COPILOT_KEY, str(gh))
+            QSettings("BelfrySCAD", "BelfrySCAD").sync()
+            check("a configured GitHub copilot is used",
+                  find_copilot_cli() == str(gh), str(find_copilot_cli()))
+            QSettings("BelfrySCAD", "BelfrySCAD").setValue(COPILOT_KEY, "")
+            QSettings("BelfrySCAD", "BelfrySCAD").sync()
+
             dlg._ai_preset.setCurrentIndex(dlg._ai_preset.findData("anthropic"))
             app.processEvents()
 

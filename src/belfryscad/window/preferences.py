@@ -28,12 +28,28 @@ from belfryscad.window.ai_providers import (
     preset_for,
 )
 from belfryscad.window.ai_cli import CLI_PATH_KEY
+from belfryscad.window.ai_copilot_cli import (
+    CLI_PATH_KEY as COPILOT_CLI_PATH_KEY, find_copilot_cli,
+)
 
 
-def _which_claude() -> str | None:
-    """PATH only -- deliberately not find_claude_cli(), which prefers the
-    configured path. This page needs to report the two separately."""
-    return shutil.which("claude")
+# id -> (label, settings key, PATH lookup). PATH lookup is deliberately not
+# the find_*_cli() the app uses: those prefer the configured path, and this
+# page has to report the two separately to say which one wins.
+_CLI_SERVICES = {
+    "anthropic": ("Claude CLI:", CLI_PATH_KEY,
+                  lambda: shutil.which("claude"), "claude CLI"),
+    # Verified, not just located: AWS ships a `copilot` too, so a plain
+    # which() would happily report the wrong tool as found.
+    "copilot": ("Copilot CLI:", COPILOT_CLI_PATH_KEY,
+                lambda: _which_github_copilot(), "GitHub Copilot CLI"),
+}
+
+
+def _which_github_copilot() -> str | None:
+    from belfryscad.window.ai_copilot_cli import _is_github_copilot
+    found = shutil.which("copilot")
+    return found if found and _is_github_copilot(found) else None
 
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
@@ -259,29 +275,28 @@ class PreferencesDialog(QDialog):
         self._ai_key.editingFinished.connect(self._save_ai_key)
         ai_form.addRow("API key:", self._ai_key)
 
-        # Claude only: no other service can run through a CLI. Wrapped in a
+        # Shown only for the services that can run through a CLI (Claude,
+        # Copilot). One row, relabelled and re-keyed per service, so the two
+        # paths are stored separately but never both on screen. Wrapped in a
         # container so setRowVisible hides the label with it -- hiding the
-        # inner widgets alone would leave "Claude CLI:" labelling a gap.
+        # inner widgets alone would leave the label captioning a gap.
+        self._ai_cli_label = QLabel("Claude CLI:")
         self._ai_cli_row = QWidget()
         cli_row = QHBoxLayout(self._ai_cli_row)
         cli_row.setContentsMargins(0, 0, 0, 0)
         cli_row.setSpacing(6)
         self._ai_cli_path = QLineEdit()
         self._ai_cli_path.setMinimumWidth(220)
-        self._ai_cli_path.setPlaceholderText("Found on PATH" if _which_claude()
-                                              else "Not found on PATH — set it here")
-        self._ai_cli_path.setText(s.value(CLI_PATH_KEY, ""))
         self._ai_cli_path.editingFinished.connect(self._save_ai_cli_path)
         cli_row.addWidget(self._ai_cli_path, 1)
         browse = QPushButton("Choose…")
         browse.clicked.connect(self._browse_ai_cli_path)
         cli_row.addWidget(browse)
-        ai_form.addRow("Claude CLI:", self._ai_cli_row)
+        ai_form.addRow(self._ai_cli_label, self._ai_cli_row)
 
         self._ai_cli_status = QLabel()
         self._ai_cli_status.setWordWrap(True)
         ai_form.addRow("", self._ai_cli_status)
-        self._update_ai_cli_status()
         self._ai_form = ai_form
 
         self._ai_note = QLabel()
@@ -306,23 +321,38 @@ class PreferencesDialog(QDialog):
 
     # -- AI tab -------------------------------------------------------------
 
+    def _cli_service(self):
+        """(label, settings key, PATH lookup, display name) for the selected
+        service, or None when it has no CLI."""
+        return _CLI_SERVICES.get(self._current_ai_preset().id)
+
+    def _cli_key(self) -> str:
+        svc = self._cli_service()
+        return svc[1] if svc else CLI_PATH_KEY
+
     def _save_ai_cli_path(self):
         path = self._ai_cli_path.text().strip()
-        QSettings("BelfrySCAD", "BelfrySCAD").setValue(CLI_PATH_KEY, path)
+        QSettings("BelfrySCAD", "BelfrySCAD").setValue(self._cli_key(), path)
         self._update_ai_cli_status()
 
     def _browse_ai_cli_path(self):
-        start = self._ai_cli_path.text().strip() or _which_claude() or str(Path.home())
-        path, _ = QFileDialog.getOpenFileName(self, "Choose the claude CLI", start)
+        svc = self._cli_service()
+        name = svc[3] if svc else "CLI"
+        found = svc[2]() if svc else None
+        start = self._ai_cli_path.text().strip() or found or str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(self, f"Choose the {name}", start)
         if not path:
             return
         self._ai_cli_path.setText(path)
         self._save_ai_cli_path()
 
     def _update_ai_cli_status(self):
-        """Say which claude will actually be used, and why."""
+        """Say which binary will actually be used, and why."""
+        svc = self._cli_service()
+        if svc is None:
+            return
+        name, found = svc[3], svc[2]()
         configured = self._ai_cli_path.text().strip()
-        found = _which_claude()
         if configured:
             if not Path(configured).is_file():
                 self._ai_cli_status.setText("⚠ No file at that path — falling back to PATH.")
@@ -338,7 +368,7 @@ class PreferencesDialog(QDialog):
             self._ai_cli_status.setText(f"Using {found} (from PATH)")
         else:
             self._ai_cli_status.setText(
-                "No claude CLI on PATH. Choose one to use Claude without an API key.")
+                f"No {name} on PATH. Choose one to use this service.")
         self._ai_cli_status.setEnabled(bool(found))
 
     #
@@ -373,14 +403,30 @@ class PreferencesDialog(QDialog):
             self._ai_form.setRowVisible(self._ai_key, p.accepts_key)
 
             anthropic = p.protocol == "anthropic"
-            self._ai_base_url.setEnabled(not anthropic)
-            self._ai_fetch_models.setEnabled(not anthropic)
-            self._ai_form.setRowVisible(self._ai_cli_row, anthropic)
-            self._ai_form.setRowVisible(self._ai_cli_status, anthropic)
+            # Copilot has no endpoint of its own to point at: the CLI talks
+            # to GitHub on its own credentials, so a base URL would be
+            # ignored and Fetch has nothing to ask.
+            no_endpoint = anthropic or p.id == "copilot"
+            self._ai_base_url.setEnabled(not no_endpoint)
+            self._ai_fetch_models.setEnabled(not no_endpoint)
+            svc = _CLI_SERVICES.get(p.id)
+            self._ai_form.setRowVisible(self._ai_cli_row, svc is not None)
+            self._ai_form.setRowVisible(self._ai_cli_status, svc is not None)
+            if svc is not None:
+                self._ai_cli_label.setText(svc[0])
+                self._ai_cli_path.setText(s.value(svc[1], ""))
+                self._ai_cli_path.setPlaceholderText(
+                    "Found on PATH" if svc[2]() else "Not found on PATH — set it here")
+                self._update_ai_cli_status()
             if anthropic:
                 self._ai_note.setText(
                     "Tried in order: ANTHROPIC_API_KEY, then the `claude` CLI "
                     "if installed (needs no key), then the key above.")
+            elif p.id == "copilot":
+                self._ai_note.setText(
+                    "Runs through the `copilot` CLI, which uses your GitHub "
+                    "login — no API key. Install with "
+                    "`npm install -g @github/copilot`, then `copilot login`.")
             elif not p.needs_key:
                 self._ai_note.setText("Local server — an API key is usually not needed.")
             else:

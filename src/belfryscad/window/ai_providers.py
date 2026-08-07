@@ -71,6 +71,12 @@ PRESETS: list[Preset] = [
     Preset("ollama", "Ollama (local)", "openai",
            "http://localhost:11434/v1", "a model with the 'tools' capability",
            needs_key=False, accepts_key=False),
+    # CLI-only: Copilot authenticates through the CLI's own GitHub login,
+    # so there is no base URL or key for it. protocol is nominal -- the
+    # chat pane routes on the id before it ever looks at the protocol.
+    Preset("copilot", "GitHub Copilot (CLI)", "openai",
+           "", "use 'auto' to let Copilot pick",
+           needs_key=False, accepts_key=False),
     Preset("custom", "Custom (OpenAI-protocol)", "openai",
            "", "any model the server offers"),
 ]
