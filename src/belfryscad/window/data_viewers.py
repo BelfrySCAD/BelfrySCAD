@@ -1171,7 +1171,7 @@ class ProfileViewer(QDialog):
         self._table.sortItems(self._SELF_MS_COL, Qt.SortOrder.DescendingOrder)
 
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.setContentsMargins(20, 0, 20, 0)
         export = QPushButton("Export CSV…")
         export.clicked.connect(self._export_csv)
         btn_row.addWidget(export)
