@@ -845,13 +845,20 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
         act_replace = self._add_action(edit_menu, "Find & Replace…", self._find_replace)
         # StandardKey.Replace alone leaves this unbound on macOS -- Qt has no
-        # default there, so the menu item had no shortcut at all. Ctrl+Alt+F
-        # renders as ⌥⌘F on macOS and rides alongside the standard binding
+        # default there, so the menu item had no shortcut at all. Ctrl+Shift+F
+        # renders as ⇧⌘F on macOS and rides alongside the standard binding
         # (Ctrl+H) elsewhere rather than replacing it. Empty sequences are
         # filtered out so a platform without a default gets one entry, not a
         # blank one that would display as a stray separator in the menu.
+        #
+        # NOT Ctrl+Alt+F (⌥⌘F, which is the macOS convention and what this
+        # first shipped as): Option rewrites the character it modifies -- ⌥F
+        # produces ƒ -- and the native menu bar's key equivalent then never
+        # matches, so the shortcut is displayed but silently dead. Confirmed
+        # on a real keyboard; the action itself was enabled and correctly
+        # bound, which is why no amount of inspecting it found the problem.
         act_replace.setShortcuts([s for s in (QKeySequence(QKeySequence.StandardKey.Replace),
-                                               QKeySequence("Ctrl+Alt+F")) if not s.isEmpty()])
+                                               QKeySequence("Ctrl+Shift+F")) if not s.isEmpty()])
         edit_menu.addSeparator()
         self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
