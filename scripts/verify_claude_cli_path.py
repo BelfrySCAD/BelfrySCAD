@@ -148,6 +148,24 @@ def main():
                       not row_v and not status_v, f"row={row_v} status={status_v}")
             show_preset("anthropic")
 
+            # --- the API key field follows accepts_key -------------------
+            from belfryscad.window.ai_providers import PRESETS_BY_ID
+            for pid in ("anthropic", "openai", "ollama", "google", "custom"):
+                i = dlg._ai_preset.findData(pid)
+                dlg._ai_preset.setCurrentIndex(i)
+                app.processEvents()
+                want = PRESETS_BY_ID[pid].accepts_key
+                shown = not dlg._ai_key.isHidden()
+                check(f"API key field {'shows' if want else 'is hidden'} for {pid}",
+                      shown == want, f"shown={shown} accepts_key={want}")
+            check("Ollama is the preset with no key field",
+                  not PRESETS_BY_ID["ollama"].accepts_key)
+            check("Claude keeps its key field even though it needs no key",
+                  PRESETS_BY_ID["anthropic"].accepts_key
+                  and not PRESETS_BY_ID["anthropic"].needs_key)
+            dlg._ai_preset.setCurrentIndex(dlg._ai_preset.findData("anthropic"))
+            app.processEvents()
+
             # Editing the field must persist, or Choose… would be the only
             # way to set it.
             dlg._ai_cli_path.setText(str(real))

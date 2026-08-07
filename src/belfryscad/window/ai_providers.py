@@ -51,6 +51,10 @@ class Preset:
     base_url: str
     model_hint: str
     needs_key: bool = True
+    # Distinct from needs_key. Anthropic does not *need* one (the CLI or
+    # ANTHROPIC_API_KEY may cover it) but can still use a key; Ollama serves
+    # locally with no auth at all, so the field is dead space there.
+    accepts_key: bool = True
 
 
 # Base URLs verified reachable (an auth/validation error rather than a 404).
@@ -66,7 +70,7 @@ PRESETS: list[Preset] = [
            "https://api.moonshot.ai/v1", "e.g. kimi-k2-0711-preview"),
     Preset("ollama", "Ollama (local)", "openai",
            "http://localhost:11434/v1", "a model with the 'tools' capability",
-           needs_key=False),
+           needs_key=False, accepts_key=False),
     Preset("custom", "Custom (OpenAI-protocol)", "openai",
            "", "any model the server offers"),
 ]

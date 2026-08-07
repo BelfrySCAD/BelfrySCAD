@@ -368,6 +368,9 @@ class PreferencesDialog(QDialog):
             self._ai_key.setText(get_api_key(p.id) or "")
             self._ai_key.setPlaceholderText(
                 "" if p.needs_key else "(not needed for this service)")
+            # Hidden, not just empty, where a key can never be used -- a
+            # local Ollama has no auth, so the field is dead space.
+            self._ai_form.setRowVisible(self._ai_key, p.accepts_key)
 
             anthropic = p.protocol == "anthropic"
             self._ai_base_url.setEnabled(not anthropic)
