@@ -384,7 +384,11 @@ class FindBar(QWidget):
         find_row.addWidget(self._find_input)
 
         self._match_label = QLabel()
-        self._match_label.setMinimumWidth(58)
+        # No reserved width. At 58 it held that gap open between the field
+        # and the buttons even with nothing to say, which was most of the
+        # time. The field expands, so it absorbs the label growing and
+        # shrinking -- the buttons stay put either way.
+        self._match_label.setMinimumWidth(0)
         self._match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         find_row.addWidget(self._match_label)
 
@@ -407,8 +411,11 @@ class FindBar(QWidget):
         # and were being clipped at that size, while the single-glyph arrows
         # fit fine. Height stays fixed so the row keeps one baseline.
         fm = self.fontMetrics()
-        for btn in (self._btn_prev, self._btn_next, self._btn_case,
-                    self._btn_word, self._btn_regex, self._btn_close):
+        # Toggles first, then the arrows, then close: the arrows act on the
+        # search rather than configuring it, so they belong at the end of
+        # the group next to the field's results.
+        for btn in (self._btn_case, self._btn_word, self._btn_regex,
+                    self._btn_prev, self._btn_next, self._btn_close):
             btn.setFixedSize(max(22, fm.horizontalAdvance(btn.text()) + 12), 22)
             btn.setFlat(True)
             find_row.addWidget(btn)

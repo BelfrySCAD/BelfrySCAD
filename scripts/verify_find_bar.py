@@ -157,6 +157,44 @@ def main():
     check("replace buttons keep their width in a narrow editor",
           narrow == wide, f"{wide} -> {narrow}")
 
+    # --- order and spacing --------------------------------------------
+    ed.resize(760, 400)
+    ed.show()
+    ed._reposition_find_bar()
+    app.processEvents()
+
+    def xs():
+        named = [("disclose", bar._btn_disclose), ("field", bar._find_input),
+                 ("label", bar._match_label), ("case", bar._btn_case),
+                 ("word", bar._btn_word), ("regex", bar._btn_regex),
+                 ("prev", bar._btn_prev), ("next", bar._btn_next),
+                 ("close", bar._btn_close)]
+        return {n: w.mapTo(bar, w.rect().topLeft()).x() for n, w in named}
+
+    pos = xs()
+    order = [n for n, _ in sorted(pos.items(), key=lambda kv: kv[1])]
+    check("arrows sit after the toggles, before close",
+          order == ["disclose", "field", "label", "case", "word", "regex",
+                    "prev", "next", "close"], str(order))
+
+    bar._find_input.setText("")
+    bar._on_search_changed()
+    app.processEvents()
+    pos = xs()
+    gap = pos["case"] - (pos["field"] + bar._find_input.width())
+    check("no reserved gap between the field and the buttons when idle",
+          gap <= 16, f"{gap}px")
+
+    # The label must not shove the buttons around as the count appears --
+    # the expanding field is what absorbs it.
+    before = xs()["case"]
+    bar._find_input.setText("foo")
+    bar._on_search_changed()
+    app.processEvents()
+    check("buttons hold position when the match count appears",
+          xs()["case"] == before, f"{before} -> {xs()['case']}")
+    check("the match count is actually showing", bool(bar._match_label.text()))
+
     # --- nothing may overlap at any width -----------------------------
     # The actual failure mode: fixed-size buttons plus a 160px floor on the
     # fields made the row wider than a narrow editor, and the layout ran the
