@@ -332,6 +332,8 @@ class AIChatPane(QWidget):
         self._worker: _AIWorker | None = None
         self._cancel = threading.Event()
         self._streaming = False
+        # An ask_user answer that arrived while a turn was still running.
+        self._pending_user_text = ""
         self._inline_open = False
         self._reply_text = ""
         self._awaiting_first_token = False
@@ -669,11 +671,42 @@ class AIChatPane(QWidget):
         self._cancel.set()
         self._say("(cancelled)")
 
+    def cancel_turn(self):
+        """Stop the running turn, if any. For the ask_user dialog: dismissing
+        the question cancels the work that asked it, rather than leaving the
+        model to carry on with the guess it was trying to avoid."""
+        if self._streaming:
+            self._cancel_turn()
+
+    def submit_user_text(self, text: str):
+        """Send `text` as though the user had typed it and pressed Send.
+
+        Deferred while a turn is running -- the ask_user answer usually
+        arrives after the model has stopped, but nothing guarantees it, and
+        start_turn refuses a second turn outright. Held and flushed when the
+        current one ends, the same way a due follow-up waits its turn.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        if self._streaming:
+            self._pending_user_text = text
+            return
+        self._followup_chain = 0     # a real answer means the user is engaged
+        self._say(text, kind="user")
+        self._scroll_to_end()
+        self.send_requested.emit(text)
+
     def _set_streaming(self, on: bool):
         self._streaming = on
         self._send_btn.setText("Stop" if on else "Send")
         if not on:
             self._set_status(None)
+            # Flush an answer that arrived mid-turn. Queued rather than sent
+            # inline: this runs while the finishing turn is still unwinding.
+            pending, self._pending_user_text = self._pending_user_text, ""
+            if pending:
+                QTimer.singleShot(0, lambda t=pending: self.submit_user_text(t))
 
     def _set_status(self, text: str | None):
         """Show `text` (plus a live elapsed count) in the activity line, or

@@ -147,31 +147,92 @@ def main():
     dlg.close()
 
     # --- the tool contract -------------------------------------------------
-    def ctx_with(answers):
-        return AIToolContext(library_dir=Path("/tmp"), ask_user=lambda qs: answers)
+    # The tool must NOT wait for an answer: it returns as soon as the
+    # question is on screen. Blocking would hold an MCP request open for as
+    # long as the user takes to think.
+    shown = []
 
-    out = run_tool(ctx_with([{"selected": ["Inches"], "note": "for the flange"}]),
-                   "ask_user", {"questions": ONE})
-    check("the answer reaches the model", "Inches" in out and "for the flange" in out, out)
+    def ctx_showing(ok=True):
+        return AIToolContext(library_dir=Path("/tmp"),
+                             ask_user=lambda qs: (shown.append(qs), ok)[1])
 
-    out = run_tool(ctx_with(None), "ask_user", {"questions": ONE})
-    check("cancelling is reported as unanswered, not as assent",
-          "dismissed" in out.lower() and "Inches" not in out, out)
+    import time
+    t0 = time.monotonic()
+    out = run_tool(ctx_showing(), "ask_user", {"questions": ONE})
+    check("ask_user returns immediately, without waiting for an answer",
+          time.monotonic() - t0 < 0.5, f"{time.monotonic()-t0:.2f}s")
+    check("the questions reached the dialog layer", shown and shown[-1][0]["question"] == "Which units?")
+    check("the model is told to stop and wait, not to guess",
+          "stop" in out.lower() and "guess" in out.lower(), out)
+    check("no answer is invented in the tool result",
+          "Millimetres" not in out and "Inches" not in out, out)
+
+    out = run_tool(ctx_showing(ok=False), "ask_user", {"questions": ONE})
+    check("a second question while one is open is refused",
+          out.startswith("Error"), out)
 
     out = run_tool(AIToolContext(library_dir=Path("/tmp")), "ask_user", {"questions": ONE})
     check("no ask_user hook is refused rather than silently ignored",
           out.startswith("Error"), out)
 
-    out = run_tool(ctx_with([]), "ask_user", {"questions": []})
+    out = run_tool(ctx_showing(), "ask_user", {"questions": []})
     check("an empty ask is refused", out.startswith("Error"), out)
 
-    out = run_tool(ctx_with([]), "ask_user",
+    out = run_tool(ctx_showing(), "ask_user",
                    {"questions": [{"question": "One option?",
                                    "options": [{"label": "Only"}]}]})
     check("a question with one option is refused", out.startswith("Error"), out)
 
-    out = run_tool(ctx_with([]), "ask_user", {"questions": ONE * 9})
+    out = run_tool(ctx_showing(), "ask_user", {"questions": ONE * 9})
     check("too many questions at once is refused", out.startswith("Error"), out)
+
+    # --- answers become a user message; dismissal cancels the turn ---------
+    from belfryscad.window.main_window import MainWindow
+
+    fmt = MainWindow._format_ai_answers
+    text = fmt(ONE, [{"selected": ["Inches"], "note": "for the flange"}])
+    check("an answer reads like something the user typed",
+          "Inches" in text and "for the flange" in text and "\n" not in text, repr(text))
+    text = fmt(BOTH, [{"selected": ["Millimetres"], "note": ""},
+                      {"selected": ["Fillets", "Chamfers"], "note": ""}])
+    check("multiple answers become one message, a line each",
+          text.count("\n") == 1 and "Fillets, Chamfers" in text, repr(text))
+    check("a question answered with nothing is left out of the message",
+          fmt(ONE, [{"selected": [], "note": ""}]) == "",
+          repr(fmt(ONE, [{"selected": [], "note": ""}])))
+
+    class _Pane:
+        def __init__(self): self.sent, self.cancelled = [], 0
+        def submit_user_text(self, t): self.sent.append(t)
+        def cancel_turn(self): self.cancelled += 1
+
+    class _Win:
+        _format_ai_answers = staticmethod(fmt)
+        _on_ai_ask_finished = MainWindow._on_ai_ask_finished
+
+    class _Dlg:
+        def __init__(self, qs, ans): self.questions, self.answers = qs, ans
+
+    w = _Win(); w._ai_chat_pane = _Pane(); w._ai_ask_dialog = object()
+    w._on_ai_ask_finished(QDialog.DialogCode.Accepted,
+                          _Dlg(ONE, [{"selected": ["Inches"], "note": ""}]))
+    check("accepting submits the answer as a user message",
+          w._ai_chat_pane.sent and "Inches" in w._ai_chat_pane.sent[0],
+          str(w._ai_chat_pane.sent))
+    check("accepting does not cancel the turn", w._ai_chat_pane.cancelled == 0)
+    check("the dialog reference is cleared so another can be asked",
+          w._ai_ask_dialog is None)
+
+    w = _Win(); w._ai_chat_pane = _Pane(); w._ai_ask_dialog = object()
+    w._on_ai_ask_finished(QDialog.DialogCode.Rejected, _Dlg(ONE, [{}]))
+    check("dismissing cancels the running turn", w._ai_chat_pane.cancelled == 1)
+    check("dismissing sends nothing", w._ai_chat_pane.sent == [])
+
+    w = _Win(); w._ai_chat_pane = _Pane(); w._ai_ask_dialog = object()
+    w._on_ai_ask_finished(QDialog.DialogCode.Accepted,
+                          _Dlg(ONE, [{"selected": [], "note": ""}]))
+    check("accepting with nothing chosen cancels rather than sending nothing",
+          w._ai_chat_pane.cancelled == 1 and w._ai_chat_pane.sent == [])
 
     # The tool must be offered to the CLI transports too, or Claude and
     # Copilot silently lack it while the direct API path has it.

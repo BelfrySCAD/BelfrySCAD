@@ -2007,41 +2007,77 @@ class MainWindow(QMainWindow):
         "top": (270, 89), "bottom": (270, -89), "iso": (315, 35),
     }
 
-    def _ask_user_threadsafe(self, questions: list) -> "list | None":
-        """Called from the AI worker thread. Puts the questions to the user on
-        the GUI thread and waits for the answers.
+    def _ask_user_threadsafe(self, questions: list) -> bool:
+        """Called from the AI worker thread. Hands the questions to the GUI
+        thread and returns at once.
 
-        No timeout, unlike the view capture: the user is being asked to think,
-        and answering after two minutes is a perfectly ordinary thing to do.
-        The wait ends when they answer, dismiss the dialog, or cancel the turn
-        -- and cancelling tears the worker down regardless.
+        Nothing waits. Blocking here would hold a tool call -- and on the CLI
+        transports an MCP request -- open for however long the user takes to
+        think, which outlasts client read timeouts and pins a worker thread
+        on something that is not work. The answer comes back as an ordinary
+        user message instead, and dismissing the question cancels the turn
+        that asked it.
         """
-        import threading
         from PySide6.QtCore import QMetaObject
-        self._ai_ask_request = {"questions": questions,
-                                "done": threading.Event(), "result": None}
+        if getattr(self, "_ai_ask_dialog", None) is not None:
+            return False
+        self._ai_ask_pending = questions
         QMetaObject.invokeMethod(self, "_service_ai_ask_request",
                                  Qt.ConnectionType.QueuedConnection)
-        self._ai_ask_request["done"].wait()
-        return self._ai_ask_request["result"]
+        return True
 
     @Slot()
     def _service_ai_ask_request(self):
-        """GUI thread: show the dialog and record the answers."""
-        req = getattr(self, "_ai_ask_request", None)
-        if not req:
+        """GUI thread: put the questions on screen, modeless."""
+        questions = getattr(self, "_ai_ask_pending", None)
+        if not questions:
             return
+        self._ai_ask_pending = None
         try:
             from belfryscad.window.ai_question_dialog import AIQuestionDialog
-            dlg = AIQuestionDialog(req["questions"], parent=self)
-            req["result"] = dlg.answers if dlg.exec() == QDialog.DialogCode.Accepted else None
+            dlg = AIQuestionDialog(questions, parent=self)
         except Exception as e:      # noqa: BLE001
-            # The worker is blocked on this event; letting an exception escape
-            # would hang the turn forever rather than failing it.
             self.log(f"AI question dialog failed: {e}")
-            req["result"] = None
-        finally:
-            req["done"].set()
+            return
+        self._ai_ask_dialog = dlg
+        dlg.finished.connect(lambda code, d=dlg: self._on_ai_ask_finished(code, d))
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_ai_ask_finished(self, code, dlg):
+        self._ai_ask_dialog = None
+        pane = getattr(self, "_ai_chat_pane", None)
+        if pane is None:
+            return
+        if code != QDialog.DialogCode.Accepted:
+            # Dismissed. Stop the work that asked -- carrying on would mean
+            # proceeding with exactly the guess the question existed to avoid.
+            pane.cancel_turn()
+            return
+        text = self._format_ai_answers(dlg.questions, dlg.answers)
+        if text:
+            pane.submit_user_text(text)
+        else:
+            # Accepted with nothing chosen and nothing typed. Treated as a
+            # dismissal rather than sent as an empty answer, which would read
+            # to the model as "none of the above".
+            pane.cancel_turn()
+
+    @staticmethod
+    def _format_ai_answers(questions: list, answers: list) -> str:
+        """The answers as the user would have typed them."""
+        lines = []
+        for spec, ans in zip(questions, answers):
+            picked = ans.get("selected") or []
+            note = (ans.get("note") or "").strip()
+            if not picked and not note:
+                continue
+            body = ", ".join(picked) if picked else ""
+            if note:
+                body = f"{body} ({note})" if body else note
+            lines.append(f"{spec.get('question', '').strip()} {body}".strip())
+        return "\n".join(lines)
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI

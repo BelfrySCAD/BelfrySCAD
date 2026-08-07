@@ -135,9 +135,11 @@ class AIToolContext:
     # Tail of the console at the start of this turn: render errors,
     # warnings and echo() output.
     console_text: str = ""
-    # Puts questions to the user and blocks until they answer or cancel.
-    # Returns one answer per question, or None if they cancelled.
-    ask_user: Callable[[list[dict]], "list[dict] | None"] | None = None
+    # Shows the ask_user dialog and returns at once -- it does NOT wait for
+    # an answer. The answer arrives later as an ordinary user message, and
+    # dismissing the dialog cancels the running turn. Returns False if a
+    # question is already on screen.
+    ask_user: Callable[[list[dict]], bool] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -252,25 +254,20 @@ def ask_user(ctx: AIToolContext, questions: list | None = None) -> str:
             "options": opts[:MAX_ASK_OPTIONS],
         })
 
-    answers = ctx.ask_user(cleaned)
-    if answers is None:
-        # Cancelled. Said plainly so the model does not treat silence as
-        # assent and carry on as though it had an answer.
-        return ("The user dismissed the question without answering. Do not "
-                "ask again unless they bring it up; proceed only with what "
-                "you already know, or stop and say what you are waiting on.")
-
-    lines = []
-    for spec, ans in zip(cleaned, answers):
-        picked = ans.get("selected") or []
-        note = (ans.get("note") or "").strip()
-        if not picked and not note:
-            lines.append(f"{spec['question']}\n  (no answer given)")
-            continue
-        lines.append(f"{spec['question']}\n  chose: "
-                     + (", ".join(picked) if picked else "(nothing)")
-                     + (f"\n  added: {note}" if note else ""))
-    return "\n".join(lines)
+    if not ctx.ask_user(cleaned):
+        return ("Error: a question is already on screen. Wait for the user to "
+                "answer that one.")
+    # Deliberately does not wait. Blocking here would hold the tool call --
+    # and with it an MCP request -- open for as long as the user takes to
+    # think, which outlasts client timeouts and pins a worker thread on
+    # something that is not work.
+    #
+    # The answer comes back as an ordinary user message on a new turn, so
+    # the model must stop here rather than pressing on with the guess it was
+    # trying to avoid.
+    return ("Asked. Stop now and say nothing further -- their answer will "
+            "arrive as a new message. Do not guess in the meantime, and do "
+            "not ask again.")
 
 
 def propose_script_edit(ctx: AIToolContext, id: int, new_content: str,

@@ -111,8 +111,13 @@ class AIQuestionDialog(QDialog):
     def __init__(self, questions: list[dict], parent=None):
         super().__init__(parent)
         self.setWindowTitle("The assistant has a question")
-        self.setModal(True)
+        # Not modal: answering may mean looking at the viewport or the
+        # script the question is about, and a modal dialog would lock both
+        # away. Nothing waits on this either -- the answer is delivered as a
+        # new message when it comes.
+        self.setModal(False)
         self._blocks: list[_QuestionBlock] = []
+        self._questions = list(questions[:MAX_QUESTIONS])
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -154,6 +159,11 @@ class AIQuestionDialog(QDialog):
         self.resize(560, min(620, 180 + 150 * len(self._blocks)))
         if self._blocks and self._blocks[0].buttons:
             self._blocks[0].buttons[0].setFocus()
+
+    @property
+    def questions(self) -> list[dict]:
+        """The specs this dialog was built from, for pairing with answers."""
+        return self._questions
 
     @property
     def answers(self) -> list[dict]:
