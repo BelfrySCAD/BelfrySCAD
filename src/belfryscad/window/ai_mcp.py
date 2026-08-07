@@ -49,11 +49,22 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, payload: dict):
         body = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The client gave up while we were working. Nothing to send it
+            # and nothing to fix -- but BaseHTTPRequestHandler would print
+            # the whole traceback to the console, which lands in front of
+            # the user as though the app had broken.
+            #
+            # ask_user makes this ordinary rather than rare: it holds the
+            # request open for as long as the user takes to answer, which
+            # can outlast a client's read timeout.
+            pass
 
 
 class McpToolServer(ThreadingHTTPServer):
