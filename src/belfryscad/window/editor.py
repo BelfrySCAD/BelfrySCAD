@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
-    QAction, QFontMetricsF,
+    QAction, QFontMetricsF, QTextDocument, QPixmap, QIcon, QPen,
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
 
@@ -356,13 +356,39 @@ class FindBar(QWidget):
         find_row = QHBoxLayout()
         find_row.setSpacing(2)
 
+        # Disclosure triangle: collapsed shows Find alone, expanded reveals
+        # the Replace row. Sits left of the field, where the thing it
+        # expands begins.
+        self._btn_disclose = QPushButton("▶")
+        self._btn_disclose.setCheckable(True)
+        self._btn_disclose.setFlat(True)
+        self._btn_disclose.setFixedSize(self._DISCLOSE_W, 22)
+        self._btn_disclose.setToolTip("Show Replace")
+        # A checkable button paints a pressed-looking background when
+        # checked. The arrow already turns from > to v, which says the same
+        # thing without the dark slab. The other toggles keep theirs -- for
+        # them the fill IS the state readout, since their labels never
+        # change.
+        self._btn_disclose.setStyleSheet(
+            "QPushButton { border: none; background: transparent; }")
+        find_row.addWidget(self._btn_disclose)
+
         self._find_input = QLineEdit()
         self._find_input.setPlaceholderText("Find")
-        self._find_input.setMinimumWidth(160)
+        # 48, not 160: the toggles are fixed-size now, so the fields are the
+        # only widgets that can give. A 160 floor made the row wider than a
+        # narrow editor could hold, and the layout ran the buttons over the
+        # field instead. It still gets every pixel that is spare, since a
+        # QLineEdit expands by default.
+        self._find_input.setMinimumWidth(48)
         find_row.addWidget(self._find_input)
 
         self._match_label = QLabel()
-        self._match_label.setMinimumWidth(58)
+        # No reserved width. At 58 it held that gap open between the field
+        # and the buttons even with nothing to say, which was most of the
+        # time. The field expands, so it absorbs the label growing and
+        # shrinking -- the buttons stay put either way.
+        self._match_label.setMinimumWidth(0)
         self._match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         find_row.addWidget(self._match_label)
 
@@ -371,15 +397,26 @@ class FindBar(QWidget):
         self._btn_case = QPushButton("Aa")
         self._btn_case.setCheckable(True)
         self._btn_case.setToolTip("Match Case")
+        self._btn_word = QPushButton()
+        self._btn_word.setCheckable(True)
+        self._btn_word.setToolTip("Match Whole Word")
+        self._refresh_word_icon()
         self._btn_regex = QPushButton(".*")
         self._btn_regex.setCheckable(True)
         self._btn_regex.setToolTip("Use Regular Expression")
         self._btn_close = QPushButton("✕")
         self._btn_close.setToolTip("Close (Escape)")
 
-        for btn in (self._btn_prev, self._btn_next, self._btn_case,
-                    self._btn_regex, self._btn_close):
-            btn.setFixedSize(22, 22)
+        # Width from the label, not a flat 22: "Aa" and ".*" are two glyphs
+        # and were being clipped at that size, while the single-glyph arrows
+        # fit fine. Height stays fixed so the row keeps one baseline.
+        fm = self.fontMetrics()
+        # Toggles first, then the arrows, then close: the arrows act on the
+        # search rather than configuring it, so they belong at the end of
+        # the group next to the field's results.
+        for btn in (self._btn_case, self._btn_word, self._btn_regex,
+                    self._btn_prev, self._btn_next, self._btn_close):
+            btn.setFixedSize(max(22, fm.horizontalAdvance(btn.text()) + 12), 22)
             btn.setFlat(True)
             find_row.addWidget(btn)
 
@@ -390,14 +427,27 @@ class FindBar(QWidget):
         replace_row = QHBoxLayout(self._replace_widget)
         replace_row.setContentsMargins(0, 0, 0, 0)
         replace_row.setSpacing(2)
+        # Indent past where the disclosure triangle sits in the row above,
+        # so the two fields share a left edge instead of stepping.
+        replace_row.addSpacing(self._DISCLOSE_W + replace_row.spacing())
 
         self._replace_input = QLineEdit()
         self._replace_input.setPlaceholderText("Replace")
-        self._replace_input.setMinimumWidth(160)
+        self._replace_input.setMinimumWidth(48)
         replace_row.addWidget(self._replace_input)
 
-        self._btn_replace = QPushButton("Replace")
-        self._btn_replace_all = QPushButton("Replace All")
+        # Icons, not text: "Replace" and "Replace All" are wide enough that
+        # a narrow editor squeezed them until the labels were cut mid-word
+        # ("eplace Al"). A fixed-size icon button cannot be squeezed, so the
+        # row stops depending on how much width is left over.
+        self._btn_replace = QPushButton()
+        self._btn_replace.setToolTip("Replace")
+        self._btn_replace_all = QPushButton()
+        self._btn_replace_all.setToolTip("Replace All")
+        for btn in (self._btn_replace, self._btn_replace_all):
+            btn.setFlat(True)
+            btn.setFixedSize(24, 22)
+        self._refresh_replace_icons()
         replace_row.addWidget(self._btn_replace)
         replace_row.addWidget(self._btn_replace_all)
         replace_row.addStretch()
@@ -409,6 +459,8 @@ class FindBar(QWidget):
         self._find_input.textChanged.connect(self._on_search_changed)
         self._find_input.returnPressed.connect(self._find_next)
         self._btn_case.toggled.connect(self._on_search_changed)
+        self._btn_disclose.toggled.connect(self._on_disclose_toggled)
+        self._btn_word.toggled.connect(self._on_search_changed)
         self._btn_regex.toggled.connect(self._on_search_changed)
         self._btn_prev.clicked.connect(self._find_prev)
         self._btn_next.clicked.connect(self._find_next)
@@ -422,11 +474,118 @@ class FindBar(QWidget):
     # Show / hide
     # ------------------------------------------------------------------
 
+    # 16x16 viewBox. {c} is substituted with the palette's button-text
+    # colour -- an SVG has no way to inherit it, and a fixed hex would
+    # vanish against a dark background.
+    _SVG_REPLACE = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+        '<path d="M2 3.5 H8.5 a3 3 0 0 1 3 3 V8.2" fill="none" stroke="{c}"'
+        ' stroke-width="1.3" stroke-linecap="round"/>'
+        '<path d="M9.6 6.9 L11.5 8.9 L13.4 6.9" fill="none" stroke="{c}"'
+        ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect x="8.3" y="9.6" width="6.4" height="4.2" rx="1"'
+        ' fill="none" stroke="{c}" stroke-width="1.3"/>'
+        '</svg>'
+    )
+    # Same arrow, two stacked targets -- "all of them" rather than one.
+    _SVG_REPLACE_ALL = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+        '<path d="M1.6 2.6 H8 a3 3 0 0 1 3 3 V6.6" fill="none" stroke="{c}"'
+        ' stroke-width="1.2" stroke-linecap="round"/>'
+        '<path d="M9.3 5.5 L11 7.2 L12.7 5.5" fill="none" stroke="{c}"'
+        ' stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect x="5.4" y="7.9" width="6.0" height="3.1" rx="0.8"'
+        ' fill="none" stroke="{c}" stroke-width="1.2"/>'
+        '<rect x="8.4" y="11.0" width="6.0" height="3.1" rx="0.8"'
+        ' fill="none" stroke="{c}" stroke-width="1.2"/>'
+        '</svg>'
+    )
+
+    def _svg_icon(self, svg: str, w: int, h: int) -> QIcon:
+        from PySide6.QtSvg import QSvgRenderer
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = QPixmap(int(w * dpr), int(h * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        QSvgRenderer(svg.format(c=self.palette().buttonText().color().name()).encode()).render(painter)
+        painter.end()
+        return QIcon(pm)
+
+    def _refresh_replace_icons(self):
+        for btn, svg in ((self._btn_replace, self._SVG_REPLACE),
+                          (self._btn_replace_all, self._SVG_REPLACE_ALL)):
+            btn.setIcon(self._svg_icon(svg, 16, 16))
+            btn.setIconSize(QSize(16, 16))
+
+    # Width of the disclosure triangle. The replace row indents by this
+    # plus one spacing so its field lines up with the find field.
+    _DISCLOSE_W = 18
+
+    def _refresh_word_icon(self):
+        """Paint the Match Whole Word icon: 'ab' with a rule beneath it.
+
+        Drawn rather than set as underlined text -- macOS's native button
+        style renders the label through the system and drops the font's
+        underline attribute, so a QFont with setUnderline(True) reads as
+        plain 'ab'. Checking font().underline() only confirms the property
+        was stored, not that anything appears.
+        """
+        w, h = 18, 14
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = QPixmap(int(w * dpr), int(h * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+
+        font = QFont(self.font())
+        font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))
+        color = self.palette().buttonText().color()
+
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setFont(font)
+        painter.setPen(color)
+        fm = painter.fontMetrics()
+        text = "ab"
+        tw = fm.horizontalAdvance(text)
+        x = (w - tw) / 2
+        baseline = h - 4                      # leave room for the rule below
+        painter.drawText(QPoint(int(x), int(baseline)), text)
+        painter.setPen(QPen(color, 1.2))
+        painter.drawLine(int(x), h - 2, int(x + tw), h - 2)
+        painter.end()
+
+        self._btn_word.setIcon(QIcon(pm))
+        self._btn_word.setIconSize(QSize(w, h))
+
+    def changeEvent(self, event):
+        # Repaint the icon when the palette flips (macOS light/dark), or it
+        # keeps the old text colour and can end up invisible.
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "_btn_word"):
+            self._refresh_word_icon()
+            self._refresh_replace_icons()
+
+    def _on_disclose_toggled(self, expanded: bool):
+        self._btn_disclose.setText("▼" if expanded else "▶")
+        self._btn_disclose.setToolTip("Hide Replace" if expanded else "Show Replace")
+        self._replace_widget.setVisible(expanded)
+        # The bar changes height, so it has to be re-measured and re-placed
+        # or it overlaps the text or leaves a gap.
+        self.adjustSize()
+        self._editor._reposition_find_bar()
+
     def open_find(self):
+        self._btn_disclose.setChecked(False)
         self._replace_widget.hide()
         self._show_and_focus()
 
     def open_replace(self):
+        # setChecked drives _on_disclose_toggled, which does the showing --
+        # one path, so the arrow can never disagree with what is visible.
+        self._btn_disclose.setChecked(True)
         self._replace_widget.show()
         self._show_and_focus()
 
@@ -472,6 +631,12 @@ class FindBar(QWidget):
             return None
         if not self._btn_regex.isChecked():
             text = QRegularExpression.escape(text)
+        if self._btn_word.isChecked():
+            # Non-capturing group so the \b anchors bind to the whole
+            # pattern rather than to whatever the user's regex starts and
+            # ends with -- \bfoo|bar\b would anchor only foo's left and
+            # bar's right.
+            text = rf"\b(?:{text})\b"
         opts = QRegularExpression.PatternOption(0)
         if not self._btn_case.isChecked():
             opts |= QRegularExpression.PatternOption.CaseInsensitiveOption
@@ -491,10 +656,16 @@ class FindBar(QWidget):
             return
 
         doc = self._editor.document()
-        c = doc.find(pattern)
+        # FindCaseSensitively must be passed here, not left to the pattern:
+        # QTextDocument.find() forces CaseInsensitiveOption on (or off) the
+        # regex to match its own flags, so _make_pattern's option was being
+        # overwritten and Match Case never did anything.
+        flags = QTextDocument.FindFlag.FindCaseSensitively if self._btn_case.isChecked() \
+            else QTextDocument.FindFlag(0)
+        c = doc.find(pattern, 0, flags)
         while not c.isNull():
             self._matches.append(c)
-            c = doc.find(pattern, c)
+            c = doc.find(pattern, c, flags)
 
         if not self._matches:
             self._match_label.setText("No results")
@@ -1210,8 +1381,13 @@ class CodeEditor(QPlainTextEdit):
             return
         bar_w = bar.sizeHint().width()
         bar_h = bar.sizeHint().height()
-        x = max(self.line_number_area_width() + 2, self.width() - bar_w - 4)
-        bar.setGeometry(x, 2, min(bar_w, self.width() - self.line_number_area_width() - 6), bar_h)
+        avail = self.width() - self.line_number_area_width() - 6
+        # Never below minimumSizeHint: squeezing past it does not shrink the
+        # children, it overlaps them. Better to run off the right edge of a
+        # very narrow editor than to draw the buttons on top of the field.
+        width = max(bar.minimumSizeHint().width(), min(bar_w, avail))
+        x = max(self.line_number_area_width() + 2, self.width() - width - 4)
+        bar.setGeometry(x, 2, width, bar_h)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
