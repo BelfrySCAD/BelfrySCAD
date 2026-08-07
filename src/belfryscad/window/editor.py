@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
-    QAction, QFontMetricsF,
+    QAction, QFontMetricsF, QTextDocument,
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
 
@@ -371,15 +371,22 @@ class FindBar(QWidget):
         self._btn_case = QPushButton("Aa")
         self._btn_case.setCheckable(True)
         self._btn_case.setToolTip("Match Case")
+        self._btn_word = QPushButton("W")
+        self._btn_word.setCheckable(True)
+        self._btn_word.setToolTip("Match Whole Word")
         self._btn_regex = QPushButton(".*")
         self._btn_regex.setCheckable(True)
         self._btn_regex.setToolTip("Use Regular Expression")
         self._btn_close = QPushButton("✕")
         self._btn_close.setToolTip("Close (Escape)")
 
+        # Width from the label, not a flat 22: "Aa" and ".*" are two glyphs
+        # and were being clipped at that size, while the single-glyph arrows
+        # fit fine. Height stays fixed so the row keeps one baseline.
+        fm = self.fontMetrics()
         for btn in (self._btn_prev, self._btn_next, self._btn_case,
-                    self._btn_regex, self._btn_close):
-            btn.setFixedSize(22, 22)
+                    self._btn_word, self._btn_regex, self._btn_close):
+            btn.setFixedSize(max(22, fm.horizontalAdvance(btn.text()) + 12), 22)
             btn.setFlat(True)
             find_row.addWidget(btn)
 
@@ -409,6 +416,7 @@ class FindBar(QWidget):
         self._find_input.textChanged.connect(self._on_search_changed)
         self._find_input.returnPressed.connect(self._find_next)
         self._btn_case.toggled.connect(self._on_search_changed)
+        self._btn_word.toggled.connect(self._on_search_changed)
         self._btn_regex.toggled.connect(self._on_search_changed)
         self._btn_prev.clicked.connect(self._find_prev)
         self._btn_next.clicked.connect(self._find_next)
@@ -472,6 +480,12 @@ class FindBar(QWidget):
             return None
         if not self._btn_regex.isChecked():
             text = QRegularExpression.escape(text)
+        if self._btn_word.isChecked():
+            # Non-capturing group so the \b anchors bind to the whole
+            # pattern rather than to whatever the user's regex starts and
+            # ends with -- \bfoo|bar\b would anchor only foo's left and
+            # bar's right.
+            text = rf"\b(?:{text})\b"
         opts = QRegularExpression.PatternOption(0)
         if not self._btn_case.isChecked():
             opts |= QRegularExpression.PatternOption.CaseInsensitiveOption
@@ -491,10 +505,16 @@ class FindBar(QWidget):
             return
 
         doc = self._editor.document()
-        c = doc.find(pattern)
+        # FindCaseSensitively must be passed here, not left to the pattern:
+        # QTextDocument.find() forces CaseInsensitiveOption on (or off) the
+        # regex to match its own flags, so _make_pattern's option was being
+        # overwritten and Match Case never did anything.
+        flags = QTextDocument.FindFlag.FindCaseSensitively if self._btn_case.isChecked() \
+            else QTextDocument.FindFlag(0)
+        c = doc.find(pattern, 0, flags)
         while not c.isNull():
             self._matches.append(c)
-            c = doc.find(pattern, c)
+            c = doc.find(pattern, c, flags)
 
         if not self._matches:
             self._match_label.setText("No results")
