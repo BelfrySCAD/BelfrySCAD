@@ -47,12 +47,14 @@ class TestHandshake:
 
 class TestToolsList:
     def test_lists_every_tool(self, tmp_path):
+        # Compared against TOOLS rather than a hand-written list: the point
+        # is that the server offers everything the app has, and a literal
+        # here just has to be edited every time a tool is added, which
+        # proves nothing about the server.
+        from belfryscad.window.ai_tools import TOOLS
         tools = _call(_server(tmp_path), "tools/list")["result"]["tools"]
-        assert {t["name"] for t in tools} == {
-            "list_library_files", "read_library_file", "list_open_scripts",
-            "read_open_script", "propose_script_edit", "propose_new_script",
-            "view_viewport", "describe_geometry", "schedule_followup", "read_console",
-        }
+        assert {t["name"] for t in tools} == {t["name"] for t in TOOLS}
+        assert len(tools) == len(TOOLS)     # no duplicates hiding a mismatch
 
     def test_uses_mcp_input_schema_key(self, tmp_path):
         # MCP calls it inputSchema; OpenAI calls the same JSON Schema

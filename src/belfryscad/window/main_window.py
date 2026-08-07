@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QApplication, QMenu,
+    QDockWidget, QApplication, QMenu, QDialog,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -1935,7 +1935,8 @@ class MainWindow(QMainWindow):
                             viewport_png=png, viewport_note=note,
                             geometry_summary=self._geometry_summary(),
                             console_text=self._console_tail(),
-                            capture_view=self._capture_view_threadsafe)
+                            capture_view=self._capture_view_threadsafe,
+                            ask_user=self._ask_user_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2005,6 +2006,42 @@ class MainWindow(QMainWindow):
         "front": (270, 0), "back": (90, 0), "left": (180, 0), "right": (0, 0),
         "top": (270, 89), "bottom": (270, -89), "iso": (315, 35),
     }
+
+    def _ask_user_threadsafe(self, questions: list) -> "list | None":
+        """Called from the AI worker thread. Puts the questions to the user on
+        the GUI thread and waits for the answers.
+
+        No timeout, unlike the view capture: the user is being asked to think,
+        and answering after two minutes is a perfectly ordinary thing to do.
+        The wait ends when they answer, dismiss the dialog, or cancel the turn
+        -- and cancelling tears the worker down regardless.
+        """
+        import threading
+        from PySide6.QtCore import QMetaObject
+        self._ai_ask_request = {"questions": questions,
+                                "done": threading.Event(), "result": None}
+        QMetaObject.invokeMethod(self, "_service_ai_ask_request",
+                                 Qt.ConnectionType.QueuedConnection)
+        self._ai_ask_request["done"].wait()
+        return self._ai_ask_request["result"]
+
+    @Slot()
+    def _service_ai_ask_request(self):
+        """GUI thread: show the dialog and record the answers."""
+        req = getattr(self, "_ai_ask_request", None)
+        if not req:
+            return
+        try:
+            from belfryscad.window.ai_question_dialog import AIQuestionDialog
+            dlg = AIQuestionDialog(req["questions"], parent=self)
+            req["result"] = dlg.answers if dlg.exec() == QDialog.DialogCode.Accepted else None
+        except Exception as e:      # noqa: BLE001
+            # The worker is blocked on this event; letting an exception escape
+            # would hang the turn forever rather than failing it.
+            self.log(f"AI question dialog failed: {e}")
+            req["result"] = None
+        finally:
+            req["done"].set()
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI

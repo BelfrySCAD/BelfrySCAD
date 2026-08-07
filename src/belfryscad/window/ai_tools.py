@@ -135,6 +135,9 @@ class AIToolContext:
     # Tail of the console at the start of this turn: render errors,
     # warnings and echo() output.
     console_text: str = ""
+    # Puts questions to the user and blocks until they answer or cancel.
+    # Returns one answer per question, or None if they cancelled.
+    ask_user: Callable[[list[dict]], "list[dict] | None"] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -216,6 +219,58 @@ _PLAN_REFUSAL = ("Error: you are in Plan mode, so no changes can be made "
                  "yet. Describe the change you would make instead -- include "
                  "the code -- and let the user switch modes if they want it "
                  "applied.")
+
+
+MAX_ASK_QUESTIONS = 6
+MAX_ASK_OPTIONS = 8
+
+
+def ask_user(ctx: AIToolContext, questions: list | None = None) -> str:
+    """Put questions to the user and wait for the answers."""
+    if ctx.ask_user is None:
+        return ("Error: this conversation cannot ask the user questions. "
+                "Decide with what you have, or say what you would need.")
+    if not questions:
+        return "Error: ask_user needs at least one question."
+    if len(questions) > MAX_ASK_QUESTIONS:
+        return (f"Error: at most {MAX_ASK_QUESTIONS} questions at once. Ask "
+                f"the most important ones first.")
+
+    cleaned = []
+    for q in questions:
+        if not isinstance(q, dict) or not (q.get("question") or "").strip():
+            return "Error: every question needs a 'question' string."
+        opts = [o for o in (q.get("options") or []) if isinstance(o, dict) and o.get("label")]
+        if len(opts) < 2:
+            return ("Error: every question needs at least two options with a "
+                    "'label'. To ask something open-ended, just say it in your "
+                    "reply instead.")
+        cleaned.append({
+            "question": str(q["question"]).strip(),
+            "header": str(q.get("header") or "").strip(),
+            "multiSelect": bool(q.get("multiSelect")),
+            "options": opts[:MAX_ASK_OPTIONS],
+        })
+
+    answers = ctx.ask_user(cleaned)
+    if answers is None:
+        # Cancelled. Said plainly so the model does not treat silence as
+        # assent and carry on as though it had an answer.
+        return ("The user dismissed the question without answering. Do not "
+                "ask again unless they bring it up; proceed only with what "
+                "you already know, or stop and say what you are waiting on.")
+
+    lines = []
+    for spec, ans in zip(cleaned, answers):
+        picked = ans.get("selected") or []
+        note = (ans.get("note") or "").strip()
+        if not picked and not note:
+            lines.append(f"{spec['question']}\n  (no answer given)")
+            continue
+        lines.append(f"{spec['question']}\n  chose: "
+                     + (", ".join(picked) if picked else "(nothing)")
+                     + (f"\n  added: {note}" if note else ""))
+    return "\n".join(lines)
 
 
 def propose_script_edit(ctx: AIToolContext, id: int, new_content: str,
@@ -563,6 +618,71 @@ TOOLS: list[dict] = [
             "required": [],
         },
         "handler": schedule_followup,
+    },
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user a question they must answer before you can do the "
+            "right thing, offering the choices you would otherwise guess "
+            "between. Blocks until they answer or dismiss it.\n\n"
+            "Use it when the answer changes what you build and you cannot "
+            "settle it from the script, the geometry or the conversation -- "
+            "not to confirm something you already have good reason to "
+            "believe, and not for choices with an obvious default. One "
+            "interruption that prevents building the wrong thing is worth "
+            "it; a habit of asking is not.\n\n"
+            "Every option needs a label and a short description of what "
+            "choosing it means. Set multiSelect when the choices genuinely "
+            "combine."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "description": (f"1 to {MAX_ASK_QUESTIONS} questions, "
+                                    "asked together on one page."),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question, as you would say it aloud.",
+                            },
+                            "header": {
+                                "type": "string",
+                                "description": ("Two or three words naming the "
+                                                "decision, e.g. 'Units' or "
+                                                "'Wall thickness'."),
+                            },
+                            "multiSelect": {
+                                "type": "boolean",
+                                "description": ("true for checkboxes when the "
+                                                "options combine; false (the "
+                                                "default) for one-of radio "
+                                                "buttons."),
+                            },
+                            "options": {
+                                "type": "array",
+                                "description": f"2 to {MAX_ASK_OPTIONS} choices.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string",
+                                                  "description": "The choice itself, a few words."},
+                                        "description": {"type": "string",
+                                                        "description": "What choosing it means."},
+                                    },
+                                    "required": ["label"],
+                                },
+                            },
+                        },
+                        "required": ["question", "options"],
+                    },
+                },
+            },
+            "required": ["questions"],
+        },
+        "handler": ask_user,
     },
 ]
 
