@@ -195,6 +195,13 @@ def main():
           xs()["case"] == before, f"{before} -> {xs()['case']}")
     check("the match count is actually showing", bool(bar._match_label.text()))
 
+    ed.show_find(replace=True)
+    ed._reposition_find_bar()
+    app.processEvents()
+    fx = bar._find_input.mapTo(bar, bar._find_input.rect().topLeft()).x()
+    rx = bar._replace_input.mapTo(bar, bar._replace_input.rect().topLeft()).x()
+    check("the replace field lines up with the find field", fx == rx, f"find {fx} vs replace {rx}")
+
     # --- nothing may overlap at any width -----------------------------
     # The actual failure mode: fixed-size buttons plus a 160px floor on the
     # fields made the row wider than a narrow editor, and the layout ran the

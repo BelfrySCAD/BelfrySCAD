@@ -362,7 +362,7 @@ class FindBar(QWidget):
         self._btn_disclose = QPushButton("▶")
         self._btn_disclose.setCheckable(True)
         self._btn_disclose.setFlat(True)
-        self._btn_disclose.setFixedSize(18, 22)
+        self._btn_disclose.setFixedSize(self._DISCLOSE_W, 22)
         self._btn_disclose.setToolTip("Show Replace")
         # A checkable button paints a pressed-looking background when
         # checked. The arrow already turns from > to v, which says the same
@@ -427,6 +427,9 @@ class FindBar(QWidget):
         replace_row = QHBoxLayout(self._replace_widget)
         replace_row.setContentsMargins(0, 0, 0, 0)
         replace_row.setSpacing(2)
+        # Indent past where the disclosure triangle sits in the row above,
+        # so the two fields share a left edge instead of stepping.
+        replace_row.addSpacing(self._DISCLOSE_W + replace_row.spacing())
 
         self._replace_input = QLineEdit()
         self._replace_input.setPlaceholderText("Replace")
@@ -515,6 +518,10 @@ class FindBar(QWidget):
                           (self._btn_replace_all, self._SVG_REPLACE_ALL)):
             btn.setIcon(self._svg_icon(svg, 16, 16))
             btn.setIconSize(QSize(16, 16))
+
+    # Width of the disclosure triangle. The replace row indents by this
+    # plus one spacing so its field lines up with the find field.
+    _DISCLOSE_W = 18
 
     def _refresh_word_icon(self):
         """Paint the Match Whole Word icon: 'ab' with a rule beneath it.
