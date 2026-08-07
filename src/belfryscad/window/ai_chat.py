@@ -27,6 +27,7 @@ from belfryscad.window.ai_providers import (
     preset_for,
 )
 from belfryscad.window.ai_cli import ClaudeCliSession, find_claude_cli
+from belfryscad.window.ai_copilot_cli import CopilotCliSession, find_copilot_cli
 from belfryscad.window.ai_mcp import McpToolServer
 from belfryscad.window.ai_secrets import get_api_key
 from belfryscad.window.ai_tools import (
@@ -545,12 +546,28 @@ class AIChatPane(QWidget):
         base_url = s.value(base_url_key(preset.id), preset.base_url)
         model = s.value(model_key(preset.id), "")
         cli_session = None
-        if provider == "anthropic":
+        if preset.id == "copilot":
+            # CLI-only: Copilot authenticates through the CLI's own GitHub
+            # login, so there is no key path to fall back to.
+            if find_copilot_cli() is None:
+                self._say("No GitHub Copilot CLI found. Install it with "
+                          "`npm install -g @github/copilot`, then run "
+                          "`copilot login`. If it is installed but not on "
+                          "PATH — or `copilot` is AWS's tool of the same "
+                          "name — point at it with Preferences → AI → "
+                          "Copilot CLI.")
+                return
+            cli_session = self._ensure_copilot_session(ctx, model)
+            if cli_session is None:
+                return
+        elif provider == "anthropic":
             transport, api_key = resolve_anthropic_transport()
             if transport == "none":
                 self._say("No way to reach Claude: set ANTHROPIC_API_KEY, "
-                          "install the `claude` CLI, or enter an API key in "
-                          "Preferences → AI.")
+                          "enter an API key in Preferences → AI, or install "
+                          "the `claude` CLI. If it is installed but not on "
+                          "PATH, point at it with Preferences → AI → "
+                          "Claude CLI.")
                 return
             if transport == "cli":
                 cli_session = self._ensure_cli_session(ctx, model)
@@ -600,6 +617,28 @@ class AIChatPane(QWidget):
         self._thread, self._worker = thread, worker
         self._reply_text = ""
         thread.start()
+
+    def _ensure_copilot_session(self, ctx, model: str):
+        """Same shape as _ensure_cli_session, for Copilot.
+
+        The session object is reused across turns even though each turn is
+        its own process -- it holds the session id that chains them.
+        """
+        if self._cli_session is not None:
+            return self._cli_session
+        try:
+            if self._mcp_server is None:
+                self._mcp_server = McpToolServer()
+                self._mcp_server.start()
+            self._mcp_server.context = ctx
+            self._cli_session = CopilotCliSession(
+                SYSTEM_PROMPT, self._mcp_server.url, model=model)
+        except OSError as e:
+            self._say(f"Could not start the copilot CLI bridge: {e}")
+            self._cli_session = None
+            return None
+        self._say("(using the GitHub Copilot CLI — no API key needed)")
+        return self._cli_session
 
     def _ensure_cli_session(self, ctx, model: str):
         """Spin up (once per conversation) the MCP tool server and the

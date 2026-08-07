@@ -24,6 +24,7 @@ events, so text deltas are read exactly as ai_providers does.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -39,7 +40,25 @@ _DENIED = ["Write", "Edit", "NotebookEdit", "Bash", "Read", "Glob", "Grep",
            "WebFetch", "WebSearch", "Task"]
 
 
+CLI_PATH_KEY = "ai/claudeCliPath"
+
+
 def find_claude_cli() -> str | None:
+    """The claude CLI, or None.
+
+    A path set in Preferences wins over PATH: the usual reason to set one
+    is that PATH has no `claude` at all, but someone with several installs
+    should get the one they picked rather than whichever comes first.
+
+    The stored path is checked rather than trusted -- an install that moved
+    or was removed should fall back to PATH instead of failing to launch
+    with a confusing error from deep inside the coprocess.
+    """
+    from PySide6.QtCore import QSettings
+    configured = (QSettings("BelfrySCAD", "BelfrySCAD")
+                  .value(CLI_PATH_KEY, "") or "").strip()
+    if configured and os.path.isfile(configured) and os.access(configured, os.X_OK):
+        return configured
     return shutil.which("claude")
 
 

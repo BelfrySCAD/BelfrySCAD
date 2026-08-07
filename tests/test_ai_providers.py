@@ -330,10 +330,15 @@ class TestPresets:
     def test_only_anthropic_uses_the_anthropic_protocol(self):
         assert [p.id for p in PRESETS if p.protocol == "anthropic"] == ["anthropic"]
 
-    def test_base_urls_are_absolute_except_custom(self):
+    # "custom" has no URL because the user supplies it; "copilot" has none
+    # because it never makes an HTTP call at all -- its CLI talks to GitHub
+    # on its own credentials. Every other preset must name a real endpoint.
+    ENDPOINTLESS = {"custom", "copilot"}
+
+    def test_base_urls_are_absolute_unless_the_preset_has_no_endpoint(self):
         for p in PRESETS:
-            if p.id == "custom":
-                assert p.base_url == ""     # user supplies it
+            if p.id in self.ENDPOINTLESS:
+                assert p.base_url == ""
             else:
                 assert p.base_url.startswith("http")
 
