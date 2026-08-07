@@ -198,6 +198,11 @@ class _RenderCallback(QObject):
             self._mw._console.append_output(msg)
 
     @Slot(str)
+    def on_tmp_path(self, path: str):
+        if self._render_id == self._mw._render_id:
+            self._mw._path_labels[path] = self._file_tab.display_name()
+
+    @Slot(str)
     def on_parse_errored(self, captured: str):
         if self._render_id == self._mw._render_id:
             self._mw._console.append_output(captured.rstrip())
@@ -226,6 +231,7 @@ class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
     logged = Signal(str)
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
+    tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
     finished = Signal(object, object, float, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
@@ -280,6 +286,11 @@ class _RenderWorker(QObject):
         _tmp.write(self._source)
         _tmp.close()
         parse_path = self._tmp_path = _tmp.name
+        # Every position the evaluator reports (errors, warnings, profile
+        # call sites) names this temp file rather than the tab, since that
+        # is genuinely what it parsed. Announce it so the UI can show the
+        # tab's name instead of a tmpXXXX.scad nobody recognises.
+        self.tmp_path_ready.emit(parse_path)
 
         # --- Parse (C++) ---
         try:
@@ -451,6 +462,11 @@ class MainWindow(QMainWindow):
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
+        # Maps a path the evaluator reports back to a friendlier label --
+        # currently the temp .scad each render writes the live buffer to,
+        # shown as its tab's name. Keyed by path, so stale entries from
+        # earlier renders are harmless (those files no longer exist).
+        self._path_labels: dict[str, str] = {}
         from openscad_cpp_evaluator import ManifoldCache
         self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
@@ -1539,6 +1555,7 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         worker.logged.connect(callback.on_logged)
         worker.parse_errored.connect(callback.on_parse_errored)
+        worker.tmp_path_ready.connect(callback.on_tmp_path)
         worker.ast_ready.connect(callback.on_ast_ready)
         worker.finished.connect(callback.on_finished)
         worker.done.connect(callback.on_done)
@@ -1662,7 +1679,10 @@ class MainWindow(QMainWindow):
             self.log("No profile available — use Render with Profiling first.")
             return
         from belfryscad.window.data_viewers import ProfileViewer
-        viewer = ProfileViewer(self._last_profile_result, parent=self)
+        from belfryscad.window.library_manager import _library_dir
+        viewer = ProfileViewer(self._last_profile_result, parent=self,
+                                path_labels=self._path_labels,
+                                trim_prefix=str(_library_dir()))
         viewer.navigate_requested.connect(self._on_debug_frame_selected)
         viewer.show()
 
@@ -2302,8 +2322,18 @@ class MainWindow(QMainWindow):
         resolved = str(Path(file_path).resolve())
         for i in range(self._tabs.count()):
             t = self._tabs.widget(i)
-            if t and t.file_path and str(Path(t.file_path).resolve()) == resolved:
-                return t, i
+            if not t:
+                continue
+            # _last_parse_path as well as file_path: a modified tab renders
+            # from a temp copy of its live buffer, so anything reporting a
+            # source location -- a profile call site, an error -- names that
+            # temp path, not the tab's own. Matching only file_path missed
+            # every such row, and the fallback open below cannot rescue it
+            # either: the temp file is unlinked once the render ends, so the
+            # read fails and the caller silently does nothing.
+            for p in (t.file_path, getattr(t, '_last_parse_path', None)):
+                if p and str(Path(p).resolve()) == resolved:
+                    return t, i
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
