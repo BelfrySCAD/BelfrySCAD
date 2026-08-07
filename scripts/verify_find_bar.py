@@ -20,6 +20,7 @@ fmt.setVersion(3, 3)
 fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
 QSurfaceFormat.setDefaultFormat(fmt)
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from belfryscad.window.editor import CodeEditor  # noqa: E402
@@ -91,6 +92,12 @@ def main():
                       f"rule {[rows[y] for y in rule]} vs glyphs {[rows[y] for y in glyphs]}")
     check("the whole-word button has no stray text label",
           bar._btn_word.text() == "", repr(bar._btn_word.text()))
+
+    # No check here for the disclosure button's checked-state background.
+    # macOS paints that through the native Aqua style, which an offscreen
+    # QWidget.render() does not reproduce -- a pixel check written for it
+    # passed just as happily with the suppressing stylesheet removed, so it
+    # would have asserted nothing. Verified on a real screen instead.
 
     check("opened with show_find(): collapsed", not bar._btn_disclose.isChecked())
     check("collapsed hides the replace row", bar._replace_widget.isHidden())

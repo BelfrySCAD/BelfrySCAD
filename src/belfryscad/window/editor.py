@@ -364,6 +364,13 @@ class FindBar(QWidget):
         self._btn_disclose.setFlat(True)
         self._btn_disclose.setFixedSize(18, 22)
         self._btn_disclose.setToolTip("Show Replace")
+        # A checkable button paints a pressed-looking background when
+        # checked. The arrow already turns from > to v, which says the same
+        # thing without the dark slab. The other toggles keep theirs -- for
+        # them the fill IS the state readout, since their labels never
+        # change.
+        self._btn_disclose.setStyleSheet(
+            "QPushButton { border: none; background: transparent; }")
         find_row.addWidget(self._btn_disclose)
 
         self._find_input = QLineEdit()
