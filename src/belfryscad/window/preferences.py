@@ -259,11 +259,12 @@ class PreferencesDialog(QDialog):
         self._ai_key.editingFinished.connect(self._save_ai_key)
         ai_form.addRow("API key:", self._ai_key)
 
-        # Only meaningful for Claude, which can run through the CLI instead
-        # of an API key. Shown for every service anyway rather than appearing
-        # and vanishing as the dropdown changes -- it is the row someone
-        # goes looking for precisely when the CLI was not found.
-        cli_row = QHBoxLayout()
+        # Claude only: no other service can run through a CLI. Wrapped in a
+        # container so setRowVisible hides the label with it -- hiding the
+        # inner widgets alone would leave "Claude CLI:" labelling a gap.
+        self._ai_cli_row = QWidget()
+        cli_row = QHBoxLayout(self._ai_cli_row)
+        cli_row.setContentsMargins(0, 0, 0, 0)
         cli_row.setSpacing(6)
         self._ai_cli_path = QLineEdit()
         self._ai_cli_path.setMinimumWidth(220)
@@ -275,12 +276,13 @@ class PreferencesDialog(QDialog):
         browse = QPushButton("Choose…")
         browse.clicked.connect(self._browse_ai_cli_path)
         cli_row.addWidget(browse)
-        ai_form.addRow("Claude CLI:", cli_row)
+        ai_form.addRow("Claude CLI:", self._ai_cli_row)
 
         self._ai_cli_status = QLabel()
         self._ai_cli_status.setWordWrap(True)
         ai_form.addRow("", self._ai_cli_status)
         self._update_ai_cli_status()
+        self._ai_form = ai_form
 
         self._ai_note = QLabel()
         self._ai_note.setWordWrap(True)
@@ -370,6 +372,8 @@ class PreferencesDialog(QDialog):
             anthropic = p.protocol == "anthropic"
             self._ai_base_url.setEnabled(not anthropic)
             self._ai_fetch_models.setEnabled(not anthropic)
+            self._ai_form.setRowVisible(self._ai_cli_row, anthropic)
+            self._ai_form.setRowVisible(self._ai_cli_status, anthropic)
             if anthropic:
                 self._ai_note.setText(
                     "Tried in order: ANTHROPIC_API_KEY, then the `claude` CLI "

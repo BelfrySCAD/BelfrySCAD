@@ -127,6 +127,27 @@ def main():
                   "No claude CLI on PATH" in dlg._ai_cli_status.text(),
                   dlg._ai_cli_status.text())
 
+            # --- the row only appears for Claude -------------------------
+            def show_preset(pid):
+                i = dlg._ai_preset.findData(pid)
+                dlg._ai_preset.setCurrentIndex(i)
+                app.processEvents()
+                # isHidden, not isVisibleTo(dlg): the AI page is not the
+                # current tab in a headless run, so QTabWidget has hidden the
+                # whole page and isVisibleTo would report False for every
+                # preset -- unable to tell the two cases apart. isHidden
+                # reflects the hide() setRowVisible actually performs.
+                return not dlg._ai_cli_row.isHidden(), not dlg._ai_cli_status.isHidden()
+
+            row_v, status_v = show_preset("anthropic")
+            check("the Claude CLI row shows for Claude", row_v and status_v,
+                  f"row={row_v} status={status_v}")
+            for other in ("openai", "ollama", "google"):
+                row_v, status_v = show_preset(other)
+                check(f"the Claude CLI row is hidden for {other}",
+                      not row_v and not status_v, f"row={row_v} status={status_v}")
+            show_preset("anthropic")
+
             # Editing the field must persist, or Choose… would be the only
             # way to set it.
             dlg._ai_cli_path.setText(str(real))
