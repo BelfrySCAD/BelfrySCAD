@@ -1174,10 +1174,15 @@ class ProfileViewer(QDialog):
         btn_row.setContentsMargins(20, 0, 20, 0)
         export = QPushButton("Export CSV…")
         export.clicked.connect(self._export_csv)
+        # A QPushButton in a QDialog is autoDefault, so Export would claim
+        # the default the moment it took focus and Return would then start
+        # writing a file. Dismiss is the one Return should hit.
+        export.setAutoDefault(False)
         btn_row.addWidget(export)
         btn_row.addStretch()
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self.close)
+        dismiss.setDefault(True)
         btn_row.addWidget(dismiss)
         layout.addLayout(btn_row)
 
