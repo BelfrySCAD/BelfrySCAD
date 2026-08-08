@@ -1433,7 +1433,14 @@ class MainWindow(QMainWindow):
                 if mesh is None:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
-                # Checked AFTER merging, because the merged mesh is what
+                # Zero-area faces are removed before writing. They break no
+                # topology, but slicers commonly discard them and are then
+                # left with the holes their removal opens -- which is how a
+                # sound model becomes a failed print. Removing them here
+                # closes those gaps properly instead.
+                mesh = self._strip_export_slivers(mesh)
+
+                # Checked AFTER merging and stripping, because that is what
                 # gets written. Checking the parts instead passed a Menger
                 # sponge whose 160,000 cubes were each fine and whose file
                 # was riddled with duplicate faces.
@@ -1452,6 +1459,48 @@ class MainWindow(QMainWindow):
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
+
+    def _strip_export_slivers(self, mesh):
+        """Remove zero-area faces from the mesh about to be written.
+
+        A retriangulation, not a repair: the solid is unchanged and no
+        vertex moves. A sliver's three corners are collinear, so removing
+        one leaves its middle vertex on the neighbour's edge -- the
+        neighbour is split there to keep the surface closed.
+
+        Logged rather than silent, because it changes the triangle list of
+        a file the user asked for.
+        """
+        try:
+            import numpy as np
+            from openscad_cpp_evaluator import strip_slivers
+        except ImportError:
+            return mesh       # older evaluator: leave the mesh alone
+        try:
+            v = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
+            t = np.asarray(mesh.tri_verts, dtype=np.uint32).ravel()
+            # Welded by position first. The slivers only exist once
+            # coincident vertices are one vertex, which is what writing the
+            # file does -- an STL has no indices at all. On a level-4 Menger
+            # sponge the unwelded mesh has none and the welded one has 14,
+            # so stripping without welding finds nothing to do.
+            keys, inverse = np.unique(np.round(v, 6), axis=0, return_inverse=True)
+            nv, nt, rep = strip_slivers(keys.ravel().tolist(),
+                                        inverse[t].astype(np.uint32).tolist())
+        except Exception:      # noqa: BLE001 -- must never block a save
+            return mesh
+        if not rep.get("removed"):
+            return mesh
+        n = rep["removed"]
+        note = f"stripped {n} zero-area face{'' if n == 1 else 's'}"
+        if rep.get("restitched"):
+            k = rep["restitched"]
+            note += f", splitting {k} neighbour{'' if k == 1 else 's'} to keep it closed"
+        self.log(f"export: {note}")
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            vert_properties=np.asarray(nv, dtype=np.float32).reshape(-1, 3),
+            tri_verts=np.asarray(nt, dtype=np.uint32).reshape(-1, 3))
 
     @staticmethod
     def _check_export_mesh(mesh) -> list:
