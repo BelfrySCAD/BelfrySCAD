@@ -1036,8 +1036,19 @@ def debug_start(ctx: AIToolContext, id: int, breakpoints: list | None = None) ->
         note = ("\nNote: this script has never been saved, so breakpoints "
                 "cannot be matched to it. It stopped at the first line "
                 "instead; step from there.")
-    return _format_debug_state(
-        ctx.debug_control("start", {"id": id, "breakpoints": lines})) + note
+    state = ctx.debug_control("start", {"id": id, "breakpoints": lines})
+    passed = ""
+    if lines and state.get("status") == "paused" and state.get("line") not in lines:
+        # A session always stops at the first statement before honouring any
+        # breakpoint. Asking for a breakpoint means asking to get there, so
+        # the initial stop is stepped past here rather than costing a whole
+        # extra round trip -- but it is reported, since top-level state at
+        # that point is sometimes what was actually wanted.
+        first = state.get("line")
+        state = ctx.debug_control("resume", "continue")
+        passed = (f"(A session always pauses at the first statement, line "
+                  f"{first}; ran on to your breakpoint.)\n")
+    return passed + _format_debug_state(state) + note
 
 
 def debug_resume(ctx: AIToolContext, command: str = "continue") -> str:
@@ -1371,8 +1382,10 @@ TOOLS: list[dict] = [
             "Start debugging a script, and run until it first stops. "
             "Breakpoints are line numbers; they are added to any the user "
             "has already set and appear in the editor gutter, so the user "
-            "can see where you chose to stop. With no breakpoints it stops "
-            "at the first line. Returns where it stopped, the call stack "
+            "can see where you chose to stop. A session always pauses at "
+            "the first statement; with breakpoints given, that stop is "
+            "stepped past for you and reported. Returns where it stopped, "
+            "the call stack "
             "and the variables in each frame. Only one session at a time -- "
             "call debug_stop when finished, since a paused session holds "
             "the evaluator."),
