@@ -431,6 +431,40 @@ def gui_checks():
     check("starting an unknown script is refused",
           "not open" in (dbg_call("start", {"id": 9999}).get("message") or ""))
 
+    # The whole way through the real tool, not the raw bridge: asking for a
+    # breakpoint should land on it, not on the mandatory first stop.
+    from belfryscad.window import ai_tools as _T
+    tool_ctx = _T.AIToolContext(
+        library_dir=Path("."),
+        open_tabs=[_T.TabSnapshot(id=dtab.chat_id, name="dbg.scad",
+                                  path=str(dbg_file), modified=False,
+                                  text=dbg_file.read_text())],
+        debug_control=w._debug_threadsafe)
+
+    def tool_call(fn, *a):
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=fn(tool_ctx, *a)))
+        th.start()
+        while th.is_alive():
+            app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+        th.join()
+        return box.get("r") or ""
+
+    out = tool_call(_T.debug_start, dtab.chat_id, [5])
+    check("debug_start lands on the breakpoint, not the first statement",
+          "Paused at dbg.scad:5." in out, out[:200])
+    check("and says it ran past the first stop",
+          "first statement, line 1" in out, out[:200])
+    check("with the frame that proves it got there",
+          "d = 20.0" in out, out[:300])
+
+    out = tool_call(_T.debug_resume, "to_child")
+    check("to_child's refusal describes the moment, not the source",
+          "no children are bound at this point" in out
+          and "until the call itself is entered" in out, out[:300])
+
+    tool_call(_T.debug_stop)
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -962,6 +996,46 @@ def main():
                                        "<toplevel>"],
               "frames": [{"variables": {"n": "10.0", "d": "20.0"},
                           "truncated": 3}]}
+    # A session always pauses at the first statement. Asking for a
+    # breakpoint means asking to get there, so that stop is stepped past.
+    first_stop = dict(paused, line=2)
+    seq = [first_stop, paused]
+    stepper = T.AIToolContext(
+        library_dir=Path("."),
+        open_tabs=[T.TabSnapshot(id=1, name="a.scad", path="/x/a.scad",
+                                 modified=False, text="cube(1);")],
+        debug_control=lambda a, arg=None: (seen_cmd.append((a, arg))
+                                           or seq.pop(0)))
+    seen_cmd.clear()
+    out = T.debug_start(stepper, 1, [12])
+    check("debug_start runs past the mandatory first stop",
+          [a for a, _ in seen_cmd] == ["start", "resume"], str(seen_cmd))
+    check("and lands on the breakpoint", "a.scad:12" in out, out)
+    check("saying it passed the initial stop",
+          "first statement, line 2" in out, out)
+
+    # With no breakpoints there is nothing to run on to.
+    seq2 = [first_stop]
+    plain = T.AIToolContext(
+        library_dir=Path("."), open_tabs=stepper.open_tabs,
+        debug_control=lambda a, arg=None: (seen_cmd.append((a, arg))
+                                           or seq2.pop(0)))
+    seen_cmd.clear()
+    T.debug_start(plain, 1, [])
+    check("with no breakpoints it stays at the first stop",
+          [a for a, _ in seen_cmd] == ["start"], str(seen_cmd))
+
+    # Already on a breakpoint: nothing to skip.
+    seq3 = [paused]
+    onbp = T.AIToolContext(
+        library_dir=Path("."), open_tabs=stepper.open_tabs,
+        debug_control=lambda a, arg=None: (seen_cmd.append((a, arg))
+                                           or seq3.pop(0)))
+    seen_cmd.clear()
+    T.debug_start(onbp, 1, [12])
+    check("and it does not step past a first stop that is the breakpoint",
+          [a for a, _ in seen_cmd] == ["start"], str(seen_cmd))
+
     seen_cmd.clear()
     out = T.debug_start(dbg(paused), 1, [12])
     check("debug_start reports where it stopped", "a.scad:12" in out, out)

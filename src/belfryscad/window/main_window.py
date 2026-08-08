@@ -2665,10 +2665,13 @@ class MainWindow(QMainWindow):
             self._ai_debug_notify({
                 **(getattr(self, "_ai_debug_last_pause", None) or
                    {"status": "paused"}),
-                "message": ("Not stepped: the module call here has no "
-                            "children, and to_child would have run on to the "
-                            "next breakpoint rather than stepping into "
-                            "anything. Use into or over instead.")})
+                "message": (
+                    "Not stepped: no children are bound at this point, so "
+                    "to_child has nowhere to go and would have run on to "
+                    "the next breakpoint instead. Note this describes the "
+                    "moment, not the source -- a call whose children are "
+                    "written in the script has none attached until the call "
+                    "itself is entered, so step into it first, or use over.")})
             return
         handler = self._AI_DEBUG_COMMANDS.get(command)
         if handler is None:
