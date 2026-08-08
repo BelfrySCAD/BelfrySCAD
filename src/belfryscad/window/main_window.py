@@ -2545,11 +2545,26 @@ class MainWindow(QMainWindow):
             if not self._ai_debug_event.wait(10):
                 return {"status": "error", "message": "the GUI did not respond."}
             return self._ai_debug_state or {"status": "idle"}
+        # A to_child step that matches no target degrades into a continue,
+        # running to the end and taking the session with it. Observed with
+        # both a built-in and a user-module child, so the cause is not
+        # simply "builtins have no body"; until that is understood, say
+        # what happened rather than guess at why.
+        stepping_to_child = (action == "resume" and arg == "to_child")
+
         if not self._ai_debug_event.wait(self._AI_DEBUG_TIMEOUT):
             return {"status": "running",
                     "message": (f"still running after {self._AI_DEBUG_TIMEOUT}s "
                                 f"without reaching a breakpoint.")}
-        return self._ai_debug_state or {"status": "idle"}
+        state = self._ai_debug_state or {"status": "idle"}
+        if stepping_to_child and state.get("status") == "finished":
+            state = dict(state)
+            state["message"] = (
+                "to_child did not stop at a child: it found nothing to "
+                "match, so it behaved like continue and the script ran to "
+                "the end. The session has ended. Use into, which steps into "
+                "the call itself, rather than repeating this.")
+        return state
 
     @Slot()
     def _service_ai_debug_cmd(self):
