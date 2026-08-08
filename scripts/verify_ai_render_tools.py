@@ -405,6 +405,21 @@ def gui_checks():
     check("which formats into something a model can act on",
           "Paused at dbg.scad:5." in txt and "n = 10.0" in txt, txt[:200])
 
+    # to_child on a module with no children never matches its target and
+    # comes back at the same place. Silently returning the unchanged state
+    # reads as a successful step, and a model can loop on it.
+    # to_child on a call with no children silently degrades to continue --
+    # it runs to the next breakpoint or off the end of the script. Handing
+    # that back as a successful step is how a model comes to believe it
+    # stepped somewhere it did not.
+    st = dbg_call("resume", "to_child")
+    check("to_child with no children refuses instead of running on",
+          "no children" in (st.get("message") or ""), str(st.get("message")))
+    check("and the session is still paused where it was",
+          st.get("status") == "paused" and st.get("line") == 5, str(st)[:140])
+    check("so the session was not consumed",
+          dbg_call("state").get("line") == 5, str(dbg_call("state"))[:120])
+
     check("a second session is refused while one is running",
           "already running" in (dbg_call(
               "start", {"id": dtab.chat_id}).get("message") or ""),
