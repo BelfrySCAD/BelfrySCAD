@@ -64,7 +64,10 @@ _TOOL_ACTIVITY = {
     "propose_new_script": "Preparing a new script",
     "view_viewport": "Looking at the model",
     "describe_geometry": "Measuring the geometry",
+    "read_console": "Reading the console",
+    "render": "Rendering",
     "schedule_followup": "Scheduling a follow-up",
+    "ask_user": "Asking you a question",
 }
 
 # A model can schedule itself, so cap how many turns can chain

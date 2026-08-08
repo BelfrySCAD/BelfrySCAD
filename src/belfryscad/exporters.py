@@ -153,6 +153,23 @@ def write_3mf(path: str, bodies):
     writer.WriteToFile(path)
 
 
+def body_to_manifold(b):
+    """The Manifold behind one rendered body.
+
+    The evaluator hands back bodies wrapped in a shim that duck-types only
+    what the renderer needs -- is_empty() and to_mesh(). Anything wanting to
+    measure a body (volume, area, genus) has to rebuild the real thing from
+    its mesh, which is what this does.
+    """
+    import numpy as np
+    import manifold3d
+
+    m = b.body.to_mesh()
+    v = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
+    t = np.asarray(m.tri_verts, dtype=np.uint32)
+    return manifold3d.Manifold(manifold3d.Mesh(v, t))
+
+
 def merge_bodies_to_mesh(bodies):
     """Union the bodies into one mesh for STL/OBJ. None if all are empty.
 
@@ -171,14 +188,7 @@ def merge_bodies_to_mesh(bodies):
     from types import SimpleNamespace
     import manifold3d
 
-    parts = []
-    for b in bodies:
-        if b.body.is_empty():
-            continue
-        m = b.body.to_mesh()
-        v = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
-        t = np.asarray(m.tri_verts, dtype=np.uint32)
-        parts.append(manifold3d.Manifold(manifold3d.Mesh(v, t)))
+    parts = [body_to_manifold(b) for b in bodies if not b.body.is_empty()]
     if not parts:
         return None
 

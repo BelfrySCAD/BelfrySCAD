@@ -1770,7 +1770,12 @@ class MainWindow(QMainWindow):
                 # or if animation playback is active.
                 if not script_moved_camera and not self._animate_pane.is_playing():
                     self._viewport.frame_scene(bb_min, bb_max)
-                self.log(f"Rendered successfully in {elapsed_ms / 1000:.3f} seconds.")
+                # Timestamped so a reader can tell one render's output from
+                # the last one's. The AI tools rely on this: the console is
+                # otherwise identical whether a render just landed or the
+                # text is left over from before the change.
+                self.log(f"Rendered successfully at {time.strftime('%H:%M:%S')} "
+                         f"in {elapsed_ms / 1000:.3f} seconds.")
                 self.log(
                     "Bounds:\n"
                     f"      [{bb_min[0]:.2f}, {bb_min[1]:.2f}, {bb_min[2]:.2f}]\n"
@@ -2063,7 +2068,9 @@ class MainWindow(QMainWindow):
                             geometry_summary=self._geometry_summary(),
                             console_text=self._console_tail(),
                             capture_view=self._capture_view_threadsafe,
-                            ask_user=self._ask_user_threadsafe)
+                            ask_user=self._ask_user_threadsafe,
+                            live_state=self._live_state_threadsafe,
+                            request_render=self._render_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2095,11 +2102,16 @@ class MainWindow(QMainWindow):
         lines, total_v, total_a = [], 0.0, 0.0
         lo = [float("inf")] * 3
         hi = [float("-inf")] * 3
+        failed = None
         for i, cb in enumerate(bodies):
             try:
-                m = cb.body
-                if m.is_empty():
+                if cb.body.is_empty():
                     continue
+                # Rebuilt from the mesh: the body itself is a shim with no
+                # measurement API, so reading volume() off it silently threw
+                # and left this returning "" -- which the AI's
+                # describe_geometry reported as "nothing has been rendered".
+                m = exporters.body_to_manifold(cb)
                 v, a = m.volume(), m.surface_area()
                 bb = m.bounding_box()
                 total_v += v
@@ -2112,10 +2124,14 @@ class MainWindow(QMainWindow):
                     f"size {bb[3] - bb[0]:.3f} x {bb[4] - bb[1]:.3f} x "
                     f"{bb[5] - bb[2]:.3f}, {m.num_tri()} triangles, "
                     f"genus {m.genus()}")
-            except Exception:      # noqa: BLE001 -- report what we can
+            except Exception as e:      # noqa: BLE001 -- report what we can
+                failed = failed or e
                 continue
         if not lines:
-            return ""
+            # Distinguishable from "nothing rendered": bodies that all fail to
+            # measure used to look identical to no bodies at all.
+            return (f"Error: the rendered model could not be measured ({failed})."
+                    if failed and bodies else "")
         return "\n".join([
             f"Rendered model: {len(lines)} solid part(s).",
             f"Total volume {total_v:.3f}, total surface area {total_a:.3f}.",
@@ -2205,6 +2221,60 @@ class MainWindow(QMainWindow):
                 body = f"{body} ({note})" if body else note
             lines.append(f"{spec.get('question', '').strip()} {body}".strip())
         return "\n".join(lines)
+
+    def _render_busy(self) -> bool:
+        """Whether a render is still running. A render is asynchronous, so
+        the AI's tools have to distinguish "nothing rendered" from "not
+        rendered yet"."""
+        return any(t.isRunning() for _, _, t in self._render_jobs)
+
+    def _live_state_threadsafe(self) -> dict:
+        """Called from the AI worker thread: the geometry summary and
+        console as they are now, rather than as they were when the turn
+        started. Accepting a proposal re-renders, so a model that looks
+        after making a change was otherwise shown the state from before
+        it."""
+        import threading
+        from PySide6.QtCore import QMetaObject
+        self._ai_state_request = {"done": threading.Event(), "result": None}
+        QMetaObject.invokeMethod(self, "_service_ai_state_request",
+                                 Qt.ConnectionType.QueuedConnection)
+        if not self._ai_state_request["done"].wait(10):
+            return {}
+        return self._ai_state_request["result"] or {}
+
+    @Slot()
+    def _service_ai_state_request(self):
+        req = getattr(self, "_ai_state_request", None)
+        if not req:
+            return
+        try:
+            req["result"] = {"geometry": self._geometry_summary(),
+                             "console": self._console_tail(),
+                             "rendering": self._render_busy()}
+        finally:
+            # Set even if reading threw, or the worker blocks for the full
+            # timeout to learn nothing.
+            req["done"].set()
+
+    def _render_threadsafe(self) -> bool:
+        """The AI's render tool. Queues the render on the GUI thread and
+        returns whether there was anything to render -- not whether it
+        succeeded, which isn't known until it finishes."""
+        from PySide6.QtCore import QMetaObject
+        tab = self._current_tab()
+        if tab is None or not tab.editor.toPlainText().strip():
+            return False
+        QMetaObject.invokeMethod(self, "_render_for_ai",
+                                 Qt.ConnectionType.QueuedConnection)
+        return True
+
+    @Slot()
+    def _render_for_ai(self):
+        """invokeMethod resolves by name through the meta-object, so the
+        target has to be a registered slot; _render is a plain method with
+        arguments."""
+        self._render()
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI
