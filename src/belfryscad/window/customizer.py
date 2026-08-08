@@ -301,6 +301,41 @@ def write_back_value(source: str, name: str, new_value: Any) -> str:
     return '\n'.join(lines)
 
 
+def describe_parameters(source: str) -> list[dict]:
+    """Every top-level customizer parameter, with its current value and
+    whatever its trailing comment constrains it to.
+
+    CustomizerPane builds its widgets from exactly this pairing of
+    scan_parameters and _parse_constraint, so a caller that isn't the pane
+    -- the AI's list_parameters -- describes the same parameters the user
+    is looking at, rather than a second opinion about what the source says.
+    """
+    out: list[dict] = []
+    for p in scan_parameters(source):
+        spec = _parse_constraint(p.constraint, p.default)
+        v = p.default
+        d: dict[str, Any] = {
+            'name': p.name,
+            'value': v,
+            'type': ('boolean' if isinstance(v, bool)
+                     else 'vector' if isinstance(v, list)
+                     else 'string' if isinstance(v, str)
+                     else 'number'),
+            'group': p.tab,
+            'description': p.description,
+        }
+        if spec['type'] == 'slider':
+            d['range'] = {'min': spec['min'], 'max': spec['max'],
+                          'step': spec['step']}
+        elif spec['type'] == 'dropdown':
+            d['options'] = [{'value': _coerce_option_value(val), 'label': lbl}
+                            for val, lbl in spec['options']]
+        elif spec['type'] == 'string' and spec.get('maxlen'):
+            d['max_length'] = spec['maxlen']
+        out.append(d)
+    return out
+
+
 _DESC_LINE_RE = re.compile(r'^\s*//')
 _TAB_HEADER_RE = re.compile(r'^\s*/\*\s*\[([^\]]*)\]\s*\*/\s*$')
 

@@ -71,6 +71,12 @@ The user chooses a mode. In Plan mode the propose_* tools refuse and you should 
 
 schedule_followup asks to be prompted again later. Use it only when there is something specific to check after a wait; don't schedule one just to keep talking, and stop once the task is finished.
 
+Many scripts expose Customizer parameters -- top-level values meant to be \
+tweaked without editing code. When one already covers what is being asked \
+for, change it with propose_parameter_change rather than rewriting the \
+code around it; list_parameters shows what a script exposes and what each \
+value is limited to.
+
 Prefer reading the relevant script or library file before proposing changes \
 to it. To change part of a script use propose_script_replace, quoting the \
 passage exactly as it appears -- re-sending a whole file to alter a few \
@@ -106,6 +112,12 @@ class Proposal:
     # from the turn-start snapshot.
     anchor: str | None = None
     replacement: str | None = None
+    # Set by propose_parameter_change: {name: value}. Carried as the change
+    # itself rather than as finished text, for the same reason as `anchor`
+    # -- it is re-applied to the live buffer on accept, so the Customizer
+    # values the user moved while the turn was running are not rolled back
+    # by a file built from the turn-start snapshot.
+    param_changes: dict | None = None
 
 
 TRIGGER_DELAY = "delay"
@@ -424,6 +436,120 @@ def propose_script_replace(ctx: AIToolContext, id: int, old_text: str,
             kind="edit", summary=summary, new_content=new_content,
             diff_text=_diff(tab.text, new_content, tab.name), tab_id=id,
             filename=tab.name, anchor=old_text, replacement=new_text,
+        ))
+    return _PROPOSED
+
+
+def _customizer():
+    """Imported on use: customizer.py pulls in Qt, and this module is
+    deliberately importable without it."""
+    from belfryscad.window.customizer import describe_parameters, write_back_value
+    return describe_parameters, write_back_value
+
+
+def list_parameters(ctx: AIToolContext, id: int) -> str:
+    """The script's customizer parameters, as the Customizer pane shows
+    them: current value, type, group, and whatever constrains it."""
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    describe, _ = _customizer()
+    try:
+        params = describe(tab.text)
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the parameters could not be read ({e})."
+    if not params:
+        return ("This script has no customizer parameters. They are "
+                "top-level assignments before the first module or function; "
+                "a trailing comment like // [0:100] constrains one.")
+    return json.dumps(params, indent=1)
+
+
+def _check_param_value(spec: dict, value) -> str | None:
+    """Why `value` is not allowed for this parameter, or None."""
+    name, kind = spec["name"], spec["type"]
+    if kind == "boolean":
+        if not isinstance(value, bool):
+            return f"Error: {name} is a boolean; got {value!r}."
+        return None
+    # bool is an int in Python, and silently writing back `true` for a
+    # number would be a puzzling thing to review.
+    if kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"Error: {name} is a number; got {value!r}."
+    elif kind == "string":
+        if not isinstance(value, str):
+            return f"Error: {name} is a string; got {value!r}."
+    elif kind == "vector":
+        if (not isinstance(value, list)
+                or any(isinstance(x, bool) or not isinstance(x, (int, float))
+                       for x in value)):
+            return f"Error: {name} is a vector of numbers; got {value!r}."
+        want = len(spec.get("value") or [])
+        if want and len(value) != want:
+            return (f"Error: {name} has {want} element(s); got "
+                    f"{len(value)}.")
+
+    options = spec.get("options")
+    if options:
+        allowed = [o["value"] for o in options]
+        if value not in allowed:
+            return (f"Error: {name} must be one of {allowed!r}; got "
+                    f"{value!r}.")
+        return None
+
+    rng = spec.get("range")
+    if rng:
+        vals = value if isinstance(value, list) else [value]
+        for v in vals:
+            if not (rng["min"] <= v <= rng["max"]):
+                return (f"Error: {name} is limited to "
+                        f"{rng['min']}..{rng['max']}; got {v!r}.")
+    return None
+
+
+def propose_parameter_change(ctx: AIToolContext, id: int, changes: dict,
+                             summary: str) -> str:
+    """Change customizer parameter values. This edits the script -- the
+    values live in the source as top-level assignments -- so it is reviewed
+    like any other proposal."""
+    if ctx.mode == MODE_PLAN:
+        return _PLAN_REFUSAL
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    if not isinstance(changes, dict) or not changes:
+        return ("Error: changes must be an object of parameter names to new "
+                'values, e.g. {"height": 20, "rounded": true}.')
+
+    describe, write_back = _customizer()
+    try:
+        known = {p["name"]: p for p in describe(tab.text)}
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the parameters could not be read ({e})."
+    if not known:
+        return "Error: this script has no customizer parameters to change."
+
+    for name, value in changes.items():
+        if name not in known:
+            return (f"Error: {name!r} is not a parameter of this script. "
+                    f"It has: {', '.join(sorted(known))}.")
+        problem = _check_param_value(known[name], value)
+        if problem:
+            return problem
+
+    new_content = tab.text
+    for name, value in changes.items():
+        new_content = write_back(new_content, name, value)
+    if new_content == tab.text:
+        return ("Error: those parameters already have those values; nothing "
+                "would change.")
+
+    if ctx.on_proposal:
+        ctx.on_proposal(Proposal(
+            kind="edit", summary=summary, new_content=new_content,
+            diff_text=_diff(tab.text, new_content, tab.name), tab_id=id,
+            filename=tab.name, param_changes=dict(changes),
         ))
     return _PROPOSED
 
@@ -768,6 +894,47 @@ TOOLS: list[dict] = [
             "required": ["id", "old_text", "new_text", "summary"],
         },
         "handler": propose_script_replace,
+    },
+    {
+        "name": "list_parameters",
+        "description": (
+            "The script's Customizer parameters -- the top-level values a "
+            "user tweaks without editing code -- with each one's current "
+            "value, type, group, description, and any range or list of "
+            "options it is limited to. Read this before changing a "
+            "parameter, and prefer changing one over rewriting the code "
+            "when the script already exposes what you need."),
+        "json_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+        "handler": list_parameters,
+    },
+    {
+        "name": "propose_parameter_change",
+        "description": (
+            "Change one or more Customizer parameter values. Pass changes as "
+            "an object of name to new value. These values live in the script "
+            "as top-level assignments, so this edits the script and is "
+            "reviewed as a diff like any other proposal. Values are checked "
+            "against the parameter's type and against any range or option "
+            "list before being proposed."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "changes": {
+                    "type": "object",
+                    "description": ('Parameter names to new values, e.g. '
+                                    '{"height": 20, "rounded": true}.'),
+                },
+                "summary": {"type": "string",
+                            "description": "One line describing the change."},
+            },
+            "required": ["id", "changes", "summary"],
+        },
+        "handler": propose_parameter_change,
     },
     {
         "name": "propose_new_script",

@@ -2530,7 +2530,30 @@ class MainWindow(QMainWindow):
             if tab.editor.isReadOnly():
                 self.log("AI: that script is read-only; change not applied.")
                 return
-            if proposal.anchor is not None:
+            if proposal.param_changes:
+                # Re-applied to the live buffer, not taken as finished text:
+                # the Customizer is the pane the user is most likely to be
+                # moving while the turn runs, and rewriting the file from
+                # the turn-start snapshot would put their values back.
+                from belfryscad.window.customizer import (
+                    describe_parameters, write_back_value)
+                live = tab.editor.toPlainText()
+                have = {p["name"] for p in describe_parameters(live)}
+                missing = [n for n in proposal.param_changes if n not in have]
+                if missing:
+                    self.log(f"AI: {', '.join(missing)} no longer "
+                             f"{'is' if len(missing) == 1 else 'are'} a "
+                             f"parameter of this script; nothing was applied.")
+                    return
+                new_text = live
+                for pname, pvalue in proposal.param_changes.items():
+                    new_text = write_back_value(new_text, pname, pvalue)
+                if new_text == live:
+                    self.log("AI: those parameters already have those "
+                             "values; nothing was applied.")
+                    return
+                tab.editor.replace_span(0, len(live), new_text)
+            elif proposal.anchor is not None:
                 # Re-found in the live buffer rather than trusting the
                 # whole-file content built from the turn-start snapshot: the
                 # user may have typed since, and rewriting only this span

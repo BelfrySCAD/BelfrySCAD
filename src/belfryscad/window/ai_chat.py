@@ -64,6 +64,8 @@ _TOOL_ACTIVITY = {
     "read_open_script": "Reading your script",
     "propose_script_edit": "Preparing an edit",
     "propose_script_replace": "Preparing an edit",
+    "list_parameters": "Reading the parameters",
+    "propose_parameter_change": "Preparing a parameter change",
     "propose_new_script": "Preparing a new script",
     "view_viewport": "Looking at the model",
     "describe_geometry": "Measuring the geometry",

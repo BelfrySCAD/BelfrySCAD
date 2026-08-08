@@ -216,6 +216,38 @@ def gui_checks():
     check("an anchor that became ambiguous is refused too",
           tab.editor.toPlainText() == "b = 2;\nb = 2;\n", tab.editor.toPlainText())
 
+    # A parameter change is re-applied to the live buffer for the same
+    # reason an anchored edit is -- and more urgently, since the Customizer
+    # is the pane the user is most likely to be moving mid-turn.
+    tab.editor.setPlainText("height = 20;  // [10:100]\nwall = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;  // [10:100]\nwall = 2;\n",
+        param_changes={"height": 45}))
+    check("a parameter change is applied",
+          "height = 45;  // [10:100]" in tab.editor.toPlainText(),
+          tab.editor.toPlainText())
+
+    # The user moves a different slider while the turn is in flight.
+    tab.editor.setPlainText("height = 20;  // [10:100]\nwall = 7;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;  // [10:100]\nwall = 2;\n",
+        param_changes={"height": 45}))
+    text = tab.editor.toPlainText()
+    check("it changes the parameter it meant to", "height = 45" in text, text)
+    check("and leaves the value the user changed meanwhile",
+          "wall = 7;" in text, text)
+
+    # A parameter that has since been deleted must not be silently ignored.
+    tab.editor.setPlainText("wall = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;\n", param_changes={"height": 45}))
+    check("a parameter that no longer exists applies nothing",
+          tab.editor.toPlainText() == "wall = 2;\n", tab.editor.toPlainText())
+    check("and says so", "no longer" in w._console_tail(), w._console_tail()[-160:])
+
     # Whole-file proposals must still work exactly as before.
     tab.editor.setPlainText("old\n")
     w._on_ai_proposal_accepted(Proposal(
@@ -466,6 +498,128 @@ def main():
     check("an empty new_text deletes the passage",
           seen and seen[0].new_content == "a = 1;\nmodule m() { cube(a); }\n",
           repr(seen[0].new_content) if seen else r)
+
+    # --- customizer parameters ---------------------------------------------
+    PSRC = (
+        "/* [Size] */\n"
+        "// Overall height\n"
+        "height = 20;  // [10:100]\n"
+        "// Wall thickness\n"
+        "wall = 2;\n"
+        "/* [Style] */\n"
+        "finish = \"matte\";  // [matte:Matte, gloss:Glossy]\n"
+        "rounded = true;\n"
+        "size = [1, 2, 3];  // [0:10]\n"
+        "module body() { cube(height); }\n"
+    )
+    ptabs = [T.TabSnapshot(id=8, name="p.scad", path=None, modified=False,
+                           text=PSRC)]
+    pseen = []
+
+    def pctx(mode=T.MODE_MANUAL):
+        return T.AIToolContext(library_dir=Path("."), open_tabs=ptabs,
+                               mode=mode, on_proposal=pseen.append)
+
+    import json as _json
+    listed = T.list_parameters(pctx(), 8)
+    params = _json.loads(listed)
+    by = {p["name"]: p for p in params}
+    check("list_parameters finds the parameters",
+          set(by) == {"height", "wall", "finish", "rounded", "size"}, listed)
+    check("and not the module", "body" not in by, str(list(by)))
+    check("it reports current values",
+          by["height"]["value"] == 20 and by["rounded"]["value"] is True, listed)
+    check("types are distinguished, and a bool is not a number",
+          by["rounded"]["type"] == "boolean" and by["height"]["type"] == "number"
+          and by["finish"]["type"] == "string" and by["size"]["type"] == "vector",
+          str({k: v["type"] for k, v in by.items()}))
+    check("a slider's range is carried",
+          by["height"]["range"] == {"min": 10.0, "max": 100.0, "step": 1},
+          str(by["height"].get("range")))
+    check("a dropdown's options and labels are carried",
+          [o["value"] for o in by["finish"]["options"]] == ["matte", "gloss"]
+          and by["finish"]["options"][1]["label"] == "Glossy",
+          str(by["finish"].get("options")))
+    check("groups come from the tab headers",
+          by["height"]["group"] == "Size" and by["finish"]["group"] == "Style",
+          str({k: v["group"] for k, v in by.items()}))
+    check("descriptions come from the preceding comment",
+          by["height"]["description"] == "Overall height",
+          repr(by["height"]["description"]))
+    check("an unconstrained parameter simply has no range",
+          "range" not in by["wall"] and "options" not in by["wall"], str(by["wall"]))
+
+    check("a script with no parameters says so",
+          "no customizer parameters" in T.list_parameters(
+              T.AIToolContext(library_dir=Path("."), open_tabs=[
+                  T.TabSnapshot(id=9, name="n.scad", path=None,
+                                modified=False, text="cube(1);\n")]), 9))
+    check("an unknown id is refused", T.list_parameters(pctx(), 99).startswith("Error:"))
+
+    # Changing one
+    pseen.clear()
+    r = T.propose_parameter_change(pctx(), 8, {"height": 45}, "taller")
+    check("propose_parameter_change proposes it", len(pseen) == 1, r)
+    if pseen:
+        p = pseen[0]
+        check("the new value is written into the source",
+              "height = 45;  // [10:100]" in p.new_content, p.new_content)
+        check("the constraint comment survives",
+              "[10:100]" in p.new_content, p.new_content)
+        check("and the change is carried for applying",
+              p.param_changes == {"height": 45}, str(p.param_changes))
+        changed = [l for l in p.diff_text.splitlines()
+                   if l[:1] in "+-" and not l.startswith(("---", "+++"))]
+        check("the diff changes only that line",
+              changed == ["-height = 20;  // [10:100]",
+                          "+height = 45;  // [10:100]"], str(changed))
+
+    pseen.clear()
+    r = T.propose_parameter_change(pctx(), 8, {"height": 30, "rounded": False},
+                                   "two at once")
+    check("several parameters can change at once",
+          pseen and "height = 30" in pseen[0].new_content
+          and "rounded = false" in pseen[0].new_content,
+          pseen[0].new_content if pseen else r)
+
+    # Validation -- each of these would otherwise write nonsense into the
+    # user's script for them to review.
+    pseen.clear()
+    for label, changes, expect in [
+        ("a value outside a slider's range", {"height": 500}, "10.0..100.0"),
+        ("a value below it", {"height": 1}, "10.0..100.0"),
+        ("a string for a number", {"height": "tall"}, "is a number"),
+        ("a bool for a number", {"height": True}, "is a number"),
+        ("a number for a boolean", {"rounded": 1}, "is a boolean"),
+        ("an option that isn't offered", {"finish": "satin"}, "must be one of"),
+        ("a number for a string", {"finish": 3}, "is a string"),
+        ("a vector of the wrong length", {"size": [1, 2]}, "3 element"),
+        ("a vector element out of range", {"size": [1, 2, 99]}, "0.0..10.0"),
+        ("a non-vector for a vector", {"size": 5}, "vector of numbers"),
+        ("an unknown parameter", {"nope": 1}, "not a parameter"),
+    ]:
+        out = T.propose_parameter_change(pctx(), 8, changes, "s")
+        check(label + " is refused",
+              out.startswith("Error:") and expect in out, out)
+    check("and none of those proposed anything", pseen == [], str(pseen))
+
+    check("a change that changes nothing is refused",
+          T.propose_parameter_change(pctx(), 8, {"height": 20},
+                                     "s").startswith("Error:"))
+    check("an empty change set is refused",
+          T.propose_parameter_change(pctx(), 8, {}, "s").startswith("Error:"))
+    check("a non-object change set is refused",
+          T.propose_parameter_change(pctx(), 8, "height=5",
+                                     "s").startswith("Error:"))
+    check("Plan mode refuses parameter changes too",
+          T.propose_parameter_change(pctx(T.MODE_PLAN), 8, {"height": 45},
+                                     "s").startswith("Error:"))
+    check("a script with no parameters is refused",
+          T.propose_parameter_change(
+              T.AIToolContext(library_dir=Path("."), open_tabs=[
+                  T.TabSnapshot(id=9, name="n.scad", path=None, modified=False,
+                                text="cube(1);\n")]), 9, {"x": 1},
+              "s").startswith("Error:"))
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]
