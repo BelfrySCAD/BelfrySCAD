@@ -256,6 +256,35 @@ def gui_checks():
     check("an unanchored proposal still replaces the whole file",
           tab.editor.toPlainText() == "brand new\n", tab.editor.toPlainText())
 
+    # The three newer bridges, driven from a worker like the tools do.
+    def from_worker(fn):
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=fn()))
+        th.start()
+        while th.is_alive():
+            app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+        th.join()
+        return box.get("r")
+
+    tab.editor.setPlainText("cube(42);")
+    live = from_worker(w._live_tabs_threadsafe)
+    check("the live-tabs bridge answers a worker thread",
+          isinstance(live, list) and live, str(live)[:100])
+    check("and returns the text as it is right now",
+          any("cube(42);" in t.text for t in live or []),
+          str([t.text[:20] for t in live or []]))
+    check("every tab carries the id the tools address it by",
+          all(isinstance(t.id, int) for t in live or []))
+
+    dirs = from_worker(w._project_dirs_threadsafe)
+    check("the project-dirs bridge answers, empty for unsaved tabs",
+          isinstance(dirs, list), str(dirs))
+
+    check("the profile report is empty before any profiled render",
+          w._profile_report() == "", w._profile_report())
+    check("and the bridge agrees",
+          from_worker(w._profile_report_threadsafe) == "")
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -366,8 +395,8 @@ def main():
     check("read_open_script says an empty script is empty",
           T.read_open_script(ectx, 3).strip() != "", repr(T.read_open_script(ectx, 3)))
 
-    # --- search_library --------------------------------------------------
     import tempfile
+    # --- search_library --------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         lib = Path(td)
         (lib / "sub").mkdir()
@@ -620,6 +649,148 @@ def main():
                   T.TabSnapshot(id=9, name="n.scad", path=None, modified=False,
                                 text="cube(1);\n")]), 9, {"x": 1},
               "s").startswith("Error:"))
+
+    # --- live tabs win over the turn-start snapshot -----------------------
+    stale = [T.TabSnapshot(id=1, name="a.scad", path=None, modified=False,
+                           text="old text")]
+    fresh = [T.TabSnapshot(id=1, name="a.scad", path=None, modified=True,
+                           text="new text")]
+    lctx = T.AIToolContext(library_dir=Path("."), open_tabs=stale,
+                           live_tabs=lambda: fresh)
+    check("read_open_script reads the live buffer",
+          T.read_open_script(lctx, 1) == "new text", T.read_open_script(lctx, 1))
+    check("list_open_scripts reports live state too",
+          '"modified": true' in T.list_open_scripts(lctx).lower(),
+          T.list_open_scripts(lctx))
+    check("without a live hook the snapshot is used",
+          T.read_open_script(T.AIToolContext(library_dir=Path("."),
+                                             open_tabs=stale), 1) == "old text")
+
+    def blow():
+        raise RuntimeError("gone")
+    check("a live-tab read that throws falls back rather than failing",
+          T.read_open_script(T.AIToolContext(
+              library_dir=Path("."), open_tabs=stale,
+              live_tabs=blow), 1) == "old text")
+
+    # Everything that edits goes through _find_tab, so an anchored edit must
+    # be matched against the live text, not the snapshot.
+    aseen = []
+    actx = T.AIToolContext(library_dir=Path("."), open_tabs=stale,
+                           live_tabs=lambda: fresh, on_proposal=aseen.append)
+    r = T.propose_script_replace(actx, 1, "old text", "x", "s")
+    check("an anchor from the stale snapshot no longer matches",
+          r.startswith("Error:") and aseen == [], r)
+    r = T.propose_script_replace(actx, 1, "new text", "newer", "s")
+    check("and one from the live text does",
+          aseen and aseen[0].new_content == "newer", r)
+
+    # --- project files -----------------------------------------------------
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "proj"
+        (proj / "parts").mkdir(parents=True)
+        (proj / "main.scad").write_text("include <common.scad>\n")
+        (proj / "common.scad").write_text("wall = 2;\n")
+        (proj / "parts" / "bracket.scad").write_text("module bracket() {}\n")
+        (proj / "notes.txt").write_text("secret\n")
+        (Path(td) / "outside.scad").write_text("nope\n")
+
+        ptab = [T.TabSnapshot(id=1, name="main.scad",
+                              path=str(proj / "main.scad"),
+                              modified=False, text="include <common.scad>\n")]
+        c = T.AIToolContext(library_dir=Path(td) / "libs", open_tabs=ptab)
+
+        out = T.list_project_files(c)
+        check("list_project_files finds the siblings",
+              "common.scad" in out and "parts/bracket.scad" in out, out)
+        check("and not non-.scad files", "notes.txt" not in out, out)
+        check("and nothing above the project", "outside.scad" not in out, out)
+
+        check("read_project_file reads a sibling",
+              T.read_project_file(c, "common.scad") == "wall = 2;\n",
+              T.read_project_file(c, "common.scad"))
+        check("and one in a subdirectory",
+              "module bracket" in T.read_project_file(c, "parts/bracket.scad"))
+
+        # The guards. A traversal that ends in .scad passes the extension
+        # check, so containment has to be what stops it.
+        check("traversal out of the project is refused",
+              T.read_project_file(c, "../outside.scad").startswith("Error:"),
+              T.read_project_file(c, "../outside.scad"))
+        check("an absolute path outside is refused",
+              T.read_project_file(
+                  c, str(Path(td) / "outside.scad")).startswith("Error:"))
+        check("a non-.scad file is refused",
+              T.read_project_file(c, "notes.txt").startswith("Error:"))
+        check("a missing file is reported",
+              "no such project file" in T.read_project_file(c, "nope.scad"))
+
+        # An unsaved-only session has no project directory at all.
+        none_ctx = T.AIToolContext(library_dir=Path(td), open_tabs=[
+            T.TabSnapshot(id=1, name="Untitled", path=None, modified=True,
+                          text="cube(1);")])
+        check("with no saved script, there is no project to read",
+              T.list_project_files(none_ctx).startswith("Error:"),
+              T.list_project_files(none_ctx))
+        check("and reading says the same",
+              T.read_project_file(none_ctx, "x.scad").startswith("Error:"))
+
+        # --- evaluate_expression ------------------------------------------
+        # Driven against a script that includes a sibling, so this also
+        # proves the temp file lands where relative includes resolve.
+        (proj / "calc.scad").write_text(
+            "include <common.scad>\n"
+            "h = 12;\n"
+            "function double(x) = x * 2;\n"
+            "pts = [for (i=[0:4]) [i, i*i]];\n")
+        etab = [T.TabSnapshot(id=2, name="calc.scad",
+                              path=str(proj / "calc.scad"), modified=False,
+                              text=(proj / "calc.scad").read_text())]
+        e = T.AIToolContext(library_dir=Path(td), open_tabs=etab)
+
+        check("a variable evaluates", T.evaluate_expression(e, 2, "h") == "12",
+              T.evaluate_expression(e, 2, "h"))
+        check("a function call evaluates",
+              T.evaluate_expression(e, 2, "double(h)") == "24")
+        check("a builtin over a comprehension evaluates",
+              T.evaluate_expression(e, 2, "len(pts)") == "5")
+        check("a list comes back whole",
+              T.evaluate_expression(e, 2, "pts").startswith("[[0, 0]"),
+              T.evaluate_expression(e, 2, "pts"))
+        check("a value from an included sibling is in scope",
+              T.evaluate_expression(e, 2, "wall") == "2",
+              T.evaluate_expression(e, 2, "wall"))
+        check("an unset name is undef rather than an error",
+              T.evaluate_expression(e, 2, "nosuchvar") == "undef")
+        check("a trailing semicolon is tolerated",
+              T.evaluate_expression(e, 2, "h;") == "12")
+        check("a syntax error is reported, not raised",
+              T.evaluate_expression(e, 2, "h +").startswith("Error:"),
+              T.evaluate_expression(e, 2, "h +"))
+        check("an empty expression is refused",
+              T.evaluate_expression(e, 2, "  ").startswith("Error:"))
+        check("an unknown tab id is refused",
+              T.evaluate_expression(e, 99, "h").startswith("Error:"))
+        check("evaluating leaves no temp files behind",
+              sorted(p.name for p in proj.glob("*.scad"))
+              == ["calc.scad", "common.scad", "main.scad"],
+              str(sorted(p.name for p in proj.glob("*.scad"))))
+
+    # --- read_profile -------------------------------------------------------
+    pr = T.AIToolContext(library_dir=Path("."),
+                         profile_report=lambda: "Profiled render: 12.0 ms")
+    check("read_profile returns the report", "12.0 ms" in T.read_profile(pr))
+    check("with nothing profiled, it says how to get one",
+          "Render with Profiling" in T.read_profile(
+              T.AIToolContext(library_dir=Path("."), profile_report=lambda: "")))
+    check("and an unwired profiler says so",
+          T.read_profile(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
+    def bang():
+        raise RuntimeError("nope")
+    check("a profile read that throws is reported, not raised",
+          T.read_profile(T.AIToolContext(library_dir=Path("."),
+                                         profile_report=bang)).startswith("Error:"))
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]

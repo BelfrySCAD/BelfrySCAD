@@ -2058,20 +2058,7 @@ class MainWindow(QMainWindow):
         from belfryscad.window.library_manager import _library_dir
         from belfryscad.window.ai_tools import AIToolContext, TabSnapshot
 
-        tabs = []
-        for i in range(self._tabs.count()):
-            tab = self._tabs.widget(i)
-            if tab is None:
-                continue
-            if tab.file_path and not tab.file_path.lower().endswith(".scad"):
-                continue
-            tabs.append(TabSnapshot(
-                id=tab.chat_id,
-                name=tab.display_name(),
-                path=tab.file_path,
-                modified=tab.is_modified,
-                text=tab.editor.toPlainText(),
-            ))
+        tabs = self._tab_snapshots()
         png, note = self._capture_viewport_png()
         ctx = AIToolContext(library_dir=_library_dir(), open_tabs=tabs,
                             viewport_png=png, viewport_note=note,
@@ -2081,7 +2068,10 @@ class MainWindow(QMainWindow):
                             ask_user=self._ask_user_threadsafe,
                             live_state=self._live_state_threadsafe,
                             request_render=self._render_threadsafe,
-                            check_geometry=self._check_geometry_threadsafe)
+                            check_geometry=self._check_geometry_threadsafe,
+                            live_tabs=self._live_tabs_threadsafe,
+                            project_dirs=self._project_dirs_threadsafe,
+                            profile_report=self._profile_report_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2273,7 +2263,47 @@ class MainWindow(QMainWindow):
         rendered yet"."""
         return any(t.isRunning() for _, _, t in self._render_jobs)
 
+    def _tab_snapshots(self) -> list:
+        """Every open .scad tab, as plain data. Read on the GUI thread and
+        handed over as text so tool handlers never touch a live editor from
+        the worker."""
+        from belfryscad.window.ai_tools import TabSnapshot
+        tabs = []
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is None:
+                continue
+            if tab.file_path and not tab.file_path.lower().endswith(".scad"):
+                continue
+            tabs.append(TabSnapshot(
+                id=tab.chat_id,
+                name=tab.display_name(),
+                path=tab.file_path,
+                modified=tab.is_modified,
+                text=tab.editor.toPlainText(),
+            ))
+        return tabs
+
+    def _project_dirs(self) -> list:
+        """Directories holding the user's open scripts. These bound what the
+        project file tools may read: opening a file is what makes its
+        folder legible, so nothing outside one is reachable."""
+        from pathlib import Path as _P
+        seen, out = set(), []
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            path = getattr(tab, "file_path", None) if tab else None
+            if not path:
+                continue
+            d = _P(path).resolve().parent
+            if d not in seen:
+                seen.add(d)
+                out.append(d)
+        return out
+
     def _live_state_threadsafe(self, want_check: bool = False,
+                               want_tabs: bool = False,
+                               want_profile: bool = False,
                                timeout: float = 10) -> dict:
         """Called from the AI worker thread: the geometry summary and
         console as they are now, rather than as they were when the turn
@@ -2283,7 +2313,8 @@ class MainWindow(QMainWindow):
         import threading
         from PySide6.QtCore import QMetaObject
         self._ai_state_request = {"done": threading.Event(), "result": None,
-                                  "check": want_check}
+                                  "check": want_check, "tabs": want_tabs,
+                                  "profile": want_profile}
         QMetaObject.invokeMethod(self, "_service_ai_state_request",
                                  Qt.ConnectionType.QueuedConnection)
         if not self._ai_state_request["done"].wait(timeout):
@@ -2301,11 +2332,74 @@ class MainWindow(QMainWindow):
                    "rendering": self._render_busy()}
             if req.get("check"):
                 res["check"] = self._geometry_check()
+            if req.get("tabs"):
+                res["tabs"] = self._tab_snapshots()
+                res["project_dirs"] = self._project_dirs()
+            if req.get("profile"):
+                res["profile"] = self._profile_report()
             req["result"] = res
         finally:
             # Set even if reading threw, or the worker blocks for the full
             # timeout to learn nothing.
             req["done"].set()
+
+    def _live_tabs_threadsafe(self) -> list:
+        """The open scripts as they are now. The per-turn snapshot goes
+        stale the moment the user types, and a model reasoning about text
+        that no longer exists wastes a turn at best."""
+        return self._live_state_threadsafe(want_tabs=True).get("tabs") or []
+
+    def _project_dirs_threadsafe(self) -> list:
+        return self._live_state_threadsafe(want_tabs=True).get(
+            "project_dirs") or []
+
+    _AI_PROFILE_SITES = 25
+
+    def _profile_report(self) -> str:
+        """The last profiled render as text, for the AI's read_profile.
+
+        The slowest call sites rather than the whole tree: the tree is what
+        the ProfileViewer is for, and a BOSL2 render has thousands of nodes.
+        Self time is what ranks them -- cumulative time would put the
+        top-level call first every time and say nothing.
+        """
+        result = getattr(self, "_last_profile_result", None)
+        if not result:
+            return ""
+        try:
+            total = result.resolve_time or 0.0
+            sites = sorted(result.call_sites,
+                           key=lambda s: s.self_time, reverse=True)
+            pct = (lambda t: 100 * t / total) if total > 0 else (lambda t: 0.0)
+            lines = [
+                f"Profiled render: {total * 1000:.1f} ms total, "
+                f"{len(result.call_sites)} call site(s).",
+                f"The {min(len(sites), self._AI_PROFILE_SITES)} slowest by "
+                f"self time (time in the call itself, not its children):",
+            ]
+            for s in sites[:self._AI_PROFILE_SITES]:
+                where = self._display_profile_origin(s.call_origin)
+                lines.append(
+                    f"  {s.name} ({s.kind}) called {s.call_count}x from "
+                    f"{s.caller_name} at {where}:{s.call_line}:"
+                    f"{s.call_column} -- self {s.self_time * 1000:.1f} ms "
+                    f"({pct(s.self_time):.1f}%), total "
+                    f"{s.cumulative_time * 1000:.1f} ms "
+                    f"({pct(s.cumulative_time):.1f}%)")
+            return "\n".join(lines)
+        except Exception as e:      # noqa: BLE001
+            return f"Error: the profile could not be summarised ({e})."
+
+    def _display_profile_origin(self, origin) -> str:
+        """A profile call site names the temp file the evaluator parsed;
+        show the tab it came from, as the ProfileViewer does."""
+        if not origin:
+            return "?"
+        label = self._path_labels.get(origin)
+        return label or Path(origin).name
+
+    def _profile_report_threadsafe(self) -> str:
+        return self._live_state_threadsafe(want_profile=True).get("profile", "")
 
     def _check_geometry_threadsafe(self) -> str:
         """The AI's check_geometry tool. A generous timeout: this is a full
