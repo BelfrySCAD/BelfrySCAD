@@ -162,6 +162,27 @@ def main():
         check("export of the sponge warns about nothing", look_mesh(mesh) == [],
               str(look_mesh(mesh)))
 
+    # --- slivers are reported, but not as "not manifold" -------------------
+    # A closed cube whose top face is fanned through a point on its diagonal:
+    # manifold, with one zero-area triangle. CSG emits these routinely.
+    sliver = SimpleNamespace(
+        vert_properties=np.asarray(
+            [0, 0, 0,  1, 0, 0,  1, 1, 0,  0, 1, 0,
+             0, 0, 1,  1, 0, 1,  1, 1, 1,  0, 1, 1,
+             0.5, 0.5, 1], dtype=np.float32).reshape(-1, 3),
+        tri_verts=np.asarray(
+            [0, 2, 1,  0, 3, 2,
+             4, 5, 8,  5, 6, 8,  4, 8, 6,  4, 6, 7,
+             0, 1, 5,  0, 5, 4,  1, 2, 6,  1, 6, 5,
+             2, 3, 7,  2, 7, 6,  3, 0, 4,  3, 4, 7], dtype=np.uint32).reshape(-1, 3))
+    msgs = look_mesh(sliver)
+    check("a mesh with a sliver is still reported on", len(msgs) == 1, str(msgs))
+    if msgs:
+        check("but not called non-manifold, because it is one",
+              "not a closed manifold" not in msgs[0], msgs[0])
+        check("and the reason given is the zero-area triangle",
+              "zero-area triangle" in msgs[0] and " 1 " in msgs[0], msgs[0])
+
     # A check that raises must never stop a save -- the file matters more
     # than the diagnosis.
     class _Broken:
