@@ -44,6 +44,9 @@ def gui_checks():
     # QMessageBox.exec() spins its own nested event loop, so a prompt here
     # would hang the script rather than fail it.
     w.skip_unsaved_prompts = True
+    # Or closing this window writes its scratch tabs, opened debugger
+    # dock and raised AI dock over the user's real saved layout.
+    w.persist_settings = False
     # Shown, or the viewport never gets a GL context and _on_render_done
     # dies partway through -- leaving no geometry and no "Rendered
     # successfully" line, which reads exactly like the bug being tested for.
@@ -342,6 +345,76 @@ def gui_checks():
     check("no report window was opened", app.activeModalWidget() is None)
     check("but the console says where to find it",
           "Show Profile Report" in w._console_tail(), w._console_tail()[-200:])
+
+    # A real debug session, driven through the same bridge the tools use.
+    # The file must live on a canonical path: on macOS tempfile hands back
+    # /var/... while resolve() gives /private/var/..., and breakpoints are
+    # matched by resolved path, so a symlinked temp dir makes them silently
+    # never fire.
+    import tempfile as _tf, os as _os
+    dbg_dir = Path(_os.path.realpath(_tf.mkdtemp()))
+    dbg_file = dbg_dir / "dbg.scad"
+    dbg_file.write_text("h = 10;\nw = 4;\nmodule post(n) {\n"
+                        "    d = n * 2;\n    cube([w, w, d]);\n}\npost(h);\n")
+    w.open_file_by_path(str(dbg_file))
+    pump(2.0)
+    dtab = w._current_tab()
+    check("the debug script opened", dtab.file_path == str(dbg_file),
+          str(dtab.file_path))
+
+    def dbg_call(action, arg=None):
+        box = {}
+        th = threading.Thread(
+            target=lambda: box.update(r=w._debug_threadsafe(action, arg)))
+        th.start()
+        while th.is_alive():
+            app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+        th.join()
+        return box.get("r") or {}
+
+    st = dbg_call("start", {"id": dtab.chat_id, "breakpoints": [5]})
+    check("a debug session starts and stops at the first line",
+          st.get("status") == "paused" and st.get("line") == 1, str(st)[:200])
+    check("naming the real file, not the temp one it parsed",
+          st.get("file") == "dbg.scad", str(st.get("file")))
+    check("the breakpoint appears in the editor gutter for the user to see",
+          4 in dtab.editor._breakpoints, str(dtab.editor._breakpoints))
+
+    check("debug_state reports without moving",
+          dbg_call("state").get("line") == 1)
+
+    st = dbg_call("resume", "over")
+    check("stepping over advances a line", st.get("line") == 2, str(st)[:160])
+
+    st = dbg_call("resume", "continue")
+    check("continuing reaches the breakpoint", st.get("line") == 5, str(st)[:200])
+    frame = (st.get("frames") or [{}])[0].get("variables") or {}
+    check("the frame shows the module's own locals",
+          frame.get("n") == "10.0" and frame.get("d") == "20.0", str(frame)[:200])
+    check("and the caller's variables too", frame.get("w") == "4.0", str(frame)[:200])
+    check("the script's own names come before the $ specials",
+          list(frame)[0] in ("d", "h", "n", "w"), str(list(frame)[:4]))
+    stack = st.get("stack") or []
+    check("the call stack is readable, not repr'd Position objects",
+          stack and "post()" in stack[0] and "object at 0x" not in " ".join(stack),
+          str(stack))
+    check("and names where the call came from", "dbg.scad:7" in stack[0], str(stack))
+
+    from belfryscad.window import ai_tools as T
+    txt = T._format_debug_state(st)
+    check("which formats into something a model can act on",
+          "Paused at dbg.scad:5." in txt and "n = 10.0" in txt, txt[:200])
+
+    check("a second session is refused while one is running",
+          "already running" in (dbg_call(
+              "start", {"id": dtab.chat_id}).get("message") or ""),
+          str(dbg_call("state"))[:120])
+
+    check("stopping ends the session", dbg_call("stop").get("status") == "stopped")
+    check("and afterwards there is nothing to step",
+          dbg_call("resume", "over").get("status") == "idle")
+    check("starting an unknown script is refused",
+          "not open" in (dbg_call("start", {"id": 9999}).get("message") or ""))
 
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
@@ -857,6 +930,83 @@ def main():
     check("a profile read that throws is reported, not raised",
           T.read_profile(T.AIToolContext(library_dir=Path("."),
                                          profile_report=bang)).startswith("Error:"))
+
+    # --- debugger ----------------------------------------------------------
+    seen_cmd = []
+
+    def dbg(reply):
+        return T.AIToolContext(
+            library_dir=Path("."),
+            open_tabs=[T.TabSnapshot(id=1, name="a.scad", path="/x/a.scad",
+                                     modified=False, text="cube(1);")],
+            debug_control=lambda a, arg=None: (seen_cmd.append((a, arg))
+                                               or reply))
+
+    paused = {"status": "paused", "file": "a.scad", "line": 12,
+              "message": "", "stack": ["post() [module], called from a.scad:7",
+                                       "<toplevel>"],
+              "frames": [{"variables": {"n": "10.0", "d": "20.0"},
+                          "truncated": 3}]}
+    seen_cmd.clear()
+    out = T.debug_start(dbg(paused), 1, [12])
+    check("debug_start reports where it stopped", "a.scad:12" in out, out)
+    check("with the call stack", "post() [module]" in out and "<toplevel>" in out, out)
+    check("and the variables", "n = 10.0" in out and "d = 20.0" in out, out)
+    check("saying how many were held back", "3 more not shown" in out, out)
+    check("the command carried the breakpoints",
+          seen_cmd == [("start", {"id": 1, "breakpoints": [12]})], str(seen_cmd))
+
+    seen_cmd.clear()
+    T.debug_resume(dbg(paused), "over")
+    check("debug_resume passes the command through",
+          seen_cmd == [("resume", "over")], str(seen_cmd))
+    check("an unknown command is refused before reaching the session",
+          T.debug_resume(dbg(paused), "sideways").startswith("Error:")
+          and len(seen_cmd) == 1, str(seen_cmd))
+    check("the default command is continue",
+          (seen_cmd.clear() or T.debug_resume(dbg(paused))) and
+          seen_cmd == [("resume", "continue")], str(seen_cmd))
+
+    # Every terminal state has to read as what it is, or the model will
+    # keep stepping a session that has already ended.
+    for state, want in [
+        ({"status": "finished"}, "ran to completion"),
+        ({"status": "idle"}, "No debug session"),
+        ({"status": "stopped"}, "stopped"),
+        ({"status": "error", "message": "boom"}, "Error: boom"),
+        ({"status": "running", "message": "still going."}, "Still running"),
+        ({"status": "error_break", "file": "a.scad", "line": 3,
+          "message": "undefined", "stack": [], "frames": []},
+         "Stopped by an error"),
+    ]:
+        check(f"a {state['status']} session reads correctly",
+              want in T._format_debug_state(state), T._format_debug_state(state))
+
+    check("a bad line number is refused",
+          T.debug_start(dbg(paused), 1, [0]).startswith("Error:"))
+    check("a non-numeric breakpoint is refused",
+          T.debug_start(dbg(paused), 1, ["x"]).startswith("Error:"))
+    check("an unknown script id is refused",
+          T.debug_start(dbg(paused), 99, []).startswith("Error:"))
+    for fn in (lambda c: T.debug_start(c, 1, []), T.debug_resume,
+               T.debug_state, T.debug_stop):
+        check("an unwired debugger says so, rather than crashing",
+              fn(T.AIToolContext(library_dir=Path("."), open_tabs=[
+                  T.TabSnapshot(id=1, name="a", path=None, modified=False,
+                                text="x")])).startswith("Error:"))
+
+    # An unsaved buffer cannot hold breakpoints -- they are collected per
+    # saved path -- so asking for one has to be flagged, not silently ignored.
+    unsaved = T.AIToolContext(
+        library_dir=Path("."),
+        open_tabs=[T.TabSnapshot(id=1, name="Untitled", path=None,
+                                 modified=True, text="cube(1);")],
+        debug_control=lambda a, arg=None: paused)
+    check("breakpoints on an unsaved script are flagged",
+          "never been saved" in T.debug_start(unsaved, 1, [3]),
+          T.debug_start(unsaved, 1, [3]))
+    check("but not mentioned when none were asked for",
+          "never been saved" not in T.debug_start(unsaved, 1, []))
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]

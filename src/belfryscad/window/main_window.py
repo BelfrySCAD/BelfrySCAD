@@ -483,6 +483,15 @@ class MainWindow(QMainWindow):
         # without blocking on the "Save changes?" QMessageBox modal (which
         # can't be driven programmatically the way a real user would).
         self.skip_unsaved_prompts = False
+        # Testing-only escape hatch, like skip_unsaved_prompts above. A
+        # verifier that builds a MainWindow, opens the debugger dock, raises
+        # the AI dock and then closes would otherwise save that transient
+        # arrangement over the user's real layout -- which is exactly how a
+        # stray dock tab ends up in their window. Redirecting QSettings
+        # cannot do this job: on macOS the (organization, application)
+        # constructor ignores setDefaultFormat and resolves to the native
+        # plist regardless.
+        self.persist_settings = True
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -949,6 +958,9 @@ class MainWindow(QMainWindow):
             # modal widget is active, regardless of ApplicationModal vs.
             # WindowModal.
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        view_menu.addSeparator()
+        self._add_action(view_menu, "Reset Panel Layout",
+                         self._reset_panel_layout)
         view_menu.addSeparator()
         self._act_zoom_in = self._add_action(view_menu, "Zoom In", lambda: self._zoom_viewport(1), QKeySequence("Ctrl+]"))
         self._act_zoom_in.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -2076,7 +2088,8 @@ class MainWindow(QMainWindow):
                             check_geometry=self._check_geometry_threadsafe,
                             live_tabs=self._live_tabs_threadsafe,
                             project_dirs=self._project_dirs_threadsafe,
-                            profile_report=self._profile_report_threadsafe)
+                            profile_report=self._profile_report_threadsafe,
+                            debug_control=self._debug_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2428,6 +2441,210 @@ class MainWindow(QMainWindow):
 
     def _profile_report_threadsafe(self) -> str:
         return self._live_state_threadsafe(want_profile=True).get("profile", "")
+
+    # ------------------------------------------------------------------
+    # Debugger, driven by the AI
+    #
+    # The session is stateful and the tool interface is not, so each tool
+    # call issues one command and then blocks until the session next comes
+    # to rest -- a pause, an error, or the end of the run. That is what
+    # makes "step and tell me where I am" a single tool call.
+    # ------------------------------------------------------------------
+    _AI_DEBUG_TIMEOUT = 120
+    _AI_MAX_LOCALS = 40
+    _AI_MAX_VALUE = 200
+
+    def _ai_debug_notify(self, state: dict):
+        """Record where the session has come to rest and wake the waiting
+        tool. Called from the same handlers that update the pane, so the
+        model and the user are told the same thing."""
+        self._ai_debug_state = state
+        ev = getattr(self, "_ai_debug_event", None)
+        if ev is not None:
+            ev.set()
+
+    def _ai_debug_label(self, origin: str) -> str:
+        """A file name the model can act on.
+
+        The debugged tab's own code is parsed from an ephemeral temp file,
+        so its origin is a random tmp name that means nothing to anyone and
+        will not exist once the session ends. Same remap the debugger pane
+        does for its own File column.
+        """
+        import os
+        tab = getattr(self, "_debug_tab", None)
+        parse_path = getattr(tab, "_last_parse_path", None) if tab else None
+        if origin and parse_path:
+            try:
+                if os.path.realpath(origin) == os.path.realpath(parse_path):
+                    return (Path(tab.file_path).name if tab.file_path
+                            else tab.display_name())
+            except OSError:
+                pass
+        return Path(origin).name if origin else ""
+
+    def _ai_frame_state(self, origin: str, line: int, all_frame_locals: list,
+                        call_stack: list, status: str = "paused",
+                        message: str = "") -> dict:
+        """One pause, as plain data."""
+        def clip(v):
+            s = str(v)
+            return s if len(s) <= self._AI_MAX_VALUE else s[:self._AI_MAX_VALUE] + "..."
+
+        def frame_line(entry):
+            # (kind, name, call_pos, decl_pos) -- raw tuples carry
+            # _Position objects that str() renders as memory addresses.
+            kind = entry[0] if entry else ""
+            if kind == "toplevel":
+                return "<toplevel>"
+            name = entry[1] if len(entry) > 1 else "?"
+            call_pos = entry[2] if len(entry) > 2 else None
+            where = ""
+            if call_pos is not None:
+                cl = getattr(call_pos, "line", None)
+                co = self._ai_debug_label(getattr(call_pos, "origin", "") or "")
+                if cl:
+                    where = f", called from {co}:{cl}" if co else f", called from line {cl}"
+            return f"{name}() [{kind}]{where}"
+
+        frames = []
+        for fr in (all_frame_locals or [])[:12]:
+            merged = {**(fr.get("outer_scope") or {}),
+                      **(fr.get("local_scope") or {})}
+            # The script's own names first: a frame carries nine or so $
+            # specials ($fa, $vpt, $parent_modules...) that would otherwise
+            # crowd out what was actually asked about, and the list is
+            # truncated.
+            names = sorted(merged, key=lambda n: (n.startswith("$"), n))
+            names = names[:self._AI_MAX_LOCALS]
+            frames.append({
+                "variables": {n: clip(merged[n]) for n in names},
+                "truncated": max(0, len(merged) - len(names)),
+            })
+        return {
+            "status": status,
+            "file": self._ai_debug_label(origin),
+            "line": line,
+            "message": message,
+            "stack": [frame_line(e) for e in reversed((call_stack or [])[-20:])],
+            "frames": frames,
+        }
+
+    def _debug_threadsafe(self, action: str, arg=None) -> dict:
+        """Called from the AI worker thread. Issues one debugger command on
+        the GUI thread, then waits for the session to come to rest."""
+        import threading
+        from PySide6.QtCore import QMetaObject
+        self._ai_debug_event = threading.Event()
+        self._ai_debug_state = None
+        self._ai_debug_cmd = (action, arg)
+        QMetaObject.invokeMethod(self, "_service_ai_debug_cmd",
+                                 Qt.ConnectionType.QueuedConnection)
+        if action == "state":
+            # Nothing to wait for -- the slot answers immediately.
+            if not self._ai_debug_event.wait(10):
+                return {"status": "error", "message": "the GUI did not respond."}
+            return self._ai_debug_state or {"status": "idle"}
+        if not self._ai_debug_event.wait(self._AI_DEBUG_TIMEOUT):
+            return {"status": "running",
+                    "message": (f"still running after {self._AI_DEBUG_TIMEOUT}s "
+                                f"without reaching a breakpoint.")}
+        return self._ai_debug_state or {"status": "idle"}
+
+    @Slot()
+    def _service_ai_debug_cmd(self):
+        action, arg = getattr(self, "_ai_debug_cmd", (None, None))
+        try:
+            if action == "start":
+                self._ai_debug_do_start(arg or {})
+            elif action == "resume":
+                self._ai_debug_do_resume(arg)
+            elif action == "stop":
+                if self._debug_session and self._debug_session.is_running():
+                    self._on_debug_stop()
+                self._ai_debug_notify({"status": "stopped"})
+            elif action == "state":
+                running = bool(self._debug_session
+                               and self._debug_session.is_running())
+                if not running:
+                    self._ai_debug_notify({"status": "idle"})
+                else:
+                    last = getattr(self, "_ai_debug_last_pause", None)
+                    self._ai_debug_notify(last or {"status": "running"})
+        except Exception as e:      # noqa: BLE001 -- reported, never raised
+            self._ai_debug_notify({"status": "error", "message": str(e)})
+
+    def _ai_debug_do_start(self, spec: dict):
+        tab = self._tab_by_chat_id(spec.get("id"))
+        if tab is None:
+            self._ai_debug_notify({"status": "error",
+                                   "message": "that script is not open."})
+            return
+        if not tab.editor.toPlainText().strip():
+            self._ai_debug_notify({"status": "error",
+                                   "message": "that script is empty."})
+            return
+        if self._debug_session and self._debug_session.is_running():
+            self._ai_debug_notify({
+                "status": "error",
+                "message": ("a debug session is already running -- stop it "
+                            "before starting another.")})
+            return
+
+        # Set as real gutter breakpoints rather than through a private
+        # channel, so the user can see where the model chose to stop.
+        # Added to theirs, not replacing them: removing a breakpoint someone
+        # placed by hand would be a surprising thing for a tool to do.
+        added = []
+        for ln in spec.get("breakpoints") or []:
+            try:
+                block = int(ln) - 1
+            except (TypeError, ValueError):
+                continue
+            if block < 0 or block >= tab.editor.document().blockCount():
+                continue
+            if block not in tab.editor._breakpoints:
+                tab.editor.toggle_breakpoint(block)
+                added.append(block + 1)
+
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.setCurrentIndex(idx)
+        self._ai_debug_started_bps = (tab, added)
+        self._ai_debug_last_pause = None
+        if added:
+            self.log(f"AI: set breakpoint(s) at line {', '.join(map(str, added))}.")
+        # _start_debug does the rest -- live-buffer temp file, the parse,
+        # and duplicating breakpoint keys under the temp path so they still
+        # match. None of that is worth a second implementation.
+        self._start_debug()
+        if not (self._debug_session and self._debug_session.is_running()):
+            self._ai_debug_notify({
+                "status": "error",
+                "message": ("the session did not start -- the script most "
+                            "likely failed to parse; read_console has the "
+                            "error.")})
+
+    _AI_DEBUG_COMMANDS = {"continue": "_on_debug_continue",
+                          "into": "_on_debug_step_into",
+                          "over": "_on_debug_step_over",
+                          "out": "_on_debug_step_out",
+                          "to_child": "_on_debug_step_to_child"}
+
+    def _ai_debug_do_resume(self, command: str):
+        if not (self._debug_session and self._debug_session.is_running()):
+            self._ai_debug_notify({
+                "status": "idle",
+                "message": "no debug session is running."})
+            return
+        handler = self._AI_DEBUG_COMMANDS.get(command)
+        if handler is None:
+            self._ai_debug_notify({
+                "status": "error",
+                "message": (f"unknown command {command!r}; expected one of "
+                            f"{', '.join(sorted(self._AI_DEBUG_COMMANDS))}.")})
+            return
+        getattr(self, handler)()
 
     def _check_geometry_threadsafe(self) -> str:
         """The AI's check_geometry tool. A generous timeout: this is a full
@@ -2996,6 +3213,9 @@ class MainWindow(QMainWindow):
                                 if k in explicit and k in locals_dict})
         self._show_debug_line(origin, line)
         self._set_debug_locals_on_visible(locals_dict)
+        self._ai_debug_last_pause = self._ai_frame_state(
+            origin, line, all_frame_locals, call_stack)
+        self._ai_debug_notify(self._ai_debug_last_pause)
 
     def _on_debug_error_break(self, origin: str, line: int, msg: str, all_frame_locals: list, call_stack: list,
                               partial_bodies=None, partial_error: str | None = None):
@@ -3036,6 +3256,9 @@ class MainWindow(QMainWindow):
         if not tab:
             return
         self._set_debug_busy(False)
+        self._ai_debug_last_pause = None
+        self._ai_debug_notify({"status": "finished",
+                               "message": "the script ran to completion."})
         self.id_to_node = id_to_node
         self._rendered_tab = tab
         self._clear_all_debug_locals()
@@ -3076,6 +3299,8 @@ class MainWindow(QMainWindow):
     def _on_debug_error(self, msg: str):
         error_tab = self._debug_tab
         self._set_debug_busy(False)
+        self._ai_debug_last_pause = None
+        self._ai_debug_notify({"status": "error", "message": msg})
         self._clear_all_debug_locals()
         self._clear_all_execution_lines()
         self._debugger_pane.set_idle()
@@ -3336,16 +3561,17 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
             time.sleep(0.005)
 
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
-        s.setValue("windowGeometry", self.saveGeometry())
-        s.setValue("windowState", self.saveState())
-        s.setValue("layoutVersion", self._LAYOUT_VERSION)
-        s.setValue("perspective", self._act_perspective.isChecked())
-        s.setValue("stereo", self._act_stereo.isChecked())
-        s.setValue("wordWrap", self._act_word_wrap.isChecked())
-        # Flush settings to disk now: the app exits via os._exit() (see
-        # main.py), which skips QSettings' normal sync-on-destruction.
-        s.sync()
+        if self.persist_settings:
+            s = QSettings("BelfrySCAD", "BelfrySCAD")
+            s.setValue("windowGeometry", self.saveGeometry())
+            s.setValue("windowState", self.saveState())
+            s.setValue("layoutVersion", self._LAYOUT_VERSION)
+            s.setValue("perspective", self._act_perspective.isChecked())
+            s.setValue("stereo", self._act_stereo.isChecked())
+            s.setValue("wordWrap", self._act_word_wrap.isChecked())
+            # Flush settings to disk now: the app exits via os._exit() (see
+            # main.py), which skips QSettings' normal sync-on-destruction.
+            s.sync()
         # Release all Manifold geometry before shutdown so nanobind sees clean
         # refcounts. Do NOT call gc.collect() here: forcing a GC pass that
         # collects nanobind-wrapped Manifold/CrossSection objects shortly
@@ -3356,6 +3582,35 @@ class MainWindow(QMainWindow):
         self._bodies = []
         self._viewport.load_geometry([])
         super().closeEvent(event)
+
+    def _reset_panel_layout(self):
+        """Put the docks back where they started.
+
+        There is a saved layout and a _LAYOUT_VERSION that quietly discards
+        it when the version moves on, but nothing the user could reach --
+        so a layout that ended up wrong (a dock torn off, a stray tab bar)
+        could only be fixed by editing preferences by hand.
+        """
+        if QMessageBox.question(
+                self, "Reset Panel Layout",
+                "Put all panels back to their default positions?",
+                QMessageBox.StandardButton.Reset
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Reset
+        ) != QMessageBox.StandardButton.Reset:
+            return
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s.remove("windowState")
+        s.remove("windowGeometry")
+        s.remove("layoutVersion")
+        s.sync()
+        # Applied by restoreState on the next launch: rebuilding the dock
+        # arrangement live would mean re-adding every dock in order, and
+        # getting that subtly wrong is what this action exists to undo.
+        QMessageBox.information(
+            self, "Reset Panel Layout",
+            "Panel layout will be back to its defaults next time "
+            "BelfrySCAD starts.")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

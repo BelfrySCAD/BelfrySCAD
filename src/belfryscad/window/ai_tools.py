@@ -63,6 +63,8 @@ A script often includes .scad files sitting beside it. Those are neither open in
 
 evaluate_expression answers what a value actually is, in the script's own scope -- len(pts), a function's result, whether a variable is what you assumed. It runs the script, so it is not free, but it beats reasoning about a value you could simply look at.
 
+The debugger answers questions a value cannot: which branch ran, how deep the recursion went, what a variable was at the moment something went wrong. debug_start runs to the first stop, debug_resume steps or continues, debug_stop ends it. Always stop the session when finished -- a paused one holds the evaluator. Prefer evaluate_expression when you only want a value; the debugger is for questions about control flow.
+
 read_profile shows where a render spent its time, for questions about why something is slow. Only a render started with profile=true is instrumented, so that pairing -- render(profile=true), then a when="render" follow-up, then read_profile -- is how a speed question gets answered.
 
 Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
@@ -208,6 +210,11 @@ class AIToolContext:
     # nothing has been profiled -- that render is explicitly chosen by the
     # user, so the model cannot cause one.
     profile_report: Callable[[], str] | None = None
+    # Issues one debugger command and blocks until the session next comes
+    # to rest -- a pause, an error, or the end of the run. The session is
+    # stateful and a tool call is not, so "step and tell me where I am" has
+    # to be a single call.
+    debug_control: Callable[[str, object], dict] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -960,6 +967,104 @@ def evaluate_expression(ctx: AIToolContext, id: int, expression: str) -> str:
             + (f" The script's own output was:\n{other}" if other else ""))
 
 
+DEBUG_COMMANDS = ("continue", "into", "over", "out", "to_child")
+
+
+def _format_debug_state(state: dict) -> str:
+    """A pause, as the model should read it."""
+    if not state:
+        return "Error: the debugger did not answer."
+    status = state.get("status", "unknown")
+    msg = state.get("message") or ""
+
+    if status == "idle":
+        return "No debug session is running." + (f" {msg}" if msg else "")
+    if status == "stopped":
+        return "Debug session stopped."
+    if status == "finished":
+        return ("The script ran to completion without stopping again. The "
+                "session has ended; the render is now the debugged run's "
+                "result.")
+    if status == "error":
+        return f"Error: {msg}"
+    if status == "running":
+        return (f"Still running -- {msg} Call debug_stop() to give up, or "
+                f"debug_state() to look again.")
+
+    head = ("Paused" if status == "paused" else "Stopped by an error")
+    where = f"{state.get('file') or '?'}:{state.get('line')}"
+    out = [f"{head} at {where}." + (f" {msg}" if msg else "")]
+
+    stack = state.get("stack") or []
+    if stack:
+        out.append("Call stack (innermost first):")
+        out.extend(f"  {i}: {s}" for i, s in enumerate(stack))
+
+    for n, frame in enumerate(state.get("frames") or []):
+        variables = frame.get("variables") or {}
+        if not variables:
+            continue
+        label = "innermost frame" if n == 0 else f"frame {n}"
+        out.append(f"Variables in the {label}:")
+        out.extend(f"  {k} = {v}" for k, v in variables.items())
+        if frame.get("truncated"):
+            out.append(f"  ... ({frame['truncated']} more not shown)")
+    return "\n".join(out)
+
+
+def debug_start(ctx: AIToolContext, id: int, breakpoints: list | None = None) -> str:
+    """Start debugging a script and run to the first stop."""
+    if ctx.debug_control is None:
+        return "Error: the debugger isn't available in this session."
+    if _find_tab(ctx, id) is None:
+        return f"Error: no open script with id {id}."
+    lines = []
+    for ln in (breakpoints or []):
+        try:
+            n = int(ln)
+        except (TypeError, ValueError):
+            return f"Error: breakpoints must be line numbers; got {ln!r}."
+        if n < 1:
+            return "Error: line numbers start at 1."
+        lines.append(n)
+
+    tab = _find_tab(ctx, id)
+    note = ""
+    if lines and not tab.path:
+        # Breakpoints are collected per saved file; an unsaved buffer has no
+        # path to key them under, so they would silently never fire.
+        note = ("\nNote: this script has never been saved, so breakpoints "
+                "cannot be matched to it. It stopped at the first line "
+                "instead; step from there.")
+    return _format_debug_state(
+        ctx.debug_control("start", {"id": id, "breakpoints": lines})) + note
+
+
+def debug_resume(ctx: AIToolContext, command: str = "continue") -> str:
+    """Let the paused script run on, and report where it stops next."""
+    if ctx.debug_control is None:
+        return "Error: the debugger isn't available in this session."
+    cmd = (command or "continue").strip().lower()
+    if cmd not in DEBUG_COMMANDS:
+        return (f"Error: command must be one of "
+                f"{', '.join(DEBUG_COMMANDS)}; got {command!r}.")
+    return _format_debug_state(ctx.debug_control("resume", cmd))
+
+
+def debug_state(ctx: AIToolContext) -> str:
+    """Where the session is now, without moving it."""
+    if ctx.debug_control is None:
+        return "Error: the debugger isn't available in this session."
+    return _format_debug_state(ctx.debug_control("state", None))
+
+
+def debug_stop(ctx: AIToolContext) -> str:
+    """End the debug session."""
+    if ctx.debug_control is None:
+        return "Error: the debugger isn't available in this session."
+    return _format_debug_state(ctx.debug_control("stop", None))
+
+
 def render(ctx: AIToolContext, id: int | None = None,
            profile: bool = False) -> str:
     """Render a script. Returns as soon as the render starts."""
@@ -1259,6 +1364,65 @@ TOOLS: list[dict] = [
             "rather than routinely."),
         "json_schema": {"type": "object", "properties": {}, "required": []},
         "handler": check_geometry,
+    },
+    {
+        "name": "debug_start",
+        "description": (
+            "Start debugging a script, and run until it first stops. "
+            "Breakpoints are line numbers; they are added to any the user "
+            "has already set and appear in the editor gutter, so the user "
+            "can see where you chose to stop. With no breakpoints it stops "
+            "at the first line. Returns where it stopped, the call stack "
+            "and the variables in each frame. Only one session at a time -- "
+            "call debug_stop when finished, since a paused session holds "
+            "the evaluator."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "breakpoints": {
+                    "type": "array", "items": {"type": "integer"},
+                    "description": "1-based line numbers. Optional.",
+                },
+            },
+            "required": ["id"],
+        },
+        "handler": debug_start,
+    },
+    {
+        "name": "debug_resume",
+        "description": (
+            "Let a paused script run on, and report where it stops next. "
+            "continue runs to the next breakpoint; into steps into a call; "
+            "over steps across one; out runs until the current call "
+            "returns; to_child steps into a child of the current module "
+            "call. Blocks until it stops, so a long stretch between "
+            "breakpoints takes as long as the script does."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string",
+                            "enum": list(DEBUG_COMMANDS),
+                            "description": "Default continue."},
+            },
+            "required": [],
+        },
+        "handler": debug_resume,
+    },
+    {
+        "name": "debug_state",
+        "description": ("Where the debug session is now -- location, call "
+                        "stack and variables -- without moving it."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": debug_state,
+    },
+    {
+        "name": "debug_stop",
+        "description": ("End the debug session. Always do this when "
+                        "finished: a paused session holds the evaluator and "
+                        "blocks ordinary rendering."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": debug_stop,
     },
     {
         "name": "read_profile",

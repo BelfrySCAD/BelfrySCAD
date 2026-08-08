@@ -62,6 +62,10 @@ _TOOL_ACTIVITY = {
     "list_project_files": "Looking through your project",
     "read_project_file": "Reading a project file",
     "read_profile": "Reading the profile",
+    "debug_start": "Starting the debugger",
+    "debug_resume": "Stepping through the script",
+    "debug_state": "Checking the debugger",
+    "debug_stop": "Stopping the debugger",
     "evaluate_expression": "Evaluating an expression",
     "check_geometry": "Checking the geometry",
     "list_open_scripts": "Checking your open scripts",
@@ -455,6 +459,11 @@ class AIChatPane(QWidget):
     has no access to editor tabs); it just surfaces the decision.
     """
 
+    # Set by --ai-echo: called with (kind, text) for each turn event, so a
+    # headless-ish run can watch the conversation on stdout. kind is one of
+    # user / tool / assistant / error / proposal.
+    echo = None
+
     proposal_accepted = Signal(object)   # Proposal
     proposal_rejected = Signal(object)
     # Emitted when the user sends a message; MainWindow answers by building a
@@ -760,6 +769,7 @@ class AIChatPane(QWidget):
         snapshot it just built on the GUI thread."""
         if self._streaming:
             return
+        self._echo("user", user_text)
         self._turn_started_at = time.monotonic()
         preset = preset_for(self._provider.currentData())
         provider = preset.protocol
@@ -964,6 +974,7 @@ class AIChatPane(QWidget):
 
     @Slot(str)
     def _on_tool_started(self, name: str):
+        self._echo("tool", name)
         self._set_status(_TOOL_ACTIVITY.get(name, "Working"))
 
     @Slot()
@@ -1090,6 +1101,10 @@ class AIChatPane(QWidget):
     @Slot(object)
     def _on_proposal(self, proposal: Proposal):
         target = proposal.filename or "script"
+        # Echoed here rather than left to the transcript: a proposal is the
+        # point at which the model actually did something, and a run
+        # watching only stdout would otherwise see it fall silent.
+        self._echo("proposal", f"{proposal.summary or proposal.kind} ({target})")
         if self.mode() in (MODE_ACCEPT, MODE_AUTO):
             # Applied straight away, but still through the editor's normal
             # edit path -- so Undo takes it back like any other change.
@@ -1105,10 +1120,19 @@ class AIChatPane(QWidget):
 
     @Slot(str)
     def _on_error(self, message: str):
+        self._echo("error", message)
         self._say(f"Error: {message}")
 
     @Slot()
+    def _echo(self, kind: str, text: str):
+        if self.echo is not None and text:
+            try:
+                self.echo(kind, text)
+            except Exception:      # noqa: BLE001 -- echoing must never
+                pass               # take the conversation down
+
     def _on_done(self):
+        self._echo("assistant", self._reply_text)
         if self._reply_text:
             self._messages.append(
                 ChatMessage(role="assistant", text=self._reply_text))

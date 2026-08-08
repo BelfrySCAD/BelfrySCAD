@@ -65,6 +65,7 @@ def main():
     def modified_window(skip):
         w = MainWindow()
         w.skip_unsaved_prompts = skip
+        w.persist_settings = False   # don't overwrite the user's layout
         w.show()
         pump(0.4)
         w._new_document()
@@ -96,6 +97,45 @@ def main():
     w.close()
     pump(0.5)
     check("quitting with unsaved changes is silent too", seen == [], str(seen))
+
+    # A verifier that builds a MainWindow must not write the user's real
+    # window layout. Checked by watching the actual settings value.
+    from PySide6.QtCore import QSettings
+    st = QSettings("BelfrySCAD", "BelfrySCAD")
+    before = st.value("windowState")
+
+    guarded = MainWindow()
+    guarded.skip_unsaved_prompts = True
+    guarded.persist_settings = False
+    guarded.show()
+    pump(0.3)
+    guarded.resize(731, 519)      # a layout change worth saving
+    guarded.close()
+    pump(0.3)
+    after = QSettings("BelfrySCAD", "BelfrySCAD").value("windowState")
+    check("closing with persist_settings off leaves the layout alone",
+          after == before, "the saved windowState changed")
+
+    # The negative control: with it on, the same close does write.
+    unguarded = MainWindow()
+    unguarded.skip_unsaved_prompts = True
+    unguarded.persist_settings = True
+    unguarded.show()
+    pump(0.3)
+    unguarded.resize(732, 520)
+    unguarded.close()
+    pump(0.3)
+    wrote = QSettings("BelfrySCAD", "BelfrySCAD").value("windowGeometry")
+    check("and with it on, closing really does save (so the check is live)",
+          wrote is not None)
+    # Put back whatever was there, so running this verifier is not itself
+    # the thing that changes the user's layout.
+    st = QSettings("BelfrySCAD", "BelfrySCAD")
+    if before is not None:
+        st.setValue("windowState", before)
+    else:
+        st.remove("windowState")
+    st.sync()
 
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
     return 1 if failures else 0
