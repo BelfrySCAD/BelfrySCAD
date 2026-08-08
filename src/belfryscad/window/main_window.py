@@ -1474,9 +1474,18 @@ class MainWindow(QMainWindow):
             d = check_mesh(keys.ravel().tolist(), inverse[t].tolist())
         except Exception:      # noqa: BLE001 -- a check must never block a save
             return []
-        if d.get("ok", True):
-            return []
-        return [f"the exported mesh is not a closed manifold solid -- {d['summary']}"]
+        if not d.get("ok", True):
+            return [f"the exported mesh is not a closed manifold solid -- {d['summary']}"]
+        if d.get("degenerate_faces"):
+            # Said separately, and not as "not manifold", because it still
+            # is one: CSG emits zero-area triangles routinely and they break
+            # no topology. They are worth mentioning only because some
+            # slicers discard them and are then left with real holes.
+            n = d["degenerate_faces"]
+            return [f"the exported mesh is a closed manifold solid, but contains {n} "
+                    f"zero-area triangle{'' if n == 1 else 's'}; some slicers drop "
+                    f"these and report holes as a result"]
+        return []
 
     @staticmethod
     def _check_export_bodies(bodies) -> list:
