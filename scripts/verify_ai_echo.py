@@ -111,6 +111,13 @@ def main():
           emit(pane._echo, "user", "x") == "")
 
     # _send_ai_prompt reaches the pane's own send path.
+    #
+    # MainWindow's own slot is disconnected first. send_requested is what
+    # starts a turn, so leaving it connected would make this verifier issue
+    # a real request to whatever provider the user has configured -- and
+    # then exit while that worker thread was still starting, which aborts
+    # in PySide's shutdown. A test must not spend the user's API budget.
+    w._ai_chat_pane.send_requested.disconnect(w._on_ai_send)
     sent = []
     pane.send_requested.connect(sent.append)
     _send_ai_prompt(w, "hello")
@@ -118,7 +125,17 @@ def main():
           sent == ["hello"], str(sent))
     check("and the chat dock is revealed", w._ai_chat_dock.isVisible())
 
+    check("no AI turn was left running", not pane._streaming)
+
+    # Quitting must stop a streaming turn: its worker is a QThread, and
+    # destroying a running one is fatal in Qt. The app normally exits via
+    # os._exit(), which skips PySide's shutdown and hides this -- anything
+    # exiting normally aborts instead.
+    cancelled = []
+    pane.cancel_turn = lambda: cancelled.append(1)
     w.close()
+    check("closing the window cancels any running AI turn",
+          cancelled == [1], str(cancelled))
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
     return 1 if failures else 0
 
