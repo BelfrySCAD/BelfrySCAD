@@ -63,7 +63,7 @@ A script often includes .scad files sitting beside it. Those are neither open in
 
 evaluate_expression answers what a value actually is, in the script's own scope -- len(pts), a function's result, whether a variable is what you assumed. It runs the script, so it is not free, but it beats reasoning about a value you could simply look at.
 
-read_profile shows where a profiled render spent its time, for questions about why something is slow.
+read_profile shows where a render spent its time, for questions about why something is slow. Only a render started with profile=true is instrumented, so that pairing -- render(profile=true), then a when="render" follow-up, then read_profile -- is how a speed question gets answered.
 
 Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
 
@@ -191,7 +191,7 @@ class AIToolContext:
     # Starts a render of the current tab and returns at once. The result is
     # not available until the render finishes -- pair it with
     # schedule_followup(when="render").
-    request_render: Callable[[], bool] | None = None
+    request_render: Callable[[int | None, bool], bool] | None = None
     # Runs the mesh soundness check over the last render, on the GUI thread.
     # Slower than the other reads -- it is a full topology pass, and on the
     # merged mesh a union -- so it is its own call rather than part of the
@@ -891,9 +891,10 @@ def read_profile(ctx: AIToolContext) -> str:
     except Exception as e:      # noqa: BLE001
         return f"Error: the profile could not be read ({e})."
     if not out:
-        return ("Error: nothing has been profiled yet. Ask the user to run "
-                "Design > Render with Profiling; it is a deliberate, "
-                "explicitly-chosen render, so you cannot start one yourself.")
+        return ("Error: nothing has been profiled yet. Call "
+                'render(profile=true) and then schedule_followup(when='
+                '"render"); the user can also run Design > Render with '
+                "Profiling themselves.")
     return out
 
 
@@ -959,19 +960,26 @@ def evaluate_expression(ctx: AIToolContext, id: int, expression: str) -> str:
             + (f" The script's own output was:\n{other}" if other else ""))
 
 
-def render(ctx: AIToolContext, id: int | None = None) -> str:
+def render(ctx: AIToolContext, id: int | None = None,
+           profile: bool = False) -> str:
     """Render a script. Returns as soon as the render starts."""
     if ctx.request_render is None:
         return "Error: rendering isn't available in this session."
     if id is not None and _find_tab(ctx, id) is None:
         return f"Error: no open script with id {id}."
-    if not ctx.request_render(id):
+    if not ctx.request_render(id, bool(profile)):
         return ("Error: there is nothing to render -- no script is open, or "
                 "the one asked for is empty.")
+    tail = ("only then read the result with describe_geometry, read_console "
+            "or view_viewport.")
+    if profile:
+        tail = ("only then read where the time went with read_profile. "
+                "Instrumenting a render makes it slower, so the timings are "
+                "useful for comparing call sites against each other, not as "
+                "absolute figures.")
     return ("Render started. It is not finished yet: call "
             'schedule_followup(when="render") to be prompted once it is, and '
-            "only then read the result with describe_geometry, read_console "
-            "or view_viewport.")
+            + tail)
 
 
 # Tool specs. json_schema is plain JSON Schema, which is what both OpenAI's
@@ -1299,7 +1307,11 @@ TOOLS: list[dict] = [
             "rather than reading straight away. Renders the active tab "
             "unless an id is given; note that rendering a different script "
             "makes it the active one, which is what describe_geometry, "
-            "read_console and view_viewport then describe."),
+            "read_console and view_viewport then describe. Pass profile=true "
+            "to instrument the render so read_profile can then say where the "
+            "time went -- that is the only way to produce a profile, and it "
+            "makes the render itself slower, so ask for it when the question "
+            "is about speed rather than routinely."),
         "json_schema": {
             "type": "object",
             "properties": {
@@ -1307,6 +1319,10 @@ TOOLS: list[dict] = [
                        "description": ("Which open script to render, from "
                                        "list_open_scripts. Defaults to the "
                                        "active tab.")},
+                "profile": {"type": "boolean",
+                            "description": ("Instrument the render for "
+                                            "read_profile. Slower; default "
+                                            "false.")},
             },
             "required": [],
         },

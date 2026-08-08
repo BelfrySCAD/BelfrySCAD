@@ -40,6 +40,10 @@ def gui_checks():
     from PySide6.QtCore import QEventLoop
 
     w = MainWindow()
+    # These tabs are deliberately left modified, and closing one prompts.
+    # QMessageBox.exec() spins its own nested event loop, so a prompt here
+    # would hang the script rather than fail it.
+    w.skip_unsaved_prompts = True
     # Shown, or the viewport never gets a GL context and _on_render_done
     # dies partway through -- leaving no geometry and no "Rendered
     # successfully" line, which reads exactly like the bug being tested for.
@@ -285,6 +289,60 @@ def gui_checks():
     check("and the bridge agrees",
           from_worker(w._profile_report_threadsafe) == "")
 
+    # An ordinary render must NOT produce a profile, or profile=true would
+    # be doing nothing and the report would just be left over.
+    tab.editor.setPlainText(
+        "module ring(n) { for (i=[0:n]) rotate(i*10) translate([8,0,0]) cube(2); }\n"
+        "ring(20);\n")
+    w._render_threadsafe()
+    pump(30, lambda: bool(w._geometry_summary()) and not w._render_busy())
+    check("an uninstrumented render leaves no profile", w._profile_report() == "",
+          w._profile_report()[:120])
+
+    # Now the instrumented one, through the same call the tool makes.
+    check("render_threadsafe accepts profile=True",
+          w._render_threadsafe(profile=True) is True)
+    got = pump(60, lambda: bool(w._profile_report()) and not w._render_busy())
+    check("a profiled render produces a report", got, "no profile appeared")
+    rep = w._profile_report()
+    check("naming the module that was called", "ring" in rep, rep[:200])
+    check("with call counts and self time",
+          "called" in rep and "self " in rep and "ms" in rep, rep[:200])
+    check("and a total for the render", "Profiled render:" in rep, rep[:80])
+    check("the total covers geometry too, not just script time",
+          "building geometry" in rep and "running the script" in rep, rep[:200])
+    check("and says what the percentages are of",
+          "of the" in rep and "script time" in rep, rep[:400])
+    # The advice branch needs geometry to dominate, which a toy model will
+    # not do reliably -- drive it with a stand-in result instead.
+    from types import SimpleNamespace
+    real = w._last_profile_result
+    w._last_profile_result = SimpleNamespace(
+        resolve_time=0.10, generate_time=0.90, total_time=1.00,
+        unattributed_time=0.01,
+        call_sites=[SimpleNamespace(name="slow", kind="module", call_count=3,
+                                    caller_name="<toplevel>", call_origin=None,
+                                    call_line=7, call_column=2,
+                                    self_time=0.09, cumulative_time=0.09)])
+    heavy = w._profile_report()
+    check("when geometry dominates, it says so plainly",
+          "90% ) went" .replace(" ", "") in heavy.replace(" ", "")
+          or "90%) went on geometry" in heavy, heavy[:300])
+    check("and says what actually helps",
+          "fewer/cheaper booleans" in heavy and "not by rewriting" in heavy,
+          heavy[:400])
+    check("a call site with no origin still renders",
+          "slow (module) called 3x" in heavy, heavy[-200:])
+    w._last_profile_result = real
+    check("the bridge returns it too",
+          "Profiled render:" in (from_worker(w._profile_report_threadsafe) or ""))
+
+    # The report window belongs to the user's own menu path; an AI-triggered
+    # profile must not pop one at them mid-conversation.
+    check("no report window was opened", app.activeModalWidget() is None)
+    check("but the console says where to find it",
+          "Show Profile Report" in w._console_tail(), w._console_tail()[-200:])
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -365,9 +423,9 @@ def main():
     tabs = [T.TabSnapshot(id=7, name="a.scad", path=None,
                           modified=False, text="cube(1);")]
     ok = T.AIToolContext(library_dir=Path("."), open_tabs=tabs,
-                         request_render=lambda i=None: called.append(i) or True)
+                         request_render=lambda i=None, pr=False: called.append((i, pr)) or True)
     out = T.render(ok)
-    check("render() starts a render", called == [None], str(called))
+    check("render() starts a render", called == [(None, False)], str(called))
     check("and says the result is not ready yet",
           "not finished" in out and 'schedule_followup(when="render")' in out, out)
 
@@ -375,14 +433,22 @@ def main():
     # happens to be active, and accepting a new script changes that silently.
     called.clear()
     T.render(ok, id=7)
-    check("render(id=) targets that script", called == [7], str(called))
+    check("render(id=) targets that script", called == [(7, False)], str(called))
+    called.clear()
+    out_p = T.render(ok, profile=True)
+    check("render(profile=True) asks for an instrumented render",
+          called == [(None, True)], str(called))
+    check("and points at read_profile rather than the geometry tools",
+          "read_profile" in out_p and "describe_geometry" not in out_p, out_p)
+    check("warning that instrumenting distorts the timings",
+          "slower" in out_p, out_p)
     called.clear()
     bad = T.render(ok, id=99)
     check("render() rejects an unknown id instead of rendering the wrong tab",
           bad.startswith("Error:") and called == [], bad)
 
     nothing = T.AIToolContext(library_dir=Path("."),
-                              request_render=lambda i=None: False)
+                              request_render=lambda i=None, pr=False: False)
     check("render() with no script reports that, rather than claiming success",
           T.render(nothing).startswith("Error:"), T.render(nothing))
     check("render() is unavailable rather than crashing when unwired",

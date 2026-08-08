@@ -1751,7 +1751,12 @@ class MainWindow(QMainWindow):
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
         if profile_result is not None:
-            self._show_profile_report()
+            if getattr(self, "_suppress_profile_report", False):
+                self._suppress_profile_report = False
+                self.log("Profiling data collected — Design > Show Profile "
+                         "Report… to see it in full.")
+            else:
+                self._show_profile_report()
         try:
             self._viewport.load_geometry(bodies)
         except Exception as e:
@@ -2367,16 +2372,39 @@ class MainWindow(QMainWindow):
         if not result:
             return ""
         try:
-            total = result.resolve_time or 0.0
+            # Percentages are of resolve_time, not of the whole render:
+            # self times sum to resolve_time + unattributed_time, so this is
+            # the only denominator they honestly add up against.
+            resolve = result.resolve_time or 0.0
+            generate = getattr(result, "generate_time", 0.0) or 0.0
+            total = getattr(result, "total_time", 0.0) or (resolve + generate)
+            unattributed = getattr(result, "unattributed_time", 0.0) or 0.0
             sites = sorted(result.call_sites,
                            key=lambda s: s.self_time, reverse=True)
-            pct = (lambda t: 100 * t / total) if total > 0 else (lambda t: 0.0)
+            pct = (lambda t: 100 * t / resolve) if resolve > 0 else (lambda t: 0.0)
             lines = [
-                f"Profiled render: {total * 1000:.1f} ms total, "
-                f"{len(result.call_sites)} call site(s).",
-                f"The {min(len(sites), self._AI_PROFILE_SITES)} slowest by "
-                f"self time (time in the call itself, not its children):",
+                f"Profiled render: {total * 1000:.1f} ms total -- "
+                f"{resolve * 1000:.1f} ms running the script, "
+                f"{generate * 1000:.1f} ms building geometry.",
             ]
+            if total > 0 and generate > resolve:
+                # Worth saying plainly: rewriting the script cannot help much
+                # when most of the time is Manifold doing boolean work.
+                lines.append(
+                    f"Most of the time ({100 * generate / total:.0f}%) went on "
+                    f"geometry, not on script evaluation -- that is Manifold "
+                    f"doing CSG, and is reduced by making the model simpler "
+                    f"(fewer/cheaper booleans, lower $fn), not by rewriting "
+                    f"the script's logic.")
+            lines.append(
+                f"{len(result.call_sites)} call site(s). Percentages below are "
+                f"of the {resolve * 1000:.1f} ms script time"
+                + (f"; {100 * unattributed / resolve:.0f}% of that is "
+                   f"top-level code outside any call." if resolve > 0
+                      and unattributed else "."))
+            lines.append(
+                f"The {min(len(sites), self._AI_PROFILE_SITES)} slowest by "
+                f"self time (time in the call itself, not its children):")
             for s in sites[:self._AI_PROFILE_SITES]:
                 where = self._display_profile_origin(s.call_origin)
                 lines.append(
@@ -2474,7 +2502,7 @@ class MainWindow(QMainWindow):
             out.append(f"\nMerged for export: could not be checked ({e}).")
         return "\n".join(out)
 
-    def _render_threadsafe(self, chat_id=None) -> bool:
+    def _render_threadsafe(self, chat_id=None, profile: bool = False) -> bool:
         """The AI's render tool. Queues the render on the GUI thread and
         returns whether there was anything to render -- not whether it
         succeeded, which isn't known until it finishes."""
@@ -2484,6 +2512,7 @@ class MainWindow(QMainWindow):
         if tab is None or not tab.editor.toPlainText().strip():
             return False
         self._ai_render_tab = tab
+        self._ai_render_profile = bool(profile)
         QMetaObject.invokeMethod(self, "_render_for_ai",
                                  Qt.ConnectionType.QueuedConnection)
         return True
@@ -2502,7 +2531,13 @@ class MainWindow(QMainWindow):
             idx = self._tabs.indexOf(tab)
             if idx >= 0:
                 self._tabs.setCurrentIndex(idx)
-        self._render(tab)
+        profile = bool(getattr(self, "_ai_render_profile", False))
+        # The report window is the user's own way of reading a profile; when
+        # the AI asked for one it reads it through read_profile instead, so
+        # popping a window at them unbidden mid-conversation would be noise.
+        # Menu-driven profiling still opens it.
+        self._suppress_profile_report = profile
+        self._render(tab, profile=profile)
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI
