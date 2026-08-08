@@ -40,6 +40,10 @@ def gui_checks():
     from PySide6.QtCore import QEventLoop
 
     w = MainWindow()
+    # These tabs are deliberately left modified, and closing one prompts.
+    # QMessageBox.exec() spins its own nested event loop, so a prompt here
+    # would hang the script rather than fail it.
+    w.skip_unsaved_prompts = True
     # Shown, or the viewport never gets a GL context and _on_render_done
     # dies partway through -- leaving no geometry and no "Rendered
     # successfully" line, which reads exactly like the bug being tested for.
@@ -256,6 +260,89 @@ def gui_checks():
     check("an unanchored proposal still replaces the whole file",
           tab.editor.toPlainText() == "brand new\n", tab.editor.toPlainText())
 
+    # The three newer bridges, driven from a worker like the tools do.
+    def from_worker(fn):
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=fn()))
+        th.start()
+        while th.is_alive():
+            app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+        th.join()
+        return box.get("r")
+
+    tab.editor.setPlainText("cube(42);")
+    live = from_worker(w._live_tabs_threadsafe)
+    check("the live-tabs bridge answers a worker thread",
+          isinstance(live, list) and live, str(live)[:100])
+    check("and returns the text as it is right now",
+          any("cube(42);" in t.text for t in live or []),
+          str([t.text[:20] for t in live or []]))
+    check("every tab carries the id the tools address it by",
+          all(isinstance(t.id, int) for t in live or []))
+
+    dirs = from_worker(w._project_dirs_threadsafe)
+    check("the project-dirs bridge answers, empty for unsaved tabs",
+          isinstance(dirs, list), str(dirs))
+
+    check("the profile report is empty before any profiled render",
+          w._profile_report() == "", w._profile_report())
+    check("and the bridge agrees",
+          from_worker(w._profile_report_threadsafe) == "")
+
+    # An ordinary render must NOT produce a profile, or profile=true would
+    # be doing nothing and the report would just be left over.
+    tab.editor.setPlainText(
+        "module ring(n) { for (i=[0:n]) rotate(i*10) translate([8,0,0]) cube(2); }\n"
+        "ring(20);\n")
+    w._render_threadsafe()
+    pump(30, lambda: bool(w._geometry_summary()) and not w._render_busy())
+    check("an uninstrumented render leaves no profile", w._profile_report() == "",
+          w._profile_report()[:120])
+
+    # Now the instrumented one, through the same call the tool makes.
+    check("render_threadsafe accepts profile=True",
+          w._render_threadsafe(profile=True) is True)
+    got = pump(60, lambda: bool(w._profile_report()) and not w._render_busy())
+    check("a profiled render produces a report", got, "no profile appeared")
+    rep = w._profile_report()
+    check("naming the module that was called", "ring" in rep, rep[:200])
+    check("with call counts and self time",
+          "called" in rep and "self " in rep and "ms" in rep, rep[:200])
+    check("and a total for the render", "Profiled render:" in rep, rep[:80])
+    check("the total covers geometry too, not just script time",
+          "building geometry" in rep and "running the script" in rep, rep[:200])
+    check("and says what the percentages are of",
+          "of the" in rep and "script time" in rep, rep[:400])
+    # The advice branch needs geometry to dominate, which a toy model will
+    # not do reliably -- drive it with a stand-in result instead.
+    from types import SimpleNamespace
+    real = w._last_profile_result
+    w._last_profile_result = SimpleNamespace(
+        resolve_time=0.10, generate_time=0.90, total_time=1.00,
+        unattributed_time=0.01,
+        call_sites=[SimpleNamespace(name="slow", kind="module", call_count=3,
+                                    caller_name="<toplevel>", call_origin=None,
+                                    call_line=7, call_column=2,
+                                    self_time=0.09, cumulative_time=0.09)])
+    heavy = w._profile_report()
+    check("when geometry dominates, it says so plainly",
+          "90% ) went" .replace(" ", "") in heavy.replace(" ", "")
+          or "90%) went on geometry" in heavy, heavy[:300])
+    check("and says what actually helps",
+          "fewer/cheaper booleans" in heavy and "not by rewriting" in heavy,
+          heavy[:400])
+    check("a call site with no origin still renders",
+          "slow (module) called 3x" in heavy, heavy[-200:])
+    w._last_profile_result = real
+    check("the bridge returns it too",
+          "Profiled render:" in (from_worker(w._profile_report_threadsafe) or ""))
+
+    # The report window belongs to the user's own menu path; an AI-triggered
+    # profile must not pop one at them mid-conversation.
+    check("no report window was opened", app.activeModalWidget() is None)
+    check("but the console says where to find it",
+          "Show Profile Report" in w._console_tail(), w._console_tail()[-200:])
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -336,9 +423,9 @@ def main():
     tabs = [T.TabSnapshot(id=7, name="a.scad", path=None,
                           modified=False, text="cube(1);")]
     ok = T.AIToolContext(library_dir=Path("."), open_tabs=tabs,
-                         request_render=lambda i=None: called.append(i) or True)
+                         request_render=lambda i=None, pr=False: called.append((i, pr)) or True)
     out = T.render(ok)
-    check("render() starts a render", called == [None], str(called))
+    check("render() starts a render", called == [(None, False)], str(called))
     check("and says the result is not ready yet",
           "not finished" in out and 'schedule_followup(when="render")' in out, out)
 
@@ -346,14 +433,22 @@ def main():
     # happens to be active, and accepting a new script changes that silently.
     called.clear()
     T.render(ok, id=7)
-    check("render(id=) targets that script", called == [7], str(called))
+    check("render(id=) targets that script", called == [(7, False)], str(called))
+    called.clear()
+    out_p = T.render(ok, profile=True)
+    check("render(profile=True) asks for an instrumented render",
+          called == [(None, True)], str(called))
+    check("and points at read_profile rather than the geometry tools",
+          "read_profile" in out_p and "describe_geometry" not in out_p, out_p)
+    check("warning that instrumenting distorts the timings",
+          "slower" in out_p, out_p)
     called.clear()
     bad = T.render(ok, id=99)
     check("render() rejects an unknown id instead of rendering the wrong tab",
           bad.startswith("Error:") and called == [], bad)
 
     nothing = T.AIToolContext(library_dir=Path("."),
-                              request_render=lambda i=None: False)
+                              request_render=lambda i=None, pr=False: False)
     check("render() with no script reports that, rather than claiming success",
           T.render(nothing).startswith("Error:"), T.render(nothing))
     check("render() is unavailable rather than crashing when unwired",
@@ -366,8 +461,8 @@ def main():
     check("read_open_script says an empty script is empty",
           T.read_open_script(ectx, 3).strip() != "", repr(T.read_open_script(ectx, 3)))
 
-    # --- search_library --------------------------------------------------
     import tempfile
+    # --- search_library --------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         lib = Path(td)
         (lib / "sub").mkdir()
@@ -620,6 +715,148 @@ def main():
                   T.TabSnapshot(id=9, name="n.scad", path=None, modified=False,
                                 text="cube(1);\n")]), 9, {"x": 1},
               "s").startswith("Error:"))
+
+    # --- live tabs win over the turn-start snapshot -----------------------
+    stale = [T.TabSnapshot(id=1, name="a.scad", path=None, modified=False,
+                           text="old text")]
+    fresh = [T.TabSnapshot(id=1, name="a.scad", path=None, modified=True,
+                           text="new text")]
+    lctx = T.AIToolContext(library_dir=Path("."), open_tabs=stale,
+                           live_tabs=lambda: fresh)
+    check("read_open_script reads the live buffer",
+          T.read_open_script(lctx, 1) == "new text", T.read_open_script(lctx, 1))
+    check("list_open_scripts reports live state too",
+          '"modified": true' in T.list_open_scripts(lctx).lower(),
+          T.list_open_scripts(lctx))
+    check("without a live hook the snapshot is used",
+          T.read_open_script(T.AIToolContext(library_dir=Path("."),
+                                             open_tabs=stale), 1) == "old text")
+
+    def blow():
+        raise RuntimeError("gone")
+    check("a live-tab read that throws falls back rather than failing",
+          T.read_open_script(T.AIToolContext(
+              library_dir=Path("."), open_tabs=stale,
+              live_tabs=blow), 1) == "old text")
+
+    # Everything that edits goes through _find_tab, so an anchored edit must
+    # be matched against the live text, not the snapshot.
+    aseen = []
+    actx = T.AIToolContext(library_dir=Path("."), open_tabs=stale,
+                           live_tabs=lambda: fresh, on_proposal=aseen.append)
+    r = T.propose_script_replace(actx, 1, "old text", "x", "s")
+    check("an anchor from the stale snapshot no longer matches",
+          r.startswith("Error:") and aseen == [], r)
+    r = T.propose_script_replace(actx, 1, "new text", "newer", "s")
+    check("and one from the live text does",
+          aseen and aseen[0].new_content == "newer", r)
+
+    # --- project files -----------------------------------------------------
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "proj"
+        (proj / "parts").mkdir(parents=True)
+        (proj / "main.scad").write_text("include <common.scad>\n")
+        (proj / "common.scad").write_text("wall = 2;\n")
+        (proj / "parts" / "bracket.scad").write_text("module bracket() {}\n")
+        (proj / "notes.txt").write_text("secret\n")
+        (Path(td) / "outside.scad").write_text("nope\n")
+
+        ptab = [T.TabSnapshot(id=1, name="main.scad",
+                              path=str(proj / "main.scad"),
+                              modified=False, text="include <common.scad>\n")]
+        c = T.AIToolContext(library_dir=Path(td) / "libs", open_tabs=ptab)
+
+        out = T.list_project_files(c)
+        check("list_project_files finds the siblings",
+              "common.scad" in out and "parts/bracket.scad" in out, out)
+        check("and not non-.scad files", "notes.txt" not in out, out)
+        check("and nothing above the project", "outside.scad" not in out, out)
+
+        check("read_project_file reads a sibling",
+              T.read_project_file(c, "common.scad") == "wall = 2;\n",
+              T.read_project_file(c, "common.scad"))
+        check("and one in a subdirectory",
+              "module bracket" in T.read_project_file(c, "parts/bracket.scad"))
+
+        # The guards. A traversal that ends in .scad passes the extension
+        # check, so containment has to be what stops it.
+        check("traversal out of the project is refused",
+              T.read_project_file(c, "../outside.scad").startswith("Error:"),
+              T.read_project_file(c, "../outside.scad"))
+        check("an absolute path outside is refused",
+              T.read_project_file(
+                  c, str(Path(td) / "outside.scad")).startswith("Error:"))
+        check("a non-.scad file is refused",
+              T.read_project_file(c, "notes.txt").startswith("Error:"))
+        check("a missing file is reported",
+              "no such project file" in T.read_project_file(c, "nope.scad"))
+
+        # An unsaved-only session has no project directory at all.
+        none_ctx = T.AIToolContext(library_dir=Path(td), open_tabs=[
+            T.TabSnapshot(id=1, name="Untitled", path=None, modified=True,
+                          text="cube(1);")])
+        check("with no saved script, there is no project to read",
+              T.list_project_files(none_ctx).startswith("Error:"),
+              T.list_project_files(none_ctx))
+        check("and reading says the same",
+              T.read_project_file(none_ctx, "x.scad").startswith("Error:"))
+
+        # --- evaluate_expression ------------------------------------------
+        # Driven against a script that includes a sibling, so this also
+        # proves the temp file lands where relative includes resolve.
+        (proj / "calc.scad").write_text(
+            "include <common.scad>\n"
+            "h = 12;\n"
+            "function double(x) = x * 2;\n"
+            "pts = [for (i=[0:4]) [i, i*i]];\n")
+        etab = [T.TabSnapshot(id=2, name="calc.scad",
+                              path=str(proj / "calc.scad"), modified=False,
+                              text=(proj / "calc.scad").read_text())]
+        e = T.AIToolContext(library_dir=Path(td), open_tabs=etab)
+
+        check("a variable evaluates", T.evaluate_expression(e, 2, "h") == "12",
+              T.evaluate_expression(e, 2, "h"))
+        check("a function call evaluates",
+              T.evaluate_expression(e, 2, "double(h)") == "24")
+        check("a builtin over a comprehension evaluates",
+              T.evaluate_expression(e, 2, "len(pts)") == "5")
+        check("a list comes back whole",
+              T.evaluate_expression(e, 2, "pts").startswith("[[0, 0]"),
+              T.evaluate_expression(e, 2, "pts"))
+        check("a value from an included sibling is in scope",
+              T.evaluate_expression(e, 2, "wall") == "2",
+              T.evaluate_expression(e, 2, "wall"))
+        check("an unset name is undef rather than an error",
+              T.evaluate_expression(e, 2, "nosuchvar") == "undef")
+        check("a trailing semicolon is tolerated",
+              T.evaluate_expression(e, 2, "h;") == "12")
+        check("a syntax error is reported, not raised",
+              T.evaluate_expression(e, 2, "h +").startswith("Error:"),
+              T.evaluate_expression(e, 2, "h +"))
+        check("an empty expression is refused",
+              T.evaluate_expression(e, 2, "  ").startswith("Error:"))
+        check("an unknown tab id is refused",
+              T.evaluate_expression(e, 99, "h").startswith("Error:"))
+        check("evaluating leaves no temp files behind",
+              sorted(p.name for p in proj.glob("*.scad"))
+              == ["calc.scad", "common.scad", "main.scad"],
+              str(sorted(p.name for p in proj.glob("*.scad"))))
+
+    # --- read_profile -------------------------------------------------------
+    pr = T.AIToolContext(library_dir=Path("."),
+                         profile_report=lambda: "Profiled render: 12.0 ms")
+    check("read_profile returns the report", "12.0 ms" in T.read_profile(pr))
+    check("with nothing profiled, it says how to get one",
+          "Render with Profiling" in T.read_profile(
+              T.AIToolContext(library_dir=Path("."), profile_report=lambda: "")))
+    check("and an unwired profiler says so",
+          T.read_profile(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
+    def bang():
+        raise RuntimeError("nope")
+    check("a profile read that throws is reported, not raised",
+          T.read_profile(T.AIToolContext(library_dir=Path("."),
+                                         profile_report=bang)).startswith("Error:"))
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]

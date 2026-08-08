@@ -43,6 +43,7 @@ def main():
         saved.write_text("module m() { cube(1); }\nm(); m();\n")
 
         mw = MainWindow()
+        mw.skip_unsaved_prompts = True   # a prompt would hang, not fail
         mw.open_file_by_path(str(saved))
         tab = mw._tabs.currentWidget()
         check("the file opened in a tab", tab is not None and tab.file_path == str(saved))

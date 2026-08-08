@@ -1751,7 +1751,12 @@ class MainWindow(QMainWindow):
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
         if profile_result is not None:
-            self._show_profile_report()
+            if getattr(self, "_suppress_profile_report", False):
+                self._suppress_profile_report = False
+                self.log("Profiling data collected — Design > Show Profile "
+                         "Report… to see it in full.")
+            else:
+                self._show_profile_report()
         try:
             self._viewport.load_geometry(bodies)
         except Exception as e:
@@ -2058,20 +2063,7 @@ class MainWindow(QMainWindow):
         from belfryscad.window.library_manager import _library_dir
         from belfryscad.window.ai_tools import AIToolContext, TabSnapshot
 
-        tabs = []
-        for i in range(self._tabs.count()):
-            tab = self._tabs.widget(i)
-            if tab is None:
-                continue
-            if tab.file_path and not tab.file_path.lower().endswith(".scad"):
-                continue
-            tabs.append(TabSnapshot(
-                id=tab.chat_id,
-                name=tab.display_name(),
-                path=tab.file_path,
-                modified=tab.is_modified,
-                text=tab.editor.toPlainText(),
-            ))
+        tabs = self._tab_snapshots()
         png, note = self._capture_viewport_png()
         ctx = AIToolContext(library_dir=_library_dir(), open_tabs=tabs,
                             viewport_png=png, viewport_note=note,
@@ -2081,7 +2073,10 @@ class MainWindow(QMainWindow):
                             ask_user=self._ask_user_threadsafe,
                             live_state=self._live_state_threadsafe,
                             request_render=self._render_threadsafe,
-                            check_geometry=self._check_geometry_threadsafe)
+                            check_geometry=self._check_geometry_threadsafe,
+                            live_tabs=self._live_tabs_threadsafe,
+                            project_dirs=self._project_dirs_threadsafe,
+                            profile_report=self._profile_report_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2273,7 +2268,47 @@ class MainWindow(QMainWindow):
         rendered yet"."""
         return any(t.isRunning() for _, _, t in self._render_jobs)
 
+    def _tab_snapshots(self) -> list:
+        """Every open .scad tab, as plain data. Read on the GUI thread and
+        handed over as text so tool handlers never touch a live editor from
+        the worker."""
+        from belfryscad.window.ai_tools import TabSnapshot
+        tabs = []
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab is None:
+                continue
+            if tab.file_path and not tab.file_path.lower().endswith(".scad"):
+                continue
+            tabs.append(TabSnapshot(
+                id=tab.chat_id,
+                name=tab.display_name(),
+                path=tab.file_path,
+                modified=tab.is_modified,
+                text=tab.editor.toPlainText(),
+            ))
+        return tabs
+
+    def _project_dirs(self) -> list:
+        """Directories holding the user's open scripts. These bound what the
+        project file tools may read: opening a file is what makes its
+        folder legible, so nothing outside one is reachable."""
+        from pathlib import Path as _P
+        seen, out = set(), []
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            path = getattr(tab, "file_path", None) if tab else None
+            if not path:
+                continue
+            d = _P(path).resolve().parent
+            if d not in seen:
+                seen.add(d)
+                out.append(d)
+        return out
+
     def _live_state_threadsafe(self, want_check: bool = False,
+                               want_tabs: bool = False,
+                               want_profile: bool = False,
                                timeout: float = 10) -> dict:
         """Called from the AI worker thread: the geometry summary and
         console as they are now, rather than as they were when the turn
@@ -2283,7 +2318,8 @@ class MainWindow(QMainWindow):
         import threading
         from PySide6.QtCore import QMetaObject
         self._ai_state_request = {"done": threading.Event(), "result": None,
-                                  "check": want_check}
+                                  "check": want_check, "tabs": want_tabs,
+                                  "profile": want_profile}
         QMetaObject.invokeMethod(self, "_service_ai_state_request",
                                  Qt.ConnectionType.QueuedConnection)
         if not self._ai_state_request["done"].wait(timeout):
@@ -2301,11 +2337,97 @@ class MainWindow(QMainWindow):
                    "rendering": self._render_busy()}
             if req.get("check"):
                 res["check"] = self._geometry_check()
+            if req.get("tabs"):
+                res["tabs"] = self._tab_snapshots()
+                res["project_dirs"] = self._project_dirs()
+            if req.get("profile"):
+                res["profile"] = self._profile_report()
             req["result"] = res
         finally:
             # Set even if reading threw, or the worker blocks for the full
             # timeout to learn nothing.
             req["done"].set()
+
+    def _live_tabs_threadsafe(self) -> list:
+        """The open scripts as they are now. The per-turn snapshot goes
+        stale the moment the user types, and a model reasoning about text
+        that no longer exists wastes a turn at best."""
+        return self._live_state_threadsafe(want_tabs=True).get("tabs") or []
+
+    def _project_dirs_threadsafe(self) -> list:
+        return self._live_state_threadsafe(want_tabs=True).get(
+            "project_dirs") or []
+
+    _AI_PROFILE_SITES = 25
+
+    def _profile_report(self) -> str:
+        """The last profiled render as text, for the AI's read_profile.
+
+        The slowest call sites rather than the whole tree: the tree is what
+        the ProfileViewer is for, and a BOSL2 render has thousands of nodes.
+        Self time is what ranks them -- cumulative time would put the
+        top-level call first every time and say nothing.
+        """
+        result = getattr(self, "_last_profile_result", None)
+        if not result:
+            return ""
+        try:
+            # Percentages are of resolve_time, not of the whole render:
+            # self times sum to resolve_time + unattributed_time, so this is
+            # the only denominator they honestly add up against.
+            resolve = result.resolve_time or 0.0
+            generate = getattr(result, "generate_time", 0.0) or 0.0
+            total = getattr(result, "total_time", 0.0) or (resolve + generate)
+            unattributed = getattr(result, "unattributed_time", 0.0) or 0.0
+            sites = sorted(result.call_sites,
+                           key=lambda s: s.self_time, reverse=True)
+            pct = (lambda t: 100 * t / resolve) if resolve > 0 else (lambda t: 0.0)
+            lines = [
+                f"Profiled render: {total * 1000:.1f} ms total -- "
+                f"{resolve * 1000:.1f} ms running the script, "
+                f"{generate * 1000:.1f} ms building geometry.",
+            ]
+            if total > 0 and generate > resolve:
+                # Worth saying plainly: rewriting the script cannot help much
+                # when most of the time is Manifold doing boolean work.
+                lines.append(
+                    f"Most of the time ({100 * generate / total:.0f}%) went on "
+                    f"geometry, not on script evaluation -- that is Manifold "
+                    f"doing CSG, and is reduced by making the model simpler "
+                    f"(fewer/cheaper booleans, lower $fn), not by rewriting "
+                    f"the script's logic.")
+            lines.append(
+                f"{len(result.call_sites)} call site(s). Percentages below are "
+                f"of the {resolve * 1000:.1f} ms script time"
+                + (f"; {100 * unattributed / resolve:.0f}% of that is "
+                   f"top-level code outside any call." if resolve > 0
+                      and unattributed else "."))
+            lines.append(
+                f"The {min(len(sites), self._AI_PROFILE_SITES)} slowest by "
+                f"self time (time in the call itself, not its children):")
+            for s in sites[:self._AI_PROFILE_SITES]:
+                where = self._display_profile_origin(s.call_origin)
+                lines.append(
+                    f"  {s.name} ({s.kind}) called {s.call_count}x from "
+                    f"{s.caller_name} at {where}:{s.call_line}:"
+                    f"{s.call_column} -- self {s.self_time * 1000:.1f} ms "
+                    f"({pct(s.self_time):.1f}%), total "
+                    f"{s.cumulative_time * 1000:.1f} ms "
+                    f"({pct(s.cumulative_time):.1f}%)")
+            return "\n".join(lines)
+        except Exception as e:      # noqa: BLE001
+            return f"Error: the profile could not be summarised ({e})."
+
+    def _display_profile_origin(self, origin) -> str:
+        """A profile call site names the temp file the evaluator parsed;
+        show the tab it came from, as the ProfileViewer does."""
+        if not origin:
+            return "?"
+        label = self._path_labels.get(origin)
+        return label or Path(origin).name
+
+    def _profile_report_threadsafe(self) -> str:
+        return self._live_state_threadsafe(want_profile=True).get("profile", "")
 
     def _check_geometry_threadsafe(self) -> str:
         """The AI's check_geometry tool. A generous timeout: this is a full
@@ -2380,7 +2502,7 @@ class MainWindow(QMainWindow):
             out.append(f"\nMerged for export: could not be checked ({e}).")
         return "\n".join(out)
 
-    def _render_threadsafe(self, chat_id=None) -> bool:
+    def _render_threadsafe(self, chat_id=None, profile: bool = False) -> bool:
         """The AI's render tool. Queues the render on the GUI thread and
         returns whether there was anything to render -- not whether it
         succeeded, which isn't known until it finishes."""
@@ -2390,6 +2512,7 @@ class MainWindow(QMainWindow):
         if tab is None or not tab.editor.toPlainText().strip():
             return False
         self._ai_render_tab = tab
+        self._ai_render_profile = bool(profile)
         QMetaObject.invokeMethod(self, "_render_for_ai",
                                  Qt.ConnectionType.QueuedConnection)
         return True
@@ -2408,7 +2531,13 @@ class MainWindow(QMainWindow):
             idx = self._tabs.indexOf(tab)
             if idx >= 0:
                 self._tabs.setCurrentIndex(idx)
-        self._render(tab)
+        profile = bool(getattr(self, "_ai_render_profile", False))
+        # The report window is the user's own way of reading a profile; when
+        # the AI asked for one it reads it through read_profile instead, so
+        # popping a window at them unbidden mid-conversation would be noise.
+        # Menu-driven profiling still opens it.
+        self._suppress_profile_report = profile
+        self._render(tab, profile=profile)
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI

@@ -59,6 +59,12 @@ type must be declined.
 
 When a render fails or looks wrong, read_console shows the errors, warnings and echo() output it produced -- usually naming the problem and its line number.
 
+A script often includes .scad files sitting beside it. Those are neither open in a tab nor in the libraries -- read them with read_project_file, and list_project_files shows what is there. Follow a script's include/use statements rather than guessing at what they define.
+
+evaluate_expression answers what a value actually is, in the script's own scope -- len(pts), a function's result, whether a variable is what you assumed. It runs the script, so it is not free, but it beats reasoning about a value you could simply look at.
+
+read_profile shows where a render spent its time, for questions about why something is slow. Only a render started with profile=true is instrumented, so that pairing -- render(profile=true), then a when="render" follow-up, then read_profile -- is how a speed question gets answered.
+
 Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
 
 check_geometry answers whether the model is a sound closed solid and whether it would print -- holes, seams where three faces meet an edge, pinched vertices, disagreeing winding. describe_geometry measures; check_geometry judges. It writes no file.
@@ -185,12 +191,23 @@ class AIToolContext:
     # Starts a render of the current tab and returns at once. The result is
     # not available until the render finishes -- pair it with
     # schedule_followup(when="render").
-    request_render: Callable[[], bool] | None = None
+    request_render: Callable[[int | None, bool], bool] | None = None
     # Runs the mesh soundness check over the last render, on the GUI thread.
     # Slower than the other reads -- it is a full topology pass, and on the
     # merged mesh a union -- so it is its own call rather than part of the
     # per-turn snapshot.
     check_geometry: Callable[[], str] | None = None
+    # The open scripts as they are now. open_tabs() prefers this over the
+    # per-turn snapshot above, so a script the user edited mid-turn is read
+    # as it stands rather than as it was when the turn began.
+    live_tabs: Callable[[], "list[TabSnapshot]"] | None = None
+    # Directories of the user's open scripts -- the only places the project
+    # file tools may read. Opening a file is what makes its folder legible.
+    project_dirs: Callable[[], "list[Path]"] | None = None
+    # Where the last profiled render spent its time, as text. Empty when
+    # nothing has been profiled -- that render is explicitly chosen by the
+    # user, so the model cannot cause one.
+    profile_report: Callable[[], str] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -298,16 +315,115 @@ def search_library(ctx: AIToolContext, pattern: str, path: str = "",
 
 
 def list_open_scripts(ctx: AIToolContext) -> str:
-    if not ctx.open_tabs:
+    tabs = open_tabs(ctx)
+    if not tabs:
         return "No scripts are currently open."
     return json.dumps([
         {"id": t.id, "name": t.name, "path": t.path, "modified": t.modified}
-        for t in ctx.open_tabs
+        for t in tabs
     ], indent=2)
 
 
+def _project_roots(ctx: AIToolContext) -> list[Path]:
+    """Directories the project tools may read. Falls back to the folders of
+    open tabs that have a path, so this works without the GUI hook."""
+    if ctx.project_dirs is not None:
+        try:
+            dirs = ctx.project_dirs()
+        except Exception:      # noqa: BLE001
+            dirs = None
+        if dirs:
+            return [Path(d) for d in dirs]
+    seen, out = set(), []
+    for t in ctx.open_tabs:
+        if not t.path:
+            continue
+        d = Path(t.path).resolve().parent
+        if d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out
+
+
+_NO_PROJECT = ("Error: no project directory is available -- that needs at "
+               "least one open script that has been saved to disk. An "
+               "unsaved tab has no folder to read from.")
+
+
+def _resolve_project_path(ctx: AIToolContext, path: str):
+    """(resolved path, error). A path is taken relative to each project
+    root in turn, so the model can pass what an include statement says."""
+    roots = _project_roots(ctx)
+    if not roots:
+        return None, _NO_PROJECT
+    if not _is_scad(path):
+        return None, "Error: only .scad files can be read."
+    for root in roots:
+        full = root / path
+        # Containment is checked after resolving, so "../secrets.scad"
+        # cannot walk out of the project even though it names a .scad file.
+        if is_path_within(root, full) and full.is_file():
+            return full, None
+    listed = ", ".join(str(r) for r in roots)
+    return None, (f"Error: no such project file: {path}. Searched: {listed}. "
+                  f"Use list_project_files to see what is there.")
+
+
+def list_project_files(ctx: AIToolContext) -> str:
+    """The .scad files alongside the user's open scripts."""
+    roots = _project_roots(ctx)
+    if not roots:
+        return _NO_PROJECT
+    out = []
+    for root in roots:
+        try:
+            found = sorted(p for p in root.rglob("*.scad") if p.is_file())
+        except OSError:
+            continue
+        listed = found[:_MAX_LIBRARY_FILES]
+        out.append(f"{root}:")
+        out.extend(f"  {p.relative_to(root)}" for p in listed)
+        if len(found) > len(listed):
+            out.append(f"  ... ({len(found) - len(listed)} more not shown)")
+    if len(out) <= len(roots):
+        return "No .scad files were found alongside the open scripts."
+    return "\n".join(out)
+
+
+def read_project_file(ctx: AIToolContext, path: str) -> str:
+    """Read a .scad file next to one of the open scripts -- the sibling a
+    script includes, which is neither open in a tab nor in the libraries."""
+    full, err = _resolve_project_path(ctx, path)
+    if err:
+        return err
+    try:
+        data = full.read_bytes()
+    except OSError as e:
+        return f"Error: {path} could not be read ({e})."
+    if len(data) > _MAX_FILE_BYTES:
+        return (f"Error: {path} is too large to read "
+                f"({len(data)} bytes, limit {_MAX_FILE_BYTES}).")
+    text = data.decode("utf-8", errors="replace")
+    return text if text.strip() else f"({path} is empty)"
+
+
+def open_tabs(ctx: AIToolContext) -> list[TabSnapshot]:
+    """The open scripts as they are now, falling back to the turn-start
+    snapshot. Everything that reads or edits a script goes through here, so
+    a buffer the user changed mid-turn is seen by all of it at once rather
+    than by whichever tool happened to be written last."""
+    if ctx.live_tabs is not None:
+        try:
+            tabs = ctx.live_tabs()
+        except Exception:      # noqa: BLE001 -- the snapshot still answers
+            tabs = None
+        if tabs:
+            return tabs
+    return ctx.open_tabs
+
+
 def _find_tab(ctx: AIToolContext, id: int) -> TabSnapshot | None:
-    return next((t for t in ctx.open_tabs if t.id == id), None)
+    return next((t for t in open_tabs(ctx) if t.id == id), None)
 
 
 def read_open_script(ctx: AIToolContext, id: int) -> str:
@@ -766,19 +882,104 @@ def check_geometry(ctx: AIToolContext) -> str:
     return out or "Error: the check returned nothing."
 
 
-def render(ctx: AIToolContext, id: int | None = None) -> str:
+def read_profile(ctx: AIToolContext) -> str:
+    """Where the last profiled render spent its time."""
+    if ctx.profile_report is None:
+        return "Error: profiling isn't available in this session."
+    try:
+        out = ctx.profile_report()
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the profile could not be read ({e})."
+    if not out:
+        return ("Error: nothing has been profiled yet. Call "
+                'render(profile=true) and then schedule_followup(when='
+                '"render"); the user can also run Design > Render with '
+                "Profiling themselves.")
+    return out
+
+
+# Evaluating an expression means running the script, so a runaway one has
+# to be stoppable.
+_EVAL_TIMEOUT = 60
+_EVAL_MARK = "__belfryscad_ai_eval__"
+
+
+def evaluate_expression(ctx: AIToolContext, id: int, expression: str) -> str:
+    """Evaluate an OpenSCAD expression in the script's own top-level scope.
+
+    Runs the real evaluator on the script with an echo() appended, so
+    everything the script defines -- variables, functions, included
+    libraries -- is in scope and the semantics are exactly OpenSCAD's,
+    rather than a second implementation that would drift.
+    """
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    expr = (expression or "").strip().rstrip(";").strip()
+    if not expr:
+        return "Error: expression is required."
+
+    import tempfile
+    try:
+        from openscad_cpp_evaluator import Evaluator
+    except ImportError:
+        return "Error: the evaluator isn't available in this session."
+
+    lines: list[str] = []
+    # Written beside the script when it has one, so its relative use/include
+    # statements still resolve -- the same convention _RenderWorker follows.
+    tmp_dir = str(Path(tab.path).parent) if tab.path else None
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".scad", mode="w", delete=False,
+                                         encoding="utf-8", dir=tmp_dir) as f:
+            tmp = Path(f.name)
+            f.write(tab.text)
+            f.write(f"\necho({_EVAL_MARK} = {expr});\n")
+        Evaluator(echo_fn=lines.append).evaluate(str(tmp))
+    except Exception as e:      # noqa: BLE001 -- reported, not raised
+        first = str(e).strip().splitlines()
+        return ("Error: " + (first[0] if first else str(e))
+                + ("\n" + "\n".join(first[1:6]) if len(first) > 1 else ""))
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+    for line in reversed(lines):
+        if _EVAL_MARK in line:
+            _, _, value = line.partition(f"{_EVAL_MARK} = ")
+            return value.strip() or "undef"
+    # The echo never ran: the script returned early, or something above it
+    # failed in a way the evaluator reported without raising.
+    other = "\n".join(lines[-10:])
+    return ("Error: the expression was never reached -- the script did not "
+            "run to the end."
+            + (f" The script's own output was:\n{other}" if other else ""))
+
+
+def render(ctx: AIToolContext, id: int | None = None,
+           profile: bool = False) -> str:
     """Render a script. Returns as soon as the render starts."""
     if ctx.request_render is None:
         return "Error: rendering isn't available in this session."
     if id is not None and _find_tab(ctx, id) is None:
         return f"Error: no open script with id {id}."
-    if not ctx.request_render(id):
+    if not ctx.request_render(id, bool(profile)):
         return ("Error: there is nothing to render -- no script is open, or "
                 "the one asked for is empty.")
+    tail = ("only then read the result with describe_geometry, read_console "
+            "or view_viewport.")
+    if profile:
+        tail = ("only then read where the time went with read_profile. "
+                "Instrumenting a render makes it slower, so the timings are "
+                "useful for comparing call sites against each other, not as "
+                "absolute figures.")
     return ("Render started. It is not finished yet: call "
             'schedule_followup(when="render") to be prompted once it is, and '
-            "only then read the result with describe_geometry, read_console "
-            "or view_viewport.")
+            + tail)
 
 
 # Tool specs. json_schema is plain JSON Schema, which is what both OpenAI's
@@ -828,6 +1029,35 @@ TOOLS: list[dict] = [
             "required": ["pattern"],
         },
         "handler": search_library,
+    },
+    {
+        "name": "list_project_files",
+        "description": (
+            "List the .scad files sitting alongside the user's open scripts. "
+            "These are their own project files -- the siblings a script "
+            "includes -- which are neither open in a tab nor part of the "
+            "installed libraries, and are otherwise unreadable."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": list_project_files,
+    },
+    {
+        "name": "read_project_file",
+        "description": (
+            "Read a .scad file from the folder of one of the open scripts. "
+            "Pass the path as an include statement writes it, relative to "
+            "the script's own folder. Only that folder tree is readable, "
+            "and only .scad files."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string",
+                         "description": ("Relative to an open script's "
+                                         "folder, e.g. common.scad or "
+                                         "parts/bracket.scad.")},
+            },
+            "required": ["path"],
+        },
+        "handler": read_project_file,
     },
     {
         "name": "list_open_scripts",
@@ -1031,6 +1261,41 @@ TOOLS: list[dict] = [
         "handler": check_geometry,
     },
     {
+        "name": "read_profile",
+        "description": (
+            "Where the last profiled render spent its time: the call tree "
+            "and the slowest call sites, with file and line. Use it when the "
+            "question is why a model is slow. Only available after the user "
+            "runs Design > Render with Profiling -- an ordinary render is "
+            "not instrumented, and you cannot start a profiled one."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": read_profile,
+    },
+    {
+        "name": "evaluate_expression",
+        "description": (
+            "Evaluate an OpenSCAD expression in a script's own top-level "
+            "scope and return the value. Everything the script defines is "
+            "in scope -- its variables, its functions, anything it includes "
+            "-- so this answers questions like len(path) or "
+            "bounding_box(pts)[1] without adding an echo() and re-rendering. "
+            "It runs the script, so it costs about what a render costs; "
+            "prefer it over guessing at a value, not over reading the "
+            "source."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "expression": {"type": "string",
+                               "description": ("An OpenSCAD expression, "
+                                               "without the trailing "
+                                               "semicolon.")},
+            },
+            "required": ["id", "expression"],
+        },
+        "handler": evaluate_expression,
+    },
+    {
         "name": "render",
         "description": (
             "Render the current script, so its geometry can then be measured "
@@ -1042,7 +1307,11 @@ TOOLS: list[dict] = [
             "rather than reading straight away. Renders the active tab "
             "unless an id is given; note that rendering a different script "
             "makes it the active one, which is what describe_geometry, "
-            "read_console and view_viewport then describe."),
+            "read_console and view_viewport then describe. Pass profile=true "
+            "to instrument the render so read_profile can then say where the "
+            "time went -- that is the only way to produce a profile, and it "
+            "makes the render itself slower, so ask for it when the question "
+            "is about speed rather than routinely."),
         "json_schema": {
             "type": "object",
             "properties": {
@@ -1050,6 +1319,10 @@ TOOLS: list[dict] = [
                        "description": ("Which open script to render, from "
                                        "list_open_scripts. Defaults to the "
                                        "active tab.")},
+                "profile": {"type": "boolean",
+                            "description": ("Instrument the render for "
+                                            "read_profile. Slower; default "
+                                            "false.")},
             },
             "required": [],
         },
