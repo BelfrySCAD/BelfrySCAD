@@ -3554,6 +3554,15 @@ class MainWindow(QMainWindow):
         # running.
         self._animate_pane.pause()
         self._customizer_render_timer.stop()
+        # Stop any AI turn still streaming. Its worker is a QThread, and
+        # destroying a running one is fatal in Qt -- normally masked here
+        # because main.py exits via os._exit() and so never runs PySide's
+        # shutdown, but anything that exits normally (a test harness, an
+        # embedded run) aborts instead of quitting.
+        try:
+            self._ai_chat_pane.cancel_turn()
+        except Exception:      # noqa: BLE001 -- never block a quit
+            pass
         if self._render_cancel is not None:
             self._render_cancel.set()
         deadline = time.monotonic() + 5.0
