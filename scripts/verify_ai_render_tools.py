@@ -148,6 +148,38 @@ def gui_checks():
           "inf" not in s and "10.000 x 10.000 x 10.000" in s, s)
     check("its area is measured from the triangles", "500.000" in s, s)
 
+    # check_geometry, on the real thing. The open shell is still rendered
+    # here, so it must come back unsound and name the reason.
+    rep = w._geometry_check()
+    check("check_geometry calls the open shell unsound",
+          "NOT a closed manifold solid" in rep and "1 unsound" in rep, rep)
+    check("and names the holes", "boundary edge" in rep, rep)
+    check("and reports what a file would contain",
+          "Merged for export:" in rep, rep)
+    check("flagging that the surface is written as-is",
+          "written as-is" in rep, rep)
+
+    # A sound solid must come back clean, or the tool is just an alarm.
+    w._current_tab().editor.setPlainText("cube(10);")
+    w._render_threadsafe()
+    pump(30, lambda: "volume 1000.000" in w._geometry_summary())
+    rep = w._geometry_check()
+    check("a sound cube checks out clean",
+          "1 part(s) checked, 0 unsound." in rep and "closed manifold solid" in rep, rep)
+    check("and its merged mesh is sound too",
+          "Merged for export: 12 triangles, a closed manifold solid" in rep, rep)
+
+    # The threadsafe wrapper is what the tool actually calls -- and it can
+    # only be exercised from a worker, like the state bridge.
+    got = {}
+    t2 = threading.Thread(target=lambda: got.update(r=w._check_geometry_threadsafe()))
+    t2.start()
+    while t2.is_alive():
+        app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+    t2.join()
+    check("the check bridge answers a worker thread",
+          "0 unsound" in (got.get("r") or ""), str(got.get("r"))[:120])
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -258,11 +290,91 @@ def main():
     check("read_open_script says an empty script is empty",
           T.read_open_script(ectx, 3).strip() != "", repr(T.read_open_script(ectx, 3)))
 
+    # --- search_library --------------------------------------------------
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        lib = Path(td)
+        (lib / "sub").mkdir()
+        (lib / "a.scad").write_text("module cuboid(size) {}\n// cuboid used here\n")
+        (lib / "sub" / "b.scad").write_text("function cuboid_of(x) = x;\n")
+        (lib / "notes.txt").write_text("cuboid should not be found here\n")
+        s = T.AIToolContext(library_dir=lib)
+
+        out = T.search_library(s, r"^\s*module\s+cuboid")
+        check("search_library finds a definition", "a.scad:1:" in out, out)
+        check("and does not return the whole file",
+              "used here" not in out, out)
+
+        out = T.search_library(s, "cuboid")
+        check("it searches subdirectories too",
+              "a.scad:1:" in out and "b.scad:1:" in out.replace("sub/", ""), out)
+        check("and ignores non-.scad files", "notes.txt" not in out, out)
+
+        out = T.search_library(s, "cuboid", path="sub")
+        check("a path narrows the search", "a.scad" not in out and "b.scad" in out, out)
+
+        check("a bad path is refused",
+              T.search_library(s, "x", path="../..").startswith("Error:"),
+              T.search_library(s, "x", path="../.."))
+        check("a non-scad path is refused",
+              T.search_library(s, "x", path="notes.txt").startswith("Error:"))
+        check("a missing path is reported",
+              T.search_library(s, "x", path="nope").startswith("Error:"))
+        check("an invalid regex is an error, not a crash",
+              T.search_library(s, "cuboid(").startswith("Error: invalid"),
+              T.search_library(s, "cuboid("))
+        check("an empty pattern is refused",
+              T.search_library(s, "  ").startswith("Error:"))
+        check("no matches says so rather than returning nothing",
+              "No matches" in T.search_library(s, "zzzznotthere"))
+
+        # The cap has to actually stop, or the tool costs what reading cost.
+        (lib / "many.scad").write_text("\n".join(f"x{i} = 1;" for i in range(50)))
+        out = T.search_library(s, r"^x\d", max_results=5)
+        check("max_results caps the output",
+              len([l for l in out.splitlines() if "many.scad:" in l]) == 5, out)
+        check("and says it stopped early", "stopped at 5" in out, out)
+
+        check("no libraries installed is reported",
+              "No OpenSCAD libraries" in T.search_library(
+                  T.AIToolContext(library_dir=lib / "nope"), "x"))
+
+    # --- check_geometry ---------------------------------------------------
+    live_ok = {"geometry": "1 part", "console": "", "rendering": False}
+    cg = T.AIToolContext(library_dir=Path("."), live_state=lambda: live_ok,
+                         check_geometry=lambda: "2 part(s) checked, 0 unsound.")
+    check("check_geometry returns the report",
+          "0 unsound" in T.check_geometry(cg), T.check_geometry(cg))
+
+    nothing_yet = T.AIToolContext(
+        library_dir=Path("."), check_geometry=lambda: "",
+        live_state=lambda: {"geometry": "", "console": "", "rendering": False})
+    check("check_geometry with nothing rendered points at render()",
+          "render()" in T.check_geometry(nothing_yet), T.check_geometry(nothing_yet))
+
+    mid = T.AIToolContext(
+        library_dir=Path("."), check_geometry=lambda: "",
+        live_state=lambda: {"geometry": "", "console": "", "rendering": True})
+    check("and while rendering, waits rather than reporting nothing",
+          "in progress" in T.check_geometry(mid), T.check_geometry(mid))
+
+    def boom2():
+        raise RuntimeError("kaboom")
+    check("a check that throws is reported, not raised",
+          T.check_geometry(T.AIToolContext(
+              library_dir=Path("."), live_state=lambda: live_ok,
+              check_geometry=boom2)).startswith("Error:"))
+    check("and an unwired check says so",
+          T.check_geometry(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]
     check("render is a registered tool", "render" in names, str(names))
     check("and is dispatchable by name",
-          T.run_tool(ok, "render", {}) == out, T.run_tool(ok, "render", {}))
+          T.run_tool(ok, "render", {}) == T.render(ok), T.run_tool(ok, "render", {}))
+    check("search_library is dispatchable by name",
+          "Error" not in T.run_tool(T.AIToolContext(library_dir=Path("src")),
+                                    "search_library", {"pattern": "zzz"}))
     # The CLI transports build their allowlists from TOOLS, so a tool that
     # is registered is permitted; a hardcoded list would have missed this.
     from belfryscad.window import ai_cli, ai_copilot_cli

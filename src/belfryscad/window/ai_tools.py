@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import difflib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -34,6 +35,10 @@ MODE_LABELS = {MODE_PLAN: "Plan", MODE_MANUAL: "Manual",
 
 _MAX_LIBRARY_FILES = 500
 _MAX_FILE_BYTES = 400_000
+# A search that matches half of BOSL2 is a search worth narrowing, and the
+# whole point of the tool is to cost less than reading the file.
+_MAX_SEARCH_RESULTS = 200
+_MAX_SEARCH_LINE = 200
 
 SYSTEM_PROMPT = """\
 You are an assistant embedded in BelfrySCAD, a hybrid OpenSCAD-style CAD \
@@ -53,6 +58,10 @@ You can only read and write .scad files. Requests involving any other file \
 type must be declined.
 
 When a render fails or looks wrong, read_console shows the errors, warnings and echo() output it produced -- usually naming the problem and its line number.
+
+Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
+
+check_geometry answers whether the model is a sound closed solid and whether it would print -- holes, seams where three faces meet an edge, pinched vertices, disagreeing winding. describe_geometry measures; check_geometry judges. It writes no file.
 
 You can also look at the rendered 3D viewport with view_viewport when the question is about how the model actually looks -- shape, proportion, orientation -- rather than about the source text, and measure it exactly with describe_geometry.
 
@@ -154,6 +163,11 @@ class AIToolContext:
     # not available until the render finishes -- pair it with
     # schedule_followup(when="render").
     request_render: Callable[[], bool] | None = None
+    # Runs the mesh soundness check over the last render, on the GUI thread.
+    # Slower than the other reads -- it is a full topology pass, and on the
+    # merged mesh a union -- so it is its own call rather than part of the
+    # per-turn snapshot.
+    check_geometry: Callable[[], str] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -198,6 +212,66 @@ def read_library_file(ctx: AIToolContext, path: str) -> str:
         return (f"Error: {path} is too large to read "
                 f"({len(data)} bytes, limit {_MAX_FILE_BYTES}).")
     return data.decode("utf-8", errors="replace")
+
+
+def search_library(ctx: AIToolContext, pattern: str, path: str = "",
+                   max_results: int = 60) -> str:
+    """Grep the libraries. Finding one module otherwise means reading a
+    whole file, and BOSL2's are 240-330 KB each."""
+    root = ctx.library_dir
+    if not root.is_dir():
+        return "No OpenSCAD libraries are installed."
+    if not (pattern or "").strip():
+        return "Error: pattern is required."
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regular expression: {e}"
+
+    base = root
+    if path:
+        base = root / path
+        if not is_path_within(root, base):
+            return "Error: path is outside the library directory."
+        if not base.exists():
+            return f"Error: no such library path: {path}"
+        if base.is_file() and not _is_scad(str(base)):
+            return "Error: only .scad files can be searched."
+
+    files = [base] if base.is_file() else sorted(base.rglob("*.scad"))
+    try:
+        limit = max(1, min(int(max_results), _MAX_SEARCH_RESULTS))
+    except (TypeError, ValueError):
+        limit = _MAX_SEARCH_RESULTS
+
+    hits, scanned, truncated = [], 0, False
+    for f in files[:_MAX_LIBRARY_FILES]:
+        scanned += 1
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = f.relative_to(root)
+        for n, line in enumerate(text.splitlines(), start=1):
+            if rx.search(line):
+                if len(hits) >= limit:
+                    truncated = True
+                    break
+                line = line.strip()
+                if len(line) > _MAX_SEARCH_LINE:
+                    line = line[:_MAX_SEARCH_LINE] + "..."
+                hits.append(f"{rel}:{n}: {line}")
+        if truncated:
+            break
+
+    if not hits:
+        where = f" under {path}" if path else ""
+        return f"No matches for {pattern!r}{where} ({scanned} file(s) searched)."
+    out = "\n".join(hits)
+    if truncated:
+        out += (f"\n... (stopped at {limit} matches; narrow the pattern or "
+                f"pass a path to see the rest)")
+    return out
 
 
 def list_open_scripts(ctx: AIToolContext) -> str:
@@ -500,6 +574,24 @@ def describe_geometry(ctx: AIToolContext) -> str:
     return state["geometry"]
 
 
+def check_geometry(ctx: AIToolContext) -> str:
+    """Is the rendered model a sound closed solid -- per part, and as the
+    file would be written."""
+    if ctx.check_geometry is None:
+        return "Error: the geometry check isn't available in this session."
+    state = _live(ctx)
+    if not state.get("geometry"):
+        if state.get("rendering"):
+            return _wait_for_render("the check")
+        return ("Error: nothing has been rendered yet. Call render() first, "
+                'then schedule_followup(when="render").')
+    try:
+        out = ctx.check_geometry()
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the check could not be run ({e})."
+    return out or "Error: the check returned nothing."
+
+
 def render(ctx: AIToolContext, id: int | None = None) -> str:
     """Render a script. Returns as soon as the render starts."""
     if ctx.request_render is None:
@@ -536,6 +628,32 @@ TOOLS: list[dict] = [
             "required": ["path"],
         },
         "handler": read_library_file,
+    },
+    {
+        "name": "search_library",
+        "description": (
+            "Search the installed OpenSCAD libraries with a regular "
+            "expression, returning file:line for each match. Prefer this "
+            "over read_library_file when looking for where something is "
+            "defined or how it is used -- library files run to hundreds of "
+            "kilobytes, and reading one to find a single module is wasteful. "
+            r"To find a definition, search for something like "
+            r"'^\\s*module\\s+cuboid' rather than just the name."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string",
+                            "description": "Python regular expression."},
+                "path": {"type": "string",
+                         "description": ("Limit the search to this file or "
+                                         "directory, relative to the library "
+                                         "root. Optional.")},
+                "max_results": {"type": "integer",
+                                "description": "Default 60."},
+            },
+            "required": ["pattern"],
+        },
+        "handler": search_library,
     },
     {
         "name": "list_open_scripts",
@@ -650,6 +768,20 @@ TOOLS: list[dict] = [
                         "line number."),
         "json_schema": {"type": "object", "properties": {}, "required": []},
         "handler": read_console,
+    },
+    {
+        "name": "check_geometry",
+        "description": (
+            "Check whether the rendered model is a sound closed manifold "
+            "solid -- reported per part, and for the merged mesh an export "
+            "would actually write. Names boundary edges (holes), edges "
+            "shared by three or more faces, pinched vertices, disagreeing "
+            "winding, and degenerate or duplicated faces. Use this to answer "
+            "whether a model is printable; it writes no file. Slower than "
+            "the other reads, so call it when soundness is the question "
+            "rather than routinely."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": check_geometry,
     },
     {
         "name": "render",

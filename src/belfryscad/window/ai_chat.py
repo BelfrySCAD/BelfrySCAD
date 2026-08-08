@@ -58,6 +58,8 @@ _MAX_TOOL_ROUNDS = 12
 _TOOL_ACTIVITY = {
     "list_library_files": "Looking through your libraries",
     "read_library_file": "Reading a library file",
+    "search_library": "Searching your libraries",
+    "check_geometry": "Checking the geometry",
     "list_open_scripts": "Checking your open scripts",
     "read_open_script": "Reading your script",
     "propose_script_edit": "Preparing an edit",
