@@ -1420,6 +1420,12 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
+        # Checked before writing, and warned rather than refused: a
+        # deliberately open surface is a legitimate export, and blocking a
+        # save the user asked for would be worse than saying so.
+        for problem in self._check_export_bodies(bodies):
+            self.log(f"WARNING: export: {problem}")
+
         ext = Path(path).suffix.lower()
         try:
             if ext == ".3mf":
@@ -1438,6 +1444,36 @@ class MainWindow(QMainWindow):
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
+
+    @staticmethod
+    def _check_export_bodies(bodies) -> list:
+        """One message per body that is not a closed manifold solid.
+
+        Uses the evaluator's own check rather than a second implementation
+        here: the GUI writes files through belfryscad.exporters instead of
+        the C++ writers, so without this the CLI and the GUI would disagree
+        about what counts as sound.
+        """
+        try:
+            import numpy as np
+            from openscad_cpp_evaluator import check_mesh
+        except ImportError:
+            return []      # older evaluator: nothing to say rather than a crash
+        out = []
+        for n, b in enumerate(bodies, start=1):
+            body = getattr(b, "body", None)
+            if body is None or body.is_empty():
+                continue
+            try:
+                m = body.to_mesh()
+                verts = np.asarray(m.vert_properties[:, :3], dtype=np.float32).ravel().tolist()
+                tris = np.asarray(m.tri_verts, dtype=np.uint32).ravel().tolist()
+                d = check_mesh(verts, tris)
+            except Exception:      # noqa: BLE001 -- a check must never block a save
+                continue
+            if not d.get("ok", True):
+                out.append(f"part {n} is not a closed manifold solid -- {d['summary']}")
+        return out
 
     # ------------------------------------------------------------------
     # Render
