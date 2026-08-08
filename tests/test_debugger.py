@@ -166,17 +166,21 @@ class TestTernaryStops:
 
 class TestFunctionCallSiteStops:
     def test_function_call_site_stop(self):
-        """Calling a user function should produce a statement-level stop
-        at the call site (in caller's context) before entering the function."""
+        """A call on the SAME line as its enclosing statement produces one
+        stop, not two.
+
+        The call-site stop is real and still fires when the call is on its
+        own line (see TestListCompStops, which still alternates) -- but on
+        `a = double(5);` the assignment has already stopped on line 2, and
+        firing again there made a breakpoint hit twice per execution."""
         src = """\
 function double(x) = x * 2;
 a = double(5);
 """
         _, _, stops = _run_with_debug(src)
         stmt = _stmt_stops(stops)
-        # Line 2 should have: assignment stop + call-site stop + function body stop
         line2_stops = [s for s in stmt if s["line"] == 2]
-        assert len(line2_stops) >= 2  # assignment + call-site
+        assert len(line2_stops) == 1          # the assignment only
 
     def test_function_call_increases_depth(self):
         """Inside a user function, depth should be > 0."""
@@ -209,8 +213,9 @@ a = [f(1), f(2), f(3)];
         _, _, stops = _run_with_debug(src)
         stmt = _stmt_stops(stops)
         line2_stops = [s for s in stmt if s["line"] == 2]
-        # assignment + 3 call-site stops + 3 function body stops = 7
-        assert len(line2_stops) >= 4  # at least assignment + 3 call-sites
+        # All three calls sit on the assignment's own line, so all three
+        # call-site stops collapse into it: one stop, not four.
+        assert len(line2_stops) == 1
 
     def test_function_literal_call_site_stop(self):
         """Calling a function literal should produce a call-site stop."""
@@ -221,7 +226,7 @@ a = f(5);
         _, _, stops = _run_with_debug(src)
         stmt = _stmt_stops(stops)
         line2_stops = [s for s in stmt if s["line"] == 2]
-        assert len(line2_stops) >= 2  # assignment + call-site
+        assert len(line2_stops) == 1          # the assignment only
 
 
 # ---------------------------------------------------------------------------
