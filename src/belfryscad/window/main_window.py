@@ -2631,11 +2631,44 @@ class MainWindow(QMainWindow):
                           "out": "_on_debug_step_out",
                           "to_child": "_on_debug_step_to_child"}
 
+    def _ai_debug_has_children(self) -> bool:
+        """Whether the current pause is at a module call with children.
+
+        Read from the frame's own $children, which the evaluator maintains
+        and which the pause already carries -- the session computes its
+        step targets on the debug thread, too late to ask before resuming.
+        """
+        prev = getattr(self, "_ai_debug_last_pause", None)
+        frames = (prev or {}).get("frames") or []
+        if not frames:
+            return True      # unknown: let the session decide
+        raw = (frames[0].get("variables") or {}).get("$children")
+        if raw is None:
+            return True
+        try:
+            return float(raw) > 0
+        except (TypeError, ValueError):
+            return True
+
     def _ai_debug_do_resume(self, command: str):
         if not (self._debug_session and self._debug_session.is_running()):
             self._ai_debug_notify({
                 "status": "idle",
                 "message": "no debug session is running."})
+            return
+        if command == "to_child" and not self._ai_debug_has_children():
+            # A to_child step with no child to find never matches its
+            # target, so it silently behaves like continue -- running to the
+            # next breakpoint or off the end of the script. Returning that
+            # as though the step had worked is how a model ends up
+            # believing it stepped somewhere it did not.
+            self._ai_debug_notify({
+                **(getattr(self, "_ai_debug_last_pause", None) or
+                   {"status": "paused"}),
+                "message": ("Not stepped: the module call here has no "
+                            "children, and to_child would have run on to the "
+                            "next breakpoint rather than stepping into "
+                            "anything. Use into or over instead.")})
             return
         handler = self._AI_DEBUG_COMMANDS.get(command)
         if handler is None:

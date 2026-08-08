@@ -63,7 +63,7 @@ A script often includes .scad files sitting beside it. Those are neither open in
 
 evaluate_expression answers what a value actually is, in the script's own scope -- len(pts), a function's result, whether a variable is what you assumed. It runs the script, so it is not free, but it beats reasoning about a value you could simply look at.
 
-The debugger answers questions a value cannot: which branch ran, how deep the recursion went, what a variable was at the moment something went wrong. debug_start runs to the first stop, debug_resume steps or continues, debug_stop ends it. Always stop the session when finished -- a paused one holds the evaluator. Prefer evaluate_expression when you only want a value; the debugger is for questions about control flow.
+The debugger answers questions a value cannot: which branch ran, how deep the recursion went, what a variable was at the moment something went wrong. debug_start runs to the first stop, debug_resume steps or continues, debug_stop ends it. Stepping is expression-level: `into` on an assignment stops within its expression before entering the call, so entering a function from a line like `x = f(y);` takes two steps rather than one. Always stop the session when finished -- a paused one holds the evaluator. Prefer evaluate_expression when you only want a value; the debugger is for questions about control flow.
 
 read_profile shows where a render spent its time, for questions about why something is slow. Only a render started with profile=true is instrumented, so that pairing -- render(profile=true), then a when="render" follow-up, then read_profile -- is how a speed question gets answered.
 
@@ -1397,7 +1397,11 @@ TOOLS: list[dict] = [
             "over steps across one; out runs until the current call "
             "returns; to_child steps into a child of the current module "
             "call. Blocks until it stops, so a long stretch between "
-            "breakpoints takes as long as the script does."),
+            "breakpoints takes as long as the script does. Stepping is "
+            "expression-level, so into on a line like `x = f(y);` stops "
+            "first inside that line's expression and stays on the same "
+            "line -- call into again to enter f. Staying on the same line "
+            "is progress, not a failed step."),
         "json_schema": {
             "type": "object",
             "properties": {
