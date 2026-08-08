@@ -183,6 +183,46 @@ def main():
         check("and the reason given is the zero-area triangle",
               "zero-area triangle" in msgs[0] and " 1 " in msgs[0], msgs[0])
 
+    # --- stripping on export ----------------------------------------------
+    class _Win:
+        logged = []
+        def log(self, m): type(self).logged.append(m)
+        _strip_export_slivers = MainWindow._strip_export_slivers
+
+    w = _Win(); _Win.logged = []
+    out = w._strip_export_slivers(sliver)
+    ov = np.asarray(out.vert_properties, dtype=np.float32)[:, :3]
+    ot = np.asarray(out.tri_verts, dtype=np.uint32).ravel()
+    d = check_mesh(ov.ravel().tolist(), ot.tolist())
+    check("stripping removes the zero-area face", d["degenerate_faces"] == 0, d["summary"])
+    check("and leaves no holes behind it", d["boundary_edges"] == 0, d["summary"])
+    check("the solid is still manifold", d["manifold"], d["summary"])
+    check("what it did is logged", any("zero-area" in m for m in _Win.logged),
+          str(_Win.logged))
+    check("the log says it split a neighbour to stay closed",
+          any("splitting" in m for m in _Win.logged), str(_Win.logged))
+
+    def volume(vv, tt):
+        tri = vv[np.asarray(tt, dtype=np.uint32).reshape(-1, 3)]
+        return float(abs(np.einsum("ij,ij->i", tri[:, 0],
+                                   np.cross(tri[:, 1], tri[:, 2])).sum()) / 6)
+    before_v = volume(np.asarray(sliver.vert_properties, dtype=np.float32)[:, :3],
+                      np.asarray(sliver.tri_verts, dtype=np.uint32).ravel())
+    check("no geometry moves -- volume is unchanged",
+          abs(volume(ov, ot) - before_v) < 1e-6, f"{before_v} -> {volume(ov, ot)}")
+
+    w = _Win(); _Win.logged = []
+    same = w._strip_export_slivers(good)
+    check("a clean mesh is returned untouched and unlogged",
+          same is good and _Win.logged == [], str(_Win.logged))
+
+    class _Boom:
+        vert_properties = None
+        tri_verts = None
+    w = _Win(); _Win.logged = []
+    check("a stripping failure returns the mesh rather than blocking export",
+          w._strip_export_slivers(_Boom) is _Boom)
+
     # A check that raises must never stop a save -- the file matters more
     # than the diagnosis.
     class _Broken:
