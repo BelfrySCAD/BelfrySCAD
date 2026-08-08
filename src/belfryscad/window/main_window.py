@@ -3521,6 +3521,10 @@ class MainWindow(QMainWindow):
 
     def _restore_settings(self):
         s = QSettings("BelfrySCAD", "BelfrySCAD")
+        # The as-built arrangement, captured before any saved layout is
+        # applied over it. This is the only moment it exists, and it is what
+        # Reset Panel Layout puts back.
+        self._default_window_state = self.saveState()
         geometry = s.value("windowGeometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -3644,18 +3648,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Reset
         ) != QMessageBox.StandardButton.Reset:
             return
+        # Applied now, not deferred to the next launch. Clearing the saved
+        # layout and waiting was worse than useless: closeEvent saves the
+        # current arrangement on the way out, so quitting immediately wrote
+        # the same broken layout straight back over the cleared one and the
+        # reset appeared to do nothing.
+        default = getattr(self, "_default_window_state", None)
+        if default is not None:
+            self.restoreState(default)
         s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.remove("windowState")
         s.remove("windowGeometry")
         s.remove("layoutVersion")
         s.sync()
-        # Applied by restoreState on the next launch: rebuilding the dock
-        # arrangement live would mean re-adding every dock in order, and
-        # getting that subtly wrong is what this action exists to undo.
-        QMessageBox.information(
-            self, "Reset Panel Layout",
-            "Panel layout will be back to its defaults next time "
-            "BelfrySCAD starts.")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
