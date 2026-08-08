@@ -96,6 +96,72 @@ def main():
     check("an empty body is skipped, not reported",
           look([_Body(TETRA_V, TETRA_T, empty=True)]) == [])
 
+    # --- the merged mesh is what gets written -----------------------------
+    # Checking the parts is not the same as checking the file. A Menger
+    # sponge is thousands of individually perfect cubes whose concatenation
+    # is riddled with duplicate faces, and the per-part check passed it.
+    from types import SimpleNamespace
+    import numpy as np
+
+    look_mesh = MainWindow._check_export_mesh
+
+    good = SimpleNamespace(
+        vert_properties=np.asarray(TETRA_V, dtype=np.float32).reshape(-1, 3),
+        tri_verts=np.asarray(TETRA_T, dtype=np.uint32).reshape(-1, 3))
+    check("a sound merged mesh produces no warning", look_mesh(good) == [])
+
+    # Two coincident tetrahedra: each is perfect, the concatenation is not.
+    doubled = SimpleNamespace(
+        vert_properties=np.asarray(TETRA_V + TETRA_V, dtype=np.float32).reshape(-1, 3),
+        tri_verts=np.asarray(TETRA_T + [i + 4 for i in TETRA_T],
+                             dtype=np.uint32).reshape(-1, 3))
+    per_part = look([_Body(TETRA_V, TETRA_T), _Body(TETRA_V, TETRA_T)])
+    check("each part on its own looks fine", per_part == [], str(per_part))
+    # The two copies use different indices, so an index-based check sees two
+    # sound solids. Welding by position -- what reading the file does -- is
+    # what turns them into the doubled faces a slicer chokes on, and the
+    # export check has to weld for that reason.
+    merged = look_mesh(doubled)
+    check("but the merged mesh is caught once welded", len(merged) == 1, str(merged))
+    if merged:
+        check("and names the defect", "duplicate face" in merged[0]
+              or "non-manifold" in merged[0], merged[0])
+
+    check("a merged-mesh check that fails is swallowed too",
+          look_mesh(SimpleNamespace(vert_properties=None, tri_verts=None)) == [])
+
+    # --- the real thing: a sponge must export manifold --------------------
+    import subprocess, tempfile, textwrap
+    from belfryscad import exporters
+    from openscad_cpp_evaluator import Evaluator, check_mesh
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "sponge.scad"
+        src.write_text(textwrap.dedent("""
+            module sponge(n, s) {
+                if (n == 0) cube(s, center=true);
+                else {
+                    t = s/3;
+                    for (x=[-1:1], y=[-1:1], z=[-1:1])
+                        if (abs(x)+abs(y)+abs(z) > 1)
+                            translate([x*t, y*t, z*t]) sponge(n-1, t);
+                }
+            }
+            sponge(2, 27);
+        """))
+        ev = Evaluator(echo_fn=lambda m: None)
+        out = ev.evaluate(str(src))
+        bodies = out[0] if isinstance(out[0], list) else out
+        check("the sponge really is many separate bodies", len(bodies) > 100, str(len(bodies)))
+        mesh = exporters.merge_bodies_to_mesh(bodies)
+        v = np.asarray(mesh.vert_properties, dtype=np.float32).ravel().tolist()
+        t = np.asarray(mesh.tri_verts, dtype=np.uint32).ravel().tolist()
+        d = check_mesh(v, t)
+        check("merging abutting bodies gives a manifold mesh", d["ok"], d["summary"])
+        check("and drops the shared interior faces rather than doubling them",
+              len(t) // 3 < len(bodies) * 12, f"{len(t)//3} tris from {len(bodies)} cubes")
+        check("export of the sponge warns about nothing", look_mesh(mesh) == [],
+              str(look_mesh(mesh)))
+
     # A check that raises must never stop a save -- the file matters more
     # than the diagnosis.
     class _Broken:

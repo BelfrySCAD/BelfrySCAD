@@ -154,22 +154,37 @@ def write_3mf(path: str, bodies):
 
 
 def merge_bodies_to_mesh(bodies):
-    """STL/OBJ are triangle soups -- merging the already-final body meshes is
-    plain index-offset concatenation (no CSG needed). Returns None if every
-    body is empty."""
+    """Union the bodies into one mesh for STL/OBJ. None if all are empty.
+
+    A union, not a concatenation. Concatenating is right only while the
+    bodies are disjoint: where two touch, each writes its own copy of the
+    shared face, so the file gets coincident duplicate faces and edges used
+    by four triangles. A Menger sponge is 400 abutting cubes at level 2 and
+    came out with 1784 non-manifold edges -- valid-looking in a viewer, and
+    rejected or silently "repaired" by a slicer.
+
+    This is what the C++ exporter has always done (composeMesh, BatchBoolean
+    Add); the two disagreed, and the same sponge exported manifold through
+    the CLI and non-manifold through here.
+    """
     import numpy as np
     from types import SimpleNamespace
+    import manifold3d
 
-    parts_v, parts_t, voff = [], [], 0
+    parts = []
     for b in bodies:
         if b.body.is_empty():
             continue
         m = b.body.to_mesh()
         v = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
-        t = np.asarray(m.tri_verts, dtype=np.int64) + voff
-        parts_v.append(v)
-        parts_t.append(t)
-        voff += len(v)
-    if not parts_v:
+        t = np.asarray(m.tri_verts, dtype=np.uint32)
+        parts.append(manifold3d.Manifold(manifold3d.Mesh(v, t)))
+    if not parts:
         return None
-    return SimpleNamespace(vert_properties=np.vstack(parts_v), tri_verts=np.vstack(parts_t))
+
+    merged = (parts[0] if len(parts) == 1
+              else manifold3d.Manifold.batch_boolean(parts, manifold3d.OpType.Add))
+    m = merged.to_mesh()
+    return SimpleNamespace(
+        vert_properties=np.asarray(m.vert_properties[:, :3], dtype=np.float32),
+        tri_verts=np.asarray(m.tri_verts, dtype=np.int64))

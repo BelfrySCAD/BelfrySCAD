@@ -1420,21 +1420,29 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        # Checked before writing, and warned rather than refused: a
-        # deliberately open surface is a legitimate export, and blocking a
-        # save the user asked for would be worse than saying so.
-        for problem in self._check_export_bodies(bodies):
-            self.log(f"WARNING: export: {problem}")
-
         ext = Path(path).suffix.lower()
         try:
             if ext == ".3mf":
+                # 3MF keeps the parts as separate objects, so each is
+                # checked on its own -- that is what the file contains.
+                for problem in self._check_export_bodies(bodies):
+                    self.log(f"WARNING: export: {problem}")
                 exporters.write_3mf(path, bodies)
             else:
                 mesh = exporters.merge_bodies_to_mesh(bodies)
                 if mesh is None:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
+                # Checked AFTER merging, because the merged mesh is what
+                # gets written. Checking the parts instead passed a Menger
+                # sponge whose 160,000 cubes were each fine and whose file
+                # was riddled with duplicate faces.
+                #
+                # Warned rather than refused: a deliberately open surface is
+                # a legitimate export, and blocking a save the user asked
+                # for would be worse than saying so.
+                for problem in self._check_export_mesh(mesh):
+                    self.log(f"WARNING: export: {problem}")
                 if ext == ".obj":
                     exporters.write_obj(path, mesh)
                 else:
@@ -1444,6 +1452,31 @@ class MainWindow(QMainWindow):
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
+
+    @staticmethod
+    def _check_export_mesh(mesh) -> list:
+        """Problems with the single mesh about to be written, if any."""
+        try:
+            import numpy as np
+            from openscad_cpp_evaluator import check_mesh
+        except ImportError:
+            return []
+        try:
+            v = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
+            t = np.asarray(mesh.tri_verts, dtype=np.uint32).ravel()
+            # Welded by position first, because that is what reading the
+            # file does. An STL carries no indices at all, and OBJ's are
+            # discarded by most importers, so two coincident-but-separately
+            # indexed copies of a face -- which look like two sound solids
+            # to an index-based check -- become the doubled faces a slicer
+            # actually chokes on.
+            keys, inverse = np.unique(np.round(v, 6), axis=0, return_inverse=True)
+            d = check_mesh(keys.ravel().tolist(), inverse[t].tolist())
+        except Exception:      # noqa: BLE001 -- a check must never block a save
+            return []
+        if d.get("ok", True):
+            return []
+        return [f"the exported mesh is not a closed manifold solid -- {d['summary']}"]
 
     @staticmethod
     def _check_export_bodies(bodies) -> list:
