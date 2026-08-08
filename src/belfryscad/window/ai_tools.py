@@ -217,6 +217,10 @@ def read_open_script(ctx: AIToolContext, id: int) -> str:
     tab = _find_tab(ctx, id)
     if tab is None:
         return f"Error: no open script with id {id}."
+    if not tab.text.strip():
+        # Said outright: an empty string back from a tool reads as the tool
+        # having failed, not as an empty file.
+        return f"(script {id} is empty)"
     return tab.text
 
 
@@ -496,13 +500,15 @@ def describe_geometry(ctx: AIToolContext) -> str:
     return state["geometry"]
 
 
-def render(ctx: AIToolContext) -> str:
-    """Render the current tab. Returns as soon as the render starts."""
+def render(ctx: AIToolContext, id: int | None = None) -> str:
+    """Render a script. Returns as soon as the render starts."""
     if ctx.request_render is None:
         return "Error: rendering isn't available in this session."
-    if not ctx.request_render():
+    if id is not None and _find_tab(ctx, id) is None:
+        return f"Error: no open script with id {id}."
+    if not ctx.request_render(id):
         return ("Error: there is nothing to render -- no script is open, or "
-                "the current one is empty.")
+                "the one asked for is empty.")
     return ("Render started. It is not finished yet: call "
             'schedule_followup(when="render") to be prompted once it is, and '
             "only then read the result with describe_geometry, read_console "
@@ -654,8 +660,20 @@ TOOLS: list[dict] = [
             "changed some other way. Rendering is asynchronous: this returns "
             "immediately, and the result only exists once the render "
             'finishes -- follow it with schedule_followup(when="render") '
-            "rather than reading straight away."),
-        "json_schema": {"type": "object", "properties": {}, "required": []},
+            "rather than reading straight away. Renders the active tab "
+            "unless an id is given; note that rendering a different script "
+            "makes it the active one, which is what describe_geometry, "
+            "read_console and view_viewport then describe."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer",
+                       "description": ("Which open script to render, from "
+                                       "list_open_scripts. Defaults to the "
+                                       "active tab.")},
+            },
+            "required": [],
+        },
         "handler": render,
     },
     {

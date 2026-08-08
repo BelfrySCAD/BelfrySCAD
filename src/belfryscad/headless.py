@@ -127,7 +127,11 @@ def _export(output_path: str, ext: str, bodies, export_format: str | None = None
         if ext == ".3mf":
             exporters.write_3mf(output_path, bodies)
         else:
-            mesh = exporters.merge_bodies_to_mesh(bodies)
+            open_parts = []
+            mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
+            for n in open_parts:
+                print(f"WARNING: part {n} is not a closed solid; its surface "
+                      f"is written as-is.", file=sys.stderr)
             if mesh is None:
                 print("ERROR: No geometry to export.", file=sys.stderr)
                 return False
