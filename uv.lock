@@ -881,10 +881,13 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/9a/bfbfde8969a0de03e73e8f75be9c6c4f19e931cde6239cbe88088d4b1252/openscad_cpp_evaluator-0.25.0.tar.gz", hash = "sha256:07189134466ec938688c589c40aa90a3a94402f44f6f6772b2161576d8ac30cc", size = 779381, upload-time = "2026-08-08T04:34:48.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/7c/440b45a49dda1b22c00cf06f48525ea6e3ffe13f7d10ac320518bc4cd889/openscad_cpp_evaluator-0.25.0-cp312-abi3-macosx_13_0_arm64.whl", hash = "sha256:e65d2ef68a4dd2651d3c9123ba547f999ab6aa22773592dc80a0aeab757c494a", size = 2078222, upload-time = "2026-08-08T04:34:41.07Z" },
     { url = "https://files.pythonhosted.org/packages/8f/06/7d91ecffed930e485a72359bb853753bd53be9d10427f809a2f1f1bcca77/openscad_cpp_evaluator-0.25.0-cp312-abi3-macosx_13_0_x86_64.whl", hash = "sha256:990966589e4b140c5d13a734174fbeabbb35834361692a418e93a49ed145bb78", size = 2295871, upload-time = "2026-08-08T04:34:42.547Z" },
     { url = "https://files.pythonhosted.org/packages/3b/ae/f91ca7fd3c954d118f4f5a4120be5509ba606d6bcda6c59d6f4a25dfab46/openscad_cpp_evaluator-0.25.0-cp312-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:924215634717b41bf8b8b7733c5a8876da53889ca1dac5be82bfe2604082dae6", size = 3043648, upload-time = "2026-08-08T04:34:43.813Z" },
+    { url = "https://files.pythonhosted.org/packages/24/08/9b592f612ac353b15cd28f4c92541ef948711ccc3d23e214d652988e35c7/openscad_cpp_evaluator-0.25.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2181621294bce1b7863046b302b7dc3f75500e1610690bbd997c8c6e5f0d12e0", size = 3339789, upload-time = "2026-08-08T04:34:45.099Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/20/5b96cc716e43b5e67eaa76e38c1792f45209497c1de24bee93897ba8961a/openscad_cpp_evaluator-0.25.0-cp312-abi3-win_amd64.whl", hash = "sha256:b72ea3b280ed384b861f6bc0c555d4762c1c921f13dbd00e3814b638742901be", size = 5123901, upload-time = "2026-08-08T04:34:46.707Z" },
 ]
 
 [[package]]
