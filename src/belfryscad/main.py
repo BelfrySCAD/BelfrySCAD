@@ -58,6 +58,11 @@ def _parse_args(argv):
     parser.add_argument("--view", metavar="OPTS",
                          help="Comma-separated: axes, crosshairs, edges, scales, wireframe (.png only)")
     parser.add_argument("--colorscheme", metavar="NAME", help="Color theme for .png export")
+    parser.add_argument("--no-save-prompts", dest="no_save_prompts",
+                        action="store_true",
+                        help="Never ask about unsaved changes when closing a "
+                             "tab or quitting (for testing; edits are "
+                             "discarded without asking)")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -72,7 +77,7 @@ def _parse_args(argv):
     return ns
 
 
-def _run_gui(initial_file: str | None):
+def _run_gui(initial_file: str | None, no_save_prompts: bool = False):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
@@ -97,6 +102,10 @@ def _run_gui(initial_file: str | None):
     app = BelfrySCADApp(sys.argv)
     app.setApplicationName("BelfrySCAD")
     window = MainWindow()
+    # Reaches the escape hatch _confirm_unsaved already honours, so both
+    # closing a tab and quitting stop prompting -- the two places it is
+    # consulted.
+    window.skip_unsaved_prompts = no_save_prompts
     app.file_open_requested.connect(window.open_file_by_path)
     window.show()
     if initial_file and initial_file.endswith(".scad") and os.path.isfile(initial_file):
@@ -228,7 +237,7 @@ def main():
     if ignored:
         print(f"belfryscad: {', '.join(ignored)} only apply together with -o/--output; ignoring", file=sys.stderr)
 
-    _run_gui(args.file)
+    _run_gui(args.file, no_save_prompts=args.no_save_prompts)
 
 
 if __name__ == "__main__":

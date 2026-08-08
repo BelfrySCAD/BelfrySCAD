@@ -2080,7 +2080,8 @@ class MainWindow(QMainWindow):
                             capture_view=self._capture_view_threadsafe,
                             ask_user=self._ask_user_threadsafe,
                             live_state=self._live_state_threadsafe,
-                            request_render=self._render_threadsafe)
+                            request_render=self._render_threadsafe,
+                            check_geometry=self._check_geometry_threadsafe)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -2272,7 +2273,8 @@ class MainWindow(QMainWindow):
         rendered yet"."""
         return any(t.isRunning() for _, _, t in self._render_jobs)
 
-    def _live_state_threadsafe(self) -> dict:
+    def _live_state_threadsafe(self, want_check: bool = False,
+                               timeout: float = 10) -> dict:
         """Called from the AI worker thread: the geometry summary and
         console as they are now, rather than as they were when the turn
         started. Accepting a proposal re-renders, so a model that looks
@@ -2280,10 +2282,11 @@ class MainWindow(QMainWindow):
         it."""
         import threading
         from PySide6.QtCore import QMetaObject
-        self._ai_state_request = {"done": threading.Event(), "result": None}
+        self._ai_state_request = {"done": threading.Event(), "result": None,
+                                  "check": want_check}
         QMetaObject.invokeMethod(self, "_service_ai_state_request",
                                  Qt.ConnectionType.QueuedConnection)
-        if not self._ai_state_request["done"].wait(10):
+        if not self._ai_state_request["done"].wait(timeout):
             return {}
         return self._ai_state_request["result"] or {}
 
@@ -2293,13 +2296,89 @@ class MainWindow(QMainWindow):
         if not req:
             return
         try:
-            req["result"] = {"geometry": self._geometry_summary(),
-                             "console": self._console_tail(),
-                             "rendering": self._render_busy()}
+            res = {"geometry": self._geometry_summary(),
+                   "console": self._console_tail(),
+                   "rendering": self._render_busy()}
+            if req.get("check"):
+                res["check"] = self._geometry_check()
+            req["result"] = res
         finally:
             # Set even if reading threw, or the worker blocks for the full
             # timeout to learn nothing.
             req["done"].set()
+
+    def _check_geometry_threadsafe(self) -> str:
+        """The AI's check_geometry tool. A generous timeout: this is a full
+        topology pass plus the export union, and a Menger sponge is 400,000
+        triangles -- far longer than an ordinary state read."""
+        return self._live_state_threadsafe(want_check=True, timeout=120).get(
+            "check", "")
+
+    def _geometry_check(self) -> str:
+        """Mesh soundness of the last render, per part and for the merged
+        mesh an export would write.
+
+        Both, because they answer different questions and can disagree: a
+        Menger sponge is thousands of individually perfect cubes whose
+        concatenation is riddled with duplicate faces, and checking only the
+        parts passed it.
+        """
+        bodies = getattr(self, "_bodies", None)
+        if not bodies:
+            return ""
+        import numpy as np
+        try:
+            from openscad_cpp_evaluator import check_mesh
+        except ImportError:
+            return "Error: this evaluator has no mesh check."
+
+        lines, bad = [], 0
+        for n, b in enumerate(bodies, start=1):
+            body = getattr(b, "body", None)
+            if body is None or body.is_empty():
+                continue
+            try:
+                v, t = exporters.body_mesh_arrays(b)
+                d = check_mesh(v.ravel().tolist(), t.ravel().tolist())
+            except Exception as e:      # noqa: BLE001
+                lines.append(f"  part {n}: could not be checked ({e})")
+                continue
+            if d.get("ok"):
+                lines.append(f"  part {n}: closed manifold solid"
+                             + (f" -- but {d['summary']}" if d.get("summary") else ""))
+            else:
+                bad += 1
+                lines.append(f"  part {n}: NOT a closed manifold solid -- "
+                             f"{d.get('summary', 'no detail')}")
+        if not lines:
+            return "The render produced no geometry to check."
+
+        out = [f"{len(lines)} part(s) checked, {bad} unsound.", *lines]
+
+        # What a file would contain, which is not the same question: the
+        # parts are unioned on the way out.
+        try:
+            open_parts = []
+            mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
+            if mesh is None:
+                out.append("\nMerged for export: nothing would be written.")
+            else:
+                v = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
+                t = np.asarray(mesh.tri_verts, dtype=np.uint32)
+                d = check_mesh(v.ravel().tolist(), t.ravel().tolist())
+                state = ("a closed manifold solid" if d.get("ok")
+                         else "NOT a closed manifold solid")
+                out.append(f"\nMerged for export: {len(t)} triangles, {state}"
+                           + (f" -- {d['summary']}" if d.get("summary") else "."))
+                if d.get("degenerate_faces"):
+                    out.append("Zero-area faces are stripped automatically on "
+                               "export, so they are not a defect in the file.")
+                for p in open_parts:
+                    out.append(f"Part {p} is not a closed solid; its surface "
+                               f"is written as-is and most slicers reject it.")
+        except Exception as e:      # noqa: BLE001
+            out.append(f"\nMerged for export: could not be checked ({e}).")
+        return "\n".join(out)
 
     def _render_threadsafe(self, chat_id=None) -> bool:
         """The AI's render tool. Queues the render on the GUI thread and
@@ -2451,8 +2530,51 @@ class MainWindow(QMainWindow):
             if tab.editor.isReadOnly():
                 self.log("AI: that script is read-only; change not applied.")
                 return
-            tab.editor.replace_span(0, len(tab.editor.toPlainText()),
-                                    proposal.new_content)
+            if proposal.param_changes:
+                # Re-applied to the live buffer, not taken as finished text:
+                # the Customizer is the pane the user is most likely to be
+                # moving while the turn runs, and rewriting the file from
+                # the turn-start snapshot would put their values back.
+                from belfryscad.window.customizer import (
+                    describe_parameters, write_back_value)
+                live = tab.editor.toPlainText()
+                have = {p["name"] for p in describe_parameters(live)}
+                missing = [n for n in proposal.param_changes if n not in have]
+                if missing:
+                    self.log(f"AI: {', '.join(missing)} no longer "
+                             f"{'is' if len(missing) == 1 else 'are'} a "
+                             f"parameter of this script; nothing was applied.")
+                    return
+                new_text = live
+                for pname, pvalue in proposal.param_changes.items():
+                    new_text = write_back_value(new_text, pname, pvalue)
+                if new_text == live:
+                    self.log("AI: those parameters already have those "
+                             "values; nothing was applied.")
+                    return
+                tab.editor.replace_span(0, len(live), new_text)
+            elif proposal.anchor is not None:
+                # Re-found in the live buffer rather than trusting the
+                # whole-file content built from the turn-start snapshot: the
+                # user may have typed since, and rewriting only this span
+                # keeps whatever else they changed. A buffer that moved so
+                # far the anchor is gone refuses instead of guessing.
+                live = tab.editor.toPlainText()
+                found = live.count(proposal.anchor)
+                if found != 1:
+                    self.log(
+                        "AI: the text this change was anchored to "
+                        + ("is no longer in the script" if found == 0
+                           else f"now appears {found} times")
+                        + "; the script changed since it was proposed, so "
+                          "nothing was applied. Ask for it again.")
+                    return
+                start = live.index(proposal.anchor)
+                tab.editor.replace_span(start, start + len(proposal.anchor),
+                                        proposal.replacement or "")
+            else:
+                tab.editor.replace_span(0, len(tab.editor.toPlainText()),
+                                        proposal.new_content)
             tab.editor.source_edited_externally.emit()
             idx = self._tabs.indexOf(tab)
             if idx >= 0:

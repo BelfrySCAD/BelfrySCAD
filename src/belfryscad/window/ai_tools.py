@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import difflib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -34,6 +35,10 @@ MODE_LABELS = {MODE_PLAN: "Plan", MODE_MANUAL: "Manual",
 
 _MAX_LIBRARY_FILES = 500
 _MAX_FILE_BYTES = 400_000
+# A search that matches half of BOSL2 is a search worth narrowing, and the
+# whole point of the tool is to cost less than reading the file.
+_MAX_SEARCH_RESULTS = 200
+_MAX_SEARCH_LINE = 200
 
 SYSTEM_PROMPT = """\
 You are an assistant embedded in BelfrySCAD, a hybrid OpenSCAD-style CAD \
@@ -54,6 +59,10 @@ type must be declined.
 
 When a render fails or looks wrong, read_console shows the errors, warnings and echo() output it produced -- usually naming the problem and its line number.
 
+Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
+
+check_geometry answers whether the model is a sound closed solid and whether it would print -- holes, seams where three faces meet an edge, pinched vertices, disagreeing winding. describe_geometry measures; check_geometry judges. It writes no file.
+
 You can also look at the rendered 3D viewport with view_viewport when the question is about how the model actually looks -- shape, proportion, orientation -- rather than about the source text, and measure it exactly with describe_geometry.
 
 Rendering is asynchronous and takes anywhere from a moment to a minute. Applying an edit starts a render by itself, and render() starts one for a script that has not been rendered yet -- but in both cases the result does not exist when the tool returns. To see it, call schedule_followup(when="render") and read the geometry, console and viewport in the turn that follows. Reading them before then shows the previous render, not yours; the console's "Rendered successfully at HH:MM:SS" line tells you which render you are looking at.
@@ -62,9 +71,18 @@ The user chooses a mode. In Plan mode the propose_* tools refuse and you should 
 
 schedule_followup asks to be prompted again later. Use it only when there is something specific to check after a wait; don't schedule one just to keep talking, and stop once the task is finished.
 
+Many scripts expose Customizer parameters -- top-level values meant to be \
+tweaked without editing code. When one already covers what is being asked \
+for, change it with propose_parameter_change rather than rewriting the \
+code around it; list_parameters shows what a script exposes and what each \
+value is limited to.
+
 Prefer reading the relevant script or library file before proposing changes \
-to it. When proposing an edit, pass the complete new contents of the file, \
-not a fragment."""
+to it. To change part of a script use propose_script_replace, quoting the \
+passage exactly as it appears -- re-sending a whole file to alter a few \
+lines is slow and risks quietly dropping something along the way. \
+propose_script_edit takes the complete new contents and is for a rewrite, \
+or for edits spread across most of the file."""
 
 
 @dataclass
@@ -86,6 +104,20 @@ class Proposal:
     diff_text: str
     tab_id: int | None = None
     filename: str | None = None
+    # Set by propose_script_replace: the exact text this change is anchored
+    # to, and what replaces it. new_content is still the whole file, for the
+    # review diff -- but applying re-finds the anchor in the live buffer and
+    # rewrites only that span, so an edit the user made elsewhere while the
+    # turn was running survives instead of being overwritten by a file built
+    # from the turn-start snapshot.
+    anchor: str | None = None
+    replacement: str | None = None
+    # Set by propose_parameter_change: {name: value}. Carried as the change
+    # itself rather than as finished text, for the same reason as `anchor`
+    # -- it is re-applied to the live buffer on accept, so the Customizer
+    # values the user moved while the turn was running are not rolled back
+    # by a file built from the turn-start snapshot.
+    param_changes: dict | None = None
 
 
 TRIGGER_DELAY = "delay"
@@ -154,6 +186,11 @@ class AIToolContext:
     # not available until the render finishes -- pair it with
     # schedule_followup(when="render").
     request_render: Callable[[], bool] | None = None
+    # Runs the mesh soundness check over the last render, on the GUI thread.
+    # Slower than the other reads -- it is a full topology pass, and on the
+    # merged mesh a union -- so it is its own call rather than part of the
+    # per-turn snapshot.
+    check_geometry: Callable[[], str] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -198,6 +235,66 @@ def read_library_file(ctx: AIToolContext, path: str) -> str:
         return (f"Error: {path} is too large to read "
                 f"({len(data)} bytes, limit {_MAX_FILE_BYTES}).")
     return data.decode("utf-8", errors="replace")
+
+
+def search_library(ctx: AIToolContext, pattern: str, path: str = "",
+                   max_results: int = 60) -> str:
+    """Grep the libraries. Finding one module otherwise means reading a
+    whole file, and BOSL2's are 240-330 KB each."""
+    root = ctx.library_dir
+    if not root.is_dir():
+        return "No OpenSCAD libraries are installed."
+    if not (pattern or "").strip():
+        return "Error: pattern is required."
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regular expression: {e}"
+
+    base = root
+    if path:
+        base = root / path
+        if not is_path_within(root, base):
+            return "Error: path is outside the library directory."
+        if not base.exists():
+            return f"Error: no such library path: {path}"
+        if base.is_file() and not _is_scad(str(base)):
+            return "Error: only .scad files can be searched."
+
+    files = [base] if base.is_file() else sorted(base.rglob("*.scad"))
+    try:
+        limit = max(1, min(int(max_results), _MAX_SEARCH_RESULTS))
+    except (TypeError, ValueError):
+        limit = _MAX_SEARCH_RESULTS
+
+    hits, scanned, truncated = [], 0, False
+    for f in files[:_MAX_LIBRARY_FILES]:
+        scanned += 1
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = f.relative_to(root)
+        for n, line in enumerate(text.splitlines(), start=1):
+            if rx.search(line):
+                if len(hits) >= limit:
+                    truncated = True
+                    break
+                line = line.strip()
+                if len(line) > _MAX_SEARCH_LINE:
+                    line = line[:_MAX_SEARCH_LINE] + "..."
+                hits.append(f"{rel}:{n}: {line}")
+        if truncated:
+            break
+
+    if not hits:
+        where = f" under {path}" if path else ""
+        return f"No matches for {pattern!r}{where} ({scanned} file(s) searched)."
+    out = "\n".join(hits)
+    if truncated:
+        out += (f"\n... (stopped at {limit} matches; narrow the pattern or "
+                f"pass a path to see the rest)")
+    return out
 
 
 def list_open_scripts(ctx: AIToolContext) -> str:
@@ -302,6 +399,157 @@ def propose_script_edit(ctx: AIToolContext, id: int, new_content: str,
         ctx.on_proposal(Proposal(
             kind="edit", summary=summary, new_content=new_content,
             diff_text=diff_text, tab_id=id, filename=tab.name,
+        ))
+    return _PROPOSED
+
+
+def propose_script_replace(ctx: AIToolContext, id: int, old_text: str,
+                           new_text: str, summary: str) -> str:
+    """Replace one exact passage. Anchored on content rather than on line
+    numbers, so a buffer that moved underneath fails the match instead of
+    being corrupted silently."""
+    if ctx.mode == MODE_PLAN:
+        return _PLAN_REFUSAL
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    if not old_text:
+        return ("Error: old_text is required. To create a file use "
+                "propose_new_script; to rewrite one wholesale use "
+                "propose_script_edit.")
+    if old_text == new_text:
+        return "Error: old_text and new_text are identical."
+
+    found = tab.text.count(old_text)
+    if found == 0:
+        return ("Error: old_text does not appear in the script. It must match "
+                "exactly, including whitespace and indentation. Read the "
+                "script again rather than guessing at it.")
+    if found > 1:
+        return (f"Error: old_text appears {found} times, so which one is "
+                f"meant is ambiguous. Include enough surrounding lines to "
+                f"make it unique.")
+
+    new_content = tab.text.replace(old_text, new_text, 1)
+    if ctx.on_proposal:
+        ctx.on_proposal(Proposal(
+            kind="edit", summary=summary, new_content=new_content,
+            diff_text=_diff(tab.text, new_content, tab.name), tab_id=id,
+            filename=tab.name, anchor=old_text, replacement=new_text,
+        ))
+    return _PROPOSED
+
+
+def _customizer():
+    """Imported on use: customizer.py pulls in Qt, and this module is
+    deliberately importable without it."""
+    from belfryscad.window.customizer import describe_parameters, write_back_value
+    return describe_parameters, write_back_value
+
+
+def list_parameters(ctx: AIToolContext, id: int) -> str:
+    """The script's customizer parameters, as the Customizer pane shows
+    them: current value, type, group, and whatever constrains it."""
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    describe, _ = _customizer()
+    try:
+        params = describe(tab.text)
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the parameters could not be read ({e})."
+    if not params:
+        return ("This script has no customizer parameters. They are "
+                "top-level assignments before the first module or function; "
+                "a trailing comment like // [0:100] constrains one.")
+    return json.dumps(params, indent=1)
+
+
+def _check_param_value(spec: dict, value) -> str | None:
+    """Why `value` is not allowed for this parameter, or None."""
+    name, kind = spec["name"], spec["type"]
+    if kind == "boolean":
+        if not isinstance(value, bool):
+            return f"Error: {name} is a boolean; got {value!r}."
+        return None
+    # bool is an int in Python, and silently writing back `true` for a
+    # number would be a puzzling thing to review.
+    if kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"Error: {name} is a number; got {value!r}."
+    elif kind == "string":
+        if not isinstance(value, str):
+            return f"Error: {name} is a string; got {value!r}."
+    elif kind == "vector":
+        if (not isinstance(value, list)
+                or any(isinstance(x, bool) or not isinstance(x, (int, float))
+                       for x in value)):
+            return f"Error: {name} is a vector of numbers; got {value!r}."
+        want = len(spec.get("value") or [])
+        if want and len(value) != want:
+            return (f"Error: {name} has {want} element(s); got "
+                    f"{len(value)}.")
+
+    options = spec.get("options")
+    if options:
+        allowed = [o["value"] for o in options]
+        if value not in allowed:
+            return (f"Error: {name} must be one of {allowed!r}; got "
+                    f"{value!r}.")
+        return None
+
+    rng = spec.get("range")
+    if rng:
+        vals = value if isinstance(value, list) else [value]
+        for v in vals:
+            if not (rng["min"] <= v <= rng["max"]):
+                return (f"Error: {name} is limited to "
+                        f"{rng['min']}..{rng['max']}; got {v!r}.")
+    return None
+
+
+def propose_parameter_change(ctx: AIToolContext, id: int, changes: dict,
+                             summary: str) -> str:
+    """Change customizer parameter values. This edits the script -- the
+    values live in the source as top-level assignments -- so it is reviewed
+    like any other proposal."""
+    if ctx.mode == MODE_PLAN:
+        return _PLAN_REFUSAL
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    if not isinstance(changes, dict) or not changes:
+        return ("Error: changes must be an object of parameter names to new "
+                'values, e.g. {"height": 20, "rounded": true}.')
+
+    describe, write_back = _customizer()
+    try:
+        known = {p["name"]: p for p in describe(tab.text)}
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the parameters could not be read ({e})."
+    if not known:
+        return "Error: this script has no customizer parameters to change."
+
+    for name, value in changes.items():
+        if name not in known:
+            return (f"Error: {name!r} is not a parameter of this script. "
+                    f"It has: {', '.join(sorted(known))}.")
+        problem = _check_param_value(known[name], value)
+        if problem:
+            return problem
+
+    new_content = tab.text
+    for name, value in changes.items():
+        new_content = write_back(new_content, name, value)
+    if new_content == tab.text:
+        return ("Error: those parameters already have those values; nothing "
+                "would change.")
+
+    if ctx.on_proposal:
+        ctx.on_proposal(Proposal(
+            kind="edit", summary=summary, new_content=new_content,
+            diff_text=_diff(tab.text, new_content, tab.name), tab_id=id,
+            filename=tab.name, param_changes=dict(changes),
         ))
     return _PROPOSED
 
@@ -500,6 +748,24 @@ def describe_geometry(ctx: AIToolContext) -> str:
     return state["geometry"]
 
 
+def check_geometry(ctx: AIToolContext) -> str:
+    """Is the rendered model a sound closed solid -- per part, and as the
+    file would be written."""
+    if ctx.check_geometry is None:
+        return "Error: the geometry check isn't available in this session."
+    state = _live(ctx)
+    if not state.get("geometry"):
+        if state.get("rendering"):
+            return _wait_for_render("the check")
+        return ("Error: nothing has been rendered yet. Call render() first, "
+                'then schedule_followup(when="render").')
+    try:
+        out = ctx.check_geometry()
+    except Exception as e:      # noqa: BLE001
+        return f"Error: the check could not be run ({e})."
+    return out or "Error: the check returned nothing."
+
+
 def render(ctx: AIToolContext, id: int | None = None) -> str:
     """Render a script. Returns as soon as the render starts."""
     if ctx.request_render is None:
@@ -538,6 +804,32 @@ TOOLS: list[dict] = [
         "handler": read_library_file,
     },
     {
+        "name": "search_library",
+        "description": (
+            "Search the installed OpenSCAD libraries with a regular "
+            "expression, returning file:line for each match. Prefer this "
+            "over read_library_file when looking for where something is "
+            "defined or how it is used -- library files run to hundreds of "
+            "kilobytes, and reading one to find a single module is wasteful. "
+            r"To find a definition, search for something like "
+            r"'^\\s*module\\s+cuboid' rather than just the name."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string",
+                            "description": "Python regular expression."},
+                "path": {"type": "string",
+                         "description": ("Limit the search to this file or "
+                                         "directory, relative to the library "
+                                         "root. Optional.")},
+                "max_results": {"type": "integer",
+                                "description": "Default 60."},
+            },
+            "required": ["pattern"],
+        },
+        "handler": search_library,
+    },
+    {
         "name": "list_open_scripts",
         "description": "List the scripts the user currently has open, with their ids.",
         "json_schema": {"type": "object", "properties": {}, "required": []},
@@ -557,7 +849,10 @@ TOOLS: list[dict] = [
         "name": "propose_script_edit",
         "description": ("Propose replacing an open script's entire contents. "
                         "The user reviews the change as a diff and accepts or "
-                        "rejects it; it is not applied automatically."),
+                        "rejects it; it is not applied automatically. Prefer "
+                        "propose_script_replace for a change to part of a "
+                        "script -- use this one for a rewrite, or when the "
+                        "edits are spread across most of the file."),
         "json_schema": {
             "type": "object",
             "properties": {
@@ -570,6 +865,76 @@ TOOLS: list[dict] = [
             "required": ["id", "new_content", "summary"],
         },
         "handler": propose_script_edit,
+    },
+    {
+        "name": "propose_script_replace",
+        "description": (
+            "Propose replacing one exact passage of an open script -- the "
+            "usual way to change part of a file, rather than re-sending the "
+            "whole thing. old_text must appear exactly once and match "
+            "character for character, including indentation; include enough "
+            "surrounding lines to make it unique. The user reviews it as a "
+            "diff like any other proposal. Anchoring on the text rather than "
+            "on line numbers means that if the script changed after you read "
+            "it, the change is refused rather than applied in the wrong "
+            "place."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "old_text": {"type": "string",
+                             "description": ("Exact text to replace, unique "
+                                             "within the script.")},
+                "new_text": {"type": "string",
+                             "description": ("What replaces it. Empty to "
+                                             "delete the passage.")},
+                "summary": {"type": "string",
+                            "description": "One line describing the change."},
+            },
+            "required": ["id", "old_text", "new_text", "summary"],
+        },
+        "handler": propose_script_replace,
+    },
+    {
+        "name": "list_parameters",
+        "description": (
+            "The script's Customizer parameters -- the top-level values a "
+            "user tweaks without editing code -- with each one's current "
+            "value, type, group, description, and any range or list of "
+            "options it is limited to. Read this before changing a "
+            "parameter, and prefer changing one over rewriting the code "
+            "when the script already exposes what you need."),
+        "json_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+        "handler": list_parameters,
+    },
+    {
+        "name": "propose_parameter_change",
+        "description": (
+            "Change one or more Customizer parameter values. Pass changes as "
+            "an object of name to new value. These values live in the script "
+            "as top-level assignments, so this edits the script and is "
+            "reviewed as a diff like any other proposal. Values are checked "
+            "against the parameter's type and against any range or option "
+            "list before being proposed."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "changes": {
+                    "type": "object",
+                    "description": ('Parameter names to new values, e.g. '
+                                    '{"height": 20, "rounded": true}.'),
+                },
+                "summary": {"type": "string",
+                            "description": "One line describing the change."},
+            },
+            "required": ["id", "changes", "summary"],
+        },
+        "handler": propose_parameter_change,
     },
     {
         "name": "propose_new_script",
@@ -650,6 +1015,20 @@ TOOLS: list[dict] = [
                         "line number."),
         "json_schema": {"type": "object", "properties": {}, "required": []},
         "handler": read_console,
+    },
+    {
+        "name": "check_geometry",
+        "description": (
+            "Check whether the rendered model is a sound closed manifold "
+            "solid -- reported per part, and for the merged mesh an export "
+            "would actually write. Names boundary edges (holes), edges "
+            "shared by three or more faces, pinched vertices, disagreeing "
+            "winding, and degenerate or duplicated faces. Use this to answer "
+            "whether a model is printable; it writes no file. Slower than "
+            "the other reads, so call it when soundness is the question "
+            "rather than routinely."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": check_geometry,
     },
     {
         "name": "render",

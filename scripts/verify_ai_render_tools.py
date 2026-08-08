@@ -148,6 +148,114 @@ def gui_checks():
           "inf" not in s and "10.000 x 10.000 x 10.000" in s, s)
     check("its area is measured from the triangles", "500.000" in s, s)
 
+    # check_geometry, on the real thing. The open shell is still rendered
+    # here, so it must come back unsound and name the reason.
+    rep = w._geometry_check()
+    check("check_geometry calls the open shell unsound",
+          "NOT a closed manifold solid" in rep and "1 unsound" in rep, rep)
+    check("and names the holes", "boundary edge" in rep, rep)
+    check("and reports what a file would contain",
+          "Merged for export:" in rep, rep)
+    check("flagging that the surface is written as-is",
+          "written as-is" in rep, rep)
+
+    # A sound solid must come back clean, or the tool is just an alarm.
+    w._current_tab().editor.setPlainText("cube(10);")
+    w._render_threadsafe()
+    pump(30, lambda: "volume 1000.000" in w._geometry_summary())
+    rep = w._geometry_check()
+    check("a sound cube checks out clean",
+          "1 part(s) checked, 0 unsound." in rep and "closed manifold solid" in rep, rep)
+    check("and its merged mesh is sound too",
+          "Merged for export: 12 triangles, a closed manifold solid" in rep, rep)
+
+    # The threadsafe wrapper is what the tool actually calls -- and it can
+    # only be exercised from a worker, like the state bridge.
+    got = {}
+    t2 = threading.Thread(target=lambda: got.update(r=w._check_geometry_threadsafe()))
+    t2.start()
+    while t2.is_alive():
+        app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+    t2.join()
+    check("the check bridge answers a worker thread",
+          "0 unsound" in (got.get("r") or ""), str(got.get("r"))[:120])
+
+    # An anchored edit must apply to the LIVE buffer, not to the whole-file
+    # content built from the turn-start snapshot -- otherwise accepting it
+    # silently reverts whatever the user typed while the turn was running.
+    from belfryscad.window.ai_tools import Proposal
+    w._current_tab().editor.setPlainText("a = 1;\nb = 2;\n")
+    tab = w._current_tab()
+    stale_whole_file = "a = 1;\nb = 3;\n"
+    # The user types a new line while the turn is in flight.
+    tab.editor.setPlainText("a = 1;\nb = 2;\nc = 9;  // typed by the user\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content=stale_whole_file, diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    text = tab.editor.toPlainText()
+    check("an anchored edit applies to the live buffer", "b = 3;" in text, text)
+    check("and does not revert what the user typed meanwhile",
+          "typed by the user" in text, text)
+
+    # And when the anchor is gone, it must refuse rather than guess.
+    tab.editor.setPlainText("totally different\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="x", diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    check("a vanished anchor leaves the script untouched",
+          tab.editor.toPlainText() == "totally different\n",
+          tab.editor.toPlainText())
+    check("and says why", "no longer in the script" in w._console_tail(),
+          w._console_tail()[-160:])
+
+    # An ambiguous anchor at apply time is equally unsafe.
+    tab.editor.setPlainText("b = 2;\nb = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="x", diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    check("an anchor that became ambiguous is refused too",
+          tab.editor.toPlainText() == "b = 2;\nb = 2;\n", tab.editor.toPlainText())
+
+    # A parameter change is re-applied to the live buffer for the same
+    # reason an anchored edit is -- and more urgently, since the Customizer
+    # is the pane the user is most likely to be moving mid-turn.
+    tab.editor.setPlainText("height = 20;  // [10:100]\nwall = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;  // [10:100]\nwall = 2;\n",
+        param_changes={"height": 45}))
+    check("a parameter change is applied",
+          "height = 45;  // [10:100]" in tab.editor.toPlainText(),
+          tab.editor.toPlainText())
+
+    # The user moves a different slider while the turn is in flight.
+    tab.editor.setPlainText("height = 20;  // [10:100]\nwall = 7;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;  // [10:100]\nwall = 2;\n",
+        param_changes={"height": 45}))
+    text = tab.editor.toPlainText()
+    check("it changes the parameter it meant to", "height = 45" in text, text)
+    check("and leaves the value the user changed meanwhile",
+          "wall = 7;" in text, text)
+
+    # A parameter that has since been deleted must not be silently ignored.
+    tab.editor.setPlainText("wall = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", diff_text="", tab_id=tab.chat_id,
+        new_content="height = 45;\n", param_changes={"height": 45}))
+    check("a parameter that no longer exists applies nothing",
+          tab.editor.toPlainText() == "wall = 2;\n", tab.editor.toPlainText())
+    check("and says so", "no longer" in w._console_tail(), w._console_tail()[-160:])
+
+    # Whole-file proposals must still work exactly as before.
+    tab.editor.setPlainText("old\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="brand new\n", diff_text="",
+        tab_id=tab.chat_id))
+    check("an unanchored proposal still replaces the whole file",
+          tab.editor.toPlainText() == "brand new\n", tab.editor.toPlainText())
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -258,11 +366,269 @@ def main():
     check("read_open_script says an empty script is empty",
           T.read_open_script(ectx, 3).strip() != "", repr(T.read_open_script(ectx, 3)))
 
+    # --- search_library --------------------------------------------------
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        lib = Path(td)
+        (lib / "sub").mkdir()
+        (lib / "a.scad").write_text("module cuboid(size) {}\n// cuboid used here\n")
+        (lib / "sub" / "b.scad").write_text("function cuboid_of(x) = x;\n")
+        (lib / "notes.txt").write_text("cuboid should not be found here\n")
+        s = T.AIToolContext(library_dir=lib)
+
+        out = T.search_library(s, r"^\s*module\s+cuboid")
+        check("search_library finds a definition", "a.scad:1:" in out, out)
+        check("and does not return the whole file",
+              "used here" not in out, out)
+
+        out = T.search_library(s, "cuboid")
+        check("it searches subdirectories too",
+              "a.scad:1:" in out and "b.scad:1:" in out.replace("sub/", ""), out)
+        check("and ignores non-.scad files", "notes.txt" not in out, out)
+
+        out = T.search_library(s, "cuboid", path="sub")
+        check("a path narrows the search", "a.scad" not in out and "b.scad" in out, out)
+
+        check("a bad path is refused",
+              T.search_library(s, "x", path="../..").startswith("Error:"),
+              T.search_library(s, "x", path="../.."))
+        check("a non-scad path is refused",
+              T.search_library(s, "x", path="notes.txt").startswith("Error:"))
+        check("a missing path is reported",
+              T.search_library(s, "x", path="nope").startswith("Error:"))
+        check("an invalid regex is an error, not a crash",
+              T.search_library(s, "cuboid(").startswith("Error: invalid"),
+              T.search_library(s, "cuboid("))
+        check("an empty pattern is refused",
+              T.search_library(s, "  ").startswith("Error:"))
+        check("no matches says so rather than returning nothing",
+              "No matches" in T.search_library(s, "zzzznotthere"))
+
+        # The cap has to actually stop, or the tool costs what reading cost.
+        (lib / "many.scad").write_text("\n".join(f"x{i} = 1;" for i in range(50)))
+        out = T.search_library(s, r"^x\d", max_results=5)
+        check("max_results caps the output",
+              len([l for l in out.splitlines() if "many.scad:" in l]) == 5, out)
+        check("and says it stopped early", "stopped at 5" in out, out)
+
+        check("no libraries installed is reported",
+              "No OpenSCAD libraries" in T.search_library(
+                  T.AIToolContext(library_dir=lib / "nope"), "x"))
+
+    # --- check_geometry ---------------------------------------------------
+    live_ok = {"geometry": "1 part", "console": "", "rendering": False}
+    cg = T.AIToolContext(library_dir=Path("."), live_state=lambda: live_ok,
+                         check_geometry=lambda: "2 part(s) checked, 0 unsound.")
+    check("check_geometry returns the report",
+          "0 unsound" in T.check_geometry(cg), T.check_geometry(cg))
+
+    nothing_yet = T.AIToolContext(
+        library_dir=Path("."), check_geometry=lambda: "",
+        live_state=lambda: {"geometry": "", "console": "", "rendering": False})
+    check("check_geometry with nothing rendered points at render()",
+          "render()" in T.check_geometry(nothing_yet), T.check_geometry(nothing_yet))
+
+    mid = T.AIToolContext(
+        library_dir=Path("."), check_geometry=lambda: "",
+        live_state=lambda: {"geometry": "", "console": "", "rendering": True})
+    check("and while rendering, waits rather than reporting nothing",
+          "in progress" in T.check_geometry(mid), T.check_geometry(mid))
+
+    def boom2():
+        raise RuntimeError("kaboom")
+    check("a check that throws is reported, not raised",
+          T.check_geometry(T.AIToolContext(
+              library_dir=Path("."), live_state=lambda: live_ok,
+              check_geometry=boom2)).startswith("Error:"))
+    check("and an unwired check says so",
+          T.check_geometry(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
+    # --- propose_script_replace -------------------------------------------
+    SRC = "a = 1;\nmodule m() { cube(a); }\nb = 2;\n"
+    seen = []
+    rtabs = [T.TabSnapshot(id=4, name="s.scad", path=None, modified=False,
+                           text=SRC)]
+
+    def rctx(mode=T.MODE_MANUAL):
+        return T.AIToolContext(library_dir=Path("."), open_tabs=rtabs,
+                               mode=mode, on_proposal=seen.append)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "b = 2;", "b = 3;", "bump b")
+    check("propose_script_replace proposes the change", len(seen) == 1, r)
+    if seen:
+        p = seen[0]
+        check("the whole file is still carried for the review diff",
+              p.new_content == "a = 1;\nmodule m() { cube(a); }\nb = 3;\n",
+              repr(p.new_content))
+        check("and the anchor is carried for applying",
+              p.anchor == "b = 2;" and p.replacement == "b = 3;", str(p.anchor))
+        check("the diff shows only the changed line",
+              "-b = 2;" in p.diff_text and "-a = 1;" not in p.diff_text, p.diff_text)
+
+    # Ambiguity has to be refused, not resolved by picking the first: that
+    # is the failure mode that silently edits the wrong place.
+    dup = [T.TabSnapshot(id=5, name="d.scad", path=None, modified=False,
+                         text="x = 1;\ny = 0;\nx = 1;\n")]
+    dctx = T.AIToolContext(library_dir=Path("."), open_tabs=dup,
+                           on_proposal=seen.append)
+    seen.clear()
+    r = T.propose_script_replace(dctx, 5, "x = 1;", "x = 2;", "s")
+    check("an ambiguous anchor is refused",
+          r.startswith("Error:") and "2 times" in r and seen == [], r)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "nowhere", "x", "s")
+    check("an anchor that isn't there is refused",
+          r.startswith("Error:") and seen == [], r)
+    check("and says to re-read rather than guess", "Read the script" in r, r)
+
+    r = T.propose_script_replace(rctx(), 4, "b = 2;", "b = 2;", "s")
+    check("a no-op edit is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(), 4, "", "x", "s")
+    check("an empty anchor is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(), 99, "b = 2;", "x", "s")
+    check("an unknown tab id is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(T.MODE_PLAN), 4, "b = 2;", "x", "s")
+    check("Plan mode refuses it like the other propose tools",
+          r.startswith("Error:") and "Plan" in r, r)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "b = 2;\n", "", "delete b")
+    check("an empty new_text deletes the passage",
+          seen and seen[0].new_content == "a = 1;\nmodule m() { cube(a); }\n",
+          repr(seen[0].new_content) if seen else r)
+
+    # --- customizer parameters ---------------------------------------------
+    PSRC = (
+        "/* [Size] */\n"
+        "// Overall height\n"
+        "height = 20;  // [10:100]\n"
+        "// Wall thickness\n"
+        "wall = 2;\n"
+        "/* [Style] */\n"
+        "finish = \"matte\";  // [matte:Matte, gloss:Glossy]\n"
+        "rounded = true;\n"
+        "size = [1, 2, 3];  // [0:10]\n"
+        "module body() { cube(height); }\n"
+    )
+    ptabs = [T.TabSnapshot(id=8, name="p.scad", path=None, modified=False,
+                           text=PSRC)]
+    pseen = []
+
+    def pctx(mode=T.MODE_MANUAL):
+        return T.AIToolContext(library_dir=Path("."), open_tabs=ptabs,
+                               mode=mode, on_proposal=pseen.append)
+
+    import json as _json
+    listed = T.list_parameters(pctx(), 8)
+    params = _json.loads(listed)
+    by = {p["name"]: p for p in params}
+    check("list_parameters finds the parameters",
+          set(by) == {"height", "wall", "finish", "rounded", "size"}, listed)
+    check("and not the module", "body" not in by, str(list(by)))
+    check("it reports current values",
+          by["height"]["value"] == 20 and by["rounded"]["value"] is True, listed)
+    check("types are distinguished, and a bool is not a number",
+          by["rounded"]["type"] == "boolean" and by["height"]["type"] == "number"
+          and by["finish"]["type"] == "string" and by["size"]["type"] == "vector",
+          str({k: v["type"] for k, v in by.items()}))
+    check("a slider's range is carried",
+          by["height"]["range"] == {"min": 10.0, "max": 100.0, "step": 1},
+          str(by["height"].get("range")))
+    check("a dropdown's options and labels are carried",
+          [o["value"] for o in by["finish"]["options"]] == ["matte", "gloss"]
+          and by["finish"]["options"][1]["label"] == "Glossy",
+          str(by["finish"].get("options")))
+    check("groups come from the tab headers",
+          by["height"]["group"] == "Size" and by["finish"]["group"] == "Style",
+          str({k: v["group"] for k, v in by.items()}))
+    check("descriptions come from the preceding comment",
+          by["height"]["description"] == "Overall height",
+          repr(by["height"]["description"]))
+    check("an unconstrained parameter simply has no range",
+          "range" not in by["wall"] and "options" not in by["wall"], str(by["wall"]))
+
+    check("a script with no parameters says so",
+          "no customizer parameters" in T.list_parameters(
+              T.AIToolContext(library_dir=Path("."), open_tabs=[
+                  T.TabSnapshot(id=9, name="n.scad", path=None,
+                                modified=False, text="cube(1);\n")]), 9))
+    check("an unknown id is refused", T.list_parameters(pctx(), 99).startswith("Error:"))
+
+    # Changing one
+    pseen.clear()
+    r = T.propose_parameter_change(pctx(), 8, {"height": 45}, "taller")
+    check("propose_parameter_change proposes it", len(pseen) == 1, r)
+    if pseen:
+        p = pseen[0]
+        check("the new value is written into the source",
+              "height = 45;  // [10:100]" in p.new_content, p.new_content)
+        check("the constraint comment survives",
+              "[10:100]" in p.new_content, p.new_content)
+        check("and the change is carried for applying",
+              p.param_changes == {"height": 45}, str(p.param_changes))
+        changed = [l for l in p.diff_text.splitlines()
+                   if l[:1] in "+-" and not l.startswith(("---", "+++"))]
+        check("the diff changes only that line",
+              changed == ["-height = 20;  // [10:100]",
+                          "+height = 45;  // [10:100]"], str(changed))
+
+    pseen.clear()
+    r = T.propose_parameter_change(pctx(), 8, {"height": 30, "rounded": False},
+                                   "two at once")
+    check("several parameters can change at once",
+          pseen and "height = 30" in pseen[0].new_content
+          and "rounded = false" in pseen[0].new_content,
+          pseen[0].new_content if pseen else r)
+
+    # Validation -- each of these would otherwise write nonsense into the
+    # user's script for them to review.
+    pseen.clear()
+    for label, changes, expect in [
+        ("a value outside a slider's range", {"height": 500}, "10.0..100.0"),
+        ("a value below it", {"height": 1}, "10.0..100.0"),
+        ("a string for a number", {"height": "tall"}, "is a number"),
+        ("a bool for a number", {"height": True}, "is a number"),
+        ("a number for a boolean", {"rounded": 1}, "is a boolean"),
+        ("an option that isn't offered", {"finish": "satin"}, "must be one of"),
+        ("a number for a string", {"finish": 3}, "is a string"),
+        ("a vector of the wrong length", {"size": [1, 2]}, "3 element"),
+        ("a vector element out of range", {"size": [1, 2, 99]}, "0.0..10.0"),
+        ("a non-vector for a vector", {"size": 5}, "vector of numbers"),
+        ("an unknown parameter", {"nope": 1}, "not a parameter"),
+    ]:
+        out = T.propose_parameter_change(pctx(), 8, changes, "s")
+        check(label + " is refused",
+              out.startswith("Error:") and expect in out, out)
+    check("and none of those proposed anything", pseen == [], str(pseen))
+
+    check("a change that changes nothing is refused",
+          T.propose_parameter_change(pctx(), 8, {"height": 20},
+                                     "s").startswith("Error:"))
+    check("an empty change set is refused",
+          T.propose_parameter_change(pctx(), 8, {}, "s").startswith("Error:"))
+    check("a non-object change set is refused",
+          T.propose_parameter_change(pctx(), 8, "height=5",
+                                     "s").startswith("Error:"))
+    check("Plan mode refuses parameter changes too",
+          T.propose_parameter_change(pctx(T.MODE_PLAN), 8, {"height": 45},
+                                     "s").startswith("Error:"))
+    check("a script with no parameters is refused",
+          T.propose_parameter_change(
+              T.AIToolContext(library_dir=Path("."), open_tabs=[
+                  T.TabSnapshot(id=9, name="n.scad", path=None, modified=False,
+                                text="cube(1);\n")]), 9, {"x": 1},
+              "s").startswith("Error:"))
+
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]
     check("render is a registered tool", "render" in names, str(names))
     check("and is dispatchable by name",
-          T.run_tool(ok, "render", {}) == out, T.run_tool(ok, "render", {}))
+          T.run_tool(ok, "render", {}) == T.render(ok), T.run_tool(ok, "render", {}))
+    check("search_library is dispatchable by name",
+          "Error" not in T.run_tool(T.AIToolContext(library_dir=Path("src")),
+                                    "search_library", {"pattern": "zzz"}))
     # The CLI transports build their allowlists from TOOLS, so a tool that
     # is registered is permitted; a hardcoded list would have missed this.
     from belfryscad.window import ai_cli, ai_copilot_cli
