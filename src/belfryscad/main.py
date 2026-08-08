@@ -58,6 +58,14 @@ def _parse_args(argv):
     parser.add_argument("--view", metavar="OPTS",
                          help="Comma-separated: axes, crosshairs, edges, scales, wireframe (.png only)")
     parser.add_argument("--colorscheme", metavar="NAME", help="Color theme for .png export")
+    parser.add_argument("--ai", metavar="PROMPT",
+                        help="Send PROMPT to the AI chat once the window is "
+                             "up, and echo the conversation to stdout "
+                             "(implies --ai-echo). Needs a provider already "
+                             "configured in Preferences")
+    parser.add_argument("--ai-echo", dest="ai_echo", action="store_true",
+                        help="Echo AI chat messages, tool calls and replies "
+                             "to stdout as they happen")
     parser.add_argument("--no-save-prompts", dest="no_save_prompts",
                         action="store_true",
                         help="Never ask about unsaved changes when closing a "
@@ -77,7 +85,8 @@ def _parse_args(argv):
     return ns
 
 
-def _run_gui(initial_file: str | None, no_save_prompts: bool = False):
+def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
+             ai_echo: bool = False, ai_prompt: str | None = None):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
@@ -106,10 +115,18 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False):
     # closing a tab and quitting stop prompting -- the two places it is
     # consulted.
     window.skip_unsaved_prompts = no_save_prompts
+    if ai_echo or ai_prompt:
+        _wire_ai_echo(window)
     app.file_open_requested.connect(window.open_file_by_path)
     window.show()
     if initial_file and initial_file.endswith(".scad") and os.path.isfile(initial_file):
         window.open_file_by_path(os.path.abspath(initial_file))
+    if ai_prompt:
+        from PySide6.QtCore import QTimer
+        # After the event loop is up and any initial file has opened and
+        # rendered, or the turn's context snapshot would describe an empty
+        # window.
+        QTimer.singleShot(1500, lambda: _send_ai_prompt(window, ai_prompt))
     code = app.exec()
     # Skip normal interpreter finalization: its GC pass can crash inside
     # manifold3d's nanobind bindings if a background render thread was
@@ -117,6 +134,41 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False):
     # has already saved settings (with an explicit sync()) and released
     # geometry, so there's nothing left to clean up.
     os._exit(code)
+
+
+def _wire_ai_echo(window):
+    """Mirror the AI conversation to stdout.
+
+    The chat pane is a GUI widget, so watching what the model does normally
+    means reading it on screen. This makes a run scriptable: launch, send a
+    prompt, read the tool calls and the reply from a terminal or a log.
+    """
+    pane = getattr(window, "_ai_chat_pane", None)
+    if pane is None:
+        return
+
+    def echo(kind, text):
+        label = {"user": "you", "tool": "tool", "assistant": "ai",
+                 "error": "error", "proposal": "proposed"}.get(kind, kind)
+        for line in str(text).splitlines() or [""]:
+            print(f"[{label}] {line}", flush=True)
+        if kind in ("assistant", "error"):
+            print(flush=True)
+
+    pane.echo = echo
+
+
+def _send_ai_prompt(window, prompt: str):
+    """Send one prompt to the AI chat, as if typed into the pane."""
+    pane = getattr(window, "_ai_chat_pane", None)
+    if pane is None:
+        print("[error] the AI chat pane is not available", flush=True)
+        return
+    dock = getattr(window, "_ai_chat_dock", None)
+    if dock is not None:
+        dock.show()
+        dock.raise_()
+    pane.send_requested.emit(prompt)
 
 
 def _belfryscad_version() -> str:
@@ -237,7 +289,8 @@ def main():
     if ignored:
         print(f"belfryscad: {', '.join(ignored)} only apply together with -o/--output; ignoring", file=sys.stderr)
 
-    _run_gui(args.file, no_save_prompts=args.no_save_prompts)
+    _run_gui(args.file, no_save_prompts=args.no_save_prompts,
+             ai_echo=args.ai_echo, ai_prompt=args.ai)
 
 
 if __name__ == "__main__":
