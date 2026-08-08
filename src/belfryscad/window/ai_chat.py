@@ -63,6 +63,7 @@ _TOOL_ACTIVITY = {
     "list_open_scripts": "Checking your open scripts",
     "read_open_script": "Reading your script",
     "propose_script_edit": "Preparing an edit",
+    "propose_script_replace": "Preparing an edit",
     "propose_new_script": "Preparing a new script",
     "view_viewport": "Looking at the model",
     "describe_geometry": "Measuring the geometry",

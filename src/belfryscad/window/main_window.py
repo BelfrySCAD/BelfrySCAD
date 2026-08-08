@@ -2530,8 +2530,28 @@ class MainWindow(QMainWindow):
             if tab.editor.isReadOnly():
                 self.log("AI: that script is read-only; change not applied.")
                 return
-            tab.editor.replace_span(0, len(tab.editor.toPlainText()),
-                                    proposal.new_content)
+            if proposal.anchor is not None:
+                # Re-found in the live buffer rather than trusting the
+                # whole-file content built from the turn-start snapshot: the
+                # user may have typed since, and rewriting only this span
+                # keeps whatever else they changed. A buffer that moved so
+                # far the anchor is gone refuses instead of guessing.
+                live = tab.editor.toPlainText()
+                found = live.count(proposal.anchor)
+                if found != 1:
+                    self.log(
+                        "AI: the text this change was anchored to "
+                        + ("is no longer in the script" if found == 0
+                           else f"now appears {found} times")
+                        + "; the script changed since it was proposed, so "
+                          "nothing was applied. Ask for it again.")
+                    return
+                start = live.index(proposal.anchor)
+                tab.editor.replace_span(start, start + len(proposal.anchor),
+                                        proposal.replacement or "")
+            else:
+                tab.editor.replace_span(0, len(tab.editor.toPlainText()),
+                                        proposal.new_content)
             tab.editor.source_edited_externally.emit()
             idx = self._tabs.indexOf(tab)
             if idx >= 0:

@@ -72,8 +72,11 @@ The user chooses a mode. In Plan mode the propose_* tools refuse and you should 
 schedule_followup asks to be prompted again later. Use it only when there is something specific to check after a wait; don't schedule one just to keep talking, and stop once the task is finished.
 
 Prefer reading the relevant script or library file before proposing changes \
-to it. When proposing an edit, pass the complete new contents of the file, \
-not a fragment."""
+to it. To change part of a script use propose_script_replace, quoting the \
+passage exactly as it appears -- re-sending a whole file to alter a few \
+lines is slow and risks quietly dropping something along the way. \
+propose_script_edit takes the complete new contents and is for a rewrite, \
+or for edits spread across most of the file."""
 
 
 @dataclass
@@ -95,6 +98,14 @@ class Proposal:
     diff_text: str
     tab_id: int | None = None
     filename: str | None = None
+    # Set by propose_script_replace: the exact text this change is anchored
+    # to, and what replaces it. new_content is still the whole file, for the
+    # review diff -- but applying re-finds the anchor in the live buffer and
+    # rewrites only that span, so an edit the user made elsewhere while the
+    # turn was running survives instead of being overwritten by a file built
+    # from the turn-start snapshot.
+    anchor: str | None = None
+    replacement: str | None = None
 
 
 TRIGGER_DELAY = "delay"
@@ -376,6 +387,43 @@ def propose_script_edit(ctx: AIToolContext, id: int, new_content: str,
         ctx.on_proposal(Proposal(
             kind="edit", summary=summary, new_content=new_content,
             diff_text=diff_text, tab_id=id, filename=tab.name,
+        ))
+    return _PROPOSED
+
+
+def propose_script_replace(ctx: AIToolContext, id: int, old_text: str,
+                           new_text: str, summary: str) -> str:
+    """Replace one exact passage. Anchored on content rather than on line
+    numbers, so a buffer that moved underneath fails the match instead of
+    being corrupted silently."""
+    if ctx.mode == MODE_PLAN:
+        return _PLAN_REFUSAL
+    tab = _find_tab(ctx, id)
+    if tab is None:
+        return f"Error: no open script with id {id}."
+    if not old_text:
+        return ("Error: old_text is required. To create a file use "
+                "propose_new_script; to rewrite one wholesale use "
+                "propose_script_edit.")
+    if old_text == new_text:
+        return "Error: old_text and new_text are identical."
+
+    found = tab.text.count(old_text)
+    if found == 0:
+        return ("Error: old_text does not appear in the script. It must match "
+                "exactly, including whitespace and indentation. Read the "
+                "script again rather than guessing at it.")
+    if found > 1:
+        return (f"Error: old_text appears {found} times, so which one is "
+                f"meant is ambiguous. Include enough surrounding lines to "
+                f"make it unique.")
+
+    new_content = tab.text.replace(old_text, new_text, 1)
+    if ctx.on_proposal:
+        ctx.on_proposal(Proposal(
+            kind="edit", summary=summary, new_content=new_content,
+            diff_text=_diff(tab.text, new_content, tab.name), tab_id=id,
+            filename=tab.name, anchor=old_text, replacement=new_text,
         ))
     return _PROPOSED
 
@@ -675,7 +723,10 @@ TOOLS: list[dict] = [
         "name": "propose_script_edit",
         "description": ("Propose replacing an open script's entire contents. "
                         "The user reviews the change as a diff and accepts or "
-                        "rejects it; it is not applied automatically."),
+                        "rejects it; it is not applied automatically. Prefer "
+                        "propose_script_replace for a change to part of a "
+                        "script -- use this one for a rewrite, or when the "
+                        "edits are spread across most of the file."),
         "json_schema": {
             "type": "object",
             "properties": {
@@ -688,6 +739,35 @@ TOOLS: list[dict] = [
             "required": ["id", "new_content", "summary"],
         },
         "handler": propose_script_edit,
+    },
+    {
+        "name": "propose_script_replace",
+        "description": (
+            "Propose replacing one exact passage of an open script -- the "
+            "usual way to change part of a file, rather than re-sending the "
+            "whole thing. old_text must appear exactly once and match "
+            "character for character, including indentation; include enough "
+            "surrounding lines to make it unique. The user reviews it as a "
+            "diff like any other proposal. Anchoring on the text rather than "
+            "on line numbers means that if the script changed after you read "
+            "it, the change is refused rather than applied in the wrong "
+            "place."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "old_text": {"type": "string",
+                             "description": ("Exact text to replace, unique "
+                                             "within the script.")},
+                "new_text": {"type": "string",
+                             "description": ("What replaces it. Empty to "
+                                             "delete the passage.")},
+                "summary": {"type": "string",
+                            "description": "One line describing the change."},
+            },
+            "required": ["id", "old_text", "new_text", "summary"],
+        },
+        "handler": propose_script_replace,
     },
     {
         "name": "propose_new_script",

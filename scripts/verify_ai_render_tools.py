@@ -180,6 +180,50 @@ def gui_checks():
     check("the check bridge answers a worker thread",
           "0 unsound" in (got.get("r") or ""), str(got.get("r"))[:120])
 
+    # An anchored edit must apply to the LIVE buffer, not to the whole-file
+    # content built from the turn-start snapshot -- otherwise accepting it
+    # silently reverts whatever the user typed while the turn was running.
+    from belfryscad.window.ai_tools import Proposal
+    w._current_tab().editor.setPlainText("a = 1;\nb = 2;\n")
+    tab = w._current_tab()
+    stale_whole_file = "a = 1;\nb = 3;\n"
+    # The user types a new line while the turn is in flight.
+    tab.editor.setPlainText("a = 1;\nb = 2;\nc = 9;  // typed by the user\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content=stale_whole_file, diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    text = tab.editor.toPlainText()
+    check("an anchored edit applies to the live buffer", "b = 3;" in text, text)
+    check("and does not revert what the user typed meanwhile",
+          "typed by the user" in text, text)
+
+    # And when the anchor is gone, it must refuse rather than guess.
+    tab.editor.setPlainText("totally different\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="x", diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    check("a vanished anchor leaves the script untouched",
+          tab.editor.toPlainText() == "totally different\n",
+          tab.editor.toPlainText())
+    check("and says why", "no longer in the script" in w._console_tail(),
+          w._console_tail()[-160:])
+
+    # An ambiguous anchor at apply time is equally unsafe.
+    tab.editor.setPlainText("b = 2;\nb = 2;\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="x", diff_text="",
+        tab_id=tab.chat_id, anchor="b = 2;", replacement="b = 3;"))
+    check("an anchor that became ambiguous is refused too",
+          tab.editor.toPlainText() == "b = 2;\nb = 2;\n", tab.editor.toPlainText())
+
+    # Whole-file proposals must still work exactly as before.
+    tab.editor.setPlainText("old\n")
+    w._on_ai_proposal_accepted(Proposal(
+        kind="edit", summary="", new_content="brand new\n", diff_text="",
+        tab_id=tab.chat_id))
+    check("an unanchored proposal still replaces the whole file",
+          tab.editor.toPlainText() == "brand new\n", tab.editor.toPlainText())
+
     # propose_new_script passes a filename that the accept path dropped, so
     # the tab it created read as "Untitled" and the argument did nothing.
     from belfryscad.window.ai_tools import Proposal
@@ -366,6 +410,62 @@ def main():
               check_geometry=boom2)).startswith("Error:"))
     check("and an unwired check says so",
           T.check_geometry(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
+    # --- propose_script_replace -------------------------------------------
+    SRC = "a = 1;\nmodule m() { cube(a); }\nb = 2;\n"
+    seen = []
+    rtabs = [T.TabSnapshot(id=4, name="s.scad", path=None, modified=False,
+                           text=SRC)]
+
+    def rctx(mode=T.MODE_MANUAL):
+        return T.AIToolContext(library_dir=Path("."), open_tabs=rtabs,
+                               mode=mode, on_proposal=seen.append)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "b = 2;", "b = 3;", "bump b")
+    check("propose_script_replace proposes the change", len(seen) == 1, r)
+    if seen:
+        p = seen[0]
+        check("the whole file is still carried for the review diff",
+              p.new_content == "a = 1;\nmodule m() { cube(a); }\nb = 3;\n",
+              repr(p.new_content))
+        check("and the anchor is carried for applying",
+              p.anchor == "b = 2;" and p.replacement == "b = 3;", str(p.anchor))
+        check("the diff shows only the changed line",
+              "-b = 2;" in p.diff_text and "-a = 1;" not in p.diff_text, p.diff_text)
+
+    # Ambiguity has to be refused, not resolved by picking the first: that
+    # is the failure mode that silently edits the wrong place.
+    dup = [T.TabSnapshot(id=5, name="d.scad", path=None, modified=False,
+                         text="x = 1;\ny = 0;\nx = 1;\n")]
+    dctx = T.AIToolContext(library_dir=Path("."), open_tabs=dup,
+                           on_proposal=seen.append)
+    seen.clear()
+    r = T.propose_script_replace(dctx, 5, "x = 1;", "x = 2;", "s")
+    check("an ambiguous anchor is refused",
+          r.startswith("Error:") and "2 times" in r and seen == [], r)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "nowhere", "x", "s")
+    check("an anchor that isn't there is refused",
+          r.startswith("Error:") and seen == [], r)
+    check("and says to re-read rather than guess", "Read the script" in r, r)
+
+    r = T.propose_script_replace(rctx(), 4, "b = 2;", "b = 2;", "s")
+    check("a no-op edit is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(), 4, "", "x", "s")
+    check("an empty anchor is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(), 99, "b = 2;", "x", "s")
+    check("an unknown tab id is refused", r.startswith("Error:"), r)
+    r = T.propose_script_replace(rctx(T.MODE_PLAN), 4, "b = 2;", "x", "s")
+    check("Plan mode refuses it like the other propose tools",
+          r.startswith("Error:") and "Plan" in r, r)
+
+    seen.clear()
+    r = T.propose_script_replace(rctx(), 4, "b = 2;\n", "", "delete b")
+    check("an empty new_text deletes the passage",
+          seen and seen[0].new_content == "a = 1;\nmodule m() { cube(a); }\n",
+          repr(seen[0].new_content) if seen else r)
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]
