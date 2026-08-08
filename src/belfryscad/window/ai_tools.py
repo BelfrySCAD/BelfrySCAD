@@ -56,6 +56,8 @@ When a render fails or looks wrong, read_console shows the errors, warnings and 
 
 You can also look at the rendered 3D viewport with view_viewport when the question is about how the model actually looks -- shape, proportion, orientation -- rather than about the source text, and measure it exactly with describe_geometry.
 
+Rendering is asynchronous and takes anywhere from a moment to a minute. Applying an edit starts a render by itself, and render() starts one for a script that has not been rendered yet -- but in both cases the result does not exist when the tool returns. To see it, call schedule_followup(when="render") and read the geometry, console and viewport in the turn that follows. Reading them before then shows the previous render, not yours; the console's "Rendered successfully at HH:MM:SS" line tells you which render you are looking at.
+
 The user chooses a mode. In Plan mode the propose_* tools refuse and you should describe changes in prose instead; in the other modes a change is either reviewed by the user or applied straight away, which the tool result will tell you.
 
 schedule_followup asks to be prompted again later. Use it only when there is something specific to check after a wait; don't schedule one just to keep talking, and stop once the task is finished.
@@ -140,6 +142,18 @@ class AIToolContext:
     # dismissing the dialog cancels the running turn. Returns False if a
     # question is already on screen.
     ask_user: Callable[[list[dict]], bool] | None = None
+    # Reads geometry_summary/console_text/rendering from the GUI thread as
+    # they are *now*. The snapshot fields above are frozen at turn start,
+    # which is wrong for anything the model changed during the turn:
+    # accepting a proposal re-renders, so by the time it looks, the frozen
+    # summary describes the model from before its own edit -- or, if
+    # nothing had been rendered when the turn began, says nothing has been
+    # rendered at all. Falls back to the snapshot when unavailable.
+    live_state: Callable[[], dict] | None = None
+    # Starts a render of the current tab and returns at once. The result is
+    # not available until the render finishes -- pair it with
+    # schedule_followup(when="render").
+    request_render: Callable[[], bool] | None = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -431,22 +445,68 @@ def schedule_followup(ctx: AIToolContext, delay_seconds: float = 0,
             f"them at length; just say briefly what you'll check.")
 
 
+def _live(ctx: AIToolContext) -> dict:
+    """Current geometry/console/rendering, or the turn-start snapshot if the
+    GUI thread can't be reached."""
+    if ctx.live_state is not None:
+        try:
+            state = ctx.live_state()
+        except Exception:      # noqa: BLE001 -- the snapshot still answers
+            state = None
+        if state:
+            return state
+    return {"geometry": ctx.geometry_summary, "console": ctx.console_text,
+            "rendering": False}
+
+
+def _wait_for_render(what: str) -> str:
+    """What to tell the model when there is nothing to read yet. A render is
+    asynchronous, so 'in progress' is the normal answer immediately after
+    one is triggered -- the model needs to be told to come back, not to ask
+    the user for something already underway."""
+    return (f"A render is in progress, so {what} isn't available yet. Call "
+            'schedule_followup(when="render") to be prompted again as soon '
+            "as it finishes.")
+
+
 def read_console(ctx: AIToolContext) -> str:
     """The console output from the last render -- errors, warnings and
     echo() results. This is where a failed render explains itself."""
-    if not ctx.console_text.strip():
+    state = _live(ctx)
+    text = (state.get("console") or "")
+    if not text.strip():
+        if state.get("rendering"):
+            return _wait_for_render("its output")
         return ("The console is empty. Nothing has been rendered yet, or the "
                 "render produced no output.")
-    return ctx.console_text
+    return text
 
 
 def describe_geometry(ctx: AIToolContext) -> str:
     """Measurements of the rendered solid -- the questions neither the
     source text nor a picture can answer."""
-    if not ctx.geometry_summary:
-        return ("Error: nothing has been rendered yet. Ask the user to "
-                "render the model first (Design > Render).")
-    return ctx.geometry_summary
+    state = _live(ctx)
+    if not state.get("geometry"):
+        if state.get("rendering"):
+            return _wait_for_render("measurements")
+        return ("Error: nothing has been rendered yet. Call render() to "
+                "render the current script, then "
+                'schedule_followup(when="render") to be prompted with the '
+                "result.")
+    return state["geometry"]
+
+
+def render(ctx: AIToolContext) -> str:
+    """Render the current tab. Returns as soon as the render starts."""
+    if ctx.request_render is None:
+        return "Error: rendering isn't available in this session."
+    if not ctx.request_render():
+        return ("Error: there is nothing to render -- no script is open, or "
+                "the current one is empty.")
+    return ("Render started. It is not finished yet: call "
+            'schedule_followup(when="render") to be prompted once it is, and '
+            "only then read the result with describe_geometry, read_console "
+            "or view_viewport.")
 
 
 # Tool specs. json_schema is plain JSON Schema, which is what both OpenAI's
@@ -584,6 +644,19 @@ TOOLS: list[dict] = [
                         "line number."),
         "json_schema": {"type": "object", "properties": {}, "required": []},
         "handler": read_console,
+    },
+    {
+        "name": "render",
+        "description": (
+            "Render the current script, so its geometry can then be measured "
+            "or looked at. Applying an edit already renders by itself, so "
+            "this is for when nothing has been rendered yet or the source "
+            "changed some other way. Rendering is asynchronous: this returns "
+            "immediately, and the result only exists once the render "
+            'finishes -- follow it with schedule_followup(when="render") '
+            "rather than reading straight away."),
+        "json_schema": {"type": "object", "properties": {}, "required": []},
+        "handler": render,
     },
     {
         "name": "schedule_followup",
