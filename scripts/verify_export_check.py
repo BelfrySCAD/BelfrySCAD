@@ -162,6 +162,39 @@ def main():
         check("export of the sponge warns about nothing", look_mesh(mesh) == [],
               str(look_mesh(mesh)))
 
+    # --- an open shell must not vanish on export --------------------------
+    # Manifold rejects anything that isn't a closed solid, so converting an
+    # open shell gave an empty Manifold and merge_bodies_to_mesh returned
+    # nothing to write. Exporting a surface with a missing face produced a
+    # valid 84-byte STL containing zero triangles, silently.
+    open_tris = [r for r in
+                 [[0, 2, 1], [0, 3, 2], [1, 2, 3], [0, 1, 3]] if r != [0, 1, 3]]
+    open_body = _Body(TETRA_V, [i for r in open_tris for i in r])
+    reported = []
+    merged = exporters.merge_bodies_to_mesh([open_body], reported)
+    check("an open shell still produces a mesh to write", merged is not None)
+    if merged is not None:
+        check("with its triangles intact rather than an empty file",
+              len(np.asarray(merged.tri_verts)) == 3,
+              str(len(np.asarray(merged.tri_verts))))
+    check("and the export path is told which part was open", reported == [1],
+          str(reported))
+
+    # A closed solid alongside it must still be unioned, not passed through.
+    reported = []
+    both = exporters.merge_bodies_to_mesh(
+        [_Body(TETRA_V, TETRA_T), open_body], reported)
+    check("a closed part beside an open one is still reported correctly",
+          reported == [2], str(reported))
+    check("and both survive into the mesh",
+          len(np.asarray(both.tri_verts)) == 7,
+          str(len(np.asarray(both.tri_verts))))
+
+    check("a mesh with no bodies at all is still None",
+          exporters.merge_bodies_to_mesh([]) is None)
+    check("and one with only empty bodies too",
+          exporters.merge_bodies_to_mesh([_Body(TETRA_V, TETRA_T, empty=True)]) is None)
+
     # --- slivers are reported, but not as "not manifold" -------------------
     # A closed cube whose top face is fanned through a point on its diagonal:
     # manifold, with one zero-area triangle. CSG emits these routinely.

@@ -170,8 +170,25 @@ def body_to_manifold(b):
     return manifold3d.Manifold(manifold3d.Mesh(v, t))
 
 
-def merge_bodies_to_mesh(bodies):
+def body_mesh_arrays(b):
+    """One body's raw triangles, as (vertices, faces) float32/uint32."""
+    import numpy as np
+
+    m = b.body.to_mesh()
+    return (np.asarray(m.vert_properties[:, :3], dtype=np.float32),
+            np.asarray(m.tri_verts, dtype=np.uint32))
+
+
+def merge_bodies_to_mesh(bodies, open_parts=None):
     """Union the bodies into one mesh for STL/OBJ. None if all are empty.
+
+    `open_parts`, if a list is passed, receives the 1-based index of every
+    body that is not a closed solid. Manifold discards such a body outright
+    -- an open shell converts to nothing -- so before this took them into
+    account, exporting a surface with a missing face wrote a valid STL
+    containing zero triangles and said nothing. Their triangles are real
+    geometry the user can see in the viewport, so they are concatenated onto
+    the unioned solids rather than dropped; the caller warns about them.
 
     A union, not a concatenation. Concatenating is right only while the
     bodies are disjoint: where two touch, each writes its own copy of the
@@ -188,13 +205,36 @@ def merge_bodies_to_mesh(bodies):
     from types import SimpleNamespace
     import manifold3d
 
-    parts = [body_to_manifold(b) for b in bodies if not b.body.is_empty()]
-    if not parts:
+    parts, loose = [], []
+    for i, b in enumerate(bodies):
+        if b.body.is_empty():
+            continue
+        v, t = body_mesh_arrays(b)
+        man = manifold3d.Manifold(manifold3d.Mesh(v, t))
+        if man.is_empty() and len(t):
+            # Manifold rejected it: not a closed solid. Keep the triangles.
+            loose.append((v, t))
+            if open_parts is not None:
+                open_parts.append(i + 1)
+        elif not man.is_empty():
+            parts.append(man)
+    if not parts and not loose:
         return None
 
-    merged = (parts[0] if len(parts) == 1
-              else manifold3d.Manifold.batch_boolean(parts, manifold3d.OpType.Add))
-    m = merged.to_mesh()
+    chunks = []
+    if parts:
+        merged = (parts[0] if len(parts) == 1
+                  else manifold3d.Manifold.batch_boolean(parts, manifold3d.OpType.Add))
+        m = merged.to_mesh()
+        chunks.append((np.asarray(m.vert_properties[:, :3], dtype=np.float32),
+                       np.asarray(m.tri_verts, dtype=np.uint32)))
+    chunks.extend(loose)
+
+    verts, faces, offset = [], [], 0
+    for v, t in chunks:
+        verts.append(v)
+        faces.append(t.astype(np.int64) + offset)
+        offset += len(v)
     return SimpleNamespace(
-        vert_properties=np.asarray(m.vert_properties[:, :3], dtype=np.float32),
-        tri_verts=np.asarray(m.tri_verts, dtype=np.int64))
+        vert_properties=np.concatenate(verts) if len(verts) > 1 else verts[0],
+        tri_verts=np.concatenate(faces) if len(faces) > 1 else faces[0])

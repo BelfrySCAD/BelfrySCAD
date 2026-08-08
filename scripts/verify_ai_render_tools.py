@@ -127,6 +127,39 @@ def gui_checks():
     check("a drilled cube is measured as genus 1",
           "genus 1" in w._geometry_summary(), w._geometry_summary())
 
+    # An open shell converts to an empty Manifold, which was reported as a
+    # solid part with 0 triangles, genus 1 and an inverted-infinity bounding
+    # box -- for a surface plainly visible in the viewport.
+    w._current_tab().editor.setPlainText("""
+        polyhedron(points=[[0,0,0],[10,0,0],[10,10,0],[0,10,0],
+                           [0,0,10],[10,0,10],[10,10,10],[0,10,10]],
+                   faces=[[0,2,1],[0,3,2],[4,5,6],[4,6,7],
+                          [0,1,5],[0,5,4],[1,2,6],[1,6,5],
+                          [2,3,7],[2,7,6]]);
+    """)
+    w._render_threadsafe()
+    pump(30, lambda: "open surface" in w._geometry_summary())
+    s = w._geometry_summary()
+    check("an open shell is named as an open surface, not a solid",
+          "open surface" in s and "0 solid part(s)" in s, s)
+    check("with its real triangle count, not the empty Manifold's zero",
+          "10 triangles" in s, s)
+    check("and a real bounding box rather than inverted infinities",
+          "inf" not in s and "10.000 x 10.000 x 10.000" in s, s)
+    check("its area is measured from the triangles", "500.000" in s, s)
+
+    # propose_new_script passes a filename that the accept path dropped, so
+    # the tab it created read as "Untitled" and the argument did nothing.
+    from belfryscad.window.ai_tools import Proposal
+    w._on_ai_proposal_accepted(Proposal(
+        kind="new_file", summary="", new_content="cube(3);",
+        diff_text="", filename="probe.scad"))
+    tab = w._current_tab()
+    check("an accepted new script keeps the name the model gave it",
+          tab.suggested_name == "probe.scad", str(tab.suggested_name))
+    check("and the tab shows it instead of Untitled",
+          tab.display_name().startswith("probe.scad"), tab.display_name())
+
     w.close()
 
 
@@ -192,18 +225,38 @@ def main():
 
     # --- the render tool ------------------------------------------------
     called = []
-    ok = T.AIToolContext(library_dir=Path("."),
-                         request_render=lambda: called.append(1) or True)
+    tabs = [T.TabSnapshot(id=7, name="a.scad", path=None,
+                          modified=False, text="cube(1);")]
+    ok = T.AIToolContext(library_dir=Path("."), open_tabs=tabs,
+                         request_render=lambda i=None: called.append(i) or True)
     out = T.render(ok)
-    check("render() starts a render", called == [1])
+    check("render() starts a render", called == [None], str(called))
     check("and says the result is not ready yet",
           "not finished" in out and 'schedule_followup(when="render")' in out, out)
 
-    nothing = T.AIToolContext(library_dir=Path("."), request_render=lambda: False)
+    # Tab targeting: without it the model can only render whatever tab
+    # happens to be active, and accepting a new script changes that silently.
+    called.clear()
+    T.render(ok, id=7)
+    check("render(id=) targets that script", called == [7], str(called))
+    called.clear()
+    bad = T.render(ok, id=99)
+    check("render() rejects an unknown id instead of rendering the wrong tab",
+          bad.startswith("Error:") and called == [], bad)
+
+    nothing = T.AIToolContext(library_dir=Path("."),
+                              request_render=lambda i=None: False)
     check("render() with no script reports that, rather than claiming success",
           T.render(nothing).startswith("Error:"), T.render(nothing))
     check("render() is unavailable rather than crashing when unwired",
           T.render(T.AIToolContext(library_dir=Path("."))).startswith("Error:"))
+
+    # An empty tool result reads as a failed call, not as an empty file.
+    empty_tab = [T.TabSnapshot(id=3, name="e.scad", path=None,
+                               modified=False, text="  \n")]
+    ectx = T.AIToolContext(library_dir=Path("."), open_tabs=empty_tab)
+    check("read_open_script says an empty script is empty",
+          T.read_open_script(ectx, 3).strip() != "", repr(T.read_open_script(ectx, 3)))
 
     # --- registration ----------------------------------------------------
     names = [t["name"] for t in T.TOOLS]

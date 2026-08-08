@@ -156,6 +156,10 @@ class FileTab(QWidget):
         self.chat_id = FileTab._next_chat_id
         FileTab._next_chat_id += 1
         self.file_path = None
+        # A name for a tab that isn't on disk yet -- the AI's
+        # propose_new_script supplies one, and without this the tab it
+        # created read as "Untitled" and its filename argument did nothing.
+        self.suggested_name = None
         self.is_modified = False
         self.root_scope = None
         # The temp file most recently parsed for this tab's root_scope --
@@ -173,7 +177,7 @@ class FileTab(QWidget):
             import os
             name = os.path.basename(self.file_path)
         else:
-            name = "Untitled"
+            name = self.suggested_name or "Untitled"
         name += "*" if self.is_modified else ""
         name += " (ro)" if self.editor.isReadOnly() else ""
         return name
@@ -1328,7 +1332,8 @@ class MainWindow(QMainWindow):
         if not tab:
             return False
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save File", "", "OpenSCAD Files (*.scad);;All Files (*)"
+            self, "Save File", tab.file_path or tab.suggested_name or "",
+            "OpenSCAD Files (*.scad);;All Files (*)"
         )
         if not path:
             return False
@@ -1429,7 +1434,12 @@ class MainWindow(QMainWindow):
                     self.log(f"WARNING: export: {problem}")
                 exporters.write_3mf(path, bodies)
             else:
-                mesh = exporters.merge_bodies_to_mesh(bodies)
+                open_parts = []
+                mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
+                for n in open_parts:
+                    self.log(f"WARNING: export: part {n} is not a closed "
+                             f"solid; its surface is written as-is, and most "
+                             f"slicers will reject it.")
                 if mesh is None:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
@@ -2096,10 +2106,12 @@ class MainWindow(QMainWindow):
         """Measurements of the last render, as plain text for the
         describe_geometry tool. Computed here on the GUI thread: Manifold
         objects are never handed to the worker."""
+        import numpy as np
         bodies = getattr(self, "_bodies", None)
         if not bodies:
             return ""
         lines, total_v, total_a = [], 0.0, 0.0
+        open_count = 0
         lo = [float("inf")] * 3
         hi = [float("-inf")] * 3
         failed = None
@@ -2112,6 +2124,32 @@ class MainWindow(QMainWindow):
                 # and left this returning "" -- which the AI's
                 # describe_geometry reported as "nothing has been rendered".
                 m = exporters.body_to_manifold(cb)
+                if m.is_empty():
+                    # Manifold rejects anything that isn't a closed solid, so
+                    # an open shell converts to nothing. Measured from its
+                    # triangles instead -- reporting the empty Manifold gave
+                    # "0 triangles, genus 1" and an inverted-infinity box for
+                    # a surface plainly visible in the viewport.
+                    mv, mt = exporters.body_mesh_arrays(cb)
+                    if not len(mt):
+                        continue
+                    bb = [*mv.min(axis=0), *mv.max(axis=0)]
+                    for k in range(3):
+                        lo[k] = min(lo[k], bb[k])
+                        hi[k] = max(hi[k], bb[k + 3])
+                    open_count += 1
+                    tri = mv[mt.astype(int)]
+                    a = float(np.linalg.norm(
+                        np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]),
+                        axis=1).sum() / 2)
+                    total_a += a
+                    lines.append(
+                        f"  body {i + 1}: an open surface, NOT a closed solid "
+                        f"(so it has no volume and cannot take part in CSG); "
+                        f"surface area {a:.3f}, size {bb[3] - bb[0]:.3f} x "
+                        f"{bb[4] - bb[1]:.3f} x {bb[5] - bb[2]:.3f}, "
+                        f"{len(mt)} triangles")
+                    continue
                 v, a = m.volume(), m.surface_area()
                 bb = m.bounding_box()
                 total_v += v
@@ -2132,8 +2170,14 @@ class MainWindow(QMainWindow):
             # measure used to look identical to no bodies at all.
             return (f"Error: the rendered model could not be measured ({failed})."
                     if failed and bodies else "")
+        solids = len(lines) - open_count
+        headline = f"Rendered model: {solids} solid part(s)"
+        if open_count:
+            headline += (f" and {open_count} open surface(s) -- an open "
+                         f"surface has no volume and cannot be used in CSG "
+                         f"or printed")
         return "\n".join([
-            f"Rendered model: {len(lines)} solid part(s).",
+            headline + ".",
             f"Total volume {total_v:.3f}, total surface area {total_a:.3f}.",
             f"Overall bounding box: [{lo[0]:.3f}, {lo[1]:.3f}, {lo[2]:.3f}] to "
             f"[{hi[0]:.3f}, {hi[1]:.3f}, {hi[2]:.3f}] "
@@ -2257,14 +2301,16 @@ class MainWindow(QMainWindow):
             # timeout to learn nothing.
             req["done"].set()
 
-    def _render_threadsafe(self) -> bool:
+    def _render_threadsafe(self, chat_id=None) -> bool:
         """The AI's render tool. Queues the render on the GUI thread and
         returns whether there was anything to render -- not whether it
         succeeded, which isn't known until it finishes."""
         from PySide6.QtCore import QMetaObject
-        tab = self._current_tab()
+        tab = self._tab_by_chat_id(chat_id) if chat_id is not None \
+            else self._current_tab()
         if tab is None or not tab.editor.toPlainText().strip():
             return False
+        self._ai_render_tab = tab
         QMetaObject.invokeMethod(self, "_render_for_ai",
                                  Qt.ConnectionType.QueuedConnection)
         return True
@@ -2274,7 +2320,16 @@ class MainWindow(QMainWindow):
         """invokeMethod resolves by name through the meta-object, so the
         target has to be a registered slot; _render is a plain method with
         arguments."""
-        self._render()
+        tab = getattr(self, "_ai_render_tab", None)
+        if tab is not None:
+            # Made active first: the geometry, console and viewport the AI
+            # reads afterwards all describe the last render, whichever tab
+            # it came from, so leaving a different tab selected would show
+            # the user one script and the model another.
+            idx = self._tabs.indexOf(tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+        self._render(tab)
 
     def _capture_view_threadsafe(self, view: str, overrides: dict | None = None):
         """Called from the AI worker thread. Hands the request to the GUI
@@ -2408,7 +2463,11 @@ class MainWindow(QMainWindow):
             self._new_document()
             tab = self._current_tab()
             if tab is not None:
+                tab.suggested_name = proposal.filename or None
                 tab.editor.setPlainText(proposal.new_content)
+                idx = self._tabs.indexOf(tab)
+                if idx >= 0:
+                    self._tabs.setTabText(idx, tab.display_name())
                 tab.editor.source_edited_externally.emit()
 
     def _edit_customizer_parameter(self, tab, word: str):
