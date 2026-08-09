@@ -306,17 +306,26 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         ))
 
         # Bracket pairs, coloured by nesting depth so a matching pair shares
-        # a colour. Five cycling colours, deliberately NOT in spectrum
-        # order: what matters is that *adjacent* depths look nothing alike,
-        # so each step jumps roughly across the wheel rather than sliding
-        # along it. No two neighbours -- including 5 wrapping back to 0 --
-        # are near hues.
+        # a colour.
+        #
+        # The hues sit 72 degrees apart but are visited two steps round the
+        # wheel at a time, so each depth bounces to the far side of the
+        # spectrum rather than walking along it: every adjacent pair,
+        # including 4 wrapping back to 0, is 144 degrees apart.
+        #
+        # 144 is the most that is possible here, not a compromise. Five
+        # signed steps of 180 sum to an odd multiple of 180, which is never
+        # a multiple of 360, so a full opposite-hue jump every time cannot
+        # close the cycle; 5 x 144 = 720 closes it in exactly two turns.
+        #
+        # Saturation and value are tuned per colour for readability. Hue
+        # never is -- it is what the 144-degree spacing depends on.
         self._bracket_formats = []
-        for colour in ("#C4921C",   # dark goldenrod
-                        "#DA70D6",   # orchid
-                        "#179FFF",   # blue
-                        "#FF7043",   # orange
-                        "#7CE38B"):  # green
+        for colour in ("#C4921C",   # dark goldenrod   42
+                        "#59CAD7",   # cyan            186
+                        "#E65FA2",   # rose            330
+                        "#68CD5C",   # green           114
+                        "#A17FF0"):  # violet          258
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(colour))
             self._bracket_formats.append(fmt)

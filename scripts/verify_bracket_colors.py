@@ -66,7 +66,13 @@ def main():
         d = min(d, 360 - d)
         if worst is None or d < worst[0]:
             worst = (d, name, palette[(i + 1) % len(palette)])
-    check("adjacent depths differ clearly in hue", worst[0] >= 60,
+    # 144 is the ceiling for five colours, not a target chosen by taste:
+    # five signed steps of 180 sum to an odd multiple of 180, never a
+    # multiple of 360, so the cycle cannot close with opposite-hue jumps.
+    # 5 x 144 = 720 closes it in two turns. Allowing 140 leaves room for
+    # rounding when a hue is derived from a hex.
+    check("every step bounces to the far side of the spectrum",
+          worst[0] >= 140,
           f"closest pair {worst[1]}/{worst[2]} only {worst[0]} deg apart")
 
     first = QColor(palette[0])
