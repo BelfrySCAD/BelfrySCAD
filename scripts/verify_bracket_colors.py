@@ -51,7 +51,9 @@ def main():
     doc = QTextDocument()
     hl = OpenSCADHighlighter(doc)
     palette = [f.foreground().color().name() for f in hl._bracket_formats]
-    check("there are at least seven cycling colours", len(palette) >= 7, str(palette))
+    # Pinned rather than a floor: the count is a deliberate choice that has
+    # moved (3, then 7, then 5), so a silent change should be noticed.
+    check("there are five cycling colours", len(palette) == 5, str(palette))
     check("and they are all distinct", len(set(palette)) == len(palette), str(palette))
 
     # The property that actually matters: neighbouring depths must not look
@@ -66,6 +68,11 @@ def main():
             worst = (d, name, palette[(i + 1) % len(palette)])
     check("adjacent depths differ clearly in hue", worst[0] >= 60,
           f"closest pair {worst[1]}/{worst[2]} only {worst[0]} deg apart")
+
+    first = QColor(palette[0])
+    check("the first colour is a darkened gold, not a bright one",
+          max(first.red(), first.green(), first.blue()) <= 0.90 * 255,
+          f"{palette[0]} value {max(first.red(), first.green(), first.blue())/255:.2f}")
 
     # The case from the request.
     src = "{ callit([3,4,5]); }"
