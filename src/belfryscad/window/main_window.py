@@ -493,6 +493,12 @@ class MainWindow(QMainWindow):
         # plist regardless.
         self.persist_settings = True
 
+        # Measurements taken in the viewport. Deliberately in memory only
+        # and cleared by a render: they are anchored to world points, and a
+        # point snapped to a vertex the new geometry no longer has would
+        # still draw a confident, wrong number.
+        self._measurements: list = []
+
         # Automatic Reload and Render: watch the open files on disk and pick
         # up changes made outside the app. Paths are collected and debounced
         # rather than reloaded per signal -- a save is rarely one write, and
@@ -541,6 +547,8 @@ class MainWindow(QMainWindow):
         # Viewport is the central widget
         self._viewport = Viewport()
         self._viewport.selection_changed.connect(self._on_selection_changed)
+        self._viewport.measurement_taken.connect(self._on_measurement_taken)
+        self._viewport.measure_progress.connect(self._on_measure_progress)
         self._viewport.translate_committed.connect(self._on_translate_committed)
         self._viewport.rotate_committed.connect(self._on_rotate_committed)
         self._viewport.scale_committed.connect(self._on_scale_committed)
@@ -903,6 +911,17 @@ class MainWindow(QMainWindow):
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
+        design_menu.addSeparator()
+        measure_menu = design_menu.addMenu("Measure")
+        self._act_measure_distance = self._add_checkable(
+            measure_menu, "Distance Between Two Points", False,
+            lambda on: self._set_measure_mode("distance" if on else None))
+        self._act_measure_angle = self._add_checkable(
+            measure_menu, "Angle Between Three Points", False,
+            lambda on: self._set_measure_mode("angle" if on else None))
+        measure_menu.addSeparator()
+        self._add_action(measure_menu, "Clear Measurements",
+                          self._clear_measurements)
         design_menu.addSeparator()
         self._act_auto_reload = self._add_checkable(
             design_menu, "Automatic Reload and Render",
@@ -1514,6 +1533,48 @@ class MainWindow(QMainWindow):
         self.log(f"Reloaded {Path(path).name} (changed on disk).")
         return True
 
+    # ------------------------------------------------------------------
+    # Measurement
+    # ------------------------------------------------------------------
+
+    _MAX_MEASUREMENTS = 10
+
+    def _set_measure_mode(self, mode):
+        """Enter or leave a measurement mode. The two modes are mutually
+        exclusive, so switching one on unchecks the other rather than
+        leaving both lit with only one of them live."""
+        if mode == "distance" and self._act_measure_angle.isChecked():
+            self._act_measure_angle.setChecked(False)
+        elif mode == "angle" and self._act_measure_distance.isChecked():
+            self._act_measure_distance.setChecked(False)
+        self._viewport.set_measure_mode(mode)
+        if mode is None and not (self._act_measure_distance.isChecked()
+                                  or self._act_measure_angle.isChecked()):
+            self.statusBar().clearMessage()
+
+    def _on_measure_progress(self, text: str):
+        if text:
+            self.statusBar().showMessage(text)
+        else:
+            self.statusBar().clearMessage()
+
+    def _on_measurement_taken(self, measurement):
+        self._measurements.append(measurement)
+        # A bounded list: these are a scratch annotation, and a viewport
+        # buried under thirty labels is worse than one that forgets.
+        del self._measurements[:-self._MAX_MEASUREMENTS]
+        self._viewport.set_measurements(self._measurements)
+        kinds = "/".join(measurement.snaps)
+        self.log(f"Measured {measurement.kind}: {measurement.label()}  "
+                 f"[snapped to {kinds}]")
+
+    def _clear_measurements(self):
+        if not self._measurements:
+            return
+        self._measurements = []
+        self._viewport.set_measurements(self._measurements)
+        self.log("Measurements cleared.")
+
     def _write_file(self, tab, path):
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -1841,6 +1902,14 @@ class MainWindow(QMainWindow):
         render_id = self._render_id
         tab.editor.clear_errors()
         self._console.clear()
+        if self._measurements:
+            # After the console clear, or the note is wiped by it. Anchored
+            # to world points on the geometry being replaced: a measurement
+            # that survived would keep drawing a confident number against a
+            # model that no longer has those corners.
+            self._measurements = []
+            self._viewport.set_measurements([])
+            self.log("Measurements cleared by the render.")
         # Deliberately NOT self._viewport.load_geometry([]) here -- the
         # previous render's geometry stays visible (with the busy overlay on
         # top) until this one's new geometry is ready to replace it, in
@@ -3753,6 +3822,16 @@ class MainWindow(QMainWindow):
                          Qt.Orientation.Vertical)
 
     def keyPressEvent(self, event):
+        if (event.key() == Qt.Key.Key_Escape
+                and self._viewport.measure_mode() is not None):
+            # First Escape drops a half-taken measurement, a second leaves
+            # the mode -- so an accidental click is cheap to undo without
+            # also losing the tool.
+            if not self._viewport.cancel_measurement():
+                self._act_measure_distance.setChecked(False)
+                self._act_measure_angle.setChecked(False)
+                self._set_measure_mode(None)
+            return
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
             self._render_cancel.set()
             self._set_render_busy(False)
