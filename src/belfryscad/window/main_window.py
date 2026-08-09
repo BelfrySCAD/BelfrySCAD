@@ -3832,16 +3832,14 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and (
                 self._viewport.measure_mode() is not None or self._measurements):
-            # One Escape clears everything measured -- the finished ones and
-            # any half-taken one together, rather than making the user press
-            # it once per layer. Measurements clear even when the tool is
-            # off, since that is when they are most likely just clutter.
-            # With nothing left to clear, Escape leaves the tool.
-            cleared = self._viewport.cancel_measurement()
+            # Escape peels one layer at a time, cheapest to lose first: a
+            # half-taken measurement, then the finished ones on screen,
+            # then the tool itself. Measurements clear even when the tool
+            # is off, since that is when they are most likely just clutter.
+            if self._viewport.cancel_measurement():
+                return
             if self._measurements:
                 self._clear_measurements()
-                cleared = True
-            if cleared:
                 return
             self._act_measure_distance.setChecked(False)
             self._act_measure_angle.setChecked(False)

@@ -181,20 +181,14 @@ def main():
     w._on_measurement_dismissed(99)
     check("an out-of-range dismissal is ignored", len(w._measurements) == before)
 
-    # One Escape clears everything measured, finished and half-taken
-    # together -- not one press per layer.
-    click(screen_of(np.array([20., 20., 20.])))       # a point left pending
-    check("there is something to clear",
-          len(w._measurements) > 0 and vp._measure_pending != [],
-          f"{len(w._measurements)} done, {len(vp._measure_pending)} pending")
+    # Escape with finished measurements clears them.
+    check("there is something to clear", len(w._measurements) > 0)
     esc = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
                     Qt.KeyboardModifier.NoModifier)
     w.keyPressEvent(esc)
     pump(0.2)
     check("escape clears the finished measurements", w._measurements == [],
           str(len(w._measurements)))
-    check("and the half-taken one in the same press",
-          vp._measure_pending == [], str(vp._measure_pending))
     check("and the tool is still armed", vp.measure_mode() == "distance",
           str(vp.measure_mode()))
     w.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
