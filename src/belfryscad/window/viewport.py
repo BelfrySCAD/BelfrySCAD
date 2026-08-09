@@ -3,6 +3,7 @@ import math
 import time
 from pathlib import Path
 import numpy as np
+from dataclasses import dataclass
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel, QPushButton
@@ -100,6 +101,64 @@ def _outer_ring_roll_delta_deg(x: float, y: float, dx: float, dy: float,
     return math.degrees(delta)
 
 
+class _MeasureLabel(QLabel):
+    """A measurement's floating readout. Clicking it dismisses that
+    measurement -- the label is the only part of a measurement big enough
+    to aim at, so it is what the click has to land on."""
+
+    clicked = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Click to dismiss this measurement")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+@dataclass
+class Measurement:
+    """One finished measurement, in world space.
+
+    Points are kept rather than the derived number so the overlay can be
+    redrawn from any camera angle, and so a measurement reads the same
+    however the view moves. They do NOT survive a re-render: a point
+    snapped to a vertex that no longer exists would still draw, and a
+    plausible wrong number is worse than none.
+    """
+    kind: str                 # "distance" | "angle"
+    points: list              # 2 for a distance, 3 for an angle (middle = vertex)
+    snaps: list               # how each point was snapped: vertex/edge/face
+
+    def value(self) -> float:
+        """Length, or degrees at the middle point."""
+        if self.kind == "distance":
+            return float(np.linalg.norm(self.points[1] - self.points[0]))
+        a = self.points[0] - self.points[1]
+        b = self.points[2] - self.points[1]
+        na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+        if na < 1e-12 or nb < 1e-12:
+            return float("nan")     # a leg of no length has no angle
+        cos = float(np.dot(a, b)) / (na * nb)
+        return float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
+
+    def label(self) -> str:
+        v = self.value()
+        if self.kind == "distance":
+            d = self.points[1] - self.points[0]
+            return (f"{v:.3f}  (dx {d[0]:.3f}, dy {d[1]:.3f}, dz {d[2]:.3f})")
+        if v != v:      # NaN
+            return "angle undefined (a leg has zero length)"
+        la = float(np.linalg.norm(self.points[0] - self.points[1]))
+        lb = float(np.linalg.norm(self.points[2] - self.points[1]))
+        return f"{v:.3f}\u00b0  (legs {la:.3f}, {lb:.3f})"
+
+
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
@@ -108,6 +167,9 @@ class Viewport(QOpenGLWidget):
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
     perspective_toggled = Signal(bool)                    # emitted on click, new perspective state
+    measurement_taken   = Signal(object)                  # a finished Measurement
+    measurement_dismissed = Signal(int)                   # index into the list
+    measure_progress    = Signal(str)                     # prompt for the next click
 
     def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0):
         super().__init__(parent)
@@ -133,6 +195,15 @@ class Viewport(QOpenGLWidget):
         # Tool state
         self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale
 
+        # Measurement. `_measure_mode` is None, "distance" or "angle";
+        # `_measure_pending` collects the snapped points of the measurement
+        # being taken. Finished ones live in MainWindow, not here -- the
+        # viewport draws them but does not own the list.
+        self._measure_mode = None
+        self._measure_pending: list = []
+        self._measure_hover = None
+        self._measurements: list = []
+
         # Delta overlay label
         self._delta_label = QLabel("", self)
         self._delta_label.setStyleSheet(
@@ -141,6 +212,10 @@ class Viewport(QOpenGLWidget):
             " font-family: Menlo; font-size: 13px; }"
         )
         self._delta_label.hide()
+
+        # Measurement readout, one label per finished measurement plus the
+        # one being taken. Same treatment as the delta overlay.
+        self._measure_labels: list = []
 
         # Gizmo drag state
         self._gizmo_drag_axis: int = -1
@@ -229,6 +304,122 @@ class Viewport(QOpenGLWidget):
         eye's `mvp` as the main scene. No-op by default."""
         pass
 
+    # ------------------------------------------------------------------
+    # Measurement overlay
+    # ------------------------------------------------------------------
+
+    _MEASURE_RGB = (1.0, 0.85, 0.25)
+    _PENDING_RGB = (0.55, 0.85, 1.0)
+
+    def _measure_marker_size(self) -> float:
+        """Cross size, scaled to the camera so it stays legible at any zoom
+        without redrawing on every orbit."""
+        return max(1e-6, float(self._renderer.camera.distance) * 0.012)
+
+    def _measure_segments(self):
+        """[(a, b, rgb)] for everything the measurement overlay draws."""
+        segs = []
+
+        def cross(p, rgb):
+            r = self._measure_marker_size()
+            for axis in range(3):
+                d = np.zeros(3)
+                d[axis] = r
+                segs.append((p - d, p + d, rgb))
+
+        for m in self._measurements:
+            rgb = self._MEASURE_RGB
+            if m.kind == "distance":
+                segs.append((m.points[0], m.points[1], rgb))
+            else:
+                segs.append((m.points[1], m.points[0], rgb))
+                segs.append((m.points[1], m.points[2], rgb))
+            for p in m.points:
+                cross(p, rgb)
+
+        # The one being taken: placed points, plus a rubber band to
+        # whatever the cursor is currently over.
+        placed = [p for p, _ in self._measure_pending]
+        for p in placed:
+            cross(p, self._PENDING_RGB)
+        if self._measure_mode is not None and self._measure_hover is not None:
+            hp = self._measure_hover[0]
+            cross(hp, self._PENDING_RGB)
+            if placed:
+                anchor_pt = placed[1] if len(placed) >= 2 else placed[0]
+                segs.append((anchor_pt, hp, self._PENDING_RGB))
+                if len(placed) >= 2:
+                    segs.append((placed[1], placed[0], self._PENDING_RGB))
+        return segs
+
+    def _rebuild_measure_overlay(self):
+        """Push the overlay into the renderer's line buffers.
+
+        Rebuilt rather than drawn per frame: the segment count is tiny, and
+        a buffer means orbiting costs nothing.
+        """
+        if self._ctx is None:
+            return
+        self.makeCurrent()
+        try:
+            self._renderer.clear_lines()
+            segs = self._measure_segments()
+            if segs:
+                rows = []
+                for a, b, rgb in segs:
+                    rows.append([a[0], a[1], a[2], *rgb])
+                    rows.append([b[0], b[1], b[2], *rgb])
+                self._renderer.upload_lines(np.array(rows, dtype=np.float32))
+        finally:
+            self.doneCurrent()
+        self._refresh_measure_labels()
+
+    def _on_measure_label_clicked(self, label):
+        """Dismiss whichever measurement this label is currently showing.
+        Resolved now rather than captured when the label was made: labels
+        are reused as the list changes, so a stored index would go stale."""
+        try:
+            index = self._measure_labels.index(label)
+        except ValueError:
+            return
+        if index < len(self._measurements):
+            self.measurement_dismissed.emit(index)
+
+    def _refresh_measure_labels(self):
+        """One floating label per measurement, at the midpoint of what it
+        measures."""
+        while len(self._measure_labels) < len(self._measurements):
+            lab = _MeasureLabel(self)
+            lab.setStyleSheet(
+                "QLabel { background: rgba(0,0,0,170); color: #ffd94a;"
+                " padding: 2px 7px; border-radius: 4px;"
+                " font-family: Menlo; font-size: 12px; }")
+            lab.clicked.connect(self._on_measure_label_clicked)
+            self._measure_labels.append(lab)
+        for lab in self._measure_labels[len(self._measurements):]:
+            lab.hide()
+
+        w, h = self.width(), self.height()
+        aspect = w / h if h > 0 else 1.0
+        mvp = (self._renderer.camera.projection_matrix(aspect)
+                @ self._renderer.camera.view_matrix())
+        for m, lab in zip(self._measurements, self._measure_labels):
+            anchor_pt = (m.points[0] + m.points[1]) / 2.0 if m.kind == "distance" \
+                else m.points[1]
+            clip = mvp.astype(np.float64) @ np.array(
+                [anchor_pt[0], anchor_pt[1], anchor_pt[2], 1.0])
+            if clip[3] <= 1e-9:
+                lab.hide()          # behind the camera
+                continue
+            ndc = clip[:2] / clip[3]
+            x = (ndc[0] * 0.5 + 0.5) * w
+            y = (1.0 - (ndc[1] * 0.5 + 0.5)) * h
+            lab.setText(m.label())
+            lab.adjustSize()
+            lab.move(int(x - lab.width() / 2), int(y - lab.height() - 6))
+            lab.show()
+            lab.raise_()
+
     def paintEvent(self, event):
         super().paintEvent(event)   # triggers paintGL
 
@@ -265,8 +456,83 @@ class Viewport(QOpenGLWidget):
         # the vertex-move handlers in data_viewers.py).
         if reframe:
             self._renderer.camera.frame_bounds(bb_min, bb_max)
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
+
+    # ------------------------------------------------------------------
+    # Measurement
+    # ------------------------------------------------------------------
+
+    MEASURE_DISTANCE = "distance"
+    MEASURE_ANGLE = "angle"
+
+    def set_measure_mode(self, mode):
+        """Enter, switch or leave measurement. Anything half-picked is
+        dropped: a leftover point from the other mode would silently become
+        part of the next measurement."""
+        self._measure_mode = mode
+        self._measure_pending = []
+        self._measure_hover = None
+        self.setCursor(Qt.CursorShape.CrossCursor if mode
+                        else Qt.CursorShape.ArrowCursor)
+        self.measure_progress.emit(self._measure_prompt())
+        self._rebuild_measure_overlay()
+        self.update()
+
+    def measure_mode(self):
+        return self._measure_mode
+
+    def _measure_prompt(self) -> str:
+        if self._measure_mode is None:
+            return ""
+        n = len(self._measure_pending)
+        if self._measure_mode == self.MEASURE_DISTANCE:
+            return ("Measure: click the first point." if n == 0
+                    else "Measure: click the second point.  (Esc cancels)")
+        return [
+            "Measure angle: click the first point.",
+            "Measure angle: click the vertex -- the corner the angle is at.",
+            "Measure angle: click the third point.  (Esc cancels)",
+        ][min(n, 2)]
+
+    def cancel_measurement(self):
+        """Drop a half-taken measurement, staying in the mode."""
+        if not self._measure_pending:
+            return False
+        self._measure_pending = []
+        self.measure_progress.emit(self._measure_prompt())
+        self._rebuild_measure_overlay()
+        self.update()
+        return True
+
+    def set_measurements(self, measurements: list):
+        """The finished measurements to draw. Owned by MainWindow."""
+        self._measurements = list(measurements)
+        self._rebuild_measure_overlay()
+        self.update()
+
+    def _do_measure_click(self, pos) -> bool:
+        snap = self._renderer.snap_at(pos.x(), pos.y(), self.width(), self.height())
+        if snap is None:
+            # A click on empty space is not a measurement point. Silently
+            # ignoring it beats snapping to a far-away vertex that merely
+            # happens to be under the cursor.
+            self.measure_progress.emit("Measure: that click missed the model.")
+            return True
+        point, kind = snap
+        self._measure_pending.append((np.asarray(point, dtype=np.float64), kind))
+        want = 2 if self._measure_mode == self.MEASURE_DISTANCE else 3
+        if len(self._measure_pending) >= want:
+            points = [p for p, _ in self._measure_pending]
+            kinds = [k for _, k in self._measure_pending]
+            self._measure_pending = []
+            self.measurement_taken.emit(Measurement(self._measure_mode, points, kinds))
+        self.measure_progress.emit(self._measure_prompt())
+        self._rebuild_measure_overlay()
+        self.update()
+        return True
 
     def set_active_tool(self, tool_id: int):
         self._active_tool = tool_id
@@ -344,6 +610,8 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         cam.orthographic = not cam.orthographic
         self.refresh_perspective_icon()
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.perspective_toggled.emit(not cam.orthographic)
         self.update()
@@ -383,6 +651,8 @@ class Viewport(QOpenGLWidget):
     def _spin_tick(self):
         cam = self._renderer.camera
         cam.azimuth = (cam.azimuth + 36.0 * 33 / 1000.0) % 360.0
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -421,9 +691,13 @@ class Viewport(QOpenGLWidget):
             cam.azimuth, cam.elevation = 295, 35
         elif preset == "all":
             self._frame_all(cam)
+            if self._measurements:
+                self._refresh_measure_labels()
             self.camera_changed.emit()
             self.update()
             return
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -451,6 +725,8 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         factor = 1.03 if direction < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -489,6 +765,8 @@ class Viewport(QOpenGLWidget):
         cam.target = (cam.target
                       + right * dx_ndc * half_h * aspect
                       + up * dy_ndc * half_h).astype(np.float32)
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -498,6 +776,15 @@ class Viewport(QOpenGLWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
+
+        # Measurement owns the plain click while its mode is on, ahead of
+        # selection and orbit -- otherwise every measuring click would also
+        # spin the camera.
+        if (self._measure_mode is not None
+                and event.button() == Qt.MouseButton.LeftButton
+                and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
+            self._do_measure_click(pos)
+            return
 
         # Cmd+click → selection (takes priority over everything). Data-viewer
         # subclasses set selectable=False so Ctrl+drag orbits instead — they
@@ -528,6 +815,17 @@ class Viewport(QOpenGLWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
+
+        if self._measure_mode is not None and self._last_mouse is None:
+            snap = self._renderer.snap_at(pos.x(), pos.y(), self.width(), self.height())
+            hover = (np.asarray(snap[0], dtype=np.float64), snap[1]) if snap else None
+            changed = (hover is None) != (self._measure_hover is None)
+            if not changed and hover is not None:
+                changed = not np.allclose(hover[0], self._measure_hover[0])
+            self._measure_hover = hover
+            if changed:
+                self._rebuild_measure_overlay()
+                self.update()
 
         # Gizmo drag update
         if self._gizmo_drag_axis >= 0:
@@ -579,6 +877,8 @@ class Viewport(QOpenGLWidget):
         elif self._mouse_button == Qt.MouseButton.RightButton:
             self._pan_by(dx, dy)
 
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -638,6 +938,8 @@ class Viewport(QOpenGLWidget):
             self._zoom_to_cursor(0.99 if delta > 0 else 1.01, event.position().toPoint())
             self._on_zoom_changed()
 
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
 
@@ -693,6 +995,8 @@ class Viewport(QOpenGLWidget):
             # platform keeps delivering the rest of the sequence.
             return True
 
+        if self._measurements:
+            self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
         return True

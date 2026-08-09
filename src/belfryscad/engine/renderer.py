@@ -1657,6 +1657,67 @@ class SceneRenderer:
                 best_id = int(buf.tri_ids[idx])
         return best_id
 
+    def ray_cast_point(self, ray_origin: np.ndarray, ray_dir: np.ndarray):
+        """Nearest surface hit, with the geometry needed to snap to it.
+
+        ray_cast() answers "what did I click on" and throws the position
+        away. Measuring needs the position, and the triangle it landed in,
+        so the click can be pulled onto a corner or an edge.
+
+        Returns (world_point, (v0, v1, v2), buffer) or None.
+        """
+        best_t = np.inf
+        best = None
+        for buf in self._buffers:
+            if buf.role == "background" or len(buf.cpu_v0) == 0:
+                continue
+            idx, t = _moller_trumbore_batch(ray_origin, ray_dir,
+                                             buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)
+            if idx is not None and t < best_t:
+                best_t = t
+                best = (buf, int(idx))
+        if best is None:
+            return None
+        buf, idx = best
+        point = np.asarray(ray_origin, dtype=np.float64) + best_t * np.asarray(ray_dir, dtype=np.float64)
+        tri = (np.asarray(buf.cpu_v0[idx], dtype=np.float64),
+                np.asarray(buf.cpu_v1[idx], dtype=np.float64),
+                np.asarray(buf.cpu_v2[idx], dtype=np.float64))
+        return point, tri, buf, idx
+
+    # Offsets tried when the ray through the cursor misses, nearest first.
+    # A corner on the silhouette is the worst case for an exact ray -- it
+    # grazes the surface and misses -- and it is also precisely where
+    # someone measuring wants to click.
+    _SNAP_PROBES = [(0.0, 0.0)] + [
+        (r * dx, r * dy)
+        for r in (3.0, 6.0, 10.0)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                        (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0.7, -0.7))
+    ]
+
+    def snap_at(self, px: float, py: float, w: int, h: int):
+        """Snap a click at (px, py) to the model. Returns (point, kind) or
+        None if nothing is under or near the cursor."""
+        hit = None
+        ray_origin = ray_dir = None
+        for ox, oy in self._SNAP_PROBES:
+            ray_origin, ray_dir = self.camera_ray(px + ox, py + oy, w, h)
+            hit = self.ray_cast_point(ray_origin, ray_dir)
+            if hit is not None:
+                break
+        if hit is None:
+            return None
+        point, tri, buf, idx = hit
+        aspect = w / h if h > 0 else 1.0
+        mvp = self.camera.projection_matrix(aspect) @ self.camera.view_matrix()
+        edges = feature_edges_of_triangle(buf.cpu_v0, buf.cpu_v1, buf.cpu_v2, idx)
+        # The probe ray found the triangle; the snap is chosen against the
+        # real cursor position, so an offset probe cannot drag the result
+        # towards whichever neighbour it happened to land on.
+        cursor_o, cursor_d = self.camera_ray(px, py, w, h)
+        return choose_snap(point, tri, edges, cursor_o, cursor_d, mvp, px, py, w, h)
+
     def release(self):
         self._clear_buffers()
         if self._gizmo_vbo is not None:
@@ -1980,6 +2041,91 @@ def _project_to_screen(point: np.ndarray, mvp: np.ndarray, w: int, h: int) -> tu
     sx = (ndc[0] * 0.5 + 0.5) * w
     sy = (1.0 - (ndc[1] * 0.5 + 0.5)) * h
     return sx, sy
+
+
+SNAP_VERTEX = "vertex"
+SNAP_EDGE = "edge"
+SNAP_FACE = "face"
+
+
+def triangle_normal(v0: np.ndarray, v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+    """Unit normal of one triangle; a zero vector for a degenerate one."""
+    n = np.cross(np.asarray(v1, dtype=np.float64) - v0,
+                  np.asarray(v2, dtype=np.float64) - v0)
+    length = float(np.linalg.norm(n))
+    return n / length if length > 1e-12 else np.zeros(3)
+
+
+def feature_edges_of_triangle(v0all: np.ndarray, v1all: np.ndarray, v2all: np.ndarray,
+                               tri_index: int, angle_deg: float = 20.0,
+                               tol: float = 1e-5) -> list:
+    """Which of triangle `tri_index`'s three edges are real model features.
+
+    The viewport shows a triangulated mesh, not a B-rep, so most edges are
+    not features at all: a flat cube face is two triangles with a diagonal
+    across it, and that diagonal moves when $fn changes. Snapping to it
+    would give a measurement that looks precise and means nothing.
+
+    An edge counts as a feature when the faces meeting along it turn by
+    more than `angle_deg` -- or when nothing else shares it, which makes it
+    a boundary. Returns a list of (a, b) endpoint pairs.
+
+    Matching is by position rather than index: the same corner can carry
+    several indices, and an edge shared by two differently-indexed copies
+    of one position is still one edge.
+    """
+    tri = (np.asarray(v0all[tri_index], dtype=np.float64),
+            np.asarray(v1all[tri_index], dtype=np.float64),
+            np.asarray(v2all[tri_index], dtype=np.float64))
+    own_normal = triangle_normal(*tri)
+    cos_limit = np.cos(np.radians(angle_deg))
+    out = []
+    for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+        has_a = (np.all(np.abs(v0all - a) < tol, axis=1)
+                  | np.all(np.abs(v1all - a) < tol, axis=1)
+                  | np.all(np.abs(v2all - a) < tol, axis=1))
+        has_b = (np.all(np.abs(v0all - b) < tol, axis=1)
+                  | np.all(np.abs(v1all - b) < tol, axis=1)
+                  | np.all(np.abs(v2all - b) < tol, axis=1))
+        shared = np.nonzero(has_a & has_b)[0]
+        others = [int(i) for i in shared if int(i) != tri_index]
+        if not others:
+            out.append((a, b))         # boundary edge: always a feature
+            continue
+        for other in others:
+            n = triangle_normal(v0all[other], v1all[other], v2all[other])
+            if abs(float(np.dot(own_normal, n))) < cos_limit:
+                out.append((a, b))
+                break
+    return out
+
+
+def choose_snap(hit_point: np.ndarray, tri, feature_edges, ray_origin: np.ndarray,
+                 ray_dir: np.ndarray, mvp: np.ndarray, px: float, py: float,
+                 w: int, h: int, vertex_px: float = 14.0, edge_px: float = 10.0):
+    """Where a click on `hit_point` should actually measure from.
+
+    Vertices win over edges even when an edge is nearer on screen: a corner
+    is what someone clicking near a corner meant, and near a corner an edge
+    is always closer to the cursor than the vertex is. Falling through to
+    the raw surface point keeps a click on a flat face useful.
+
+    Returns (world_point, kind).
+    """
+    verts = np.asarray(tri, dtype=np.float64)
+    idx = nearest_point_index(verts, mvp, px, py, w, h, vertex_px)
+    if idx >= 0:
+        return verts[idx], SNAP_VERTEX
+
+    if feature_edges:
+        points = np.array([p for edge in feature_edges for p in edge], dtype=np.float64)
+        segments = [(2 * i, 2 * i + 1) for i in range(len(feature_edges))]
+        found = nearest_segment_index(points, segments, ray_origin, ray_dir,
+                                       mvp, px, py, w, h, edge_px)
+        if found is not None:
+            return np.asarray(found[1], dtype=np.float64), SNAP_EDGE
+
+    return np.asarray(hit_point, dtype=np.float64), SNAP_FACE
 
 
 def nearest_segment_index(points: np.ndarray, segments: list, ray_origin: np.ndarray, ray_dir: np.ndarray,
