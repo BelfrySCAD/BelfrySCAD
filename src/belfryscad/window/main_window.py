@@ -2546,10 +2546,10 @@ class MainWindow(QMainWindow):
                 return {"status": "error", "message": "the GUI did not respond."}
             return self._ai_debug_state or {"status": "idle"}
         # A to_child step that matches no target degrades into a continue,
-        # running to the end and taking the session with it. Observed with
-        # both a built-in and a user-module child, so the cause is not
-        # simply "builtins have no body"; until that is understood, say
-        # what happened rather than guess at why.
+        # running to the end and taking the session with it. The common
+        # case -- stepping from a module's own children(), which used to
+        # find no target at all -- is fixed in evaluator 0.26.1; this stays
+        # as the honest answer for whatever else reaches no child.
         stepping_to_child = (action == "resume" and arg == "to_child")
 
         if not self._ai_debug_event.wait(self._AI_DEBUG_TIMEOUT):
