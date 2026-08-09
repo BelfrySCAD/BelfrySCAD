@@ -101,6 +101,26 @@ def _outer_ring_roll_delta_deg(x: float, y: float, dx: float, dy: float,
     return math.degrees(delta)
 
 
+class _MeasureLabel(QLabel):
+    """A measurement's floating readout. Clicking it dismisses that
+    measurement -- the label is the only part of a measurement big enough
+    to aim at, so it is what the click has to land on."""
+
+    clicked = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Click to dismiss this measurement")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 @dataclass
 class Measurement:
     """One finished measurement, in world space.
@@ -148,6 +168,7 @@ class Viewport(QOpenGLWidget):
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
     perspective_toggled = Signal(bool)                    # emitted on click, new perspective state
     measurement_taken   = Signal(object)                  # a finished Measurement
+    measurement_dismissed = Signal(int)                   # index into the list
     measure_progress    = Signal(str)                     # prompt for the next click
 
     def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0):
@@ -353,15 +374,27 @@ class Viewport(QOpenGLWidget):
             self.doneCurrent()
         self._refresh_measure_labels()
 
+    def _on_measure_label_clicked(self, label):
+        """Dismiss whichever measurement this label is currently showing.
+        Resolved now rather than captured when the label was made: labels
+        are reused as the list changes, so a stored index would go stale."""
+        try:
+            index = self._measure_labels.index(label)
+        except ValueError:
+            return
+        if index < len(self._measurements):
+            self.measurement_dismissed.emit(index)
+
     def _refresh_measure_labels(self):
         """One floating label per measurement, at the midpoint of what it
         measures."""
         while len(self._measure_labels) < len(self._measurements):
-            lab = QLabel("", self)
+            lab = _MeasureLabel(self)
             lab.setStyleSheet(
                 "QLabel { background: rgba(0,0,0,170); color: #ffd94a;"
                 " padding: 2px 7px; border-radius: 4px;"
                 " font-family: Menlo; font-size: 12px; }")
+            lab.clicked.connect(self._on_measure_label_clicked)
             self._measure_labels.append(lab)
         for lab in self._measure_labels[len(self._measurements):]:
             lab.hide()

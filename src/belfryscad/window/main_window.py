@@ -549,6 +549,7 @@ class MainWindow(QMainWindow):
         self._viewport.selection_changed.connect(self._on_selection_changed)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
+        self._viewport.measurement_dismissed.connect(self._on_measurement_dismissed)
         self._viewport.translate_committed.connect(self._on_translate_committed)
         self._viewport.rotate_committed.connect(self._on_rotate_committed)
         self._viewport.scale_committed.connect(self._on_scale_committed)
@@ -1567,6 +1568,13 @@ class MainWindow(QMainWindow):
         kinds = "/".join(measurement.snaps)
         self.log(f"Measured {measurement.kind}: {measurement.label()}  "
                  f"[snapped to {kinds}]")
+
+    def _on_measurement_dismissed(self, index: int):
+        if not (0 <= index < len(self._measurements)):
+            return
+        gone = self._measurements.pop(index)
+        self._viewport.set_measurements(self._measurements)
+        self.log(f"Dismissed measurement: {gone.label()}")
 
     def _clear_measurements(self):
         if not self._measurements:
@@ -3822,15 +3830,20 @@ class MainWindow(QMainWindow):
                          Qt.Orientation.Vertical)
 
     def keyPressEvent(self, event):
-        if (event.key() == Qt.Key.Key_Escape
-                and self._viewport.measure_mode() is not None):
-            # First Escape drops a half-taken measurement, a second leaves
-            # the mode -- so an accidental click is cheap to undo without
-            # also losing the tool.
-            if not self._viewport.cancel_measurement():
-                self._act_measure_distance.setChecked(False)
-                self._act_measure_angle.setChecked(False)
-                self._set_measure_mode(None)
+        if event.key() == Qt.Key.Key_Escape and (
+                self._viewport.measure_mode() is not None or self._measurements):
+            # Escape peels one layer at a time, cheapest to lose first: a
+            # half-taken measurement, then the finished ones on screen,
+            # then the tool itself. Measurements clear even when the tool
+            # is off, since that is when they are most likely just clutter.
+            if self._viewport.cancel_measurement():
+                return
+            if self._measurements:
+                self._clear_measurements()
+                return
+            self._act_measure_distance.setChecked(False)
+            self._act_measure_angle.setChecked(False)
+            self._set_measure_mode(None)
             return
         if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
             self._render_cancel.set()

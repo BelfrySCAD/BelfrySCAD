@@ -22,7 +22,7 @@ QSurfaceFormat.setDefaultFormat(fmt)
 
 import numpy as np  # noqa: E402
 from PySide6.QtCore import QEventLoop, QPoint, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QKeyEvent, QMouseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 failures = []
@@ -144,6 +144,61 @@ def main():
               abs(w._measurements[0].value() - 90.0) < 1.0,
               str(w._measurements[0].value()))
 
+    # --- dismissing -----------------------------------------------------
+    # Two measurements, so dismissing one has to remove the right one.
+    w._clear_measurements()
+    w._set_measure_mode("distance")
+    click(screen_of(np.array([0., 0., 20.])))
+    click(screen_of(np.array([20., 0., 20.])))          # 20 along x
+    click(screen_of(np.array([0., 0., 20.])))
+    click(screen_of(np.array([0., 20., 20.])))          # 20 along y
+    check("two measurements were taken", len(w._measurements) == 2,
+          str(len(w._measurements)))
+
+    labels = [lab for lab in vp._measure_labels if lab.isVisible()]
+    check("each has a visible label", len(labels) == 2, str(len(labels)))
+    check("and the label says what it measures",
+          "20.000" in labels[0].text(), labels[0].text())
+
+    if len(w._measurements) == 2 and len(labels) == 2:
+        second = w._measurements[1]
+        # Click the FIRST label: the remaining measurement must be the
+        # second one, not merely "one fewer".
+        labels[0].clicked.emit(labels[0])
+        pump(0.3)
+        check("clicking a label dismisses that measurement",
+              len(w._measurements) == 1, str(len(w._measurements)))
+        check("and it is the other one that survives",
+              w._measurements and w._measurements[0] is second,
+              str(w._measurements))
+        check("the console records the dismissal",
+              "Dismissed measurement" in w._console_tail(),
+              w._console_tail()[-120:])
+
+    # A stale index must not throw -- labels outlive the measurements they
+    # showed, so a click can arrive after the list has shrunk.
+    before = len(w._measurements)
+    w._on_measurement_dismissed(99)
+    check("an out-of-range dismissal is ignored", len(w._measurements) == before)
+
+    # Escape with finished measurements clears them.
+    check("there is something to clear", len(w._measurements) > 0)
+    esc = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                    Qt.KeyboardModifier.NoModifier)
+    w.keyPressEvent(esc)
+    pump(0.2)
+    check("escape clears the finished measurements", w._measurements == [],
+          str(len(w._measurements)))
+    check("and the tool is still armed", vp.measure_mode() == "distance",
+          str(vp.measure_mode()))
+    w.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                              Qt.KeyboardModifier.NoModifier))
+    pump(0.2)
+    check("a further escape leaves the tool", vp.measure_mode() is None,
+          str(vp.measure_mode()))
+
+    w._set_measure_mode("angle")
+
     # Escape: first drops the half-taken measurement, then leaves the mode.
     click(screen_of(c1))
     check("a point is pending", vp._measure_pending != [])
@@ -151,6 +206,11 @@ def main():
     check("but stays in the mode", vp.measure_mode() == "angle")
 
     # A render clears them: they point at geometry that no longer exists.
+    # Take a fresh one first -- the escape checks above emptied the list.
+    w._act_measure_angle.setChecked(False)
+    w._set_measure_mode("distance")
+    click(screen_of(np.array([0., 0., 20.])))
+    click(screen_of(np.array([20., 0., 20.])))
     before = len(w._measurements)
     check("there is a measurement to lose", before > 0)
     w._current_tab().editor.setPlainText("cube([30, 30, 30]);")
