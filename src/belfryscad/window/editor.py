@@ -305,6 +305,34 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
             self._special_var_format,
         ))
 
+        # Bracket pairs, coloured by nesting depth so a matching pair shares
+        # a colour.
+        #
+        # The hues sit 72 degrees apart but are visited two steps round the
+        # wheel at a time, so each depth bounces to the far side of the
+        # spectrum rather than walking along it: every adjacent pair,
+        # including 4 wrapping back to 0, is 144 degrees apart.
+        #
+        # 144 is the most that is possible here, not a compromise. Five
+        # signed steps of 180 sum to an odd multiple of 180, which is never
+        # a multiple of 360, so a full opposite-hue jump every time cannot
+        # close the cycle; 5 x 144 = 720 closes it in exactly two turns.
+        #
+        # Saturation and value are tuned per colour for readability. Hue
+        # never is -- it is what the 144-degree spacing depends on.
+        self._bracket_formats = []
+        for colour in ("#C4921C",   # dark goldenrod   42
+                        "#59CAD7",   # cyan            186
+                        "#E65FA2",   # rose            330
+                        "#68CD5C",   # green           114
+                        "#C3ACFA"):  # violet, pastel  258
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(colour))
+            self._bracket_formats.append(fmt)
+
+    _OPENERS = "([{"
+    _CLOSERS = ")]}"
+
     def highlightBlock(self, text):
         for pattern, fmt in self._rules:
             it = pattern.globalMatch(text)
@@ -312,22 +340,54 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 match = it.next()
                 self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
-        # Multi-line /* ... */ comments
-        self.setCurrentBlockState(0)
-        start_idx = 0
-        if self.previousBlockState() != 1:
-            m = self._block_comment_start.match(text)
-            start_idx = m.capturedStart() if m.hasMatch() else -1
-        while start_idx >= 0:
-            m_end = self._block_comment_end.match(text, start_idx + 2)
-            if m_end.hasMatch():
-                length = m_end.capturedEnd() - start_idx
-            else:
-                self.setCurrentBlockState(1)
-                length = len(text) - start_idx
-            self.setFormat(start_idx, length, self._comment_format)
-            m = self._block_comment_start.match(text, start_idx + length)
-            start_idx = m.capturedStart() if m.hasMatch() else -1
+        # One left-to-right pass doing both multi-line comments and bracket
+        # depth. They share a scan because they answer the same question:
+        # brackets inside a comment or a string are text, not nesting, and
+        # a regex pass over the line alone cannot know that -- a `{` in a
+        # /* ... */ that opened three lines up must not shift the colours.
+        #
+        # The block state carries both across lines: depth in the high
+        # bits, "inside a block comment" in bit 0. -1 is Qt's "no previous
+        # state" for the first block.
+        prev = self.previousBlockState()
+        in_comment = prev >= 0 and bool(prev & 1)
+        depth = (prev >> 1) if prev >= 0 else 0
+
+        i, n = 0, len(text)
+        while i < n:
+            if in_comment:
+                end = text.find("*/", i)
+                stop = n if end < 0 else end + 2
+                self.setFormat(i, stop - i, self._comment_format)
+                in_comment = end < 0
+                i = stop
+                continue
+            ch = text[i]
+            if ch == "/" and i + 1 < n and text[i + 1] == "/":
+                self.setFormat(i, n - i, self._comment_format)
+                break
+            if ch == "/" and i + 1 < n and text[i + 1] == "*":
+                self.setFormat(i, 2, self._comment_format)
+                in_comment = True
+                i += 2
+                continue
+            if ch == '"':
+                j = i + 1
+                while j < n and text[j] != '"':
+                    j += 2 if text[j] == "\\" else 1
+                i = min(j + 1, n)
+                continue
+            if ch in self._OPENERS:
+                self.setFormat(i, 1, self._bracket_formats[depth % len(self._bracket_formats)])
+                depth += 1
+            elif ch in self._CLOSERS:
+                # Clamped: a stray closer would otherwise drive the depth
+                # negative and recolour everything after it.
+                depth = max(0, depth - 1)
+                self.setFormat(i, 1, self._bracket_formats[depth % len(self._bracket_formats)])
+            i += 1
+
+        self.setCurrentBlockState((depth << 1) | (1 if in_comment else 0))
 
 
 class FindBar(QWidget):
