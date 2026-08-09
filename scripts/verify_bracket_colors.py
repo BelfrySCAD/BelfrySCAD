@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
-from PySide6.QtGui import QTextDocument  # noqa: E402
+from PySide6.QtGui import QColor, QTextDocument  # noqa: E402
 
 failures = []
 
@@ -51,8 +51,21 @@ def main():
     doc = QTextDocument()
     hl = OpenSCADHighlighter(doc)
     palette = [f.foreground().color().name() for f in hl._bracket_formats]
-    check("there are three cycling colours", len(palette) == 3, str(palette))
-    check("and they are distinct", len(set(palette)) == 3, str(palette))
+    check("there are at least seven cycling colours", len(palette) >= 7, str(palette))
+    check("and they are all distinct", len(set(palette)) == len(palette), str(palette))
+
+    # The property that actually matters: neighbouring depths must not look
+    # alike. Includes the wrap from the last back to the first, which is
+    # just as adjacent as any other pair.
+    worst = None
+    for i, name in enumerate(palette):
+        a, b = QColor(name), QColor(palette[(i + 1) % len(palette)])
+        d = abs(a.hue() - b.hue())
+        d = min(d, 360 - d)
+        if worst is None or d < worst[0]:
+            worst = (d, name, palette[(i + 1) % len(palette)])
+    check("adjacent depths differ clearly in hue", worst[0] >= 60,
+          f"closest pair {worst[1]}/{worst[2]} only {worst[0]} deg apart")
 
     # The case from the request.
     src = "{ callit([3,4,5]); }"
@@ -70,11 +83,15 @@ def main():
               c[src.index(opener)] == c[src.rindex(closer)],
               f"{c[src.index(opener)]} vs {c[src.rindex(closer)]}")
 
-    # Depth 3 wraps to the first colour.
-    src = "(((()))"
+    # Depth N wraps back to the first colour.
+    n = len(palette)
+    src = "(" * (n + 1)
     c = colours(doc, src, hl)
-    check("depth 3 cycles back to the first colour",
-          c[3] == palette[0], f"{c.get(3)} vs {palette[0]}")
+    check(f"depth {n} cycles back to the first colour",
+          c[n] == palette[0], f"{c.get(n)} vs {palette[0]}")
+    check("and every depth below it is its own colour",
+          [c[i] for i in range(n)] == palette,
+          str([c.get(i) for i in range(n)]))
 
     # Brackets carry across lines -- the state has to survive a newline.
     src = "module m() {\n    a = [1,\n         2];\n}"

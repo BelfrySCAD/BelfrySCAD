@@ -306,12 +306,19 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         ))
 
         # Bracket pairs, coloured by nesting depth so a matching pair shares
-        # a colour. Three cycling colours: enough to tell neighbouring
-        # levels apart, few enough that each stays distinct -- the same set
-        # VS Code uses. Depth 3 reuses depth 0's colour, which reads fine
-        # because those two are never adjacent.
+        # a colour. Seven cycling colours, deliberately NOT in spectrum
+        # order: what matters is that *adjacent* depths look nothing alike,
+        # so each step jumps roughly across the wheel rather than sliding
+        # along it. Gold to orchid to blue to orange... no two neighbours
+        # (including 7 wrapping back to 0) are near hues.
         self._bracket_formats = []
-        for colour in ("#FFD700", "#DA70D6", "#179FFF"):
+        for colour in ("#FFD700",   # gold
+                        "#DA70D6",   # orchid
+                        "#179FFF",   # blue
+                        "#FF7043",   # orange
+                        "#7CE38B",   # green
+                        "#C792EA",   # lavender
+                        "#4DD0E1"):  # cyan
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(colour))
             self._bracket_formats.append(fmt)
