@@ -312,7 +312,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         # along it. No two neighbours -- including 5 wrapping back to 0 --
         # are near hues.
         self._bracket_formats = []
-        for colour in ("#DAA520",   # goldenrod
+        for colour in ("#C4921C",   # dark goldenrod
                         "#DA70D6",   # orchid
                         "#179FFF",   # blue
                         "#FF7043",   # orange
