@@ -325,7 +325,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                         "#59CAD7",   # cyan            186
                         "#E65FA2",   # rose            330
                         "#68CD5C",   # green           114
-                        "#A17FF0"):  # violet          258
+                        "#C3ACFA"):  # violet, pastel  258
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(colour))
             self._bracket_formats.append(fmt)
