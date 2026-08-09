@@ -492,6 +492,20 @@ class MainWindow(QMainWindow):
         # constructor ignores setDefaultFormat and resolves to the native
         # plist regardless.
         self.persist_settings = True
+
+        # Automatic Reload and Render: watch the open files on disk and pick
+        # up changes made outside the app. Paths are collected and debounced
+        # rather than reloaded per signal -- a save is rarely one write, and
+        # several editors do it as write-temp-then-rename, which fires more
+        # than once.
+        from PySide6.QtCore import QFileSystemWatcher
+        self._file_watcher = QFileSystemWatcher(self)
+        self._file_watcher.fileChanged.connect(self._on_watched_file_changed)
+        self._file_watcher.directoryChanged.connect(self._on_watched_dir_changed)
+        self._pending_reloads: set = set()
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.timeout.connect(self._service_pending_reloads)
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
@@ -890,6 +904,12 @@ class MainWindow(QMainWindow):
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
+        self._act_auto_reload = self._add_checkable(
+            design_menu, "Automatic Reload and Render",
+            QSettings("BelfrySCAD", "BelfrySCAD").value(
+                "autoReload", False, type=bool),
+            self._set_auto_reload)
+        design_menu.addSeparator()
         self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
         self._add_action(design_menu, "Flush Caches", self._flush_caches)
@@ -1165,6 +1185,7 @@ class MainWindow(QMainWindow):
             if tab.file_path:
                 get_document_manager().unregister(tab.file_path, tab.editor)
         self._tabs.removeTab(index)
+        self._refresh_watched_files()
         if self._tabs.count() == 0:
             self._new_document()
 
@@ -1329,6 +1350,7 @@ class MainWindow(QMainWindow):
                 return
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
+        self._refresh_watched_files()
         self._render(tab)
 
     def _save_file(self):
@@ -1351,6 +1373,147 @@ class MainWindow(QMainWindow):
             return False
         return self._write_file(tab, path)
 
+    # ------------------------------------------------------------------
+    # Automatic Reload and Render
+    # ------------------------------------------------------------------
+
+    def _set_auto_reload(self, on: bool):
+        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s.setValue("autoReload", bool(on))
+        self._refresh_watched_files()
+        self.log("Automatic Reload and Render is "
+                 + ("on: changes made to open files outside BelfrySCAD will "
+                    "be loaded and rendered." if on else "off."))
+
+    def _auto_reload_enabled(self) -> bool:
+        act = getattr(self, "_act_auto_reload", None)
+        return bool(act and act.isChecked())
+
+    def _refresh_watched_files(self):
+        """Watch exactly the open, saved files -- no more, no less.
+
+        Called whenever that set can change: open, save, close, and after
+        every reload -- see _service_pending_reloads for why the last one
+        matters.
+        """
+        watcher = getattr(self, "_file_watcher", None)
+        if watcher is None:
+            return
+        want, want_dirs = set(), set()
+        if self._auto_reload_enabled():
+            for i in range(self._tabs.count()):
+                tab = self._tabs.widget(i)
+                path = getattr(tab, "file_path", None) if tab else None
+                if not path:
+                    continue
+                if Path(path).is_file():
+                    want.add(path)
+                # The containing directory is watched whether or not the
+                # file is there right now. A watched file that stops
+                # existing is dropped for good and never re-armed when it
+                # returns -- and at the moment we notice the deletion the
+                # file is gone, so there is nothing to re-add. Watching the
+                # directory is what notices it come back.
+                parent = str(Path(path).parent)
+                if Path(parent).is_dir():
+                    want_dirs.add(parent)
+        have = set(watcher.files())
+        if have - want:
+            watcher.removePaths(list(have - want))
+        if want - have:
+            watcher.addPaths(list(want - have))
+        have_dirs = set(watcher.directories())
+        if have_dirs - want_dirs:
+            watcher.removePaths(list(have_dirs - want_dirs))
+        if want_dirs - have_dirs:
+            watcher.addPaths(list(want_dirs - have_dirs))
+
+    def _on_watched_dir_changed(self, dirpath: str):
+        """Something appeared or vanished in a directory holding an open
+        file. Queue that file: this is how a delete-and-recreate is seen,
+        since the file's own watch does not survive the gap."""
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            path = getattr(tab, "file_path", None) if tab else None
+            if path and str(Path(path).parent) == dirpath:
+                self._pending_reloads.add(path)
+        if self._pending_reloads:
+            self._reload_timer.start(200)
+
+    def _on_watched_file_changed(self, path: str):
+        self._pending_reloads.add(path)
+        # Long enough to coalesce a multi-write save, short enough to feel
+        # immediate.
+        self._reload_timer.start(200)
+
+    def _service_pending_reloads(self):
+        paths, self._pending_reloads = self._pending_reloads, set()
+        if not self._auto_reload_enabled():
+            return
+        rendered = False
+        for path in sorted(paths):
+            if self._reload_one(path):
+                rendered = True
+        # Re-arm after the fact. A watched path that stops existing, even
+        # for a moment, is dropped and never picked back up on its own --
+        # measured: after a delete, QFileSystemWatcher reports the file
+        # unwatched and stays silent when it reappears. That covers a
+        # delete-and-recreate, and the write-temp-then-rename that several
+        # editors save with, which drops the watch on Linux's inotify even
+        # though macOS happens to survive it.
+        self._refresh_watched_files()
+        if rendered:
+            self._render(self._current_tab())
+
+    def _reload_one(self, path: str) -> bool:
+        """Reload `path`'s tab from disk. True if anything changed."""
+        tab = None
+        try:
+            resolved = str(Path(path).resolve())
+        except OSError:
+            return False
+        for i in range(self._tabs.count()):
+            t = self._tabs.widget(i)
+            if t and t.file_path and str(Path(t.file_path).resolve()) == resolved:
+                tab = t
+                break
+        if tab is None:
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            # Deleted, or mid-rename. _refresh_watched_files drops it; the
+            # tab keeps what it has rather than being emptied.
+            return False
+
+        if text == tab.editor.toPlainText():
+            return False       # our own save, or a touch with no edit
+
+        if tab.is_modified:
+            # Never discard unsaved work to pick up an external edit. The
+            # user is the only one who can say which version wins.
+            self.log(f"WARNING: {Path(path).name} changed on disk, but this "
+                     f"tab has unsaved changes -- not reloaded. Save or "
+                     f"revert it to pick the change up.")
+            return False
+
+        editor = tab.editor
+        cursor_pos = editor.textCursor().position()
+        scroll = editor.verticalScrollBar().value()
+        editor.replace_span(0, len(editor.toPlainText()), text)
+        cur = editor.textCursor()
+        cur.setPosition(min(cursor_pos, len(text)))
+        editor.setTextCursor(cur)
+        editor.verticalScrollBar().setValue(scroll)
+
+        tab.is_modified = False
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.setTabText(idx, tab.display_name())
+        self.log(f"Reloaded {Path(path).name} (changed on disk).")
+        return True
+
     def _write_file(self, tab, path):
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -1370,6 +1533,7 @@ class MainWindow(QMainWindow):
         if tab is self._current_tab():
             self._customizer_pane.set_file_path(path)
         self._update_recent_files(path)
+        self._refresh_watched_files()
         self._render(tab)
         return True
 
