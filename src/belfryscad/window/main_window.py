@@ -1097,6 +1097,9 @@ class MainWindow(QMainWindow):
             self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
+        # A new, empty document has nothing rendered, so the previous
+        # model must not stay on screen looking like its output.
+        self._clear_viewport()
 
     def _current_tab(self) -> FileTab | None:
         return self._tabs.currentWidget()
@@ -1193,7 +1196,8 @@ class MainWindow(QMainWindow):
             if self._debug_tab is tab:
                 self._on_debug_stop()
             if self._rendered_tab is tab:
-                self._rendered_tab = None
+                # Its geometry is still on screen with nothing behind it.
+                self._clear_viewport()
             if tab.file_path:
                 get_document_manager().unregister(tab.file_path, tab.editor)
         self._tabs.removeTab(index)
@@ -1531,6 +1535,29 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     _MAX_MEASUREMENTS = 10
+
+    def _clear_viewport(self):
+        """Empty the viewport and everything derived from what was in it.
+
+        Used when the geometry on screen stops belonging to anything the
+        user can see: a new empty document, or closing the tab the render
+        came from. Leaving it up would mean measuring, exporting or
+        selecting against a model with no source behind it any more.
+        """
+        self._bodies = []
+        self._rendered_tab = None
+        self.id_to_node = {}
+        self._last_csg_tree = None
+        try:
+            self._viewport.load_geometry([])
+        except Exception as e:      # noqa: BLE001 -- never block the action
+            self.log(f"WARNING: could not clear the viewport: {e}")
+        self._viewport._renderer.selected_id = None
+        if self._measurements:
+            self._measurements = []
+            self._viewport.set_measurements([])
+        self._update_measure_actions_enabled()
+        self._viewport.update()
 
     def _update_measure_actions_enabled(self):
         """Measurement needs something to measure.
