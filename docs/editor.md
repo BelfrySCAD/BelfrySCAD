@@ -576,6 +576,8 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
+The editor's right-click menu offers **Use Library…** as well, near the top so it does not shift position with whatever word is under the cursor; a read-only tab (a library file) does not get it, having nothing to insert into. It goes up through `CodeEditor.use_library_requested`, the same signal-to-MainWindow pattern as Go to Definition.
+
 **Design ▸ Use Library…** opens `UseLibraryDialog` (`window/library_manager.py`): a combo of installed libraries, a list of that library's `includes` below it, and the selected file's description in a word-wrapped label beside the list, with the exact statement shown under both. A menu of submenus was tried first and is what this replaces — a library can offer dozens of files (BOSL2 23, dotSCAD 276), which is awkward to aim at and leaves nowhere for the description.
 
 Non-modal, and it stays open after Insert: pulling in two or three files from one library is the normal case, and closing on each would make that several trips. It is created once and re-populated on reopen, so a library installed meanwhile appears. Rows are labelled by file, since the verb and directory repeat on every row; the entry point sorts first and is marked as such.
