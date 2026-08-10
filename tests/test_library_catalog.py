@@ -119,6 +119,19 @@ def test_bosl2_lists_the_entry_point_and_its_extras_only(catalog):
         assert inside not in by_path, inside
 
 
+def test_bosl2_omits_the_files_its_docsgen_config_ignores(catalog):
+    # BOSL2's .openscad_docsgen_rc lists files it does not document:
+    # a BOSL1 compatibility shim, a superseded screws file, internals.
+    # std.scad is on that list too, because there is nothing to document
+    # in an aggregator -- but it is the way in, so it stays.
+    bosl2 = next(e for e in catalog if e["install_as"] == "BOSL2")
+    listed = {_named(r) for r in bosl2["includes"]}
+    for ignored in ("BOSL2/bosl1compat.scad", "BOSL2/metric_screws.scad",
+                    "BOSL2/builtins.scad", "BOSL2/foo.scad"):
+        assert ignored not in listed, ignored
+    assert "BOSL2/std.scad" in listed
+
+
 def test_no_test_harnesses_are_offered(catalog):
     # A library's own test file is includable but is not something to
     # offer -- same reasoning as skipping its tests/ directory.

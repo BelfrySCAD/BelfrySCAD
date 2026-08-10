@@ -136,10 +136,6 @@
         "description": "Models for standard ball bearing cartridges."
       },
       {
-        "statement": "include <BOSL2/bosl1compat.scad>",
-        "description": "Modules translate_copies(), xspread(), yspread(), zspread(), spread(), grid_of() and 22 more."
-      },
-      {
         "statement": "include <BOSL2/bottlecaps.scad>",
         "description": "Standard bottle caps and necks."
       },
@@ -174,10 +170,6 @@
       {
         "statement": "include <BOSL2/linear_bearings.scad>",
         "description": "Mounts for LMxUU style linear bearings."
-      },
-      {
-        "statement": "include <BOSL2/metric_screws.scad>",
-        "description": "Metric screws, nuts, and screwholes."
       },
       {
         "statement": "include <BOSL2/modular_hose.scad>",
