@@ -17,10 +17,10 @@ import time
 from html import escape
 
 from PySide6.QtCore import QObject, QSettings, QThread, QTimer, Qt, Signal, Slot
-from PySide6.QtGui import QFont, QKeyEvent, QTextCursor
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCursor
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-    QTextBrowser, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
+    QPushButton, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from belfryscad.window.ai_providers import (
@@ -233,26 +233,66 @@ def resolve_anthropic_transport() -> tuple[str, str]:
     return "none", ""
 
 
-def diff_to_html(diff_text: str) -> str:
-    """Render a unified diff as colour-coded HTML.
+# Accent colours the added/removed/hunk bands are tinted with, and the text
+# drawn on each. Two sets, because one cannot serve both themes: dark green
+# on a dark background is unreadable, and light green on a light one is too.
+_DIFF_ACCENT = {"add": (0x2E, 0xA0, 0x43), "rem": (0xCF, 0x22, 0x2E),
+                "hunk": (0x54, 0xAE, 0xFF)}
+_DIFF_LIGHT = {"add": "#0B4A1F", "rem": "#6E0512", "hunk": "#0A3069",
+               "head": "#4B535D"}
+_DIFF_DARK = {"add": "#B7F0C2", "rem": "#FFC4BD", "hunk": "#CAE4FF",
+              "head": "#9AA4AF"}
 
-    Tinted backgrounds rather than coloured text alone, so the added/removed
-    distinction survives both light and dark palettes without querying the
-    theme. Order matters: the "---"/"+++" file headers must be matched
-    before the single-character "-"/"+" line tests, or they'd render as a
-    giant deletion and addition.
+
+def _tint(accent, base, alpha):
+    """Blend `accent` over `base` ourselves and return a solid colour.
+
+    Qt's rich-text engine drops the alpha in `rgba(...)` backgrounds: what
+    was written as a 20% wash rendered as the accent at full strength, so
+    the diff was dark text on a saturated band -- around 2:1, whichever
+    theme was in use. Blending here keeps the band subtle and, more to the
+    point, makes the colour the text is actually drawn against knowable.
     """
+    return "#%02X%02X%02X" % tuple(
+        round(alpha * a + (1 - alpha) * b) for a, b in zip(accent, base))
+
+
+def diff_to_html(diff_text: str, base_color=None) -> str:
+    """Render a unified diff as colour-coded HTML, legible on `base_color`.
+
+    Order matters: the "---"/"+++" file headers must be matched before the
+    single-character "-"/"+" line tests, or they'd render as a giant
+    deletion and addition.
+
+    Pass the background the result will be shown on -- the widget's own,
+    not the application's, since only the widget knows what it inherited.
+    Every combination this produces clears WCAG AA (4.5:1); the worst is
+    5.07:1 and most are past 7:1. See scripts/verify_diff_contrast.py.
+    """
+    if base_color is None:
+        app = QApplication.instance()
+        base_color = app.palette().base().color() if app else QColor("#FFFFFF")
+    base = (base_color.red(), base_color.green(), base_color.blue())
+    dark = base_color.lightness() < 128
+    fg = _DIFF_DARK if dark else _DIFF_LIGHT
+    # A dark theme needs a touch more tint to read as a band at all.
+    alpha = 0.25 if dark else 0.18
+
+    def band(kind):
+        return (f"color:{fg[kind]};"
+                f"background-color:{_tint(_DIFF_ACCENT[kind], base, alpha)};")
+
     rows = []
     for line in diff_text.splitlines():
         text = escape(line) or "&nbsp;"
         if line.startswith(("---", "+++")):
-            style = "color:#57606a;"
+            style = f"color:{fg['head']};"
         elif line.startswith("@@"):
-            style = "color:#0969da;background:rgba(84,174,255,0.12);"
+            style = band("hunk")
         elif line.startswith("+"):
-            style = "color:#116329;background:rgba(46,160,67,0.20);"
+            style = band("add")
         elif line.startswith("-"):
-            style = "color:#82071e;background:rgba(207,34,46,0.20);"
+            style = band("rem")
         else:
             style = ""
         rows.append(f'<div style="white-space:pre;{style}">{text}</div>')
@@ -288,7 +328,10 @@ class DiffReviewDialog(QDialog):
         layout.addWidget(header)
 
         view = QTextBrowser()
-        view.setHtml(diff_to_html(proposal.diff_text))
+        # This widget's own background, not the application's: it is
+        # what the diff is actually drawn on.
+        view.setHtml(diff_to_html(proposal.diff_text,
+                                  view.palette().base().color()))
         view.setLineWrapMode(QTextBrowser.LineWrapMode.NoWrap)
         layout.addWidget(view, 1)
 
