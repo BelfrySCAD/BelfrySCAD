@@ -1167,7 +1167,17 @@ class AIChatPane(QWidget):
         """Open the review window for the oldest unresolved proposal. Only
         one at a time -- further proposals wait their turn in _pending and
         are shown as each is resolved."""
-        if self._review_dialog is not None or not self._pending:
+        if self._review_dialog is not None:
+            # Already open, but not necessarily where the user can see it:
+            # behind the main window, on another Space, or minimised. The
+            # review bar is visible the whole time it is pending, so this
+            # is the button they press when the window is not in front of
+            # them -- returning here made it look broken.
+            self._review_dialog.show()
+            self._review_dialog.raise_()
+            self._review_dialog.activateWindow()
+            return
+        if not self._pending:
             return
         dlg = DiffReviewDialog(self._pending[0], self)
         self._review_dialog = dlg
