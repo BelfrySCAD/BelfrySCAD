@@ -576,6 +576,8 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
+**Design ▸ Use Library** lists every installed library from the bundled catalogue (`resources/libraries.json`). A library with more than one usable file opens a submenu of its `includes`: the entry point first, a separator, then the files that entry point does not already pull in. Items are labelled by file — the verb and directory are the same for every row, so only the filename distinguishes them — with the full statement and its description in the tool tip. `_populate_use_library_menu` reads the catalogue's `includes` list; there is no separate include-statement field to drift out of step with it.
+
 **Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
 **Design**: Render / Render with Profiling / Show Profile Report… / — / Dump CSG Tree to Console / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
