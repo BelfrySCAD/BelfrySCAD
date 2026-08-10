@@ -8,10 +8,10 @@ Parse errors get a squiggly underline at the error location via `QTextCharFormat
 
 ## Find / Replace
 
-`CodeEditor.show_find(replace=False)` opens a `FindBar` overlay parented to the editor, top-right corner. `show_find(replace=True)` also shows the replace row. Triggered by Cmd+F / Cmd+H.
+`CodeEditor.show_find(replace=False)` opens a `FindBar` overlay parented to the editor, top-right corner. `show_find(replace=True)` also shows the replace row. Find is `QKeySequence.StandardKey.Find` (Cmd+F). Find & Replace carries two sequences, `StandardKey.Replace` plus an explicit `Ctrl+Shift+F`, with empty ones filtered out: Qt has no macOS default for `Replace`, so the menu item was unbound there, and `Ctrl+Shift+F` renders as ⇧⌘F on macOS while riding alongside Ctrl+H elsewhere. Not `Ctrl+Alt+F` — ⌥F produces `ƒ`, so the native menu bar's key equivalent never matches and the shortcut displays but is silently dead.
 
 `FindBar` features:
-- Plain-text and regex search (`.*` toggle), case-sensitive toggle (`Aa`)
+- Plain-text and regex search (`.*` toggle), case-sensitive toggle (`Aa`), whole-word toggle (`ab` with a rule beneath it) which wraps the term in `\b` anchors inside a non-capturing group, so the anchors bind to the whole term rather than to its first and last alternatives
 - All matches highlighted pale yellow; current match orange with white text
 - Match count label ("N of M"); prev/next navigation (◀ ▶ or Shift+Enter / Enter)
 - Replace one (current match) and Replace All (works backwards through matches to preserve positions, wrapped in one `beginEditBlock`/`endEditBlock` for one undo step)
@@ -267,6 +267,8 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+] | Zoom In |
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
+| Cmd+F | Find |
+| Shift+Cmd+F | Find & Replace (Ctrl+H also, off macOS) |
 | F5 | Debug: Continue / Pause |
 | Shift+F5 | Debug: Stop |
 | Shift+Cmd+F5 | Debug: Restart |
@@ -318,9 +320,39 @@ The Preferences action uses `QAction.MenuRole.PreferencesRole` so Qt places it i
 
 ## Syntax Highlighting
 
-`OpenSCADHighlighter(QSyntaxHighlighter)` applies keyword/type/number/string/comment formatting via regex rules processed per block in `highlightBlock()`.
+`OpenSCADHighlighter(QSyntaxHighlighter)` applies keyword/type/number/string formatting via regex rules processed per block in `highlightBlock()`.
 
-Multi-line `/* ... */` block comments use `QSyntaxHighlighter` block state tracking (`previousBlockState`/`setCurrentBlockState`) so highlighting persists across lines. Both `//` line comments and `/* */` block comments render in the same green (`#6A9955`).
+Comments and brackets are *not* regex-driven. They share one left-to-right pass, `_scan_line(text, in_comment)`, which returns the line's comment spans, its bracket positions, and whether a block comment is still open at end of line. They have to share it: a bracket inside a comment or string is text, not nesting, and a regex pass over a single line cannot know that — a `{` inside a `/* ... */` that opened three lines earlier must not shift the depth colours.
+
+Multi-line `/* ... */` block comments use `QSyntaxHighlighter` block state tracking (`previousBlockState`/`setCurrentBlockState`) so highlighting persists across lines. The state packs two things: nesting depth in the high bits, "inside a block comment" in bit 0. Both `//` line comments and `/* */` block comments render in the same green (`#6A9955`).
+
+### Bracket depth colours
+
+`()`, `[]` and `{}` take one of five colours by nesting depth, so a pair shares a colour. The cycle steps two places at a time round the hues sorted by angle, so adjacent depths land on opposite sides of the wheel rather than walking along it.
+
+| depth | colour | | hue |
+|---|---|---|---|
+| 0 | `#C4921C` | dark goldenrod | 42° |
+| 1 | `#59D798` | spring green | 150° |
+| 2 | `#C3ACFA` | violet (pastel) | 258° |
+| 3 | `#8BCD5C` | green | 95° |
+| 4 | `#54A5DE` | blue | 205° |
+
+The magenta/pink band is deliberately empty, because a saturated pink reads as red-adjacent next to the unmatched-bracket red below however far round the wheel it technically sits — hue angle alone passed a rose at 330° and then an orchid at 310°, and both had to be replaced. Every colour but the goldenrod is at least 95° from red; the goldenrod is dark and yellow-side and has never been the one confused.
+
+Vacating a third of the wheel is what stops the ring being an even 72° apart: an even five-way split always lands some hue within 36° of red, whichever way it is rotated. So adjacent depths are 108°–163° apart rather than a uniform 144°.
+
+A stray closer clamps at depth 0 rather than driving it negative, so one typo cannot recolour the rest of the file.
+
+### Unmatched brackets
+
+An opener the document never closes is drawn in bold red (`#FF2D2D`) instead of a depth colour.
+
+This cannot be decided per line — the closer may be thousands of lines below — so `_rescan_unmatched()` walks the whole document on `contentsChanged` and records `{block number: {columns}}` of openers left on the stack at end of document. `highlightBlock()` reads that back for its own line. Only the lines whose verdict changed are repainted, and a `_rescanning` guard stops those repaints re-entering the scan.
+
+The scan runs on every edit rather than debounced: it measures 15ms on BOSL2's `skin.scad` (5400 lines), and a delayed scan would leave the red on a stale line number, so typing above an unclosed bracket would drag the mark down the screen a beat behind the cursor. If a file ever makes that felt, the upgrade path is caching per-block bracket lists and rescanning only edited blocks.
+
+An unmatched opener still counts towards the depth, so the brackets that *do* pair below it keep the colours they had. Bracket kind is not checked when popping: `( ]` is a mismatch, not an unclosed bracket, and treating it as one would put the red on a bracket the user did close.
 
 ## Startup Behavior
 
