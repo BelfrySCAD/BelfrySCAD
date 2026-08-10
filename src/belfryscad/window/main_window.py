@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._new_document()
         self._restore_settings()
+        self._update_measure_actions_enabled()
 
     def _create_measure_actions(self):
         """The measurement toggles, made before the toolbar is built.
@@ -1096,6 +1097,9 @@ class MainWindow(QMainWindow):
             self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
         self._tabs.setCurrentIndex(idx)
+        # A new, empty document has nothing rendered, so the previous
+        # model must not stay on screen looking like its output.
+        self._clear_viewport()
 
     def _current_tab(self) -> FileTab | None:
         return self._tabs.currentWidget()
@@ -1192,7 +1196,8 @@ class MainWindow(QMainWindow):
             if self._debug_tab is tab:
                 self._on_debug_stop()
             if self._rendered_tab is tab:
-                self._rendered_tab = None
+                # Its geometry is still on screen with nothing behind it.
+                self._clear_viewport()
             if tab.file_path:
                 get_document_manager().unregister(tab.file_path, tab.editor)
         self._tabs.removeTab(index)
@@ -1530,6 +1535,44 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     _MAX_MEASUREMENTS = 10
+
+    def _clear_viewport(self):
+        """Empty the viewport and everything derived from what was in it.
+
+        Used when the geometry on screen stops belonging to anything the
+        user can see: a new empty document, or closing the tab the render
+        came from. Leaving it up would mean measuring, exporting or
+        selecting against a model with no source behind it any more.
+        """
+        self._bodies = []
+        self._rendered_tab = None
+        self.id_to_node = {}
+        self._last_csg_tree = None
+        try:
+            self._viewport.load_geometry([])
+        except Exception as e:      # noqa: BLE001 -- never block the action
+            self.log(f"WARNING: could not clear the viewport: {e}")
+        self._viewport._renderer.selected_id = None
+        if self._measurements:
+            self._measurements = []
+            self._viewport.set_measurements([])
+        self._update_measure_actions_enabled()
+        self._viewport.update()
+
+    def _update_measure_actions_enabled(self):
+        """Measurement needs something to measure.
+
+        Both toggles are the same actions the Design menu shows, so this
+        greys out the menu entries too. If a mode was live when the
+        geometry went away -- a render that produced nothing, say -- the
+        tool is put down as well, rather than left armed over an empty
+        viewport where every click would report a miss.
+        """
+        has_geometry = bool(getattr(self, "_bodies", None))
+        for act in (self._act_measure_distance, self._act_measure_angle):
+            act.setEnabled(has_geometry)
+        if not has_geometry and self._viewport.measure_mode() is not None:
+            self._set_measure_mode(None)
 
     def _on_measure_action(self):
         """Whichever toggle is now checked decides the mode. Reading the
@@ -2024,6 +2067,7 @@ class MainWindow(QMainWindow):
             return
 
         self._bodies = bodies
+        self._update_measure_actions_enabled()
 
         # If the script set $vp* variables, apply them to the camera and skip auto-fit.
         script_moved_camera = bool(final_vp) and self._apply_vp_params(final_vp)
@@ -3577,6 +3621,7 @@ class MainWindow(QMainWindow):
             self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
         self._bodies = bodies
+        self._update_measure_actions_enabled()
         try:
             import numpy as np
             mins, maxs = [], []

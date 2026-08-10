@@ -75,12 +75,21 @@ def main():
     w.persist_settings = False
     w.show()
     pump(0.8)
+
+    # Nothing rendered yet, so there is nothing to measure.
+    check("the measure toggles start disabled",
+          not w._act_measure_distance.isEnabled()
+          and not w._act_measure_angle.isEnabled())
+
     w._new_document()
     w._current_tab().editor.setPlainText("cube([20, 20, 20]);")
     w._render_threadsafe()
     pump(30, lambda: bool(w._geometry_summary()) and not w._render_busy())
     check("the test cube rendered", "volume 8000.000" in w._geometry_summary(),
           w._geometry_summary()[:120])
+
+    check("a render enables them", w._act_measure_distance.isEnabled()
+          and w._act_measure_angle.isEnabled())
 
     vp = w._viewport
     vp.resize(500, 400)
@@ -283,6 +292,37 @@ def main():
     check("a click on empty space adds no point", vp._measure_pending == [])
     check("and says the click missed", "missed" in w.statusBar().currentMessage(),
           w.statusBar().currentMessage())
+
+    # A render that produces no geometry does NOT disable them, and should
+    # not: the worker returns early without replacing the geometry, so the
+    # previous model is still on screen and still measurable. Asserting the
+    # opposite here was a wrong guess about what that path does.
+    w._set_measure_mode("distance")
+    w._current_tab().editor.setPlainText("x = 1;   // no geometry at all\n")
+    w._render_threadsafe()
+    pump(6)
+    check("a render producing nothing leaves the old geometry measurable",
+          w._act_measure_distance.isEnabled(), "toggles went disabled")
+    check("and says so in the console",
+          "no geometry produced" in w._console_tail(), w._console_tail()[-120:])
+
+    # The disable path itself: with the geometry actually gone, the toggles
+    # go dead and the tool is put down rather than left armed over nothing.
+    real_bodies = w._bodies
+    w._bodies = []
+    w._update_measure_actions_enabled()
+    check("with no geometry at all the toggles are disabled",
+          not w._act_measure_distance.isEnabled()
+          and not w._act_measure_angle.isEnabled())
+    check("and an armed tool is put down",
+          vp.measure_mode() is None, str(vp.measure_mode()))
+    check("with neither toggle left lit",
+          not w._act_measure_distance.isChecked()
+          and not w._act_measure_angle.isChecked())
+    w._bodies = real_bodies
+    w._update_measure_actions_enabled()
+    check("restoring the geometry re-enables them",
+          w._act_measure_distance.isEnabled())
 
     # Leaving the mode tidies up.
     w._act_measure_distance.setChecked(False)
