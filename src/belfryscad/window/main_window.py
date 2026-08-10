@@ -1,8 +1,7 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
-    QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QApplication, QMenu, QDialog,
+    QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -26,13 +25,6 @@ from pathlib import Path
 from typing import Optional
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
-_TOOL_ICONS = {
-    0: "tool-translate.svg",
-    1: "tool-rotate.svg",
-    2: "tool-scale.svg",
-}
-
-
 def _fmt_elapsed(elapsed_ms: float) -> str:
     if elapsed_ms >= 1000:
         return f"({elapsed_ms / 1000:.3f}s)"
@@ -512,11 +504,46 @@ class MainWindow(QMainWindow):
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._service_pending_reloads)
+        self._create_measure_actions()
         self._setup_ui()
         self._setup_menus()
         self._setup_shortcuts()
         self._new_document()
         self._restore_settings()
+
+    def _create_measure_actions(self):
+        """The measurement toggles, made before the toolbar is built.
+
+        One QAction each, shown in both the toolbar and the Design menu, so
+        the two views of the same state cannot drift apart. The group's
+        ExclusiveOptional policy is what gives "only one at a time, and
+        clicking the active one turns it off" -- a plain exclusive group
+        would leave no way to put the tool down.
+        """
+        from PySide6.QtGui import QActionGroup
+
+        def make(name, icon, tip):
+            act = QAction(QIcon(str(_ICONS_DIR / icon)), name, self)
+            act.setCheckable(True)
+            act.setToolTip(tip)
+            return act
+
+        self._act_measure_distance = make(
+            "Distance Between Two Points", "toolbar-measure-linear.svg",
+            "Measure distance between two points")
+        self._act_measure_angle = make(
+            "Angle Between Three Points", "toolbar-measure-angle.svg",
+            "Measure angle between three points")
+
+        self._measure_group = QActionGroup(self)
+        self._measure_group.setExclusionPolicy(
+            QActionGroup.ExclusionPolicy.ExclusiveOptional)
+        for act in (self._act_measure_distance, self._act_measure_angle):
+            self._measure_group.addAction(act)
+            # One handler reading the group, rather than each action acting
+            # on its own toggle: switching tools fires an un-check and a
+            # check, and Qt does not promise which lands first.
+            act.toggled.connect(self._on_measure_action)
 
     def _create_undo_stack(self):
         from PySide6.QtGui import QUndoStack
@@ -801,42 +828,10 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act_animate_tb)
 
         tb.addSeparator()
-
-        self._tool_group = QButtonGroup(tb)
-        self._tool_group.setExclusive(True)
-        self._active_tool: int | None = None
-
-        for tool_id, label, tooltip in (
-            (0, "T", "Translate"),
-            (1, "R", "Rotate"),
-            (2, "S", "Scale"),
-        ):
-            btn = QToolButton()
-            btn.setToolTip(tooltip)
-            btn.setCheckable(True)
-            btn.setAutoRaise(True)
-            btn.setFixedSize(28, 28)
-            btn.setStyleSheet(
-                "QToolButton { border: none; }"
-                "QToolButton:checked { background: palette(highlight); border-radius: 4px; }"
-            )
-            icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
-            if icon_path.exists():
-                btn.setIcon(QIcon(str(icon_path)))
-                btn.setIconSize(QSize(22, 22))
-            else:
-                btn.setText(label)
-                btn.setFont(QFont("Helvetica", 11, QFont.Weight.Bold))
-            self._tool_group.addButton(btn, tool_id)
-            tb.addWidget(btn)
-
-        self._tool_group.idToggled.connect(self._on_tool_toggled)
+        tb.addAction(self._act_measure_distance)
+        tb.addAction(self._act_measure_angle)
 
         return tb
-
-    def _on_tool_toggled(self, tool_id: int, checked: bool):
-        self._active_tool = tool_id if checked else None
-        self._viewport.set_active_tool(tool_id if checked else -1)
 
     # ------------------------------------------------------------------
     # Menus
@@ -914,12 +909,8 @@ class MainWindow(QMainWindow):
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
         measure_menu = design_menu.addMenu("Measure")
-        self._act_measure_distance = self._add_checkable(
-            measure_menu, "Distance Between Two Points", False,
-            lambda on: self._set_measure_mode("distance" if on else None))
-        self._act_measure_angle = self._add_checkable(
-            measure_menu, "Angle Between Three Points", False,
-            lambda on: self._set_measure_mode("angle" if on else None))
+        measure_menu.addAction(self._act_measure_distance)
+        measure_menu.addAction(self._act_measure_angle)
         measure_menu.addSeparator()
         self._add_action(measure_menu, "Clear Measurements",
                           self._clear_measurements)
@@ -1540,17 +1531,32 @@ class MainWindow(QMainWindow):
 
     _MAX_MEASUREMENTS = 10
 
+    def _on_measure_action(self):
+        """Whichever toggle is now checked decides the mode. Reading the
+        state rather than the signal keeps this correct however Qt orders
+        the un-check and check of a switch between the two."""
+        if self._act_measure_distance.isChecked():
+            mode = "distance"
+        elif self._act_measure_angle.isChecked():
+            mode = "angle"
+        else:
+            mode = None
+        self._apply_measure_mode(mode)
+
     def _set_measure_mode(self, mode):
-        """Enter or leave a measurement mode. The two modes are mutually
-        exclusive, so switching one on unchecks the other rather than
-        leaving both lit with only one of them live."""
-        if mode == "distance" and self._act_measure_angle.isChecked():
-            self._act_measure_angle.setChecked(False)
-        elif mode == "angle" and self._act_measure_distance.isChecked():
-            self._act_measure_distance.setChecked(False)
+        """Enter or leave a measurement mode programmatically, keeping the
+        toolbar and menu toggles in step."""
+        for act, want in ((self._act_measure_distance, mode == "distance"),
+                           (self._act_measure_angle, mode == "angle")):
+            if act.isChecked() != want:
+                blocked = act.blockSignals(True)
+                act.setChecked(want)
+                act.blockSignals(blocked)
+        self._apply_measure_mode(mode)
+
+    def _apply_measure_mode(self, mode):
         self._viewport.set_measure_mode(mode)
-        if mode is None and not (self._act_measure_distance.isChecked()
-                                  or self._act_measure_angle.isChecked()):
+        if mode is None:
             self.statusBar().clearMessage()
 
     def _on_measure_progress(self, text: str):

@@ -144,6 +144,62 @@ def main():
               abs(w._measurements[0].value() - 90.0) < 1.0,
               str(w._measurements[0].value()))
 
+    # --- the toolbar toggles ---------------------------------------------
+    # One QAction each, shown in both the toolbar and the menu, so the two
+    # cannot drift apart.
+    tb_actions = w._toolbar.actions()
+    check("both toggles are on the toolbar",
+          w._act_measure_distance in tb_actions
+          and w._act_measure_angle in tb_actions, str(len(tb_actions)))
+    check("and they carry icons", not w._act_measure_distance.icon().isNull()
+          and not w._act_measure_angle.icon().isNull())
+    check("they are checkable", w._act_measure_distance.isCheckable()
+          and w._act_measure_angle.isCheckable())
+
+    w._set_measure_mode(None)
+    w._act_measure_distance.setChecked(True)
+    pump(0.1)
+    check("checking distance arms that mode", vp.measure_mode() == "distance",
+          str(vp.measure_mode()))
+
+    # Only one at a time: turning on angle must turn distance off, and the
+    # live mode must end up as angle however Qt orders the two signals.
+    w._act_measure_angle.setChecked(True)
+    pump(0.1)
+    check("turning on angle turns distance off",
+          not w._act_measure_distance.isChecked())
+    check("and the mode really is angle, not left mid-switch",
+          vp.measure_mode() == "angle", str(vp.measure_mode()))
+
+    # Clicking the active one again puts the tool down -- a plain exclusive
+    # group would refuse to uncheck and leave no way out.
+    #
+    # trigger(), not setChecked(False): a programmatic setChecked bypasses
+    # the group's exclusion policy entirely, so it passes whichever policy
+    # is set and proves nothing about clicking.
+    w._act_measure_angle.trigger()
+    pump(0.1)
+    check("unchecking the active toggle leaves the mode",
+          vp.measure_mode() is None, str(vp.measure_mode()))
+    check("and neither toggle is left lit",
+          not w._act_measure_distance.isChecked()
+          and not w._act_measure_angle.isChecked())
+
+    # Escape leaving the mode must clear the toolbar toggle too, or the
+    # button would stay lit with nothing behind it. Nothing measured and
+    # nothing pending first, or Escape would peel those layers instead --
+    # which is what it is supposed to do.
+    w._clear_measurements()
+    vp.cancel_measurement()
+    w._act_measure_distance.setChecked(True)
+    pump(0.1)
+    w.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                              Qt.KeyboardModifier.NoModifier))
+    pump(0.1)
+    check("escaping out of the tool unlights the toolbar toggle",
+          not w._act_measure_distance.isChecked() and vp.measure_mode() is None,
+          f"checked={w._act_measure_distance.isChecked()} mode={vp.measure_mode()}")
+
     # --- dismissing -----------------------------------------------------
     # Two measurements, so dismissing one has to remove the right one.
     w._clear_measurements()

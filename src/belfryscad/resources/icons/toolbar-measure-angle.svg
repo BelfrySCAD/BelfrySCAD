@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Two rays from a vertex at bottom-left -->
+  <line x1="6" y1="26" x2="28" y2="26" stroke="#444" stroke-width="2"/>
+  <line x1="6" y1="26" x2="24" y2="8" stroke="#444" stroke-width="2"/>
+  <!-- Arc between them -->
+  <path d="M 20 26 A 14 14 0 0 0 15.9 16.1" fill="none" stroke="#444" stroke-width="2"/>
+  <!-- Vertex dot -->
+  <circle cx="6" cy="26" r="2.5" fill="#444"/>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Extension lines -->
+  <line x1="6" y1="9" x2="6" y2="23" stroke="#444" stroke-width="2"/>
+  <line x1="26" y1="9" x2="26" y2="23" stroke="#444" stroke-width="2"/>
+  <!-- Dimension line -->
+  <line x1="6" y1="16" x2="26" y2="16" stroke="#444" stroke-width="2"/>
+  <!-- Arrowheads -->
+  <polygon points="6,16 12,13 12,19" fill="#444"/>
+  <polygon points="26,16 20,13 20,19" fill="#444"/>
+</svg>
