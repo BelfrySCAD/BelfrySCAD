@@ -58,7 +58,24 @@ Command-click always lands on the leaf geometry node (innermost primitive).
 
 > Original intent: outlined via a stencil buffer technique, falling back to mesh tinting if outline rendering proved too expensive.
 
-Selecting a shape enables the transform toolbar (Translate, Rotate, Scale, and future tools).
+Selecting a shape reveals the transform tool buttons (Translate, Rotate, Scale). They are **in the viewport**, stacked down its left edge under the perspective toggle — not on the main toolbar, where they first shipped: a tool that only applies to a selection reads better next to the selection than in a strip that is mostly view and render commands. `Viewport._tool_btns` is a dict of three checkable `QToolButton`s; `_sync_tool_buttons()` shows or hides them with the selection and disarms the active tool when the selection goes away, so no gizmo is ever left drawn over nothing.
+
+Only one runs at a time, and clicking the running one turns it off (`Viewport._active_tool`, `-1` for none).
+
+## Measurement
+
+Two viewport measuring tools, toggled from the toolbar and mutually exclusive (a `QActionGroup` with `ExclusionPolicy.ExclusiveOptional`, so both may be off). Both are disabled whenever there is no geometry to measure — `MainWindow._update_measure_actions_enabled()`.
+
+| Tool | Picks | Reports |
+|---|---|---|
+| Linear | Two points | Distance between them |
+| Angle | Three points | Angle at the second, the vertex |
+
+Each click ray-casts to a surface point (`SceneRenderer.ray_cast_point`), then `snap_at()`/`choose_snap()` snap it to a vertex or feature edge if one is near in *screen* space, falling back to the raw surface point. Priority is vertex, then edge, then face.
+
+The edges offered are filtered by `feature_edges_of_triangle()`, which keeps an edge only if it is a boundary or its dihedral angle is sharp. Without that, a flat square face — two triangles — would offer its triangulation diagonal as a snap target, which moves when `$fn` changes and means nothing.
+
+Finished measurements draw as overlay lines (`Viewport.upload_lines`) with a `_MeasureLabel` per measurement. A label is dismissed by clicking it; Escape peels one measurement at a time rather than clearing them all.
 
 ## Transform Gizmos
 
