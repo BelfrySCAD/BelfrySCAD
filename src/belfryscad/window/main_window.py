@@ -1272,7 +1272,7 @@ class MainWindow(QMainWindow):
         # rather than letting it run to completion for nothing; the
         # debounced render below will start a fresh one once editing
         # actually settles. Same cancel idiom as Escape (keyPressEvent).
-        if self._render_cancel is not None and any(t.isRunning() for _, _, t in self._render_jobs):
+        if self._render_cancel is not None and self._render_busy():
             self._render_cancel.set()
             self._set_render_busy(False)
             self.log("Render cancelled — Customizer field changed.")
@@ -3898,7 +3898,13 @@ class MainWindow(QMainWindow):
             self._act_measure_angle.setChecked(False)
             self._set_measure_mode(None)
             return
-        if event.key() == Qt.Key.Key_Escape and self._render_cancel is not None:
+        # _render_cancel outlives the render it belongs to -- it is only
+        # replaced when the next one starts -- so it says "a render has run
+        # at some point", not "one is running now". _render_busy() is the
+        # question actually being asked; without it every Escape after the
+        # first render claimed to cancel one.
+        if (event.key() == Qt.Key.Key_Escape and self._render_cancel is not None
+                and self._render_busy()):
             self._render_cancel.set()
             self._set_render_busy(False)
             self.log("Render cancelled.")
