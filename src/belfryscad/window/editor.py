@@ -246,20 +246,55 @@ _OPENERS = "([{"
 _CLOSERS = ")]}"
 
 
-def _scan_line(text, in_comment):
+def _scan_string(text, i):
+    """From just past an opening quote, find where the string ends.
+
+    Returns ``(index just past it, still open at end of line)``.
+
+    Still open only when the line ends on a backslash, which escapes the
+    newline and continues the string on the next line -- a real feature of
+    the language, and the value carries no break where the source has one.
+    A string simply left unclosed ends at the line end instead: the parser
+    would take it further, but painting the rest of the file as one string
+    over a stray quote is worse than stopping.
+    """
+    n = len(text)
+    j = i
+    while j < n:
+        if text[j] == "\\":
+            if j + 1 >= n:
+                return n, True      # the backslash escapes the newline
+            j += 2                  # \" and \\ do not end the string
+            continue
+        if text[j] == '"':
+            return j + 1, False
+        j += 1
+    return n, False
+
+
+def _scan_line(text, in_comment, in_string):
     """One left-to-right pass over a line for comments, strings and brackets.
 
-    Returns ``(comment_spans, brackets, in_comment_out)``, where spans are
-    ``(start, length)`` and brackets are ``(pos, char)``.
+    Returns ``(comment_spans, string_spans, brackets, in_comment_out,
+    in_string_out)``, where spans are ``(start, length)`` and brackets are
+    ``(pos, char)``. The two flags carry into the next line.
 
     Brackets inside a comment or a string are text, not nesting, and a
     regex pass over the line alone cannot know that -- a ``{`` in a
-    ``/* ... */`` that opened three lines up must not shift the colours.
-    Both the per-line colouring and the whole-document unmatched scan read
-    brackets through here, so they cannot disagree about which ones count.
+    ``/* ... */`` that opened three lines up, or in a string continued from
+    the line above, must not shift the colours. Both the per-line colouring
+    and the whole-document unmatched scan read brackets through here, so
+    they cannot disagree about which ones count.
+
+    Strings are reported as spans rather than matched by a regex for the
+    same reason: ``"[^"]*"`` cannot cross a line, and stops early on an
+    escaped quote.
     """
-    spans, brackets = [], []
+    spans, strings, brackets = [], [], []
     i, n = 0, len(text)
+    if in_string:
+        i, in_string = _scan_string(text, 0)
+        strings.append((0, i))
     while i < n:
         if in_comment:
             end = text.find("*/", i)
@@ -278,15 +313,14 @@ def _scan_line(text, in_comment):
             i += 2
             continue
         if ch == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            i = min(j + 1, n)
+            end, in_string = _scan_string(text, i + 1)
+            strings.append((i, end - i))
+            i = end
             continue
         if ch in _OPENERS or ch in _CLOSERS:
             brackets.append((i, ch))
         i += 1
-    return spans, brackets, in_comment
+    return spans, strings, brackets, in_comment, in_string
 
 
 class OpenSCADHighlighter(QSyntaxHighlighter):
@@ -333,12 +367,12 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
             number_format,
         ))
 
-        string_format = QTextCharFormat()
-        string_format.setForeground(QColor("#CE9178"))
-        self._rules.append((
-            QRegularExpression(r'"[^"]*"'),
-            string_format,
-        ))
+        # Painted from _scan_line's spans, not a regex rule: a string can be
+        # continued onto the next line with a backslash, which no per-line
+        # pattern can follow, and `"[^"]*"` also stopped at the first
+        # escaped quote inside one.
+        self._string_format = QTextCharFormat()
+        self._string_format.setForeground(QColor("#CE9178"))
 
         self._comment_format = QTextCharFormat()
         self._comment_format.setForeground(QColor("#6A9955"))
@@ -424,10 +458,11 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         if self._rescanning:  # our own rehighlightBlock() calls come back here
             return
         doc = self.document()
-        stack, in_comment = [], False
+        stack, in_comment, in_string = [], False, False
         block = doc.firstBlock()
         while block.isValid():
-            _, brackets, in_comment = _scan_line(block.text(), in_comment)
+            _, _, brackets, in_comment, in_string = _scan_line(
+                block.text(), in_comment, in_string)
             number = block.blockNumber()
             for pos, ch in brackets:
                 if ch in _OPENERS:
@@ -466,16 +501,23 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 match = it.next()
                 self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
-        # The block state carries two things across lines: depth in the high
-        # bits, "inside a block comment" in bit 0. -1 is Qt's "no previous
+        # The block state carries three things across lines: depth in the
+        # high bits, "inside a string continued from the line above" in bit
+        # 1, "inside a block comment" in bit 0. -1 is Qt's "no previous
         # state" for the first block.
         prev = self.previousBlockState()
         in_comment = prev >= 0 and bool(prev & 1)
-        depth = (prev >> 1) if prev >= 0 else 0
+        in_string = prev >= 0 and bool(prev & 2)
+        depth = (prev >> 2) if prev >= 0 else 0
 
-        spans, brackets, in_comment = _scan_line(text, in_comment)
+        spans, strings, brackets, in_comment, in_string = _scan_line(
+            text, in_comment, in_string)
         for start, length in spans:
             self.setFormat(start, length, self._comment_format)
+        # After the regex rules, so a keyword inside a string does not keep
+        # its keyword colour.
+        for start, length in strings:
+            self.setFormat(start, length, self._string_format)
 
         unmatched = self._unmatched.get(self.currentBlock().blockNumber(), ())
         for pos, ch in brackets:
@@ -491,7 +533,8 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 depth = max(0, depth - 1)
                 self.setFormat(pos, 1, self._bracket_formats[depth % len(self._bracket_formats)])
 
-        self.setCurrentBlockState((depth << 1) | (1 if in_comment else 0))
+        self.setCurrentBlockState(
+            (depth << 2) | (2 if in_string else 0) | (1 if in_comment else 0))
 
 
 class FindBar(QWidget):
