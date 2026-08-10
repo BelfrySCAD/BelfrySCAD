@@ -1,8 +1,7 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
-    QLabel, QMessageBox, QFileDialog, QToolButton, QButtonGroup,
-    QDockWidget, QApplication, QMenu, QDialog,
+    QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
@@ -26,13 +25,6 @@ from pathlib import Path
 from typing import Optional
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
-_TOOL_ICONS = {
-    0: "tool-translate.svg",
-    1: "tool-rotate.svg",
-    2: "tool-scale.svg",
-}
-
-
 def _fmt_elapsed(elapsed_ms: float) -> str:
     if elapsed_ms >= 1000:
         return f"({elapsed_ms / 1000:.3f}s)"
@@ -800,43 +792,7 @@ class MainWindow(QMainWindow):
         self._act_animate_tb.triggered.connect(self._show_animate)
         tb.addAction(self._act_animate_tb)
 
-        tb.addSeparator()
-
-        self._tool_group = QButtonGroup(tb)
-        self._tool_group.setExclusive(True)
-        self._active_tool: int | None = None
-
-        for tool_id, label, tooltip in (
-            (0, "T", "Translate"),
-            (1, "R", "Rotate"),
-            (2, "S", "Scale"),
-        ):
-            btn = QToolButton()
-            btn.setToolTip(tooltip)
-            btn.setCheckable(True)
-            btn.setAutoRaise(True)
-            btn.setFixedSize(28, 28)
-            btn.setStyleSheet(
-                "QToolButton { border: none; }"
-                "QToolButton:checked { background: palette(highlight); border-radius: 4px; }"
-            )
-            icon_path = _ICONS_DIR / _TOOL_ICONS[tool_id]
-            if icon_path.exists():
-                btn.setIcon(QIcon(str(icon_path)))
-                btn.setIconSize(QSize(22, 22))
-            else:
-                btn.setText(label)
-                btn.setFont(QFont("Helvetica", 11, QFont.Weight.Bold))
-            self._tool_group.addButton(btn, tool_id)
-            tb.addWidget(btn)
-
-        self._tool_group.idToggled.connect(self._on_tool_toggled)
-
         return tb
-
-    def _on_tool_toggled(self, tool_id: int, checked: bool):
-        self._active_tool = tool_id if checked else None
-        self._viewport.set_active_tool(tool_id if checked else -1)
 
     # ------------------------------------------------------------------
     # Menus
