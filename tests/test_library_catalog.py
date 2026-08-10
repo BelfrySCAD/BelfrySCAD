@@ -2,9 +2,9 @@
 
 Pure data, so it needs no Qt. The list of includes per library is derived
 from the libraries' own sources (see the entries' `includes` key); these
-tests guard the shape of it, and the one rule that actually bites: a path
-here is pasted into a script, so it must match what the installer lays
-down on disk.
+tests guard the shape of it, and the one rule that actually bites: each
+statement is pasted into a script as it stands, so the file it names must
+match what the installer lays down on disk.
 """
 import json
 import re
@@ -26,25 +26,48 @@ def test_every_library_lists_its_includes(catalog):
     assert missing == []
 
 
+def _named(row):
+    """The file a statement refers to."""
+    m = re.search(r"[<\"]([^>\"]+)[>\"]", row["statement"])
+    assert m, row["statement"]
+    return m.group(1)
+
+
+def test_every_row_is_a_usable_statement(catalog):
+    # Pasted into a script as-is, so it has to be a whole statement rather
+    # than a bare path.
+    bad = [r["statement"] for e in catalog for r in e["includes"]
+           if not re.fullmatch(r"(include|use) <[^<>]+>", r["statement"])]
+    assert bad == []
+
+
+def test_each_library_uses_one_verb_throughout(catalog):
+    # Which of include<> or use<> a library wants is a property of the
+    # library, not of the file.
+    for e in catalog:
+        verbs = {r["statement"].split()[0] for r in e["includes"]}
+        assert verbs == {e["include_statement"].split()[0]}, e["install_as"]
+
+
 def test_paths_are_rooted_at_the_install_directory(catalog):
     # The installer moves the archive's root to <libraries>/<install_as>,
-    # so every include path has to start with that name or the statement
+    # so every named file has to start with that name or the statement
     # will not resolve once installed.
-    wrong = [(e["install_as"], r["path"])
+    wrong = [(e["install_as"], _named(r))
              for e in catalog for r in e["includes"]
-             if not r["path"].startswith(e["install_as"] + "/")]
+             if not _named(r).startswith(e["install_as"] + "/")]
     assert wrong == []
 
 
 def test_every_include_has_a_description(catalog):
-    blank = [r["path"] for e in catalog for r in e["includes"]
+    blank = [r["statement"] for e in catalog for r in e["includes"]
              if not r.get("description", "").strip()]
     assert blank == []
 
 
 def test_no_duplicate_paths_within_a_library(catalog):
     dupes = [e["install_as"] for e in catalog
-             if len({r["path"] for r in e["includes"]}) != len(e["includes"])]
+             if len({r["statement"] for r in e["includes"]}) != len(e["includes"])]
     assert dupes == []
 
 
@@ -55,7 +78,7 @@ def test_include_statement_matches_a_listed_file(catalog):
     for e in catalog:
         m = re.search(r"[<\"]([^>\"]+)[>\"]", e["include_statement"])
         assert m, e["install_as"]
-        if m.group(1) not in {r["path"] for r in e["includes"]}:
+        if m.group(1) not in {_named(r) for r in e["includes"]}:
             mismatched.append(e["install_as"])
     assert mismatched == ["BOLTS"]
 
@@ -77,7 +100,7 @@ def test_the_primary_is_listed_first(catalog):
 def test_a_bundled_file_is_never_the_primary(catalog):
     # "bundled" means the entry point already pulls it in; the entry point
     # cannot be pulled in by itself.
-    both = [r["path"] for e in catalog for r in e["includes"]
+    both = [r["statement"] for e in catalog for r in e["includes"]
             if r.get("bundled") and r.get("primary")]
     assert both == []
 
@@ -87,7 +110,7 @@ def test_bosl2_extras_are_separable(catalog):
     # several files are deliberately not in it and are included on their
     # own.
     bosl2 = next(e for e in catalog if e["install_as"] == "BOSL2")
-    by_path = {r["path"]: r for r in bosl2["includes"]}
+    by_path = {_named(r): r for r in bosl2["includes"]}
     assert by_path["BOSL2/std.scad"].get("primary")
     for extra in ("BOSL2/nurbs.scad", "BOSL2/gears.scad", "BOSL2/screws.scad"):
         assert extra in by_path, extra
