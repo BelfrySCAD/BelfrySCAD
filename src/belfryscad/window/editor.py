@@ -1166,6 +1166,18 @@ class CodeEditor(QPlainTextEdit):
                 or event.matches(QKeySequence.StandardKey.Redo)):
             event.ignore()
             return
+        # Before the Key_Down handling below, which appends a line at the
+        # end of the document -- Option-Down on the last line must not do
+        # that. Alt has to be tested by bit rather than by equality:
+        # macOS reports arrow keys with KeypadModifier set as well.
+        mods = event.modifiers()
+        if (mods & Qt.KeyboardModifier.AltModifier
+                and not mods & (Qt.KeyboardModifier.ShiftModifier
+                                | Qt.KeyboardModifier.ControlModifier
+                                | Qt.KeyboardModifier.MetaModifier)
+                and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down)):
+            self._move_lines(-1 if event.key() == Qt.Key.Key_Up else 1)
+            return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
             block_text = cursor.block().text()
@@ -1260,54 +1272,106 @@ class CodeEditor(QPlainTextEdit):
         self.replace_span(start, end, new_text)
         self.source_edited_externally.emit()
 
+    def _selected_block_range(self, cursor):
+        """(first, last) block numbers the cursor's selection covers.
+
+        With no selection that is the cursor's own line, twice, so callers
+        that treat "the current line" and "the selected lines" alike need
+        no branch.
+
+        A selection ending exactly at a block start does not include that
+        block: dragging down to the next line's column 0 highlights no text
+        on it, and acting on it would touch a line the user cannot see
+        selected.
+        """
+        doc = self.document()
+        first = doc.findBlock(cursor.selectionStart()).blockNumber()
+        last = doc.findBlock(cursor.selectionEnd()).blockNumber()
+        if last > first:
+            end_cur = QTextCursor(doc)
+            end_cur.setPosition(cursor.selectionEnd())
+            if end_cur.atBlockStart():
+                last -= 1
+        return first, last
+
     def _indent_lines(self):
         cursor = self.textCursor()
         spaces = " " * self._indent_size
         doc = self.document()
+        first, last = self._selected_block_range(cursor)
         cursor.beginEditBlock()
-        if cursor.hasSelection():
-            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
-            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
-            end_cur = QTextCursor(doc)
-            end_cur.setPosition(cursor.selectionEnd())
-            if end_cur.atBlockStart() and end_bn > start_bn:
-                end_bn -= 1
-            for bn in range(start_bn, end_bn + 1):
-                bc = QTextCursor(doc.findBlockByNumber(bn))
-                bc.insertText(spaces)
-        else:
-            bc = QTextCursor(cursor.block())
-            bc.insertText(spaces)
+        for bn in range(first, last + 1):
+            QTextCursor(doc.findBlockByNumber(bn)).insertText(spaces)
         cursor.endEditBlock()
 
     def _unindent_lines(self):
         cursor = self.textCursor()
         n = self._indent_size
         doc = self.document()
+        first, last = self._selected_block_range(cursor)
         cursor.beginEditBlock()
-        if cursor.hasSelection():
-            start_bn = doc.findBlock(cursor.selectionStart()).blockNumber()
-            end_bn = doc.findBlock(cursor.selectionEnd()).blockNumber()
-            end_cur = QTextCursor(doc)
-            end_cur.setPosition(cursor.selectionEnd())
-            if end_cur.atBlockStart() and end_bn > start_bn:
-                end_bn -= 1
-            for bn in range(start_bn, end_bn + 1):
-                block = doc.findBlockByNumber(bn)
-                text = block.text()
-                n_sp = min(n, len(text) - len(text.lstrip()))
-                if n_sp > 0:
-                    bc = QTextCursor(block)
-                    bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
-                    bc.removeSelectedText()
-        else:
-            text = cursor.block().text()
+        for bn in range(first, last + 1):
+            block = doc.findBlockByNumber(bn)
+            text = block.text()
             n_sp = min(n, len(text) - len(text.lstrip()))
             if n_sp > 0:
-                bc = QTextCursor(cursor.block())
+                bc = QTextCursor(block)
                 bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
                 bc.removeSelectedText()
         cursor.endEditBlock()
+
+    def _move_lines(self, delta):
+        """Move the current line, or every line the selection touches, one
+        line up (delta -1) or down (delta +1). Option-Up/Down, as VS Code.
+
+        Done as a single replace_span over the affected lines rather than a
+        delete plus an insert, so it lands on the app's undo stack as one
+        step -- see replace_span. The lines move verbatim; nothing is
+        re-indented, so a move is always exactly reversible by the opposite
+        move.
+        """
+        doc = self.document()
+        cursor = self.textCursor()
+        first, last = self._selected_block_range(cursor)
+        other = first - 1 if delta < 0 else last + 1
+        if not 0 <= other < doc.blockCount():
+            return  # already against the top or bottom of the document
+
+        moving = "\n".join(doc.findBlockByNumber(bn).text()
+                           for bn in range(first, last + 1))
+        displaced = doc.findBlockByNumber(other).text()
+
+        span_start = doc.findBlockByNumber(min(first, other)).position()
+        end_block = doc.findBlockByNumber(max(last, other))
+        # length() counts the block separator; stop before it so the newline
+        # after the span survives and the block count cannot change.
+        span_end = end_block.position() + end_block.length() - 1
+
+        # Where the cursor sits within its line, to put it back on the same
+        # text afterwards rather than at the same absolute offset.
+        def offset_of(pos):
+            block = doc.findBlock(pos)
+            return block.blockNumber(), pos - block.position()
+
+        anchor_bn, anchor_off = offset_of(cursor.anchor())
+        pos_bn, pos_off = offset_of(cursor.position())
+
+        self.replace_span(span_start, span_end,
+                          moving + "\n" + displaced if delta < 0
+                          else displaced + "\n" + moving)
+
+        # Every line the selection touched shifted by exactly delta -- and
+        # so did a selection end resting on the block just past the group,
+        # which is why this applies to the raw block numbers rather than to
+        # the clamped range.
+        def restored(bn, off):
+            block = doc.findBlockByNumber(min(max(bn + delta, 0), doc.blockCount() - 1))
+            return block.position() + min(off, block.length() - 1)
+
+        moved = QTextCursor(doc)
+        moved.setPosition(restored(anchor_bn, anchor_off))
+        moved.setPosition(restored(pos_bn, pos_off), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(moved)
 
     # ------------------------------------------------------------------
     # Code completion
