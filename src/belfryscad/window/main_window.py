@@ -934,8 +934,7 @@ class MainWindow(QMainWindow):
         for op in ("Union", "Difference", "Intersection"):
             bool_menu.addAction(op)
         design_menu.addSeparator()
-        self._use_library_menu = design_menu.addMenu("Use Library")
-        self._use_library_menu.aboutToShow.connect(self._populate_use_library_menu)
+        self._add_action(design_menu, "Use Library…", self._open_use_library)
         self._add_action(design_menu, "Manage Libraries…", self._open_library_manager)
 
         # View
@@ -2175,67 +2174,25 @@ class MainWindow(QMainWindow):
         self._library_manager.raise_()
         self._library_manager.activateWindow()
 
-    def _populate_use_library_menu(self):
-        from belfryscad.window.library_manager import _library_dir, _load_catalog
-        menu = self._use_library_menu
-        menu.clear()
-        lib_dir = _library_dir()
-        catalog = _load_catalog()
-        found = False
-        for lib in catalog:
-            install_as = lib.get("install_as", lib["name"])
-            if (lib_dir / install_as).is_dir():
-                # The catalogue's `includes` list is the source of truth for
-                # what a library can be reached through: the row marked
-                # primary is its entry point, and the rest are the files it
-                # does not already pull in.
-                rows = lib.get("includes", [])
-                if not rows:
-                    continue
-                found = True
-                if len(rows) == 1:
-                    # A submenu holding one item is a click for nothing.
-                    act = menu.addAction(lib["name"])
-                    act.triggered.connect(
-                        lambda checked=False, s=rows[0]["statement"]:
-                        self._insert_use_statement(s))
-                    self._describe_include(act, rows[0])
-                    continue
+    def _open_use_library(self):
+        """Pick a library and the file to pull in from it.
 
-                sub = menu.addMenu(lib["name"])
-                # Descriptions are the reason the list is worth having, and
-                # a menu hides tool tips unless asked.
-                sub.setToolTipsVisible(True)
-                for i, row in enumerate(rows):
-                    act = sub.addAction(self._include_label(row, install_as))
-                    act.triggered.connect(
-                        lambda checked=False, s=row["statement"]:
-                        self._insert_use_statement(s))
-                    self._describe_include(act, row)
-                    # The entry point first, set apart from the files it
-                    # deliberately leaves out.
-                    if row.get("primary") and i == 0 and len(rows) > 1:
-                        sub.addSeparator()
-        if not found:
-            act = menu.addAction("(No libraries installed)")
-            act.setEnabled(False)
-
-    @staticmethod
-    def _include_label(row: dict, install_as: str) -> str:
-        """What to call one include in the menu.
-
-        The file, not the whole statement: every entry in a library's
-        submenu repeats the same verb and the same directory, so showing
-        them makes a long menu out of one distinguishing word. The full
-        statement is in the tool tip."""
-        named = row["statement"].split("<", 1)[1].rstrip(">")
-        return named[len(install_as) + 1:] if named.startswith(install_as + "/") else named
-
-    @staticmethod
-    def _describe_include(action, row: dict):
-        desc = (row.get("description") or "").strip()
-        action.setToolTip(f"{row['statement']}\n{desc}" if desc else row["statement"])
-        action.setStatusTip(desc or row["statement"])
+        A window rather than a menu of submenus: a library can offer
+        dozens of files -- BOSL2 has 23, dotSCAD 276 -- and a submenu that
+        long is awkward to aim at and has nowhere to put the description
+        that says what each file is for.
+        """
+        from belfryscad.window.library_manager import UseLibraryDialog
+        dlg = getattr(self, "_use_library_dialog", None)
+        if dlg is None:
+            dlg = UseLibraryDialog(self._insert_use_statement, self)
+            self._use_library_dialog = dlg
+        else:
+            # Reopened: a library may have been installed or removed since.
+            dlg._populate()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _insert_use_statement(self, statement: str):
         tab = self._current_tab()

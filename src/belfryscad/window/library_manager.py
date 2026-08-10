@@ -40,6 +40,7 @@ _SSL_CTX = _make_ssl_context()
 from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -821,3 +822,132 @@ class LibraryManagerWindow(QDialog):
         self._stop_thread(self._update_thread)
         self._stop_thread(self._thumb_thread)
         super().closeEvent(event)
+
+
+class UseLibraryDialog(QDialog):
+    """Pick a library, then the file to include or use from it.
+
+    Non-modal, and it stays open after inserting: pulling in two or three
+    of a library's files is the normal case -- BOSL2's std.scad plus gears
+    plus threading, say -- and a dialog that closed on each one would make
+    that three trips.
+    """
+
+    def __init__(self, insert, parent=None):
+        super().__init__(parent)
+        self._insert = insert
+        self.setWindowTitle("Use Library")
+        self.resize(660, 420)
+
+        layout = QVBoxLayout(self)
+
+        picker = QHBoxLayout()
+        picker.addWidget(QLabel("Library:"))
+        self._library = QComboBox()
+        # Aqua clips a combo's text even with AdjustToContents, so the
+        # width comes from the font -- see feedback_qt_combobox_macos_width.
+        picker.addWidget(self._library, 1)
+        layout.addLayout(picker)
+
+        body = QHBoxLayout()
+        self._files = QListWidget()
+        self._files.setMinimumWidth(240)
+        body.addWidget(self._files, 1)
+
+        self._description = QLabel()
+        self._description.setWordWrap(True)
+        self._description.setAlignment(Qt.AlignmentFlag.AlignTop
+                                       | Qt.AlignmentFlag.AlignLeft)
+        self._description.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._description.setMinimumWidth(240)
+        body.addWidget(self._description, 1)
+        layout.addLayout(body, 1)
+
+        self._statement = QLabel()
+        self._statement.setWordWrap(True)
+        self._statement.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        font = QFont("Menlo")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self._statement.setFont(font)
+        layout.addWidget(self._statement)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        close = QPushButton("Close")
+        close.clicked.connect(self.close)
+        buttons.addWidget(close)
+        self._insert_btn = QPushButton("Insert")
+        self._insert_btn.setDefault(True)
+        self._insert_btn.clicked.connect(self._on_insert)
+        buttons.addWidget(self._insert_btn)
+        layout.addLayout(buttons)
+
+        self._library.currentIndexChanged.connect(self._on_library_changed)
+        self._files.currentRowChanged.connect(self._on_file_changed)
+        self._files.itemActivated.connect(lambda _item: self._on_insert())
+
+        self._populate()
+
+    # -- contents ---------------------------------------------------------
+
+    def _populate(self):
+        lib_dir = _library_dir()
+        self._libs = [lib for lib in _load_catalog()
+                      if (lib_dir / lib.get("install_as", lib["name"])).is_dir()
+                      and lib.get("includes")]
+        self._library.clear()
+        for lib in self._libs:
+            self._library.addItem(lib["name"])
+        width = self._library.fontMetrics().horizontalAdvance(
+            max((lib["name"] for lib in self._libs), key=len, default="")) + 60
+        self._library.setMinimumWidth(width)
+
+        if not self._libs:
+            self._files.clear()
+            self._description.setText(
+                "No libraries are installed. Use Design ▸ Manage Libraries… "
+                "to install one.")
+            self._statement.clear()
+            self._insert_btn.setEnabled(False)
+            self._library.setEnabled(False)
+            return
+        self._on_library_changed(0)
+
+    def _rows(self):
+        idx = self._library.currentIndex()
+        return self._libs[idx]["includes"] if 0 <= idx < len(self._libs) else []
+
+    def _on_library_changed(self, _index):
+        self._files.clear()
+        for row in self._rows():
+            named = row["statement"].split("<", 1)[1].rstrip(">")
+            label = named.split("/", 1)[1] if "/" in named else named
+            # The entry point is the one to reach for first, and saying so
+            # beats leaving the user to infer it from the order.
+            if row.get("primary"):
+                label += "   (entry point)"
+            self._files.addItem(QListWidgetItem(label))
+        if self._files.count():
+            self._files.setCurrentRow(0)
+
+    def _on_file_changed(self, row_index):
+        rows = self._rows()
+        if not 0 <= row_index < len(rows):
+            self._description.clear()
+            self._statement.clear()
+            self._insert_btn.setEnabled(False)
+            return
+        row = rows[row_index]
+        self._description.setText(row.get("description", ""))
+        self._statement.setText(row["statement"])
+        self._insert_btn.setEnabled(True)
+
+    # -- action -----------------------------------------------------------
+
+    def _on_insert(self):
+        rows = self._rows()
+        i = self._files.currentRow()
+        if 0 <= i < len(rows):
+            self._insert(rows[i]["statement"])
