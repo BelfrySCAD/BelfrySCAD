@@ -258,6 +258,35 @@ class Viewport(QOpenGLWidget):
         self._persp_btn.clicked.connect(self._on_perspective_button_clicked)
         self.refresh_perspective_icon()
 
+        # Transform tools, stacked under the perspective toggle. Hidden
+        # until something is selected: a gizmo needs a shape to act on, and
+        # a button that does nothing is worse than one that is not there.
+        self._tool_btns: dict = {}
+        for row, (tool_id, icon_name, tip) in enumerate((
+            (0, "translate", "Translate"),
+            (1, "rotate", "Rotate"),
+            (2, "scale", "Scale"),
+        )):
+            btn = QPushButton(self)
+            btn.setFlat(True)
+            btn.setCheckable(True)
+            btn.setFixedSize(40, 40)
+            btn.setIconSize(QSize(24, 24))
+            btn.setStyleSheet(
+                "QPushButton { background: rgba(0,0,0,160); border: none;"
+                " border-radius: 8px; }"
+                "QPushButton:hover { background: rgba(0,0,0,200); }"
+                "QPushButton:checked { background: rgba(80,140,220,220); }"
+            )
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(tip)
+            btn.setIcon(QIcon(_recolored_icon_pixmap(
+                icon_name, 24, Qt.GlobalColor.white, prefix="tool")))
+            btn.move(12, 12 + (row + 1) * 46)
+            btn.clicked.connect(lambda _checked=False, t=tool_id: self._on_tool_button(t))
+            btn.hide()
+            self._tool_btns[tool_id] = btn
+
     # ------------------------------------------------------------------
     # GL lifecycle
     # ------------------------------------------------------------------
@@ -534,12 +563,38 @@ class Viewport(QOpenGLWidget):
         self.update()
         return True
 
+    def _on_tool_button(self, tool_id: int):
+        """Only one tool runs at a time, and clicking the running one turns
+        it off -- otherwise there would be no way to put the gizmo away
+        without selecting something else."""
+        already = self._active_tool == tool_id
+        self.set_active_tool(-1 if already else tool_id)
+
+    def _sync_tool_buttons(self):
+        """Show the tools only with a shape selected, and light whichever
+        is running."""
+        visible = self._renderer.selected_id is not None
+        for tool_id, btn in getattr(self, "_tool_btns", {}).items():
+            btn.setVisible(visible)
+            btn.setChecked(visible and self._active_tool == tool_id)
+
+    def set_selection(self, orig_id):
+        """Set (or clear, with None) the selected shape, keeping the tool
+        buttons in step. A tool left running over a cleared selection would
+        draw no gizmo and answer no clicks."""
+        self._renderer.selected_id = orig_id
+        if orig_id is None and self._active_tool in (0, 1, 2):
+            self.set_active_tool(-1)
+        self._sync_tool_buttons()
+        self.update()
+
     def set_active_tool(self, tool_id: int):
         self._active_tool = tool_id
         self._renderer.show_gizmo = tool_id in (0, 1, 2)
         self._renderer.gizmo_type = tool_id
         self._gizmo_drag_axis = -1
         self._renderer.active_gizmo_axis = -1
+        self._sync_tool_buttons()
         self.update()
 
     def camera_info(self) -> dict:
@@ -1022,8 +1077,7 @@ class Viewport(QOpenGLWidget):
         w, h = self.width(), self.height()
         ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
         orig_id = self._renderer.ray_cast(ray_origin, ray_dir)
-        self._renderer.selected_id = orig_id
-        self.update()
+        self.set_selection(orig_id)
         self.selection_changed.emit(orig_id if orig_id is not None else -1)
 
     # ------------------------------------------------------------------

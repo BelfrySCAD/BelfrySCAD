@@ -117,7 +117,8 @@ class _GizmoCmd(QUndoCommand):
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._before
         self._render()
-        self._viewport._renderer.selected_id = None
+        # Through the viewport, so the transform buttons hide with it.
+        self._viewport.set_selection(None)
         self._editor.clear_selection()
         self._viewport.update()
 
@@ -1552,7 +1553,8 @@ class MainWindow(QMainWindow):
             self._viewport.load_geometry([])
         except Exception as e:      # noqa: BLE001 -- never block the action
             self.log(f"WARNING: could not clear the viewport: {e}")
-        self._viewport._renderer.selected_id = None
+        # Through the viewport, so the transform buttons hide with it.
+        self._viewport.set_selection(None)
         if self._measurements:
             self._measurements = []
             self._viewport.set_measurements([])
@@ -4211,12 +4213,12 @@ class MainWindow(QMainWindow):
     def _restore_selection_after_translate(self, new_node_start: int):
         for orig_id, node in self.id_to_node.items():
             if node.position.start_offset == new_node_start:
-                self._viewport._renderer.selected_id = orig_id
+                self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
                     self._rendered_tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
                 self._viewport.update()
                 return
-        self._viewport._renderer.selected_id = None
+        self._viewport.set_selection(None)
         if self._rendered_tab:
             self._rendered_tab.editor.clear_selection()
         self._viewport.update()
