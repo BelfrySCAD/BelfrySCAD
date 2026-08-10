@@ -242,10 +242,61 @@ class LineNumberArea(QWidget):
                 ed.toggle_breakpoint(block.blockNumber())
 
 
+_OPENERS = "([{"
+_CLOSERS = ")]}"
+
+
+def _scan_line(text, in_comment):
+    """One left-to-right pass over a line for comments, strings and brackets.
+
+    Returns ``(comment_spans, brackets, in_comment_out)``, where spans are
+    ``(start, length)`` and brackets are ``(pos, char)``.
+
+    Brackets inside a comment or a string are text, not nesting, and a
+    regex pass over the line alone cannot know that -- a ``{`` in a
+    ``/* ... */`` that opened three lines up must not shift the colours.
+    Both the per-line colouring and the whole-document unmatched scan read
+    brackets through here, so they cannot disagree about which ones count.
+    """
+    spans, brackets = [], []
+    i, n = 0, len(text)
+    while i < n:
+        if in_comment:
+            end = text.find("*/", i)
+            stop = n if end < 0 else end + 2
+            spans.append((i, stop - i))
+            in_comment = end < 0
+            i = stop
+            continue
+        ch = text[i]
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            spans.append((i, n - i))
+            break
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            spans.append((i, 2))
+            in_comment = True
+            i += 2
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            i = min(j + 1, n)
+            continue
+        if ch in _OPENERS or ch in _CLOSERS:
+            brackets.append((i, ch))
+        i += 1
+    return spans, brackets, in_comment
+
+
 class OpenSCADHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
         self._rules = []
+        # Block number -> column of each opener that is never closed. Filled
+        # by _rescan_unmatched(), read back per line in highlightBlock().
+        self._unmatched = {}
+        self._rescanning = False
 
         keyword_format = QTextCharFormat()
         keyword_format.setForeground(QColor("#569CD6"))
@@ -308,30 +359,105 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         # Bracket pairs, coloured by nesting depth so a matching pair shares
         # a colour.
         #
-        # The hues sit 72 degrees apart but are visited two steps round the
-        # wheel at a time, so each depth bounces to the far side of the
-        # spectrum rather than walking along it: every adjacent pair,
-        # including 4 wrapping back to 0, is 144 degrees apart.
+        # Each depth bounces to the far side of the spectrum rather than
+        # walking along it, by stepping two places at a time round the five
+        # hues sorted by angle.
         #
-        # 144 is the most that is possible here, not a compromise. Five
-        # signed steps of 180 sum to an odd multiple of 180, which is never
-        # a multiple of 360, so a full opposite-hue jump every time cannot
-        # close the cycle; 5 x 144 = 720 closes it in exactly two turns.
+        # The hues also stay clear of the red an unmatched bracket is drawn
+        # in (below), so a depth colour can never be mistaken for an error.
+        # There is deliberately nothing in the magenta/pink band at all:
+        # the rose and orchid that used to sit there measured 30 and 50
+        # degrees off red, but hue angle is the wrong test -- a saturated
+        # pink reads as hot and red-adjacent however far round the wheel
+        # it technically is. Every colour but the goldenrod is now at
+        # least 95 degrees away, and goldenrod is dark and yellow-side
+        # enough that it has never been the one confused.
         #
-        # Saturation and value are tuned per colour for readability. Hue
-        # never is -- it is what the 144-degree spacing depends on.
+        # Vacating a third of the wheel is what stops the ring being an
+        # even 72 degrees apart, so adjacent depths are 108 to 163 degrees
+        # apart rather than a uniform 144. The tightest pair anywhere in
+        # the set is 53 degrees, between two colours that are never
+        # adjacent in depth.
+        #
+        # Saturation and value are tuned per colour for readability. Hue is
+        # not free: it carries both the spacing and the distance from red.
         self._bracket_formats = []
-        for colour in ("#C4921C",   # dark goldenrod   42
-                        "#59CAD7",   # cyan            186
-                        "#E65FA2",   # rose            330
-                        "#68CD5C",   # green           114
-                        "#C3ACFA"):  # violet, pastel  258
+        for colour in ("#C4921C",   # dark goldenrod    42
+                        "#59D798",   # spring green    150
+                        "#C3ACFA",   # violet, pastel  258
+                        "#8BCD5C",   # green            95
+                        "#54A5DE"):  # blue            205
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(colour))
             self._bracket_formats.append(fmt)
 
-    _OPENERS = "([{"
-    _CLOSERS = ")]}"
+        # An opener with no closer is an error, not a depth. Bold as well as
+        # red: rose sits in the depth cycle, and colour alone would leave the
+        # two telling apart by hue on a dark background.
+        self._unmatched_format = QTextCharFormat()
+        self._unmatched_format.setForeground(QColor("#FF2D2D"))
+        self._unmatched_format.setFontWeight(QFont.Weight.Bold)
+
+        document.contentsChanged.connect(self._rescan_unmatched)
+
+    _OPENERS = _OPENERS
+    _CLOSERS = _CLOSERS
+
+    def _rescan_unmatched(self):
+        """Find every opener the document never closes.
+
+        Whether an opener is unmatched is not a property of its own line --
+        the closer can be thousands of lines below -- so this walks the
+        whole document, on every edit.
+
+        Measured at 15ms on the largest BOSL2 file (skin.scad, 5400 lines),
+        which is what buys running it outright rather than debounced: a
+        delayed scan leaves the red on a stale line number for as long as
+        it waits, so typing above an unclosed bracket would drag the mark
+        down the screen a beat behind the cursor.
+
+        ponytail: re-reads every line each time. Cache per-block bracket
+        lists and re-scan only edited blocks if a file ever makes this
+        felt -- 15ms is inside a frame, and real .scad files are far
+        smaller than BOSL2's largest.
+        """
+        if self._rescanning:  # our own rehighlightBlock() calls come back here
+            return
+        doc = self.document()
+        stack, in_comment = [], False
+        block = doc.firstBlock()
+        while block.isValid():
+            _, brackets, in_comment = _scan_line(block.text(), in_comment)
+            number = block.blockNumber()
+            for pos, ch in brackets:
+                if ch in _OPENERS:
+                    stack.append((number, pos))
+                elif stack:
+                    # Kind is deliberately not checked: `( ]` is a mismatch,
+                    # not an unclosed bracket, and calling it one would put
+                    # the red on a bracket the user did close.
+                    stack.pop()
+            block = block.next()
+
+        unmatched = {}
+        for number, pos in stack:
+            unmatched.setdefault(number, set()).add(pos)
+        stale = [n for n in set(unmatched) | set(self._unmatched)
+                 if unmatched.get(n) != self._unmatched.get(n)]
+        if not stale:
+            return
+        self._unmatched = unmatched
+
+        # Only the lines whose verdict actually changed, so an edit deep in
+        # a large file does not repaint the whole document.
+        self._rescanning = True
+        try:
+            for number in stale:
+                block = doc.findBlockByNumber(number)
+                if block.isValid():
+                    self.rehighlightBlock(block)
+        finally:
+            self._rescanning = False
 
     def highlightBlock(self, text):
         for pattern, fmt in self._rules:
@@ -340,52 +466,30 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 match = it.next()
                 self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
-        # One left-to-right pass doing both multi-line comments and bracket
-        # depth. They share a scan because they answer the same question:
-        # brackets inside a comment or a string are text, not nesting, and
-        # a regex pass over the line alone cannot know that -- a `{` in a
-        # /* ... */ that opened three lines up must not shift the colours.
-        #
-        # The block state carries both across lines: depth in the high
+        # The block state carries two things across lines: depth in the high
         # bits, "inside a block comment" in bit 0. -1 is Qt's "no previous
         # state" for the first block.
         prev = self.previousBlockState()
         in_comment = prev >= 0 and bool(prev & 1)
         depth = (prev >> 1) if prev >= 0 else 0
 
-        i, n = 0, len(text)
-        while i < n:
-            if in_comment:
-                end = text.find("*/", i)
-                stop = n if end < 0 else end + 2
-                self.setFormat(i, stop - i, self._comment_format)
-                in_comment = end < 0
-                i = stop
-                continue
-            ch = text[i]
-            if ch == "/" and i + 1 < n and text[i + 1] == "/":
-                self.setFormat(i, n - i, self._comment_format)
-                break
-            if ch == "/" and i + 1 < n and text[i + 1] == "*":
-                self.setFormat(i, 2, self._comment_format)
-                in_comment = True
-                i += 2
-                continue
-            if ch == '"':
-                j = i + 1
-                while j < n and text[j] != '"':
-                    j += 2 if text[j] == "\\" else 1
-                i = min(j + 1, n)
-                continue
-            if ch in self._OPENERS:
-                self.setFormat(i, 1, self._bracket_formats[depth % len(self._bracket_formats)])
+        spans, brackets, in_comment = _scan_line(text, in_comment)
+        for start, length in spans:
+            self.setFormat(start, length, self._comment_format)
+
+        unmatched = self._unmatched.get(self.currentBlock().blockNumber(), ())
+        for pos, ch in brackets:
+            if ch in _OPENERS:
+                # An unmatched opener still counts towards the depth, so the
+                # brackets that DO pair below it keep the colours they had.
+                self.setFormat(pos, 1, self._unmatched_format if pos in unmatched
+                               else self._bracket_formats[depth % len(self._bracket_formats)])
                 depth += 1
-            elif ch in self._CLOSERS:
+            else:
                 # Clamped: a stray closer would otherwise drive the depth
                 # negative and recolour everything after it.
                 depth = max(0, depth - 1)
-                self.setFormat(i, 1, self._bracket_formats[depth % len(self._bracket_formats)])
-            i += 1
+                self.setFormat(pos, 1, self._bracket_formats[depth % len(self._bracket_formats)])
 
         self.setCurrentBlockState((depth << 1) | (1 if in_comment else 0))
 

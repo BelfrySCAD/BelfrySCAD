@@ -66,14 +66,35 @@ def main():
         d = min(d, 360 - d)
         if worst is None or d < worst[0]:
             worst = (d, name, palette[(i + 1) % len(palette)])
-    # 144 is the ceiling for five colours, not a target chosen by taste:
-    # five signed steps of 180 sum to an odd multiple of 180, never a
-    # multiple of 360, so the cycle cannot close with opposite-hue jumps.
-    # 5 x 144 = 720 closes it in two turns. Allowing 140 leaves room for
-    # rounding when a hue is derived from a hex.
+    # 144 would be the ceiling for five evenly spaced colours: five signed
+    # steps of 180 sum to an odd multiple of 180, never a multiple of 360,
+    # so the cycle cannot close with opposite-hue jumps, and 5 x 144 = 720
+    # closes it in two turns.
+    #
+    # The palette gives that up on purpose. An even five-way split always
+    # puts some hue within 36 degrees of the red that marks an unmatched
+    # bracket, whichever way it is rotated, so the ring is deliberately
+    # uneven to keep clear of red -- see the palette's own comment. The
+    # magenta/pink band is vacated entirely (checked below), which costs
+    # the tightest adjacent pair: 108 degrees rather than 144.
     check("every step bounces to the far side of the spectrum",
-          worst[0] >= 140,
+          worst[0] >= 105,
           f"closest pair {worst[1]}/{worst[2]} only {worst[0]} deg apart")
+
+    # ...and the reason it is allowed to be uneven has to hold, or the
+    # relaxation above is just a loosened assertion.
+    red = QColor("#FF2D2D").hue()
+    nearest = min(min(abs(QColor(n).hue() - red), 360 - abs(QColor(n).hue() - red))
+                  for n in palette)
+    check("no depth colour is close to the unmatched-bracket red",
+          nearest >= 40, f"nearest is {nearest} deg away")
+
+    # Nothing in the magenta/pink band: a saturated pink reads as red
+    # regardless of its hue angle, which is what put the last two
+    # replacements there in the first place.
+    check("no depth colour is a magenta or pink",
+          all(not (295 <= QColor(n).hue() <= 350) for n in palette),
+          str([(n, QColor(n).hue()) for n in palette]))
 
     first = QColor(palette[0])
     check("the first colour is a darkened gold, not a bright one",
@@ -96,9 +117,11 @@ def main():
               c[src.index(opener)] == c[src.rindex(closer)],
               f"{c[src.index(opener)]} vs {c[src.rindex(closer)]}")
 
-    # Depth N wraps back to the first colour.
+    # Depth N wraps back to the first colour. Every one of these has to be
+    # closed: an opener the document never closes is drawn in the error red
+    # instead of its depth colour, so a bare "((((((" would probe nothing.
     n = len(palette)
-    src = "(" * (n + 1)
+    src = "(" * (n + 1) + ")" * (n + 1)
     c = colours(doc, src, hl)
     check(f"depth {n} cycles back to the first colour",
           c[n] == palette[0], f"{c.get(n)} vs {palette[0]}")
