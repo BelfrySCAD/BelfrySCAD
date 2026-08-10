@@ -576,7 +576,11 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **File**: New / Open… / Open Recent ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
+**Design ▸ Use Library…** opens `UseLibraryDialog` (`window/library_manager.py`): a combo of installed libraries, a list of that library's `includes` below it, and the selected file's description in a word-wrapped label beside the list, with the exact statement shown under both. A menu of submenus was tried first and is what this replaces — a library can offer dozens of files (BOSL2 23, dotSCAD 276), which is awkward to aim at and leaves nowhere for the description.
+
+Non-modal, and it stays open after Insert: pulling in two or three files from one library is the normal case, and closing on each would make that several trips. It is created once and re-populated on reopen, so a library installed meanwhile appears. Rows are labelled by file, since the verb and directory repeat on every row; the entry point sorts first and is marked as such.
+
+**Edit**:**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
 **Design**: Render / Render with Profiling / Show Profile Report… / — / Dump CSG Tree to Console / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
 

@@ -10,7 +10,101 @@
     "version": "v1.0.3",
     "default_branch": "master",
     "install_as": "BOSL",
-    "include_statement": "include <BOSL/constants.scad>"
+    "includes": [
+      {
+        "statement": "include <BOSL/constants.scad>",
+        "description": "Useful Constants.",
+        "primary": true
+      },
+      {
+        "statement": "include <BOSL/acme_screws.scad>",
+        "description": "Bundles 1 file: threading.scad."
+      },
+      {
+        "statement": "include <BOSL/beziers.scad>",
+        "description": "Bezier functions and modules."
+      },
+      {
+        "statement": "include <BOSL/compat.scad>",
+        "description": "Backwards Compatability library To use, include this line at the top of your file: ``` use <compat.scad> ```"
+      },
+      {
+        "statement": "include <BOSL/convex_hull.scad>",
+        "description": "Functions to create 2D and 3D convex hulls."
+      },
+      {
+        "statement": "include <BOSL/debug.scad>",
+        "description": "Helpers to make debugging OpenScad code easier."
+      },
+      {
+        "statement": "include <BOSL/involute_gears.scad>",
+        "description": "Involute Spur Gears and Racks by Leemon Baird, 2011, Leemon@Leemon.com http://www.thingiverse.com/thing:5505 Additional fixes and…"
+      },
+      {
+        "statement": "include <BOSL/joiners.scad>",
+        "description": "Snap-together joiners."
+      },
+      {
+        "statement": "include <BOSL/linear_bearings.scad>",
+        "description": "Linear Bearing clips/holders."
+      },
+      {
+        "statement": "include <BOSL/masks.scad>",
+        "description": "Masking shapes."
+      },
+      {
+        "statement": "include <BOSL/math.scad>",
+        "description": "Math helper functions."
+      },
+      {
+        "statement": "include <BOSL/metric_screws.scad>",
+        "description": "Screws, Bolts, and Nuts."
+      },
+      {
+        "statement": "include <BOSL/nema_steppers.scad>",
+        "description": "Masks and models for NEMA stepper motors."
+      },
+      {
+        "statement": "include <BOSL/paths.scad>",
+        "description": "Polylines, polygons and paths."
+      },
+      {
+        "statement": "include <BOSL/phillips_drive.scad>",
+        "description": "Phillips driver bits To use, add these lines to the top of your file: ``` include <BOSL/constants.scad> use <BOSL/phillips_drive.scad> ```"
+      },
+      {
+        "statement": "include <BOSL/quaternions.scad>",
+        "description": "Support for Quaternions."
+      },
+      {
+        "statement": "include <BOSL/shapes.scad>",
+        "description": "Common useful shapes and structured objects."
+      },
+      {
+        "statement": "include <BOSL/sliders.scad>",
+        "description": "Simple V-groove based sliders and rails."
+      },
+      {
+        "statement": "include <BOSL/threading.scad>",
+        "description": "Triangular and Trapezoidal-Threaded Screw Rods and Nuts."
+      },
+      {
+        "statement": "include <BOSL/torx_drive.scad>",
+        "description": "Torx driver bits To use, add these lines to the top of your file: ``` include <BOSL/constants.scad> use <BOSL/torx_drive.scad> ```"
+      },
+      {
+        "statement": "include <BOSL/transforms.scad>",
+        "description": "This is the file that the most commonly used transformations, distributors, and mutator are in."
+      },
+      {
+        "statement": "include <BOSL/triangulation.scad>",
+        "description": "Functions to triangulate polyhedron faces."
+      },
+      {
+        "statement": "include <BOSL/wiring.scad>",
+        "description": "Rendering for wiring bundles To use, include the following line at the top of your file: ``` use <BOSL/wiring.scad> ```"
+      }
+    ]
   },
   {
     "name": "BOSL2",
@@ -29,7 +123,101 @@
     "version": "v2.0.745",
     "default_branch": "master",
     "install_as": "BOSL2",
-    "include_statement": "include <BOSL2/std.scad>"
+    "includes": [
+      {
+        "statement": "include <BOSL2/std.scad>",
+        "description": "File that includes the standard BOSL include files.",
+        "primary": true
+      },
+      {
+        "statement": "include <BOSL2/ball_bearings.scad>",
+        "description": "Models for standard ball bearing cartridges."
+      },
+      {
+        "statement": "include <BOSL2/bottlecaps.scad>",
+        "description": "Standard bottle caps and necks."
+      },
+      {
+        "statement": "include <BOSL2/cubetruss.scad>",
+        "description": "Modular open-framed trusses and joiners."
+      },
+      {
+        "statement": "include <BOSL2/fnliterals.scad>",
+        "description": "Function Literal Algorithms, and factories for generating function literals for builtin functions."
+      },
+      {
+        "statement": "include <BOSL2/gears.scad>",
+        "description": "Gears, racks, worms, and worm gears."
+      },
+      {
+        "statement": "include <BOSL2/hinges.scad>",
+        "description": "Hinges and snap-locking hinged parts."
+      },
+      {
+        "statement": "include <BOSL2/hooks.scad>",
+        "description": "Hooks and hook-like parts."
+      },
+      {
+        "statement": "include <BOSL2/isosurface.scad>",
+        "description": "Isosurfaces and metaballs."
+      },
+      {
+        "statement": "include <BOSL2/joiners.scad>",
+        "description": "Joiner shapes for connecting separately printed objects."
+      },
+      {
+        "statement": "include <BOSL2/linear_bearings.scad>",
+        "description": "Mounts for LMxUU style linear bearings."
+      },
+      {
+        "statement": "include <BOSL2/modular_hose.scad>",
+        "description": "Modular flexible hose segments."
+      },
+      {
+        "statement": "include <BOSL2/nema_steppers.scad>",
+        "description": "NEMA motor mounts and stepper motor models."
+      },
+      {
+        "statement": "include <BOSL2/nurbs.scad>",
+        "description": "NURBS and B-spline curves and surfaces."
+      },
+      {
+        "statement": "include <BOSL2/polyhedra.scad>",
+        "description": "Platonic, Archimidean, Catalan, and stellated polyhedra"
+      },
+      {
+        "statement": "include <BOSL2/screw_drive.scad>",
+        "description": "Masks for Phillips, Torx and square (Robertson) driver holes."
+      },
+      {
+        "statement": "include <BOSL2/screws.scad>",
+        "description": "ISO (metric) and UTS screws and nuts."
+      },
+      {
+        "statement": "include <BOSL2/sliders.scad>",
+        "description": "Simple sliders and rails."
+      },
+      {
+        "statement": "include <BOSL2/threading.scad>",
+        "description": "Various types of threaded rods and nuts."
+      },
+      {
+        "statement": "include <BOSL2/tripod_mounts.scad>",
+        "description": "Tripod mount plates: RC2"
+      },
+      {
+        "statement": "include <BOSL2/turtle3d.scad>",
+        "description": "3D turtle graphics for making paths or lists of transformations."
+      },
+      {
+        "statement": "include <BOSL2/walls.scad>",
+        "description": "Walls and structural elements that 3D print without support."
+      },
+      {
+        "statement": "include <BOSL2/wiring.scad>",
+        "description": "Routed bundles of wires."
+      }
+    ]
   },
   {
     "name": "dotSCAD",
@@ -42,7 +230,1113 @@
     "version": "v3.3",
     "default_branch": "master",
     "install_as": "dotSCAD",
-    "include_statement": "use <dotSCAD/dotSCAD.scad>"
+    "includes": [
+      {
+        "statement": "use <dotSCAD/src/line2d.scad>",
+        "description": "Modules line2d(), square_end(), round_end(), test_line2d_cap(), test_line2d_line().",
+        "primary": true
+      },
+      {
+        "statement": "use <dotSCAD/src/along_with.scad>",
+        "description": "Modules along_with(), axis_angle_align_with_pts_angles(), axis_angle_align_with_pts_rs(), axis_angle_align_with_local_rotate() and 2 more; functions axis_angle_cumulated_rot_matrice(), euler_angle_path_angles()."
+      },
+      {
+        "statement": "use <dotSCAD/src/angle_between.scad>",
+        "description": "Functions angle_between()."
+      },
+      {
+        "statement": "use <dotSCAD/src/arc.scad>",
+        "description": "Modules arc()."
+      },
+      {
+        "statement": "use <dotSCAD/src/arc_path.scad>",
+        "description": "Functions arc_path()."
+      },
+      {
+        "statement": "use <dotSCAD/src/archimedean_spiral.scad>",
+        "description": "Functions archimedean_spiral()."
+      },
+      {
+        "statement": "use <dotSCAD/src/archimedean_spiral_extrude.scad>",
+        "description": "Modules archimedean_spiral_extrude(), test_archimedean_spiral_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bauer_spiral.scad>",
+        "description": "Functions bauer_spiral()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bend.scad>",
+        "description": "Modules bend(), triangle_frag(), get_frag(), test_bend_tri_frag()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bend_extrude.scad>",
+        "description": "Modules bend_extrude(), get_frag()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bezier_curve.scad>",
+        "description": "Functions bezier_curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bezier_smooth.scad>",
+        "description": "Functions bezier_smooth()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bezier_surface.scad>",
+        "description": "Functions bezier_surface()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bijection_offset.scad>",
+        "description": "Functions bijection_offset()."
+      },
+      {
+        "statement": "use <dotSCAD/src/box_extrude.scad>",
+        "description": "Modules box_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/bspline_curve.scad>",
+        "description": "Functions bspline_curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/contours.scad>",
+        "description": "Functions contours()."
+      },
+      {
+        "statement": "use <dotSCAD/src/cross_sections.scad>",
+        "description": "Functions cross_sections()."
+      },
+      {
+        "statement": "use <dotSCAD/src/crystal_ball.scad>",
+        "description": "Modules crystal_ball(), test_crystal_ball_pie()."
+      },
+      {
+        "statement": "use <dotSCAD/src/curve.scad>",
+        "description": "Functions curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ellipse_extrude.scad>",
+        "description": "Modules ellipse_extrude(), extrude(), test_ellipse_extrude_fzc()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/_impl/Gyroid3.scad>",
+        "description": "Modules gyroid_cell(); functions gyroid(), gyroid_point(), grad_gyroid() and 4 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/circle_packing.scad>",
+        "description": "Functions circle_packing()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/circle_packing2.scad>",
+        "description": "Functions circle_packing2(), circle_packing_triangle2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/circle_packing3.scad>",
+        "description": "Functions circle_packing3(), circle_packing_triangle3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/convex_centroid.scad>",
+        "description": "Functions convex_centroid()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/convex_ct_clk_order.scad>",
+        "description": "Functions convex_ct_clk_order()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/convex_hull2.scad>",
+        "description": "Functions convex_hull2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/convex_hull3.scad>",
+        "description": "Functions convex_hull3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/convex_offset.scad>",
+        "description": "Functions convex_offset()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/differential_line_growth.scad>",
+        "description": "Functions differential_line_growth()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/fibonacci_lattice2.scad>",
+        "description": "Functions fibonacci_lattice2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/foliage_scroll.scad>",
+        "description": "Functions foliage_scroll()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/gcd.scad>",
+        "description": "Functions gcd()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/great_circle_arc.scad>",
+        "description": "Functions great_circle_arc()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/gyroid.scad>",
+        "description": "Modules gyroid(), cell()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/hollow_out_sweep.scad>",
+        "description": "Modules hollow_out_sweep(); functions rects(), rand_tris()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/kogan_sphere.scad>",
+        "description": "Functions kogan_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/lcm.scad>",
+        "description": "Functions lcm()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/lemniscate_2circles.scad>",
+        "description": "Functions lemniscate_2circles()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/lemniscate_curve.scad>",
+        "description": "Functions lemniscate_curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/perlin_sphere.scad>",
+        "description": "Modules perlin_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/ptf_c2sphere.scad>",
+        "description": "Functions ptf_c2sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/r_union2.scad>",
+        "description": "Modules r_union2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/r_union3.scad>",
+        "description": "Modules r_union3(), dilate()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/reaction_diffusion.scad>",
+        "description": "Functions init(), gray_scott(), reaction_diffusion()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_hitomezashi.scad>",
+        "description": "Functions tile_hitomezashi()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_penrose2.scad>",
+        "description": "Modules draw(); functions tile(), tile_type(), tile_x() and 9 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_penrose3.scad>",
+        "description": "Modules draw(); functions tri2tile(), tile_penrose3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_truchet.scad>",
+        "description": "Functions tile_truchet()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_w2c.scad>",
+        "description": "Functions tile_w2c()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_w2e.scad>",
+        "description": "Functions tile_w2e()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tile_wfc.scad>",
+        "description": "Functions tile_wfc()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tri_alpha_complex.scad>",
+        "description": "Functions circumcircle_rr(), edge(), dist_gt(), edge_tri(), reduce_tris(), tri_alpha_complex()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tri_arc_path.scad>",
+        "description": "Functions tri_arc_path()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tri_bisectors.scad>",
+        "description": "Functions tri_bisectors()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tri_circle_packing.scad>",
+        "description": "Functions r2(), c3_r(), c3_a(), pack_one(), tri_circle_packing()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/tri_is_ccw.scad>",
+        "description": "Functions tri_is_ccw()."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/wireframe.scad>",
+        "description": "Modules wireframe(); functions hollow_face(), hollow_faces(), side() and 1 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/experimental/worley_sphere.scad>",
+        "description": "Modules worley_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/fibonacci_lattice.scad>",
+        "description": "Functions fibonacci_lattice()."
+      },
+      {
+        "statement": "use <dotSCAD/src/function_grapher.scad>",
+        "description": "Modules function_grapher(), faces(), hull_pts(), tri_to_hull_faces() and 1 more; functions xy_to_index()."
+      },
+      {
+        "statement": "use <dotSCAD/src/golden_spiral.scad>",
+        "description": "Functions golden_spiral()."
+      },
+      {
+        "statement": "use <dotSCAD/src/golden_spiral_extrude.scad>",
+        "description": "Modules golden_spiral_extrude(), test_golden_spiral_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/helix.scad>",
+        "description": "Functions helix()."
+      },
+      {
+        "statement": "use <dotSCAD/src/helix_extrude.scad>",
+        "description": "Modules helix_extrude(), test_helix_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/hexagons.scad>",
+        "description": "Modules hexagons(), hexagon(), line_hexagons(), test_each_hexagon(); functions hexagons_pts()."
+      },
+      {
+        "statement": "use <dotSCAD/src/hollow_out.scad>",
+        "description": "Modules hollow_out()."
+      },
+      {
+        "statement": "use <dotSCAD/src/hull_polyline2d.scad>",
+        "description": "Modules hull_polyline2d(), hull_line2d(), test_hull_polyline2d_line_segment()."
+      },
+      {
+        "statement": "use <dotSCAD/src/hull_polyline3d.scad>",
+        "description": "Modules hull_polyline3d(), hull_line3d(), test_hull_polyline3d_line_segment()."
+      },
+      {
+        "statement": "use <dotSCAD/src/in_polyline.scad>",
+        "description": "Functions in_polyline()."
+      },
+      {
+        "statement": "use <dotSCAD/src/in_shape.scad>",
+        "description": "Functions in_shape()."
+      },
+      {
+        "statement": "use <dotSCAD/src/line3d.scad>",
+        "description": "Modules line3d(), cap_with(), cap_butt(), cap(), test_line3d_butt(), test_line3d_cap()."
+      },
+      {
+        "statement": "use <dotSCAD/src/lines_intersection.scad>",
+        "description": "Functions lines_intersection()."
+      },
+      {
+        "statement": "use <dotSCAD/src/loft.scad>",
+        "description": "Modules loft(); functions gcd(), lcm(), interpolate() and 1 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_determinant.scad>",
+        "description": "Functions m_determinant()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_mirror.scad>",
+        "description": "Functions m_mirror()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_replace.scad>",
+        "description": "Functions m_replace()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_rotation.scad>",
+        "description": "Functions m_rotation()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_scaling.scad>",
+        "description": "Functions m_scaling()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_shearing.scad>",
+        "description": "Functions m_shearing()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_translation.scad>",
+        "description": "Functions m_translation()."
+      },
+      {
+        "statement": "use <dotSCAD/src/matrix/m_transpose.scad>",
+        "description": "Functions m_transpose()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_cube.scad>",
+        "description": "Modules cell_wall(); functions mz_cube()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_cube_get.scad>",
+        "description": "Functions mz_cube_get()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_cube_initialize.scad>",
+        "description": "Functions mz_cube_initialize()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_hamiltonian.scad>",
+        "description": "Functions mz_hamiltonian()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_hex_walls.scad>",
+        "description": "Functions mz_hex_walls()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_hexwalls.scad>",
+        "description": "Functions mz_hexwalls()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_square.scad>",
+        "description": "Functions mz_square()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_square_cells.scad>",
+        "description": "Functions mz_square_cells()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_square_get.scad>",
+        "description": "Functions mz_square_get()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_square_initialize.scad>",
+        "description": "Functions mz_square_initialize()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_square_walls.scad>",
+        "description": "Functions mz_square_walls()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_squarewalls.scad>",
+        "description": "Functions mz_squarewalls()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_theta.scad>",
+        "description": "Functions mz_theta()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_theta_cells.scad>",
+        "description": "Functions mz_theta_cells()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_theta_get.scad>",
+        "description": "Functions mz_theta_get()."
+      },
+      {
+        "statement": "use <dotSCAD/src/maze/mz_tiles.scad>",
+        "description": "Functions mz_tiles()."
+      },
+      {
+        "statement": "use <dotSCAD/src/midpt_smooth.scad>",
+        "description": "Functions midpt_smooth()."
+      },
+      {
+        "statement": "use <dotSCAD/src/multi_line_text.scad>",
+        "description": "Modules multi_line_text()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_cell.scad>",
+        "description": "Functions nz_cell()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin1.scad>",
+        "description": "Functions nz_perlin1()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin1s.scad>",
+        "description": "Functions nz_perlin1s()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin2.scad>",
+        "description": "Functions nz_perlin2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin2s.scad>",
+        "description": "Functions nz_perlin2s()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin3.scad>",
+        "description": "Functions nz_perlin3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_perlin3s.scad>",
+        "description": "Functions nz_perlin3s()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_worley2.scad>",
+        "description": "Functions nz_worley2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_worley2s.scad>",
+        "description": "Functions nz_worley2s()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_worley3.scad>",
+        "description": "Functions nz_worley3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/noise/nz_worley3s.scad>",
+        "description": "Functions nz_worley3s()."
+      },
+      {
+        "statement": "use <dotSCAD/src/part/cone.scad>",
+        "description": "Modules cone(), base(), head()."
+      },
+      {
+        "statement": "use <dotSCAD/src/part/connector_peg.scad>",
+        "description": "Modules connector_peg(), base(), peg(), peg_void(), head()."
+      },
+      {
+        "statement": "use <dotSCAD/src/part/joint_T.scad>",
+        "description": "Modules joint_T(), joint_ring()."
+      },
+      {
+        "statement": "use <dotSCAD/src/path_extrude.scad>",
+        "description": "Modules path_extrude(), axis_angle_path_extrude(), euler_angle_path_extrude(), test_path_extrude(); functions translate_pts(), init_section(), local_rotate_section() and 1 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/path_scaling_sections.scad>",
+        "description": "Functions path_scaling_sections()."
+      },
+      {
+        "statement": "use <dotSCAD/src/paths2sections.scad>",
+        "description": "Functions paths2sections()."
+      },
+      {
+        "statement": "use <dotSCAD/src/pie.scad>",
+        "description": "Modules pie()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polygon_hull.scad>",
+        "description": "Modules polygon_hull(), test_convex_hull2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/dodecahedron.scad>",
+        "description": "Modules dodecahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_dodecahedron.scad>",
+        "description": "Functions geom_dodecahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_hexahedron.scad>",
+        "description": "Functions geom_hexahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_icosahedron.scad>",
+        "description": "Functions geom_icosahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_octahedron.scad>",
+        "description": "Functions geom_octahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_polar_zonohedra.scad>",
+        "description": "Functions vertex(), rhombi(), geom_polar_zonohedra()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_star.scad>",
+        "description": "Functions geom_star()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/geom_tetrahedron.scad>",
+        "description": "Functions geom_tetrahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/hexahedron.scad>",
+        "description": "Modules hexahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/icosahedron.scad>",
+        "description": "Modules icosahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/octahedron.scad>",
+        "description": "Modules octahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/polar_zonohedra.scad>",
+        "description": "Modules polar_zonohedra()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/star.scad>",
+        "description": "Modules star()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/superellipsoid.scad>",
+        "description": "Modules superellipsoid()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedra/tetrahedron.scad>",
+        "description": "Modules tetrahedron()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyhedron_hull.scad>",
+        "description": "Modules polyhedron_hull(), test_convex_hull3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyline2d.scad>",
+        "description": "Modules polyline2d(), line_segment(), joins()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyline3d.scad>",
+        "description": "Modules polyline3d(), line_segment()."
+      },
+      {
+        "statement": "use <dotSCAD/src/polyline_join.scad>",
+        "description": "Modules polyline_join(), hull_line(), hull_line2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/pp/pp_disk.scad>",
+        "description": "Functions pp_disk()."
+      },
+      {
+        "statement": "use <dotSCAD/src/pp/pp_poisson2.scad>",
+        "description": "Functions pp_poisson2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/pp/pp_poisson3.scad>",
+        "description": "Functions pp_poisson3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/pp/pp_sphere.scad>",
+        "description": "Functions pp_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_bend.scad>",
+        "description": "Functions ptf_bend()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_circle.scad>",
+        "description": "Functions ptf_circle()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_ring.scad>",
+        "description": "Functions ptf_ring()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_rotate.scad>",
+        "description": "Functions ptf_rotate()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_sphere.scad>",
+        "description": "Functions ptf_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_torus.scad>",
+        "description": "Functions ptf_torus()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_x_twist.scad>",
+        "description": "Functions ptf_x_twist()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ptf/ptf_y_twist.scad>",
+        "description": "Functions ptf_y_twist()."
+      },
+      {
+        "statement": "use <dotSCAD/src/rails2sections.scad>",
+        "description": "Functions rails2sections()."
+      },
+      {
+        "statement": "use <dotSCAD/src/ring_extrude.scad>",
+        "description": "Modules ring_extrude(), test_ring_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/rounded_cube.scad>",
+        "description": "Modules rounded_cube(), corner(), test_rounded_edge_corner_center()."
+      },
+      {
+        "statement": "use <dotSCAD/src/rounded_cylinder.scad>",
+        "description": "Modules rounded_cylinder(), test_center_half_trapezium()."
+      },
+      {
+        "statement": "use <dotSCAD/src/rounded_extrude.scad>",
+        "description": "Modules rounded_extrude(), layers(), one_layer(), test_rounded_extrude_data()."
+      },
+      {
+        "statement": "use <dotSCAD/src/rounded_square.scad>",
+        "description": "Modules rounded_square(), test_rounded_square()."
+      },
+      {
+        "statement": "use <dotSCAD/src/select.scad>",
+        "description": "Modules select()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_arc.scad>",
+        "description": "Functions shape_arc()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_circle.scad>",
+        "description": "Functions shape_circle()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_cyclicpolygon.scad>",
+        "description": "Functions shape_cyclicpolygon()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_ellipse.scad>",
+        "description": "Functions shape_ellipse()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_liquid_splitting.scad>",
+        "description": "Functions shape_liquid_splitting()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_path_extend.scad>",
+        "description": "Functions shape_path_extend()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_pentagram.scad>",
+        "description": "Functions shape_pentagram()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_pie.scad>",
+        "description": "Functions shape_pie()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_square.scad>",
+        "description": "Functions shape_square()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_star.scad>",
+        "description": "Functions shape_star()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_starburst.scad>",
+        "description": "Functions shape_starburst()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_superformula.scad>",
+        "description": "Functions shape_superformula()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_taiwan.scad>",
+        "description": "Functions shape_taiwan()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shape_trapezium.scad>",
+        "description": "Functions shape_trapezium()."
+      },
+      {
+        "statement": "use <dotSCAD/src/shear.scad>",
+        "description": "Modules shear()."
+      },
+      {
+        "statement": "use <dotSCAD/src/sphere_spiral.scad>",
+        "description": "Functions sphere_spiral()."
+      },
+      {
+        "statement": "use <dotSCAD/src/sphere_spiral_extrude.scad>",
+        "description": "Modules sphere_spiral_extrude(), test_sphere_spiral_extrude()."
+      },
+      {
+        "statement": "use <dotSCAD/src/starburst.scad>",
+        "description": "Modules starburst(), half_burst(), burst()."
+      },
+      {
+        "statement": "use <dotSCAD/src/stereographic_extrude.scad>",
+        "description": "Modules stereographic_extrude(), test_stereographic_extrude_rs()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_bend.scad>",
+        "description": "Modules sf_bend()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_curve.scad>",
+        "description": "Modules sf_curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_cylinder.scad>",
+        "description": "Modules sf_cylinder()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_hull.scad>",
+        "description": "Modules sf_hull(), hull_pts(), tri_to_hull_faces()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_ring.scad>",
+        "description": "Modules sf_ring()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_solidify.scad>",
+        "description": "Modules sf_solidify()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_solidifyT.scad>",
+        "description": "Modules sf_solidifyT(); functions de_pairs()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_sphere.scad>",
+        "description": "Modules sf_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_splines.scad>",
+        "description": "Functions sf_splines()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_square.scad>",
+        "description": "Modules sf_square()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_thicken.scad>",
+        "description": "Modules sf_thicken(); functions vertex_normal_xs()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_thickenT.scad>",
+        "description": "Modules sf_thickenT()."
+      },
+      {
+        "statement": "use <dotSCAD/src/surface/sf_torus.scad>",
+        "description": "Modules sf_torus()."
+      },
+      {
+        "statement": "use <dotSCAD/src/sweep.scad>",
+        "description": "Modules sweep(), solid_sections(), hollow_sections(), triangles_defined_sections() and 2 more; functions side_indexes(), the_same_after_twisting(), to_v_pts() and 3 more."
+      },
+      {
+        "statement": "use <dotSCAD/src/torus_knot.scad>",
+        "description": "Functions torus_knot()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_circumcenter.scad>",
+        "description": "Functions tri_circumcenter()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_delaunay.scad>",
+        "description": "Functions tri_delaunay()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_delaunay_indices.scad>",
+        "description": "Functions tri_delaunay_indices()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_delaunay_shapes.scad>",
+        "description": "Functions tri_delaunay_shapes()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_delaunay_voronoi.scad>",
+        "description": "Functions tri_delaunay_voronoi()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_ear_clipping.scad>",
+        "description": "Functions tri_ear_clipping()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_incenter.scad>",
+        "description": "Functions tri_incenter()."
+      },
+      {
+        "statement": "use <dotSCAD/src/triangle/tri_subdivide.scad>",
+        "description": "Functions tri_subdivide()."
+      },
+      {
+        "statement": "use <dotSCAD/src/trim_shape.scad>",
+        "description": "Functions trim_shape()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/footprints2.scad>",
+        "description": "Functions footprints2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/footprints3.scad>",
+        "description": "Functions footprints3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/lsystem2.scad>",
+        "description": "Functions lsystem2()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/lsystem3.scad>",
+        "description": "Functions lsystem3()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/t2d.scad>",
+        "description": "Functions t2d()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/t3d.scad>",
+        "description": "Functions t3d()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/turtle2d.scad>",
+        "description": "Functions turtle2d()."
+      },
+      {
+        "statement": "use <dotSCAD/src/turtle/turtle3d.scad>",
+        "description": "Functions turtle3d()."
+      },
+      {
+        "statement": "use <dotSCAD/src/unittest.scad>",
+        "description": "Modules assertEqualPoint(), assertEqualPoints(), assertEqualNum()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/binary_search.scad>",
+        "description": "Functions binary_search()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/bsearch.scad>",
+        "description": "Functions bsearch()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/choose.scad>",
+        "description": "Functions choose()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/contains.scad>",
+        "description": "Functions contains()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/count.scad>",
+        "description": "Functions count()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/dedup.scad>",
+        "description": "Functions dedup()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/degrees.scad>",
+        "description": "Functions degrees()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/every.scad>",
+        "description": "Functions every()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/fibseq.scad>",
+        "description": "Functions fibseq()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/find_index.scad>",
+        "description": "Functions find_index()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/flat.scad>",
+        "description": "Functions flat()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/has.scad>",
+        "description": "Functions has()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/lerp.scad>",
+        "description": "Functions lerp()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap.scad>",
+        "description": "Functions hashmap()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_del.scad>",
+        "description": "Functions hashmap_del()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_entries.scad>",
+        "description": "Functions hashmap_entries()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_get.scad>",
+        "description": "Functions hashmap_get()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_keys.scad>",
+        "description": "Functions hashmap_keys()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_len.scad>",
+        "description": "Functions hashmap_len()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_put.scad>",
+        "description": "Functions hashmap_put()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/map/hashmap_values.scad>",
+        "description": "Functions hashmap_values()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/parse_number.scad>",
+        "description": "Functions parse_number()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/polar_coordinate.scad>",
+        "description": "Functions polar_coordinate()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/radians.scad>",
+        "description": "Functions radians()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/rand.scad>",
+        "description": "Functions rand()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/reverse.scad>",
+        "description": "Functions reverse()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset.scad>",
+        "description": "Functions hashset()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset_add.scad>",
+        "description": "Functions hashset_add()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset_del.scad>",
+        "description": "Functions hashset_del()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset_elems.scad>",
+        "description": "Functions hashset_elems()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset_has.scad>",
+        "description": "Functions hashset_has()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/set/hashset_len.scad>",
+        "description": "Functions hashset_len()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/shuffle.scad>",
+        "description": "Functions shuffle()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/slice.scad>",
+        "description": "Functions slice()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/some.scad>",
+        "description": "Functions some()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/sort.scad>",
+        "description": "Functions sort()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/sorted.scad>",
+        "description": "Functions sorted()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/spherical_coordinate.scad>",
+        "description": "Functions spherical_coordinate()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/split_str.scad>",
+        "description": "Functions split_str()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/sub_str.scad>",
+        "description": "Functions sub_str()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/sum.scad>",
+        "description": "Functions sum()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/swap.scad>",
+        "description": "Functions swap()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/unit_vector.scad>",
+        "description": "Functions unit_vector()."
+      },
+      {
+        "statement": "use <dotSCAD/src/util/zip.scad>",
+        "description": "Functions zip()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn2_cells_from.scad>",
+        "description": "Functions vrn2_cells_from()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn2_cells_space.scad>",
+        "description": "Functions vrn2_cells_space()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn2_from.scad>",
+        "description": "Modules vrn2_from(), region(), offseted_region()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn2_space.scad>",
+        "description": "Modules vrn2_space(), region(), offseted_region(); functions cell_pt()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn3_from.scad>",
+        "description": "Modules vrn3_from(), space()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn3_space.scad>",
+        "description": "Modules vrn3_space(), space()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voronoi/vrn_sphere.scad>",
+        "description": "Functions vrn_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_ascii.scad>",
+        "description": "Functions vx_ascii()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_bezier.scad>",
+        "description": "Functions vx_bezier()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_circle.scad>",
+        "description": "Functions vx_circle()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_contour.scad>",
+        "description": "Functions vx_contour()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_curve.scad>",
+        "description": "Functions vx_curve()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_cylinder.scad>",
+        "description": "Functions vx_cylinder()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_difference.scad>",
+        "description": "Functions vx_difference()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_from.scad>",
+        "description": "Functions vx_from()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_gray.scad>",
+        "description": "Functions vx_gray()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_intersection.scad>",
+        "description": "Functions vx_intersection()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_line.scad>",
+        "description": "Functions vx_line()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_polygon.scad>",
+        "description": "Functions vx_polygon()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_polyline.scad>",
+        "description": "Functions vx_polyline()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_sphere.scad>",
+        "description": "Functions vx_sphere()."
+      },
+      {
+        "statement": "use <dotSCAD/src/voxel/vx_union.scad>",
+        "description": "Functions vx_union()."
+      }
+    ]
   },
   {
     "name": "NopSCADlib",
@@ -55,7 +1349,181 @@
     "version": "v21.41.1",
     "default_branch": "master",
     "install_as": "NopSCADlib",
-    "include_statement": "include <NopSCADlib/lib.scad>"
+    "includes": [
+      {
+        "statement": "include <NopSCADlib/lib.scad>",
+        "description": "Bundles 81 files: core.scad, psus.scad, displays.scad, antennas.scad and 77 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <NopSCADlib/global_defs.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/box.scad>",
+        "description": "A box made from routed or laser cut sheet sheets and printed profiles and bezels."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/box_assembly.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/butt_box.scad>",
+        "description": "A box made from CNC cut panels butted together using printed fixing blocks."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/cable_clip.scad>",
+        "description": "Cable clips to order."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/cable_grommets.scad>",
+        "description": "Printed cable grommets for passing cables through panels avoiding sharp edges and in the case of conductive panels, an extra layer of…"
+      },
+      {
+        "statement": "include <NopSCADlib/printed/camera_housing.scad>",
+        "description": "Housings for PCB cameras."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/carriers.scad>",
+        "description": "Adapts ESP12 modules and various small PCBs to 0.1\" grid."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/corner_block.scad>",
+        "description": "Corner brackets using threaded inserts for fastening three sheets together at right angles."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/door_hinge.scad>",
+        "description": "Door hinges to hang an acrylic sheet door on a 3D printer, default 6mm thick."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/door_latch.scad>",
+        "description": "Door latch for 6mm acrylic door for 3D printer."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/drag_chain.scad>",
+        "description": "Parametric cable drag chain to limit the bend radius of a cable run."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/fan_guard.scad>",
+        "description": "Printable fan finger guard to match the specified fan."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/fixing_block.scad>",
+        "description": "Fixing block to mount two sheets at right angles using threaded inserts."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/flat_hinge.scad>",
+        "description": "A parametric flat hinge."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/foot.scad>",
+        "description": "Customisable printed rubber feet for equipment cases."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/gridfinity.scad>",
+        "description": "Generate storage bins compatible with Zack Freedman's Gridfinity design, see <https://www.youtube.com/watch?v=ra_9zU-mnl8&t=37s> //!"
+      },
+      {
+        "statement": "include <NopSCADlib/printed/handle.scad>",
+        "description": "Printed handle that can be printed without needing support material due to its truncated teardrop profile."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/knob.scad>",
+        "description": "Parametric knobs for potentiometers and encoders."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/led_bezel.scad>",
+        "description": "Printed LED bezels for panel mounting"
+      },
+      {
+        "statement": "include <NopSCADlib/printed/pcb_mount.scad>",
+        "description": "A frame to mount a PCB by its corners when it has no mounting holes."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/pocket_handle.scad>",
+        "description": "Customisable pocket handle"
+      },
+      {
+        "statement": "include <NopSCADlib/printed/press_fit.scad>",
+        "description": "Utility for making printed press fit connectors to join printed parts."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/printed_box.scad>",
+        "description": "A fully parametric 3D printed case that can be customised with cutouts and additions specified by children."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/printed_pulleys.scad>",
+        "description": "Printed pulleys are a remix of droftarts's (see <https://www.thingiverse.com/droftarts/designs>) Parametric Pulleys on Thingiverse (see…"
+      },
+      {
+        "statement": "include <NopSCADlib/printed/psu_shroud.scad>",
+        "description": "A cover to go over the mains end of a PSU terminal strip to make it safe."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/ribbon_clamp.scad>",
+        "description": "Clamp for ribbon cable and polypropylene strip or one or more ribbon cables."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/screw_knob.scad>",
+        "description": "Knob with embedded hex head screw."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/socket_box.scad>",
+        "description": "UK 13A socket and printed backbox with earth terminal for the panel it is mounted on."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/ssr_shroud.scad>",
+        "description": "A cover to go over the mains end of an SSR to make it safe to be touched."
+      },
+      {
+        "statement": "include <NopSCADlib/printed/strap_handle.scad>",
+        "description": "Retracting strap handle."
+      },
+      {
+        "statement": "include <NopSCADlib/utils/annotation.scad>",
+        "description": "Annotation used in this documentation"
+      },
+      {
+        "statement": "include <NopSCADlib/utils/catenary.scad>",
+        "description": "Catenary curve to model hanging wires, etc."
+      },
+      {
+        "statement": "include <NopSCADlib/utils/chamfer.scad>",
+        "description": "45 degree chamfer the entrance to holes."
+      },
+      {
+        "statement": "include <NopSCADlib/utils/core_xy.scad>",
+        "description": "Parameterised Core XY implementation."
+      },
+      {
+        "statement": "include <NopSCADlib/utils/dimension.scad>",
+        "description": "Modules for adding dimensions to assembly views."
+      },
+      {
+        "statement": "include <NopSCADlib/utils/horiholes.scad>",
+        "description": "Utilities for depicting the staircase slicing of horizontal holes made with [`teardrop_plus()`](#teardrops), see…"
+      },
+      {
+        "statement": "include <NopSCADlib/vitamins/led_meters.scad>",
+        "description": "Bundles 1 file: led_meter.scad."
+      },
+      {
+        "statement": "include <NopSCADlib/vitamins/sbr_rail.scad>",
+        "description": "SBR rails //!"
+      },
+      {
+        "statement": "include <NopSCADlib/vitamins/sbr_rails.scad>",
+        "description": "Bundles 3 files: core.scad, bearing_blocks.scad, sbr_rail.scad."
+      },
+      {
+        "statement": "include <NopSCADlib/vitamins/ttrack.scad>",
+        "description": "T-Tracks used in woodworking jigs"
+      },
+      {
+        "statement": "include <NopSCADlib/vitamins/ttracks.scad>",
+        "description": "Bundles 3 files: core.scad, screw.scad, ttrack.scad."
+      }
+    ]
   },
   {
     "name": "UB.scad",
@@ -65,10 +1533,32 @@
     "download_url": "https://github.com/UBaer21/UB.scad",
     "documentation_url": "https://github.com/UBaer21/UB.scad/blob/main/README.md",
     "thumbnail_url": "https://openscad.org/images/ub.gif",
-    "version": "\u03b2315|21",
+    "version": "β315|21",
     "default_branch": "main",
     "install_as": "UB.scad",
-    "include_statement": "include <UB.scad/UB.scad>"
+    "includes": [
+      {
+        "statement": "include <UB.scad/libraries/ub.scad>",
+        "description": "Modules Menu(), Example(), Laby(), CHull() and 209 more; functions center(), l(), layer() and 145 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <UB.scad/Images/DEMO.scad>",
+        "description": "Modules P(), Txt(), Cross()."
+      },
+      {
+        "statement": "include <UB.scad/Images/Examples.scad>",
+        "description": "Modules Wall(), Auger(), Hex(), O5(), Junction(), PipeBlock() and 2 more."
+      },
+      {
+        "statement": "include <UB.scad/libraries/products.scad>",
+        "description": "Modules HirthJoint(), AxialBearing(), VQRotor(), Bellow(), BLetter(), Chuck() and 8 more."
+      },
+      {
+        "statement": "include <UB.scad/UBscadDoku/ub22.212Doxy.scad>",
+        "description": "Modules Menu(), Example(), Laby(), T() and 184 more; functions l(), n(), line() and 112 more."
+      }
+    ]
   },
   {
     "name": "Functional OpenSCAD",
@@ -81,7 +1571,33 @@
     "version": "51588ff",
     "default_branch": "master",
     "install_as": "FunctionalOpenSCAD",
-    "include_statement": "use <FunctionalOpenSCAD/functional.scad>"
+    "includes": [
+      {
+        "statement": "use <FunctionalOpenSCAD/functional.scad>",
+        "description": "Modules functional_examples(), showPoints(), poly3d(), poly2d(); functions is_vec(), unit(), flatten() and 40 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <FunctionalOpenSCAD/alternative_spheres.scad>",
+        "description": "Functions sphere2(), TETRAHEDRON(), CUBE(), OCTAHEDRON(), ICOSAHEDRON(), DODECAHEDRON() and 5 more."
+      },
+      {
+        "statement": "use <FunctionalOpenSCAD/double_fillet.scad>",
+        "description": "Functions sine(), double_fillet()."
+      },
+      {
+        "statement": "use <FunctionalOpenSCAD/planes.scad>",
+        "description": "Modules planes_demo(), showPlane(); functions planeFromPoints(), planeFromFace(), filter_nan() and 1 more."
+      },
+      {
+        "statement": "use <FunctionalOpenSCAD/subdivision.scad>",
+        "description": "Functions subdivide_faces()."
+      },
+      {
+        "statement": "use <FunctionalOpenSCAD/webbing.scad>",
+        "description": "Modules webbing_demo(); functions webbing(), webbing_r3(), getLawCosA() and 3 more."
+      }
+    ]
   },
   {
     "name": "Constructive Library",
@@ -108,7 +1624,77 @@
     "version": "8aad3ca",
     "default_branch": "main",
     "install_as": "constructive",
-    "include_statement": "include <constructive/constructive-compiled.scad>"
+    "includes": [
+      {
+        "statement": "include <constructive/constructive-compiled.scad>",
+        "description": "Modules XYZ(), XY(), X(), Z() and 92 more; functions toInt(), toIntList(), join() and 178 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <constructive/cad_kickstart/constructive-compiled.scad>",
+        "description": "Modules XYZ(), XY(), X(), Z() and 92 more; functions toInt(), toIntList(), join() and 178 more."
+      },
+      {
+        "statement": "include <constructive/cad_kickstart/tryExamples.scad>",
+        "description": "Bundles 1 file: constructive-compiled.scad."
+      },
+      {
+        "statement": "include <constructive/constructive-all.scad>",
+        "description": "Bundles 10 files: basicfuncs.scad, globals.scad, typeSystem.scad, geomInfo.scad and 6 more."
+      },
+      {
+        "statement": "include <constructive/gallery/sources/cart14-Plugs.scad>",
+        "description": "Modules plugs()."
+      },
+      {
+        "statement": "include <constructive/gallery/sources/cart14-tensioner.scad>",
+        "description": "Modules tensioner()."
+      },
+      {
+        "statement": "include <constructive/sources/assemble.scad>",
+        "description": "Modules confinementOf(), assemble(), addHullStep(), noHull() and 9 more; functions confinementPartName(), isConfining(), confines() and 17 more."
+      },
+      {
+        "statement": "include <constructive/sources/basicfuncs.scad>",
+        "description": "Functions toInt(), toIntList(), join(), checkInside(), split(), splitSimple() and 27 more."
+      },
+      {
+        "statement": "include <constructive/sources/colorSystem.scad>",
+        "description": "Modules autoColor(), clear(), opaq(), showColors(); functions findInList(), pickColorWithOpacity(), shellColor() and 1 more."
+      },
+      {
+        "statement": "include <constructive/sources/constructive.scad>",
+        "description": "Modules runFor(), pieces(), two(), skipFirst() and 45 more; functions margin(), pad(), every() and 49 more."
+      },
+      {
+        "statement": "include <constructive/sources/geomInfo.scad>",
+        "description": "Functions isOfGeomType(), set(), setFromList(), stackingInfo(), stack(), alignInfo() and 5 more."
+      },
+      {
+        "statement": "include <constructive/sources/globals.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "include <constructive/sources/metricScrews.scad>",
+        "description": "Modules cableClampSm(), cableClamp6m(), clampScrews(), cableClamp(), pressNutM3(), pressNutM4() and 5 more."
+      },
+      {
+        "statement": "include <constructive/sources/nonMetricScrews.scad>",
+        "description": "Modules screw3mm()."
+      },
+      {
+        "statement": "include <constructive/sources/placements.scad>",
+        "description": "Modules XYZ(), XY(), X(), Z() and 14 more; functions vec3(), vec4(), unit() and 47 more."
+      },
+      {
+        "statement": "include <constructive/sources/typeSystem.scad>",
+        "description": "Functions noUndefs(), has3ElemsOrMore(), isPlace(), isPlaceOrGeom(), definePrototype(), setType() and 5 more."
+      },
+      {
+        "statement": "include <constructive/tubeV2.scad>",
+        "description": "Modules tubeV2(), tube(), doChamfer(), doChamferTube()."
+      }
+    ]
   },
   {
     "name": "StoneAgeLib",
@@ -121,7 +1707,13 @@
     "version": "37cbbfb",
     "default_branch": "main",
     "install_as": "StoneAgeLib",
-    "include_statement": "use <StoneAgeLib/StoneAgeLib.scad>"
+    "includes": [
+      {
+        "statement": "use <StoneAgeLib/StoneAgeLib.scad>",
+        "description": "Bundles 16 files: color.scad, extrude.scad, font.scad, inverseminkowski.scad and 12 more.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "BOLTS",
@@ -134,7 +1726,52 @@
     "version": "dd53a1d",
     "default_branch": "master",
     "install_as": "BOLTS",
-    "include_statement": "include <BOLTS/BOLTS.scad>"
+    "includes": [
+      {
+        "statement": "include <BOLTS/backends/openscad/common.scad>",
+        "description": "Modules BOLTS_error(), BOLTS_warning(), BOLTS_check_dimension_defined(), BOLTS_check_dimension_positive() and 4 more; functions BOLTS_convert_to_default_unit(), get_dim(), type()."
+      },
+      {
+        "statement": "include <BOLTS/backends/openscad/conf.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "include <BOLTS/backends/openscad/local.scad>",
+        "description": "Modules show_cs(), translate_local(), in_cs(), align(); functions norm(), unit_vector(), clamp() and 10 more."
+      },
+      {
+        "statement": "include <BOLTS/openscad/batteries/batteries.scad>",
+        "description": "Modules roundBatteryBase(); functions roundBatteryConn()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/bearings/bearings.scad>",
+        "description": "Modules makeSquorus(), makeRing(), singlerowradialbearing(), axialthrustbearing()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/extrusions/aluminiumProfiles.scad>",
+        "description": "Modules aluProBore(), aluProCore(), aluProCorner(), aluProSide() and 18 more; functions aluProBore_r(), aluProBore_outsetW(), aluProBore_outsetR() and 4 more."
+      },
+      {
+        "statement": "include <BOLTS/openscad/hex/hex.scad>",
+        "description": "Modules hex1(), hex2(); functions hexConn()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/hex_socket/hex_socket.scad>",
+        "description": "Modules hex_socket1(), hex_socket2()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/nut/nut.scad>",
+        "description": "Modules nut1(); functions nutConn()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/pipes/pipe.scad>",
+        "description": "Modules pipe(), pipe_wall(); functions pipeConn()."
+      },
+      {
+        "statement": "include <BOLTS/openscad/washer/washer.scad>",
+        "description": "Modules washer1(), washer2(); functions washerConn()."
+      }
+    ]
   },
   {
     "name": "Asset Collection",
@@ -147,7 +1784,261 @@
     "version": "714acd7",
     "default_branch": "main",
     "install_as": "OpenSCAD-Snippet",
-    "include_statement": "use <OpenSCAD-Snippet/openscad-snippet.scad>"
+    "includes": [
+      {
+        "statement": "use <OpenSCAD-Snippet/Import_Library.scad>",
+        "description": "Bundles 70 files: Abacus.scad, Arc_01.scad, Arc_02.scad, Base_cabinet_01.scad and 66 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Animation_SCAD/Gear_02.scad>",
+        "description": "Modules Gear_02(), Gear_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Animation_SCAD/Mechanism_01.scad>",
+        "description": "Modules Key()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Animation_SCAD/Spawing_Cube.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Angle Shelf.scad>",
+        "description": "Modules shelf()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Arrow_01.scad>",
+        "description": "Modules Arrow_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Banner_01.scad>",
+        "description": "Modules banner()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_Angular.scad>",
+        "description": "Modules Beam_T()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_H.scad>",
+        "description": "Modules Beam_T()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_T.scad>",
+        "description": "Modules Beam_T()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Box_Wood_01.scad>",
+        "description": "Modules slot()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chair_03.scad>",
+        "description": "Modules Chair_03()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chalkboard_01.scad>",
+        "description": "Modules Chalkboard_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chalkboard_02.scad>",
+        "description": "Modules Chalkboard_02()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Coin_02.scad>",
+        "description": "Modules Coin_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Cone_01.scad>",
+        "description": "Modules Cone_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Crystal.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Cup_01.scad>",
+        "description": "Modules Soda_Cup_01(), Ring(), pipe()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Display_Seven_Segments.scad>",
+        "description": "Modules Color_num()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Fireplace_01.scad>",
+        "description": "Modules Fireplace_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Flag_France.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Flag_Italy.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Flange_01.scad>",
+        "description": "Modules Flange_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Flange_02.scad>",
+        "description": "Modules Flange_02()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Flange_03.scad>",
+        "description": "Modules Flange_03()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Floor_01.scad>",
+        "description": "Modules Floor_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Gear_02.scad>",
+        "description": "Modules Gear_02(), Gear_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Ingot_01.scad>",
+        "description": "Modules ingot()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Key_Old_01.scad>",
+        "description": "Modules Key_Old_01(), Pipe_90(), pipe()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Key_Simple.scad>",
+        "description": "Modules key_simple()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Ladder_01.scad>",
+        "description": "Modules Ladder_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Ladder_02.scad>",
+        "description": "Modules Ladder_02(), Rail()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Led_01.scad>",
+        "description": "Modules Led()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Letter_A.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mech_Piece_01.scad>",
+        "description": "Modules Piece_01(), Mech_Piece_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mech_Piece_02.scad>",
+        "description": "Modules Piece_02(), Mech_Piece_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mech_Piece_03.scad>",
+        "description": "Modules Mech_Piece_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mech_Piece_04.scad>",
+        "description": "Modules Mech_Piece_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Pendulum.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Pipe_00.scad>",
+        "description": "Modules Pipe()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Resistor.scad>",
+        "description": "Modules Resistor()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Roll_Holder.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Shaft_02_With_Keyway.scad>",
+        "description": "Modules Shaft_02(), Key()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sign_01.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sign_02.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sign_03.scad>",
+        "description": "Constants and shared definitions."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Soda_Cup_01.scad>",
+        "description": "Modules Soda_Cup_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Stairs_01.scad>",
+        "description": "Modules Stairs_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Stairs_02.scad>",
+        "description": "Modules Stairs_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Stairs_03.scad>",
+        "description": "Modules Stairs_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sword_01.scad>",
+        "description": "Modules Sword_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Table_01.scad>",
+        "description": "Modules Table_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Table_02.scad>",
+        "description": "Modules Table_02()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Table_03.scad>",
+        "description": "Modules Table_03()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Table_Small_01.scad>",
+        "description": "Modules Table_Small_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Transistor.scad>",
+        "description": "Modules Transistor()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Tree_01.scad>",
+        "description": "Modules tree_01(), regular_polygon()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Walking_Stick.scad>",
+        "description": "Modules Walking_Stick(), shaft()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wall_04.scad>",
+        "description": "Modules Wall_04(), Wall_01()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Weights_01.scad>",
+        "description": "Modules Weights_01(), regular_polygon(), weight()."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/x.scad>",
+        "description": "Top-level geometry, with nothing declared for callers."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Scene_City_Street.scad>",
+        "description": "Bundles 5 files: Street_01.scad, Street_02.scad, Street_03.scad, Street_04.scad and 1 more."
+      },
+      {
+        "statement": "use <OpenSCAD-Snippet/Scene_House.scad>",
+        "description": "Bundles 4 files: Wall_01.scad, Wall_02.scad, Wall_03.scad, Grid_01.scad."
+      }
+    ]
   },
   {
     "name": "Board game toolkit",
@@ -160,7 +2051,13 @@
     "version": "cc9b533",
     "default_branch": "main",
     "install_as": "openscad_boardgame_toolkit",
-    "include_statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>"
+    "includes": [
+      {
+        "statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>",
+        "description": "Various modules to generate board game inserts.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "Round Anything",
@@ -173,7 +2070,21 @@
     "version": "1.0.4",
     "default_branch": "master",
     "install_as": "Round-Anything",
-    "include_statement": "use <Round-Anything/polyround.scad>"
+    "includes": [
+      {
+        "statement": "use <Round-Anything/polyround.scad>",
+        "description": "Modules polyRoundExtrude(), testingInternals(), round2d(), shell2d() and 4 more; functions addZcoord(), translate3Dcoords(), offsetPolygonPoints() and 36 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <Round-Anything/MinkowskiRound.scad>",
+        "description": "Modules round2d(), minkowskiRound(), minkowskiOutsideRound(), minkowskiInsideRound()."
+      },
+      {
+        "statement": "use <Round-Anything/roundAnythingExamples.scad>",
+        "description": "Modules basicPolyRoundExample(), polyLineExample(), parametricPolyRoundExample(), experimentalParametricPolyRoundExample() and 9 more; functions makeRadiiPoints(), nutCapture(), beamPoints() and 1 more."
+      }
+    ]
   },
   {
     "name": "Mark's Enclosure Helper",
@@ -186,7 +2097,45 @@
     "version": "77f016d",
     "default_branch": "master",
     "install_as": "MarksEnclosureHelper",
-    "include_statement": "use <MarksEnclosureHelper/enclosure_helper.scad>"
+    "includes": [
+      {
+        "statement": "use <MarksEnclosureHelper/hingebox_code.scad>",
+        "description": "Modules decorate_top(), decorate_bottom(), decorate_left(), decorate_right(), decorate_front(), decorate_back() and 50 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-beebox/example-beebox.scad>",
+        "description": "Modules myperf(), cutout_top(), cutout_bottom(), cutout_left(), cutout_right()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-cardcase/example-cardcase.scad>",
+        "description": "Modules decorate_top_front(), cutout_front()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-eyeglass-beltcase/glasses-case.scad>",
+        "description": "Modules decorate_front(), decorate_back()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-minitin/example-minitin.scad>",
+        "description": "Modules decorate_top()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-needlekeeper/example-needlekeeper.scad>",
+        "description": "Modules decorate_top(), cutout_top(), insert_bottom(), my_divs()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-needlekeeper/needlegauge.scad>",
+        "description": "Modules NeedleGauge()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-partbox/example-partbox.scad>",
+        "description": "Modules decorate_top(), insert_bottom(), decorate_left(), decorate_right(), mydttng(), mydtnotch()."
+      },
+      {
+        "statement": "use <MarksEnclosureHelper/example-threadkeeper/example-threadkeeper.scad>",
+        "description": "Modules decorate_top(), cutout_top(), aslot(), insert_bottom()."
+      }
+    ]
   },
   {
     "name": "funcutils",
@@ -199,7 +2148,13 @@
     "version": "fac6ac1",
     "default_branch": "master",
     "install_as": "funcutils",
-    "include_statement": "use <funcutils/funcutils.scad>"
+    "includes": [
+      {
+        "statement": "use <funcutils/funcutils.scad>",
+        "description": "Bundles 3 files: func.scad, string.scad, math.scad.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "OpenSCAD threads.scad Module",
@@ -212,7 +2167,13 @@
     "version": "4ae9aeb",
     "default_branch": "master",
     "install_as": "threads-scad",
-    "include_statement": "use <threads-scad/threads.scad>"
+    "includes": [
+      {
+        "statement": "use <threads-scad/threads.scad>",
+        "description": "Modules ClosePoints(), ScrewThread(), AugerThread(), ScrewHole() and 15 more; functions ThreadPitch(), HexAcrossFlats(), HexAcrossCorners() and 7 more.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "OpenSCAD Smooth Primitives Library",
@@ -225,7 +2186,13 @@
     "version": "0d0038f",
     "default_branch": "master",
     "install_as": "smooth-prim",
-    "include_statement": "use <smooth-prim/smooth_prim.scad>"
+    "includes": [
+      {
+        "statement": "use <smooth-prim/smooth_prim.scad>",
+        "description": "Modules SmoothCylinder(), HollowCylinder(), SmoothHole(), ChamferHole(), SmoothCube(), SmoothXYCube() and 6 more.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "OpenSCAD Function Plotting Library",
@@ -238,7 +2205,17 @@
     "version": "5f78d03",
     "default_branch": "master",
     "install_as": "plot-function",
-    "include_statement": "use <plot-function/plot_function.scad>"
+    "includes": [
+      {
+        "statement": "use <plot-function/plot_function.scad>",
+        "description": "Modules PlotFunction(), PlotPolarFunction(), PlotAxialFunction(), PlotClosePoints(); functions CallFunc(), CallPolarFunc(), CallAxialFunc() and 2 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <plot-function/demo_plot_function.scad>",
+        "description": "Modules DemoNumber(), SelectFrom(), Demo(); functions Func1(), PolarFunc2(), PolarFunc3() and 5 more."
+      }
+    ]
   },
   {
     "name": "OpenSCAD ClosePoints Library",
@@ -251,7 +2228,33 @@
     "version": "8ce827f",
     "default_branch": "master",
     "install_as": "closepoints",
-    "include_statement": "use <closepoints/closepoints.scad>"
+    "includes": [
+      {
+        "statement": "use <closepoints/closepoints.scad>",
+        "description": "Modules ClosePoints(), CloseLoop(); functions recurse_avg(), recurse_avg(), Affine() and 8 more.",
+        "primary": true
+      },
+      {
+        "statement": "use <closepoints/demo_3D_art.scad>",
+        "description": "Functions OneLayer(), Pedestal()."
+      },
+      {
+        "statement": "use <closepoints/demo_gear_thing.scad>",
+        "description": "Functions GearRotXY(), GearRotXZ(), Ellipse(), PathMatrix(), ThePolygon()."
+      },
+      {
+        "statement": "use <closepoints/demo_roller_coaster.scad>",
+        "description": "Functions RotZt(), hillf(), Hills(), RotXZ(), ShiftX(), PathMatrix() and 1 more."
+      },
+      {
+        "statement": "use <closepoints/demo_roller_coaster2.scad>",
+        "description": "Modules wheel(), train(); functions RotZt(), hillf(), Hills() and 4 more."
+      },
+      {
+        "statement": "use <closepoints/demo_wavy_donut.scad>",
+        "description": "Functions PathMatrix(), ThePolygon()."
+      }
+    ]
   },
   {
     "name": "Tray Library",
@@ -264,7 +2267,13 @@
     "version": "9fc4720",
     "default_branch": "main",
     "install_as": "openscad-tray",
-    "include_statement": "use <openscad-tray/tray.scad>"
+    "includes": [
+      {
+        "statement": "use <openscad-tray/tray.scad>",
+        "description": "Modules tray(), tray_outside(), tray_scoop(), tray_single().",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "Yet Another Parametric Projectbox generator",
@@ -277,7 +2286,17 @@
     "version": "v3.3",
     "default_branch": "main",
     "install_as": "YAPP_Box",
-    "include_statement": "include <YAPP_Box/YAPPgenerator_v3.scad>"
+    "includes": [
+      {
+        "statement": "include <YAPP_Box/YAPPgenerator_v3.scad>",
+        "description": "Modules hookLidInsidePre(), hookLidInside(), hookLidOutsidePre(), hookLidOutside() and 77 more; functions maxWidth(), textDirection(), textHalign() and 41 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <YAPP_Box/YAPP_Template_v3.scad>",
+        "description": "Modules hookLidInside(), hookLidOutside(), hookBaseInside(), hookBaseOutside()."
+      }
+    ]
   },
   {
     "name": "STEMFIE Parts Library",
@@ -290,7 +2309,17 @@
     "version": "440c084",
     "default_branch": "main",
     "install_as": "Stemfie_OpenSCAD",
-    "include_statement": "include <Stemfie_OpenSCAD/stemfie.scad>"
+    "includes": [
+      {
+        "statement": "include <Stemfie_OpenSCAD/stemfie.scad>",
+        "description": "Modules beam_block(), beam_threaded(), beam_cross(), brace() and 114 more; functions helix(), Rg().",
+        "primary": true
+      },
+      {
+        "statement": "include <Stemfie_OpenSCAD/stemfie_electrics.scad>",
+        "description": "Modules potentiometer_knob(), manual_dc_speed_controller(), battery_holder(), motor_shaft(), motor_shaft_yellow_gearbox(), motor_shaft_N20() and 12 more."
+      }
+    ]
   },
   {
     "name": "Catch'n'Hole",
@@ -303,7 +2332,13 @@
     "version": "v3.0.2",
     "default_branch": "latest",
     "install_as": "catchnhole",
-    "include_statement": "use <catchnhole/catchnhole.scad>"
+    "includes": [
+      {
+        "statement": "use <catchnhole/catchnhole.scad>",
+        "description": "Modules hexagon(), bolt_head(), bolt_2d(), bolt() and 2 more; functions hex_inscribed_circle_d(), bolt_data(), nut_data() and 5 more.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "Pathbuilder",
@@ -316,7 +2351,13 @@
     "default_branch": "main",
     "install_as": "pathbuilder",
     "version": "V1.0",
-    "include_statement": "use <pathbuilder/pathbuilder.scad>"
+    "includes": [
+      {
+        "statement": "use <pathbuilder/pathbuilder.scad>",
+        "description": "Modules svgShape(), m(), M(), h() and 27 more; functions svgPoints(), svgTweenPath(), pb_angle() and 34 more.",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "SCON - JSON for OpenSCAD",
@@ -329,7 +2370,13 @@
     "install_as": "openscad-scon",
     "version": "v1.0.0",
     "default_branch": "main",
-    "include_statement": "use <openscad-scon/scon.scad>"
+    "includes": [
+      {
+        "statement": "use <openscad-scon/scon.scad>",
+        "description": "Functions scon_value(), scon_make(), scon_to_json(), scon_from_json().",
+        "primary": true
+      }
+    ]
   },
   {
     "name": "Altair's 2D Library for OpenSCAD",
@@ -342,7 +2389,49 @@
     "install_as": "A2D",
     "version": "v1.6.2",
     "default_branch": "master",
-    "include_statement": "use <A2D/a2d.scad>"
+    "includes": [
+      {
+        "statement": "include <A2D/A2D.scad>",
+        "description": "Modules p5star(), p6star(), p8star(), star() and 17 more; functions regpoly_points(), square_points(), star_points() and 9 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <A2D/Samples/CircleText.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/GrillCircle.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/GrillSquare.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/KnurledKnob.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/MakeRound.scad>",
+        "description": "Modules l_shape()."
+      },
+      {
+        "statement": "include <A2D/Samples/MultiLineText.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/ParametricBoxWithLid.scad>",
+        "description": "Modules part_lid(), part_box()."
+      },
+      {
+        "statement": "include <A2D/Samples/PointGenerators.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      },
+      {
+        "statement": "include <A2D/Samples/Stars.scad>",
+        "description": "Bundles 1 file: A2D.scad."
+      }
+    ]
   },
   {
     "name": "Doll house",
@@ -355,7 +2444,17 @@
     "version": "a866a80",
     "default_branch": "main",
     "install_as": "openscad-doll-house",
-    "include_statement": "use <openscad-doll-house/doll-house.scad>"
+    "includes": [
+      {
+        "statement": "include <openscad-doll-house/roof.scad>",
+        "description": "Modules Roof(), SlopeChain(), render3D(), renderFlat() and 2 more; functions get_left_junction_length(), get_right_junction_length(), get_total_junction_length() and 5 more.",
+        "primary": true
+      },
+      {
+        "statement": "include <openscad-doll-house/stairs.scad>",
+        "description": "Modules Stairs(), render3d(), renderFlat(), renderDimensions2D()."
+      }
+    ]
   },
   {
     "name": "Dimensions",
@@ -368,6 +2467,12 @@
     "version": "d37828e",
     "default_branch": "main",
     "install_as": "openscad-new-dimensions",
-    "include_statement": "use <openscad-new-dimensions/dimensions.scad>"
+    "includes": [
+      {
+        "statement": "use <openscad-new-dimensions/dimensions.scad>",
+        "description": "Bundles 4 files: constants.scad, line.scad, angle.scad, label.scad.",
+        "primary": true
+      }
+    ]
   }
 ]

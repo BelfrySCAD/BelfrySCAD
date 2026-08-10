@@ -934,8 +934,7 @@ class MainWindow(QMainWindow):
         for op in ("Union", "Difference", "Intersection"):
             bool_menu.addAction(op)
         design_menu.addSeparator()
-        self._use_library_menu = design_menu.addMenu("Use Library")
-        self._use_library_menu.aboutToShow.connect(self._populate_use_library_menu)
+        self._add_action(design_menu, "Use Library…", self._open_use_library)
         self._add_action(design_menu, "Manage Libraries…", self._open_library_manager)
 
         # View
@@ -2175,23 +2174,25 @@ class MainWindow(QMainWindow):
         self._library_manager.raise_()
         self._library_manager.activateWindow()
 
-    def _populate_use_library_menu(self):
-        from belfryscad.window.library_manager import _library_dir, _load_catalog
-        menu = self._use_library_menu
-        menu.clear()
-        lib_dir = _library_dir()
-        catalog = _load_catalog()
-        found = False
-        for lib in catalog:
-            install_as = lib.get("install_as", lib["name"])
-            if (lib_dir / install_as).is_dir():
-                stmt = lib.get("include_statement", f"use <{install_as}/{install_as}.scad>")
-                act = menu.addAction(lib["name"])
-                act.triggered.connect(lambda checked=False, s=stmt: self._insert_use_statement(s))
-                found = True
-        if not found:
-            act = menu.addAction("(No libraries installed)")
-            act.setEnabled(False)
+    def _open_use_library(self):
+        """Pick a library and the file to pull in from it.
+
+        A window rather than a menu of submenus: a library can offer
+        dozens of files -- BOSL2 has 23, dotSCAD 276 -- and a submenu that
+        long is awkward to aim at and has nowhere to put the description
+        that says what each file is for.
+        """
+        from belfryscad.window.library_manager import UseLibraryDialog
+        dlg = getattr(self, "_use_library_dialog", None)
+        if dlg is None:
+            dlg = UseLibraryDialog(self._insert_use_statement, self)
+            self._use_library_dialog = dlg
+        else:
+            # Reopened: a library may have been installed or removed since.
+            dlg._populate()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _insert_use_statement(self, statement: str):
         tab = self._current_tab()
