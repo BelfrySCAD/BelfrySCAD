@@ -49,24 +49,49 @@ def main():
 
     w._populate_use_library_menu()
     app.processEvents()
-    actions = [a for a in w._use_library_menu.actions() if a.isEnabled()]
+    entries = [a for a in w._use_library_menu.actions() if a.isEnabled()]
     check("the menu lists every installed library",
-          len(actions) == len(installed),
-          f"{len(actions)} actions vs {len(installed)} installed")
+          len(entries) == len(installed),
+          f"{len(entries)} entries vs {len(installed)} installed")
 
-    # Each action inserts the entry point named in the catalogue.
     for lib in installed:
-        primary = next((r["statement"] for r in lib["includes"] if r.get("primary")), None)
-        act = next((a for a in actions if a.text() == lib["name"]), None)
-        check(f"{lib['name']} is offered", act is not None)
-        if act is None or primary is None:
+        rows = lib["includes"]
+        entry = next((a for a in entries if a.text() == lib["name"]), None)
+        check(f"{lib['name']} is offered", entry is not None)
+        if entry is None:
             continue
-        w._current_tab().editor.setPlainText("cube(1);\n")
-        act.trigger()
-        app.processEvents()
-        text = w._current_tab().editor.toPlainText()
-        check(f"{lib['name']} inserts its entry point",
-              primary in text, repr(text.split("\n")[0]))
+
+        if len(rows) == 1:
+            check(f"{lib['name']} with one include is a plain item, not a submenu",
+                  entry.menu() is None)
+            acts = [entry]
+        else:
+            sub = entry.menu()
+            check(f"{lib['name']} opens a submenu", sub is not None)
+            if sub is None:
+                continue
+            acts = [a for a in sub.actions() if not a.isSeparator()]
+            check(f"{lib['name']} lists all {len(rows)} of its includes",
+                  len(acts) == len(rows), f"{len(acts)} items")
+            check(f"{lib['name']} shows tool tips", sub.toolTipsVisible())
+            check(f"{lib['name']} puts its entry point first and sets it apart",
+                  sub.actions()[0] is acts[0]
+                  and any(a.isSeparator() for a in sub.actions()[:2]),
+                  str([a.text() or "---" for a in sub.actions()[:3]]))
+            check(f"{lib['name']} labels items by file, not the whole statement",
+                  all("<" not in a.text() for a in acts),
+                  str([a.text() for a in acts[:2]]))
+
+        # Every item carries its description, and inserts its own statement.
+        for act, row in zip(acts, rows):
+            check(f"{row['statement']} carries its description",
+                  row["description"] in act.toolTip(), act.toolTip()[:60])
+            w._current_tab().editor.setPlainText("cube(1);\n")
+            act.trigger()
+            app.processEvents()
+            first = w._current_tab().editor.toPlainText().split("\n")[0]
+            check(f"{row['statement']} is what it inserts",
+                  first == row["statement"], repr(first))
 
     # The statement must name a file that is really there, or it is a
     # broken line in the user's script.

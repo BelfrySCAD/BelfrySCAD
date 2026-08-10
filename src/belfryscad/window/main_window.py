@@ -2188,21 +2188,54 @@ class MainWindow(QMainWindow):
                 # The catalogue's `includes` list is the source of truth for
                 # what a library can be reached through: the row marked
                 # primary is its entry point, and the rest are the files it
-                # does not already pull in. Falling back to the first row
-                # covers a library with no single entry point -- BOLTS has
-                # none -- which is still better than guessing at a filename.
-                stmts = [r["statement"] for r in lib.get("includes", [])]
-                primary = next((r["statement"] for r in lib.get("includes", [])
-                                if r.get("primary")), None)
-                stmt = primary or (stmts[0] if stmts else None)
-                if stmt is None:
+                # does not already pull in.
+                rows = lib.get("includes", [])
+                if not rows:
                     continue
-                act = menu.addAction(lib["name"])
-                act.triggered.connect(lambda checked=False, s=stmt: self._insert_use_statement(s))
                 found = True
+                if len(rows) == 1:
+                    # A submenu holding one item is a click for nothing.
+                    act = menu.addAction(lib["name"])
+                    act.triggered.connect(
+                        lambda checked=False, s=rows[0]["statement"]:
+                        self._insert_use_statement(s))
+                    self._describe_include(act, rows[0])
+                    continue
+
+                sub = menu.addMenu(lib["name"])
+                # Descriptions are the reason the list is worth having, and
+                # a menu hides tool tips unless asked.
+                sub.setToolTipsVisible(True)
+                for i, row in enumerate(rows):
+                    act = sub.addAction(self._include_label(row, install_as))
+                    act.triggered.connect(
+                        lambda checked=False, s=row["statement"]:
+                        self._insert_use_statement(s))
+                    self._describe_include(act, row)
+                    # The entry point first, set apart from the files it
+                    # deliberately leaves out.
+                    if row.get("primary") and i == 0 and len(rows) > 1:
+                        sub.addSeparator()
         if not found:
             act = menu.addAction("(No libraries installed)")
             act.setEnabled(False)
+
+    @staticmethod
+    def _include_label(row: dict, install_as: str) -> str:
+        """What to call one include in the menu.
+
+        The file, not the whole statement: every entry in a library's
+        submenu repeats the same verb and the same directory, so showing
+        them makes a long menu out of one distinguishing word. The full
+        statement is in the tool tip."""
+        named = row["statement"].split("<", 1)[1].rstrip(">")
+        return named[len(install_as) + 1:] if named.startswith(install_as + "/") else named
+
+    @staticmethod
+    def _describe_include(action, row: dict):
+        desc = (row.get("description") or "").strip()
+        action.setToolTip(f"{row['statement']}\n{desc}" if desc else row["statement"])
+        action.setStatusTip(desc or row["statement"])
 
     def _insert_use_statement(self, statement: str):
         tab = self._current_tab()
