@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._new_document()
         self._restore_settings()
+        self._update_measure_actions_enabled()
 
     def _create_measure_actions(self):
         """The measurement toggles, made before the toolbar is built.
@@ -1531,6 +1532,21 @@ class MainWindow(QMainWindow):
 
     _MAX_MEASUREMENTS = 10
 
+    def _update_measure_actions_enabled(self):
+        """Measurement needs something to measure.
+
+        Both toggles are the same actions the Design menu shows, so this
+        greys out the menu entries too. If a mode was live when the
+        geometry went away -- a render that produced nothing, say -- the
+        tool is put down as well, rather than left armed over an empty
+        viewport where every click would report a miss.
+        """
+        has_geometry = bool(getattr(self, "_bodies", None))
+        for act in (self._act_measure_distance, self._act_measure_angle):
+            act.setEnabled(has_geometry)
+        if not has_geometry and self._viewport.measure_mode() is not None:
+            self._set_measure_mode(None)
+
     def _on_measure_action(self):
         """Whichever toggle is now checked decides the mode. Reading the
         state rather than the signal keeps this correct however Qt orders
@@ -2024,6 +2040,7 @@ class MainWindow(QMainWindow):
             return
 
         self._bodies = bodies
+        self._update_measure_actions_enabled()
 
         # If the script set $vp* variables, apply them to the camera and skip auto-fit.
         script_moved_camera = bool(final_vp) and self._apply_vp_params(final_vp)
@@ -3577,6 +3594,7 @@ class MainWindow(QMainWindow):
             self.log(f"GPU upload error: {e}\n{traceback.format_exc()}")
             return
         self._bodies = bodies
+        self._update_measure_actions_enabled()
         try:
             import numpy as np
             mins, maxs = [], []
