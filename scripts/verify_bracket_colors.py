@@ -74,10 +74,11 @@ def main():
     # The palette gives that up on purpose. An even five-way split always
     # puts some hue within 36 degrees of the red that marks an unmatched
     # bracket, whichever way it is rotated, so the ring is deliberately
-    # uneven to keep clear of red -- see the palette's own comment. That
-    # costs the tightest pair, which is 124 degrees rather than 144.
+    # uneven to keep clear of red -- see the palette's own comment. The
+    # magenta/pink band is vacated entirely (checked below), which costs
+    # the tightest adjacent pair: 108 degrees rather than 144.
     check("every step bounces to the far side of the spectrum",
-          worst[0] >= 120,
+          worst[0] >= 105,
           f"closest pair {worst[1]}/{worst[2]} only {worst[0]} deg apart")
 
     # ...and the reason it is allowed to be uneven has to hold, or the
@@ -87,6 +88,13 @@ def main():
                   for n in palette)
     check("no depth colour is close to the unmatched-bracket red",
           nearest >= 40, f"nearest is {nearest} deg away")
+
+    # Nothing in the magenta/pink band: a saturated pink reads as red
+    # regardless of its hue angle, which is what put the last two
+    # replacements there in the first place.
+    check("no depth colour is a magenta or pink",
+          all(not (295 <= QColor(n).hue() <= 350) for n in palette),
+          str([(n, QColor(n).hue()) for n in palette]))
 
     first = QColor(palette[0])
     check("the first colour is a darkened gold, not a bright one",

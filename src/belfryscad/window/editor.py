@@ -365,25 +365,28 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         #
         # The hues also stay clear of the red an unmatched bracket is drawn
         # in (below), so a depth colour can never be mistaken for an error.
-        # The rose this replaced sat 30 degrees off red and read as a
-        # red-family colour; orchid at 310 is 50 degrees clear. Goldenrod
-        # is 42 degrees off but reads nothing like red, being far darker
-        # and yellow-side.
+        # There is deliberately nothing in the magenta/pink band at all:
+        # the rose and orchid that used to sit there measured 30 and 50
+        # degrees off red, but hue angle is the wrong test -- a saturated
+        # pink reads as hot and red-adjacent however far round the wheel
+        # it technically is. Every colour but the goldenrod is now at
+        # least 95 degrees away, and goldenrod is dark and yellow-side
+        # enough that it has never been the one confused.
         #
-        # Keeping away from red is what stops the ring being an even 72
-        # degrees apart -- an even five-way split always lands something
-        # within 36 degrees of red, whichever way it is rotated. So
-        # adjacent depths are 124 to 163 degrees apart rather than a
-        # uniform 144.
+        # Vacating a third of the wheel is what stops the ring being an
+        # even 72 degrees apart, so adjacent depths are 108 to 163 degrees
+        # apart rather than a uniform 144. The tightest pair anywhere in
+        # the set is 53 degrees, between two colours that are never
+        # adjacent in depth.
         #
         # Saturation and value are tuned per colour for readability. Hue is
         # not free: it carries both the spacing and the distance from red.
         self._bracket_formats = []
-        for colour in ("#C4921C",   # dark goldenrod   42
-                        "#59CAD7",   # cyan            186
-                        "#E65FCF",   # orchid          310
-                        "#68CD5C",   # green           114
-                        "#C3ACFA"):  # violet, pastel  258
+        for colour in ("#C4921C",   # dark goldenrod    42
+                        "#59D798",   # spring green    150
+                        "#C3ACFA",   # violet, pastel  258
+                        "#8BCD5C",   # green            95
+                        "#54A5DE"):  # blue            205
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(colour))
             self._bracket_formats.append(fmt)

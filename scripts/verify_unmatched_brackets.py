@@ -159,7 +159,7 @@ def main():
           colour_at(doc, 0, 3) == colour_at(doc, 0, 8) != RED,
           f"{colour_at(doc, 0, 3)} vs {colour_at(doc, 0, 8)}")
     check("and is coloured for depth 1, not depth 0 -- the red one still counts",
-          colour_at(doc, 0, 3) == "#59cad7", str(colour_at(doc, 0, 3)))
+          colour_at(doc, 0, 3) == "#59d798", str(colour_at(doc, 0, 3)))
 
     # --- stray closers ---------------------------------------------------
     load("cube(1));\ncube(2);\n")
