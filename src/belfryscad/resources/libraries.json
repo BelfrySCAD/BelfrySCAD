@@ -132,23 +132,8 @@
         "primary": true
       },
       {
-        "statement": "include <BOSL2/affine.scad>",
-        "description": "Matrix math and affine transformation matrices.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/attachments.scad>",
-        "description": "Positioning objects on or relative to other objects.",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/ball_bearings.scad>",
         "description": "Models for standard ball bearing cartridges."
-      },
-      {
-        "statement": "include <BOSL2/beziers.scad>",
-        "description": "Bezier curves and surfaces.",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/bosl1compat.scad>",
@@ -159,43 +144,8 @@
         "description": "Standard bottle caps and necks."
       },
       {
-        "statement": "include <BOSL2/builtins.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/color.scad>",
-        "description": "HSV and HSL conversion, color multiple objects, change color of objects",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/comparisons.scad>",
-        "description": "Comparisons and sorting.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/constants.scad>",
-        "description": "Constants provided by the library",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/coords.scad>",
-        "description": "Conversions between coordinate systems.",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/cubetruss.scad>",
         "description": "Modular open-framed trusses and joiners."
-      },
-      {
-        "statement": "include <BOSL2/distributors.scad>",
-        "description": "Copy or distribute objects onto a line, grid, or path.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/drawing.scad>",
-        "description": "Create and draw 2D and 3D paths: arc, helix, turtle graphics",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/fnliterals.scad>",
@@ -204,11 +154,6 @@
       {
         "statement": "include <BOSL2/gears.scad>",
         "description": "Gears, racks, worms, and worm gears."
-      },
-      {
-        "statement": "include <BOSL2/geometry.scad>",
-        "description": "Geometrical calculations including intersections of lines, circles and planes, circle from 3 points",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/hinges.scad>",
@@ -227,37 +172,12 @@
         "description": "Joiner shapes for connecting separately printed objects."
       },
       {
-        "statement": "include <BOSL2/linalg.scad>",
-        "description": "Linear Algebra: solve linear systems, construct and modify matrices.",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/linear_bearings.scad>",
         "description": "Mounts for LMxUU style linear bearings."
       },
       {
-        "statement": "include <BOSL2/lists.scad>",
-        "description": "List indexing, change list structure, rearrange/modify lists",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/masks.scad>",
-        "description": "Masking shapes for edge profiling including roundover, cove, teardrop, ogee.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/math.scad>",
-        "description": "Math on lists, special functions, quantization, random numbers, calculus, root finding",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/metric_screws.scad>",
         "description": "Metric screws, nuts, and screwholes."
-      },
-      {
-        "statement": "include <BOSL2/miscellaneous.scad>",
-        "description": "Extrusion, bounding box, chain hull and minkowski-based transforms.",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/modular_hose.scad>",
@@ -272,28 +192,8 @@
         "description": "NURBS and B-spline curves and surfaces."
       },
       {
-        "statement": "include <BOSL2/partitions.scad>",
-        "description": "Cut objects with a plane or partition them into interlocking pieces.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/paths.scad>",
-        "description": "Operations on paths: length, resampling, tangents, splitting into subpaths",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/polyhedra.scad>",
         "description": "Platonic, Archimidean, Catalan, and stellated polyhedra"
-      },
-      {
-        "statement": "include <BOSL2/regions.scad>",
-        "description": "Offsets and Boolean geometry of 2D paths and regions.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/rounding.scad>",
-        "description": "Round path corners, rounded prisms, rounded cutouts in tubes, filleted prism joints",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/screw_drive.scad>",
@@ -304,47 +204,12 @@
         "description": "ISO (metric) and UTS screws and nuts."
       },
       {
-        "statement": "include <BOSL2/shapes2d.scad>",
-        "description": "Attachable circles, squares, polygons, teardrop.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/shapes3d.scad>",
-        "description": "Attachable cubes, cylinders, spheres, ruler, and text.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/skin.scad>",
-        "description": "Construct 3D shapes from 2D cross sections of the desired shape.",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/sliders.scad>",
         "description": "Simple sliders and rails."
       },
       {
-        "statement": "include <BOSL2/strings.scad>",
-        "description": "String manipulation functions.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/structs.scad>",
-        "description": "Structure/Dictionary Manipulation",
-        "bundled": true
-      },
-      {
         "statement": "include <BOSL2/threading.scad>",
         "description": "Various types of threaded rods and nuts."
-      },
-      {
-        "statement": "include <BOSL2/transforms.scad>",
-        "description": "Shortcuts for translation, rotation, etc.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/trigonometry.scad>",
-        "description": "Trigonometry shortcuts for when you can't recall the mnemonic SOHCAHTOA.",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/tripod_mounts.scad>",
@@ -353,26 +218,6 @@
       {
         "statement": "include <BOSL2/turtle3d.scad>",
         "description": "3D turtle graphics for making paths or lists of transformations."
-      },
-      {
-        "statement": "include <BOSL2/utility.scad>",
-        "description": "Type checking, dealing with undefs, processing function args",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/vectors.scad>",
-        "description": "Vector arithmetic, angle, and searching.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/version.scad>",
-        "description": "Parse and compare semantic versions.",
-        "bundled": true
-      },
-      {
-        "statement": "include <BOSL2/vnf.scad>",
-        "description": "Vertices 'n' Faces structure.",
-        "bundled": true
       },
       {
         "statement": "include <BOSL2/walls.scad>",
@@ -1523,17 +1368,8 @@
         "primary": true
       },
       {
-        "statement": "include <NopSCADlib/core.scad>",
-        "description": "Bundles 2 files: core.scad, screws.scad.",
-        "bundled": true
-      },
-      {
         "statement": "include <NopSCADlib/global_defs.scad>",
         "description": "Constants and shared definitions."
-      },
-      {
-        "statement": "include <NopSCADlib/libtest.scad>",
-        "description": "# NopSCADlib An ever expanding library of parts modelled in OpenSCAD useful for 3D printers and enclosures for electronics, etc."
       },
       {
         "statement": "include <NopSCADlib/printed/box.scad>",
@@ -1660,57 +1496,12 @@
         "description": "Annotation used in this documentation"
       },
       {
-        "statement": "include <NopSCADlib/utils/bezier.scad>",
-        "description": "Bezier curves and function to get and adjust the length or minimum z point.",
-        "bundled": true
-      },
-      {
         "statement": "include <NopSCADlib/utils/catenary.scad>",
         "description": "Catenary curve to model hanging wires, etc."
       },
       {
         "statement": "include <NopSCADlib/utils/chamfer.scad>",
         "description": "45 degree chamfer the entrance to holes."
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/bom.scad>",
-        "description": "Bill Of Materials generation via echo and the `bom.py` script.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/clip.scad>",
-        "description": "Construct arbitrarily large box to partition 3D space and clip objects, useful for creating cross sections to see the inside when debugging.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/core.scad>",
-        "description": "Modules use_stl(), use_dxf(), use_svg().",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/global.scad>",
-        "description": "Global constants, functions and modules.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/polyholes.scad>",
-        "description": "A method of making 3D printed holes come out the right size regardless of the printer, providing it gets the linear dimensions right.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/rounded_rectangle.scad>",
-        "description": "Rectangle with rounded corners.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/sphere.scad>",
-        "description": "Redefines `sphere()` to always have a vertex on all six half axes I.e.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/core/teardrops.scad>",
-        "description": "For making horizontal holes that don't need support material.",
-        "bundled": true
       },
       {
         "statement": "include <NopSCADlib/utils/core_xy.scad>",
@@ -1721,682 +1512,12 @@
         "description": "Modules for adding dimensions to assembly views."
       },
       {
-        "statement": "include <NopSCADlib/utils/dogbones.scad>",
-        "description": "When square holes are cut with a CNC bit they get rounded corners.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/fillet.scad>",
-        "description": "Rounded fillet for adding to corners.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/gears.scad>",
-        "description": "Utilities for making involute gears.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/hanging_hole.scad>",
-        "description": "Method to print holes in mid air.",
-        "bundled": true
-      },
-      {
         "statement": "include <NopSCADlib/utils/horiholes.scad>",
         "description": "Utilities for depicting the staircase slicing of horizontal holes made with [`teardrop_plus()`](#teardrops), see…"
       },
       {
-        "statement": "include <NopSCADlib/utils/layout.scad>",
-        "description": "Layout objects in a line with equal gaps given a vector of their widths.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/maths.scad>",
-        "description": "Maths utilities for manipulating vectors and matrices.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/offset.scad>",
-        "description": "3D offset using `minkowski` with a `sphere`, so very slow if `$fn` is not kept small.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/pcb_utils.scad>",
-        "description": "Utilities for making PCBs and components",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/quadrant.scad>",
-        "description": "Square with one rounded corner.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/round.scad>",
-        "description": "Round 2D shapes using `offset()`, which is fast and 3D shapes with [`offset_3D()`](#offset), which is very slow.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/rounded_cylinder.scad>",
-        "description": "Cylinder with a rounded end.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/rounded_polygon.scad>",
-        "description": "Draw a polygon with rounded corners.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/rounded_triangle.scad>",
-        "description": "Draw a 3D right triangle with rounded edges.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/sector.scad>",
-        "description": "A sector of a circle between two angles.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/splines.scad>",
-        "description": "Cubic splines that interpolate between a list of 2D points passing through all of them.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/sweep.scad>",
-        "description": "Utility to generate a polyhedron by sweeping a 2D profile along a 3D path and utilities for generating paths.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/thread.scad>",
-        "description": "Utilities for making threads with sweep.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/utils/tube.scad>",
-        "description": "Simple tube or ring",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/7_segment.scad>",
-        "description": "7 Segment displays.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/7_segments.scad>",
-        "description": "7 Segment displays",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/antenna.scad>",
-        "description": "Wifi Antennas",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/antennas.scad>",
-        "description": "Wifi Antennas",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/axial.scad>",
-        "description": "Axial components for PCBs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/axials.scad>",
-        "description": "Axial components",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ball_bearing.scad>",
-        "description": "Simple model of ball bearings with seals, the colour of which can be specified.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ball_bearings.scad>",
-        "description": "Bundles 1 file: ball_bearing.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/batteries.scad>",
-        "description": "Bundles 2 files: springs.scad, battery.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/battery.scad>",
-        "description": "Actually just single cells at the moment, shown here with mating contacts in place.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bearing_block.scad>",
-        "description": "SCSnUU and SCSnLUU bearing blocks",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bearing_blocks.scad>",
-        "description": "Bundles 3 files: linear_bearings.scad, circlips.scad, bearing_block.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/belt.scad>",
-        "description": "Models timing belt running in a path over toothed or smooth pulleys and calculates an accurate length.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/belts.scad>",
-        "description": "Bundles 1 file: belt.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bldc_motor.scad>",
-        "description": "Brushless DC electric motor",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bldc_motors.scad>",
-        "description": "Bundles 1 file: bldc_motor.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/blower.scad>",
-        "description": "Models of radial blowers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/blowers.scad>",
-        "description": "Bundles 1 file: blower.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/box_section.scad>",
-        "description": "Box sections.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/box_sections.scad>",
-        "description": "Bundles 1 file: box_section.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bulldog.scad>",
-        "description": "Crude representation of a bulldog clip.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/bulldogs.scad>",
-        "description": "Bundles 1 file: bulldog.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/button.scad>",
-        "description": "PCB mounted buttons.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/buttons.scad>",
-        "description": "Bundles 1 file: button.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/cable_strip.scad>",
-        "description": "A strip of polypropylene used with ribbon cable to make a cable flexible in one direction only.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/camera.scad>",
-        "description": "PCB cameras.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/cameras.scad>",
-        "description": "Bundles 2 files: smds.scad, camera.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/circlip.scad>",
-        "description": "Circlips aka tapered retaining rings.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/circlips.scad>",
-        "description": "Bundles 1 file: circlip.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/component.scad>",
-        "description": "Various electronic components used in hot ends and heated beds.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/components.scad>",
-        "description": "Bundles 1 file: component.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/d_connector.scad>",
-        "description": "D-connectors.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/d_connectors.scad>",
-        "description": "Bundles 1 file: d_connector.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/dip.scad>",
-        "description": "Dual inline IC packages and sockets",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/display.scad>",
-        "description": "LCD displays.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/displays.scad>",
-        "description": "Bundles 2 files: pcbs.scad, display.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/e3d.scad>",
-        "description": "Modules e3d_nozzle(), e3d_resistor(), heater_block(), bowden_connector(), e3d_fan_duct(), e3d_fan() and 2 more.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/extrusion.scad>",
-        "description": "Aluminium extrusion.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/extrusion_bracket.scad>",
-        "description": "Brackets for joining extrusions at a corner.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/extrusion_brackets.scad>",
-        "description": "Bundles 3 files: core.scad, screws.scad, extrusion_bracket.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/extrusions.scad>",
-        "description": "Bundles 1 file: extrusion.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/fan.scad>",
-        "description": "Axial fans.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/fans.scad>",
-        "description": "Bundles 1 file: fan.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/faston.scad>",
-        "description": "Faston receptacles to mate with spade connectors",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/fastons.scad>",
-        "description": "Faston receptacles to mate with spade connectors",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/fuseholder.scad>",
-        "description": "20mm panel mount fuse holder.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/gear_motor.scad>",
-        "description": "DC motors with a gearbox",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/gear_motors.scad>",
-        "description": "Bundles 1 file: gear_motor.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/geared_stepper.scad>",
-        "description": "Geared tin can steppers",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/geared_steppers.scad>",
-        "description": "Geared tin can steppers",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/green_terminal.scad>",
-        "description": "Parametric green terminal blocks",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/green_terminals.scad>",
-        "description": "Bundles 1 file: green_terminal.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/hot_end.scad>",
-        "description": "Hot end models.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/hot_ends.scad>",
-        "description": "Bundles 1 file: hot_end.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ht_pipe.scad>",
-        "description": "Parametric PVC HT water pipes commonly found in hardware stores around germany.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ht_pipes.scad>",
-        "description": "Bundles 1 file: ht_pipe.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/hygrometer.scad>",
-        "description": "Mini LCD Celsius Digital Thermometer Hygrometer Temperature Humidity Meter Gauge on eBay",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/iec.scad>",
-        "description": "IEC mains inlets and outlet.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/iecs.scad>",
-        "description": "Bundles 2 files: spades.scad, iec.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/insert.scad>",
-        "description": "Heatfit threaded inserts.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/inserts.scad>",
-        "description": "Bundles 1 file: insert.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/jack.scad>",
-        "description": "4mm jack sockets and binding posts.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/jhead.scad>",
-        "description": "J-Head hot ends from Brian Reifsnider, hotends.com.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ldr.scad>",
-        "description": "Light dependent resistors.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ldrs.scad>",
-        "description": "Bundles 1 file: ldr.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/leadnut.scad>",
-        "description": "Nuts for leadscrews.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/leadnuts.scad>",
-        "description": "Bundles 1 file: leadnut.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/led.scad>",
-        "description": "Standard domed through hole LEDs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/led_meter.scad>",
-        "description": "LED voltmeter and ammeter modules available from China and a printed bezel that allows the voltmeter to be mounted into a CNC cut panel.",
-        "bundled": true
-      },
-      {
         "statement": "include <NopSCADlib/vitamins/led_meters.scad>",
         "description": "Bundles 1 file: led_meter.scad."
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/leds.scad>",
-        "description": "Bundles 1 file: led.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/light_strip.scad>",
-        "description": "LED strip lights that can be cut to size.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/light_strips.scad>",
-        "description": "Bundles 1 file: light_strip.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/linear_bearing.scad>",
-        "description": "LMnUU linear bearings.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/linear_bearings.scad>",
-        "description": "Bundles 1 file: linear_bearing.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/magnet.scad>",
-        "description": "Cylindrical and ring magnets.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/magnets.scad>",
-        "description": "Cylindrical and ring magnets.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/mains_socket.scad>",
-        "description": "UK 13A sockets at the moment.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/mains_sockets.scad>",
-        "description": "UK 13A sockets at the moment.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/microswitch.scad>",
-        "description": "Used for limit switches.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/microswitches.scad>",
-        "description": "Bundles 1 file: microswitch.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/microview.scad>",
-        "description": "Microview OLED display with on board AVR by geekammo / Sparkfun.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/module.scad>",
-        "description": "Random screw down modules.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/modules.scad>",
-        "description": "Bundles 1 file: module.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/nut.scad>",
-        "description": "Default is steel but can be drawn as brass or nylon.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/nuts.scad>",
-        "description": "Bundles 2 files: washers.scad, nut.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/o_ring.scad>",
-        "description": "Nitrile rubber O-rings.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/opengrab.scad>",
-        "description": "Nicodrone OpenGrab V3 electro-permanent magnet, see <https://kb.zubax.com/display/MAINKB/OpenGrab+EPM+v3>.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/panel_meter.scad>",
-        "description": "Panel mounted digital meter modules //!",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/panel_meters.scad>",
-        "description": "Panel mounted digital meter modules",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pcb.scad>",
-        "description": "PCBs and perfboard with optional components.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pcbs.scad>",
-        "description": "Bundles 11 files: microswitches.scad, d_connectors.scad, leds.scad, axials.scad and 7 more.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/photo_interrupter.scad>",
-        "description": "Photo interrupter modules popular in robot kits and from China.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/photo_interrupters.scad>",
-        "description": "Bundles 1 file: photo_interrupter.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pillar.scad>",
-        "description": "Threaded pillars.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pillars.scad>",
-        "description": "Bundles 1 file: pillar.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pillow_block.scad>",
-        "description": "KP pillow block bearings",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pillow_blocks.scad>",
-        "description": "KP pillow block bearings",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pin_header.scad>",
-        "description": "Pin headers and sockets, etc.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pin_headers.scad>",
-        "description": "Bundles 1 file: pin_header.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/potentiometer.scad>",
-        "description": "Potentiometers and rotary encoders",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/potentiometers.scad>",
-        "description": "Potentiometers and rotary encoders",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/psu.scad>",
-        "description": "Power supplies.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/psus.scad>",
-        "description": "Functions NIUGUY_CB_PCB(), NIUGUY_CB_PSU().",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pulley.scad>",
-        "description": "Timing belt pulleys, both toothed and plain with internal bearings for idlers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/pulleys.scad>",
-        "description": "Bundles 2 files: belts.scad, pulley.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/radial.scad>",
-        "description": "Radial components for PCBs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/radials.scad>",
-        "description": "Radial components for PCBs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rail.scad>",
-        "description": "Linear rails with carriages.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rails.scad>",
-        "description": "Bundles 2 files: core.scad, rail.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ring_terminal.scad>",
-        "description": "Ring terminals and earth assemblies for DiBond panels.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ring_terminals.scad>",
-        "description": "Bundles 1 file: ring_terminal.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rocker.scad>",
-        "description": "Rocker switch.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rockers.scad>",
-        "description": "Bundles 2 files: spades.scad, rocker.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rod.scad>",
-        "description": "Steel rods and studding with chamfered ends.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rod_end.scad>",
-        "description": "A rod end, sometimes called a spherical bearing or rod-end eye, is a component used in mechanical systems to create a flexible connection…",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/rod_ends.scad>",
-        "description": "Bundles 1 file: rod_end.scad.",
-        "bundled": true
       },
       {
         "statement": "include <NopSCADlib/vitamins/sbr_rail.scad>",
@@ -2407,212 +1528,12 @@
         "description": "Bundles 3 files: core.scad, bearing_blocks.scad, sbr_rail.scad."
       },
       {
-        "statement": "include <NopSCADlib/vitamins/screw.scad>",
-        "description": "Machine screws and wood screws with various head styles.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/screws.scad>",
-        "description": "Functions find_screw(), alternate_screw().",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/sealing_strip.scad>",
-        "description": "Sealing strip from B&Q used to seal around the door of 3D printers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/servo_motor.scad>",
-        "description": "BLDC servos for CNC machines",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/servo_motors.scad>",
-        "description": "Bundles 1 file: servo_motor.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/shaft_coupling.scad>",
-        "description": "Shaft couplings",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/shaft_couplings.scad>",
-        "description": "Shaft couplings",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/sheet.scad>",
-        "description": "Sheet materials.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/sheets.scad>",
-        "description": "Bundles 1 file: sheet.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/sk_bracket.scad>",
-        "description": "SK shaft support brackets",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/sk_brackets.scad>",
-        "description": "Bundles 1 file: sk_bracket.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/smd.scad>",
-        "description": "Surface mount components for PCBs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/smds.scad>",
-        "description": "SMD components",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/spade.scad>",
-        "description": "Spade terminals used as parts of electrical components.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/spades.scad>",
-        "description": "Bundles 1 file: spade.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/spool.scad>",
-        "description": "Filament spool models",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/spools.scad>",
-        "description": "Bundles 1 file: spool.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/spring.scad>",
-        "description": "Compression springs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/springs.scad>",
-        "description": "Bundles 1 file: spring.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ssr.scad>",
-        "description": "Solid state relays.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ssrs.scad>",
-        "description": "Bundles 1 file: ssr.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/stepper_motor.scad>",
-        "description": "NEMA stepper motor model.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/stepper_motors.scad>",
-        "description": "Bundles 1 file: stepper_motor.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/swiss_clip.scad>",
-        "description": "Swiss picture clip.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/swiss_clips.scad>",
-        "description": "Swiss picture clip.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/terminal.scad>",
-        "description": "Terminal blocks for power supplies and PCBs.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/toggle.scad>",
-        "description": "Toggle switches",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/toggles.scad>",
-        "description": "Bundles 1 file: toggle.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/transformer.scad>",
-        "description": "Iron core transformers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/transformers.scad>",
-        "description": "Bundles 1 file: transformer.scad.",
-        "bundled": true
-      },
-      {
         "statement": "include <NopSCADlib/vitamins/ttrack.scad>",
         "description": "T-Tracks used in woodworking jigs"
       },
       {
         "statement": "include <NopSCADlib/vitamins/ttracks.scad>",
         "description": "Bundles 3 files: core.scad, screw.scad, ttrack.scad."
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/tubing.scad>",
-        "description": "Tubing and sleeving.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/tubings.scad>",
-        "description": "Bundles 1 file: tubing.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/variac.scad>",
-        "description": "Variable auto transformers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/variacs.scad>",
-        "description": "Bundles 1 file: variac.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/veroboard.scad>",
-        "description": "Veroboard with mounting holes, track breaks, removed tracks, solder points and components.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/washer.scad>",
-        "description": "Washers, star washers, penny washers and printed washers.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/washers.scad>",
-        "description": "Bundles 1 file: washer.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/wire.scad>",
-        "description": "Utilities for adding wires to the BOM and optionally drawing them and cable bundle size functions for holes, plus cable ties.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/ziptie.scad>",
-        "description": "Cable zipties.",
-        "bundled": true
-      },
-      {
-        "statement": "include <NopSCADlib/vitamins/zipties.scad>",
-        "description": "Bundles 1 file: ziptie.scad.",
-        "bundled": true
       }
     ]
   },
@@ -2807,86 +1728,6 @@
         "statement": "use <StoneAgeLib/StoneAgeLib.scad>",
         "description": "Bundles 16 files: color.scad, extrude.scad, font.scad, inverseminkowski.scad and 12 more.",
         "primary": true
-      },
-      {
-        "statement": "use <StoneAgeLib/color.scad>",
-        "description": "Functions Hue().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/extrude.scad>",
-        "description": "Modules outward_bevel_extrude(), make_bevel(), roof_router(), fake_roof(), chamfer_extrude(), MakeFrame() and 2 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/font.scad>",
-        "description": "Modules text_subdivision(), DefaultRender(), FontDesigner(); functions GetFontIndex().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/inverseminkowski.scad>",
-        "description": "Modules InverseMinkowski().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/list.scad>",
-        "description": "Functions vector_add(), ShuffleList(), ReverseList(), MirrorList(), RandomNonOverlap(), ShortestDistance() and 2 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/matrix.scad>",
-        "description": "Modules MatrixSubdivisionDesigner(), ShowSurface(); functions MatrixSubdivision(), MatrixExtrudeDown(), MatrixAddMirror() and 10 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/perspective.scad>",
-        "description": "Modules Perspective().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/polyhedron.scad>",
-        "description": "Functions MatrixTubeToPolyhedron(), LayersToPolyhedron(), PolygonVolume(), PolyhedronStart(), PolyhedronAdd(), Lift2D() and 1 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/seven_segment.scad>",
-        "description": "Modules Draw7Segment(), Clock7Segment(), SevenSegmentTurtle(), SevenSegmentSimple(), SevenSegmentDesigner().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/shadow.scad>",
-        "description": "Modules Shadow2D().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/shapes.scad>",
-        "description": "Modules cylinder_fillet(), FilletInwards(), FilletOutwards(), heart2D().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/string.scad>",
-        "description": "Functions string_to_numbers(), to_string_with_separators(), to_list_of_numbers(), char_to_num(), calculate_number(), substr().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/subdivision.scad>",
-        "description": "Modules Round2D(); functions MethodSplitName(), Subdivision().",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/tangentlines.scad>",
-        "description": "Modules DrawLine(); functions PointForInternal(), PointForExternal(), TangentPoints() and 2 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/texture.scad>",
-        "description": "Modules Granules(), Dimples(), Crease2D(), SteelPlate(), OneCheckerShape(), FlatShape2D() and 4 more.",
-        "bundled": true
-      },
-      {
-        "statement": "use <StoneAgeLib/turtle.scad>",
-        "description": "Modules DrawPath(); functions TurtleToPath(), WalkTheTurtle().",
-        "bundled": true
       }
     ]
   },
@@ -2980,23 +1821,8 @@
         "description": "Top-level geometry, with nothing declared for callers."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Abacus.scad>",
-        "description": "Modules Abacus(), abacus_sphere().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Angle Shelf.scad>",
         "description": "Modules shelf()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Arc_01.scad>",
-        "description": "Modules Arc_01(), Cylinder_Wheel().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Arc_02.scad>",
-        "description": "Modules Arc_02(), Cylinder_Wheel().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Arrow_01.scad>",
@@ -3007,23 +1833,8 @@
         "description": "Modules banner()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Base_cabinet_01.scad>",
-        "description": "Modules Base_cabinet_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Base_cabinet_02.scad>",
-        "description": "Modules Base_cabinet_02().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_Angular.scad>",
         "description": "Modules Beam_T()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_C.scad>",
-        "description": "Modules Beam_C().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Beam_H.scad>",
@@ -3034,63 +1845,8 @@
         "description": "Modules Beam_T()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bed_01.scad>",
-        "description": "Modules Bed_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bed_02.scad>",
-        "description": "Modules Bed_02().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bench_01.scad>",
-        "description": "Modules Bench_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bench_02.scad>",
-        "description": "Modules Bench_02().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bookshelf_01.scad>",
-        "description": "Modules Bookshelf_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bookshelf_02.scad>",
-        "description": "Modules Bookshelf_02().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Box_Wood_01.scad>",
         "description": "Modules slot()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Bricks.scad>",
-        "description": "Modules Bricks().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Building_01.scad>",
-        "description": "Modules Building_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Building_02.scad>",
-        "description": "Modules Building_02(), door().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chair_01.scad>",
-        "description": "Modules Chair_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chair_02.scad>",
-        "description": "Modules Chair_02().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chair_03.scad>",
@@ -3103,16 +1859,6 @@
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Chalkboard_02.scad>",
         "description": "Modules Chalkboard_02()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Circular_Blade.scad>",
-        "description": "Modules Circular_Blade().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Coin_01.scad>",
-        "description": "Modules Coin_01().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Coin_02.scad>",
@@ -3133,31 +1879,6 @@
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Display_Seven_Segments.scad>",
         "description": "Modules Color_num()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Door_01.scad>",
-        "description": "Modules Door_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Electric_Wire_Plug.scad>",
-        "description": "Modules Electric_Wire_Plug().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Eyebolt.scad>",
-        "description": "Modules Eyebolt(), pieno().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Fence_01.scad>",
-        "description": "Modules Fence_01(), staccionata().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Fence_02.scad>",
-        "description": "Modules Fence_02(), staccionata().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Fireplace_01.scad>",
@@ -3188,37 +1909,12 @@
         "description": "Modules Floor_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Gear_01.scad>",
-        "description": "Modules Gear_01().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Gear_02.scad>",
         "description": "Modules Gear_02(), Gear_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Grid_01.scad>",
-        "description": "Modules Grid_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Hexagon_socket_screw_keys.scad>",
-        "description": "Modules Hexagon_socket_screw_keys(), regular_polygon().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Hole_Plate.scad>",
-        "description": "Modules Hole_Plate().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Ingot_01.scad>",
         "description": "Modules ingot()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Key.scad>",
-        "description": "Modules Key().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Key_Old_01.scad>",
@@ -3237,27 +1933,12 @@
         "description": "Modules Ladder_02(), Rail()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Lamp_01.scad>",
-        "description": "Modules Lamp_01().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Led_01.scad>",
         "description": "Modules Led()."
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Letter_A.scad>",
         "description": "Top-level geometry, with nothing declared for callers."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Lever_Handle.scad>",
-        "description": "Modules Lever_Handle().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mallet.scad>",
-        "description": "Modules Mallet().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Mech_Piece_01.scad>",
@@ -3276,16 +1957,6 @@
         "description": "Modules Mech_Piece_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Notebook.scad>",
-        "description": "Modules Notebook(), ring().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Nut_LQ.scad>",
-        "description": "Modules Nut_LQ(), regular_polygon().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Pendulum.scad>",
         "description": "Top-level geometry, with nothing declared for callers."
       },
@@ -3294,47 +1965,12 @@
         "description": "Modules Pipe()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Pipe_45.scad>",
-        "description": "Modules Pipe_45(), pipe(), repeat().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Pipe_90.scad>",
-        "description": "Modules Pipe_90(), pipe(), repeat().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Resistor.scad>",
         "description": "Modules Resistor()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Ring.scad>",
-        "description": "Modules Ring(), pipe(), repeat().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Rod_01.scad>",
-        "description": "Modules Rod_01().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Roll_Holder.scad>",
         "description": "Top-level geometry, with nothing declared for callers."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sauce_Bottle.scad>",
-        "description": "Modules Sauce_Bottle().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Screw.scad>",
-        "description": "Modules Screw(), regular_polygon().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Shaft_01.scad>",
-        "description": "Modules Shaft_01().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Shaft_02_With_Keyway.scad>",
@@ -3357,11 +1993,6 @@
         "description": "Modules Soda_Cup_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sofa.scad>",
-        "description": "Modules Sofa().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Stairs_01.scad>",
         "description": "Modules Stairs_01()."
       },
@@ -3372,36 +2003,6 @@
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Stairs_03.scad>",
         "description": "Modules Stairs_01()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_01.scad>",
-        "description": "Modules Street_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_02.scad>",
-        "description": "Modules Street_02().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_03.scad>",
-        "description": "Modules Street_03().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_04.scad>",
-        "description": "Modules Street_04().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_05.scad>",
-        "description": "Modules Street_05().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Street_06.scad>",
-        "description": "Modules Street_06().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Sword_01.scad>",
@@ -3424,21 +2025,6 @@
         "description": "Modules Table_Small_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Tootbrush.scad>",
-        "description": "Modules Tootbrush().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Tower.scad>",
-        "description": "Modules Tower().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Traffic_Light.scad>",
-        "description": "Modules Traffic_Light().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Transistor.scad>",
         "description": "Modules Transistor()."
       },
@@ -3447,51 +2033,16 @@
         "description": "Modules tree_01(), regular_polygon()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Vent_Grid.scad>",
-        "description": "Modules Vent_Grid().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Walking_Stick.scad>",
         "description": "Modules Walking_Stick(), shaft()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wall_01.scad>",
-        "description": "Modules Wall_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wall_02.scad>",
-        "description": "Modules Wall_02(), Wall_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wall_03.scad>",
-        "description": "Modules Wall_03(), Wall_Curve().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wall_04.scad>",
         "description": "Modules Wall_04(), Wall_01()."
       },
       {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Washer.scad>",
-        "description": "Modules Washer().",
-        "bundled": true
-      },
-      {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Weights_01.scad>",
         "description": "Modules Weights_01(), regular_polygon(), weight()."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Window_01.scad>",
-        "description": "Modules Window_01().",
-        "bundled": true
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Asset_SCAD/Wood_Crate.scad>",
-        "description": "Modules Wood_Crate().",
-        "bundled": true
       },
       {
         "statement": "use <OpenSCAD-Snippet/Asset_SCAD/x.scad>",
@@ -3504,10 +2055,6 @@
       {
         "statement": "use <OpenSCAD-Snippet/Scene_House.scad>",
         "description": "Bundles 4 files: Wall_01.scad, Wall_02.scad, Wall_03.scad, Grid_01.scad."
-      },
-      {
-        "statement": "use <OpenSCAD-Snippet/Scene_Test.scad>",
-        "description": "Bundles 1 file: Import_Library.scad."
       }
     ]
   },
@@ -3528,161 +2075,6 @@
         "statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>",
         "description": "Various modules to generate board game inserts.",
         "primary": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/base_bgtk.scad>",
-        "description": "Basic pieces of the board game insert system.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/cap_box.scad>",
-        "description": "Cap box pieces for the cap boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/cap_box_polygon.scad>",
-        "description": "Cap box pieces for the cap boxes with polygon outline.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/card_library.scad>",
-        "description": "A special card library box for card heavy games.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/components.scad>",
-        "description": "Various modules to generate board game inserts.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/dividers.scad>",
-        "description": "Divider pieces for the dividers.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/filament_hinge_box.scad>",
-        "description": "Filament hinge box pieces for the hinge boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/flags.scad>",
-        "description": "Flags for a selection of countries.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/hinge_box.scad>",
-        "description": "Hinge box pieces for the hinge boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/inset_box.scad>",
-        "description": "Various modules to generate board game inserts.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/labels.scad>",
-        "description": "Shared label pieces.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/lids_base.scad>",
-        "description": "Shared lid pieces for making lids.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/magnetic_box.scad>",
-        "description": "Magnetic box pieces for the magnetic boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/no_lid.scad>",
-        "description": "Boxes with no lids.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/penrose_tiling.scad>",
-        "description": "This file has all the modules needed to make a penrose tesslation.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/pentagon_tilings.scad>",
-        "description": "This file has all the modules needed to make a variety of penagon tesslations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/shapes.scad>",
-        "description": "Shapes for all sorts of things.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/shapes3d.scad>",
-        "description": "3d Shapes for all sorts of things.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/slicing.scad>",
-        "description": "Pieces for slicing a model into sections to print on smaller print areas.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/sliding_box.scad>",
-        "description": "Sliding box pieces for the sliding boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/sliding_catch_box.scad>",
-        "description": "Sliding catch box pieces for the sliding catch boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/slipover_box.scad>",
-        "description": "Slipover box pieces for the slipover boxes.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/slipover_path_box.scad>",
-        "description": "Slipover box pieces for the slipover boxes with polygon outline.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations.scad>",
-        "description": "This file has all the modules needed to make a variety of tesselations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/chicken.scad>",
-        "description": "This file has all the modules needed to make chicken tesselations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/goose.scad>",
-        "description": "This file has all the modules needed to make a goose tesselation.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/kite_tesselation.scad>",
-        "description": "This file has all the modules needed to make a variety of tesselations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/lizard.scad>",
-        "description": "This file has all the modules needed to make lizard tesselations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/pentagons.scad>",
-        "description": "This file has all the modules needed to make a sheep tesselation.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/quad_tesselation.scad>",
-        "description": "This file has all the modules needed to make a variety of tesselations.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad_boardgame_toolkit/tesselations/voronoi.scad>",
-        "description": "This file has all the modules needed to make voronoi tesselations.",
-        "bundled": true
       }
     ]
   },
@@ -3783,41 +2175,6 @@
         "statement": "use <funcutils/funcutils.scad>",
         "description": "Bundles 3 files: func.scad, string.scad, math.scad.",
         "primary": true
-      },
-      {
-        "statement": "use <funcutils/func.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/list.scad>",
-        "description": "Bundles 2 files: types.scad, std_algorithm.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/math.scad>",
-        "description": "Bundles 1 file: list.scad.",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/ops.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/std_algorithm.scad>",
-        "description": "Modules for_each(), for_each_n().",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/string.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
-      },
-      {
-        "statement": "use <funcutils/types.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
       }
     ]
   },
@@ -4128,11 +2485,6 @@
         "primary": true
       },
       {
-        "statement": "include <openscad-doll-house/constants.scad>",
-        "description": "Bundles 1 file: constants.scad.",
-        "bundled": true
-      },
-      {
         "statement": "include <openscad-doll-house/stairs.scad>",
         "description": "Modules Stairs(), render3d(), renderFlat(), renderDimensions2D()."
       }
@@ -4155,26 +2507,6 @@
         "statement": "use <openscad-new-dimensions/dimensions.scad>",
         "description": "Bundles 4 files: constants.scad, line.scad, angle.scad, label.scad.",
         "primary": true
-      },
-      {
-        "statement": "use <openscad-new-dimensions/angle.scad>",
-        "description": "Modules Arc(), renderAngle2D(), Angle(), AngleOverview(), renderAngleOverview2D().",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad-new-dimensions/constants.scad>",
-        "description": "Constants and shared definitions.",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad-new-dimensions/label.scad>",
-        "description": "Modules Text(), Label().",
-        "bundled": true
-      },
-      {
-        "statement": "use <openscad-new-dimensions/line.scad>",
-        "description": "Modules Arrow(), Line(), Dimension(), FlatDimension().",
-        "bundled": true
       }
     ]
   }

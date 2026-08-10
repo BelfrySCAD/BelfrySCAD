@@ -97,23 +97,33 @@ def test_the_primary_is_listed_first(catalog):
         assert e["includes"][0].get("primary"), e["install_as"]
 
 
-def test_a_bundled_file_is_never_the_primary(catalog):
-    # "bundled" means the entry point already pulls it in; the entry point
-    # cannot be pulled in by itself.
-    both = [r["statement"] for e in catalog for r in e["includes"]
-            if r.get("bundled") and r.get("primary")]
-    assert both == []
+def test_nothing_the_entry_point_already_pulls_in_is_listed(catalog):
+    # Listing them again is noise: including the entry point has already
+    # brought them in. Only the entry point itself and what it leaves out
+    # are worth offering.
+    leftover = [r["statement"] for e in catalog for r in e["includes"]
+                if r.get("bundled")]
+    assert leftover == []
 
 
-def test_bosl2_extras_are_separable(catalog):
-    # The case that prompted the lists: std.scad is the entry point, but
-    # several files are deliberately not in it and are included on their
-    # own.
+def test_bosl2_lists_the_entry_point_and_its_extras_only(catalog):
+    # The case that prompted the lists: std.scad is the entry point, and
+    # several files are deliberately not in it, to be included on their own.
     bosl2 = next(e for e in catalog if e["install_as"] == "BOSL2")
     by_path = {_named(r): r for r in bosl2["includes"]}
     assert by_path["BOSL2/std.scad"].get("primary")
     for extra in ("BOSL2/nurbs.scad", "BOSL2/gears.scad", "BOSL2/screws.scad"):
         assert extra in by_path, extra
-        assert not by_path[extra].get("bundled"), extra
-    # ...while the ones std.scad does pull in are marked as such.
-    assert by_path["BOSL2/shapes3d.scad"].get("bundled")
+    # ...while what std.scad already pulls in is absent.
+    for inside in ("BOSL2/shapes3d.scad", "BOSL2/affine.scad", "BOSL2/paths.scad"):
+        assert inside not in by_path, inside
+
+
+def test_no_test_harnesses_are_offered(catalog):
+    # A library's own test file is includable but is not something to
+    # offer -- same reasoning as skipping its tests/ directory.
+    import os
+    harnesses = [r["statement"] for e in catalog for r in e["includes"]
+                 if re.search(r"(^|[_-])tests?$|^tests?([_-]|$)|^libtest$",
+                              os.path.splitext(os.path.basename(_named(r)))[0], re.I)]
+    assert harnesses == []
