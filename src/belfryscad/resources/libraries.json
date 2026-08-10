@@ -10,7 +10,6 @@
     "version": "v1.0.3",
     "default_branch": "master",
     "install_as": "BOSL",
-    "include_statement": "include <BOSL/constants.scad>",
     "includes": [
       {
         "statement": "include <BOSL/constants.scad>",
@@ -124,7 +123,6 @@
     "version": "v2.0.745",
     "default_branch": "master",
     "install_as": "BOSL2",
-    "include_statement": "include <BOSL2/std.scad>",
     "includes": [
       {
         "statement": "include <BOSL2/std.scad>",
@@ -232,7 +230,6 @@
     "version": "v3.3",
     "default_branch": "master",
     "install_as": "dotSCAD",
-    "include_statement": "use <dotSCAD/src/line2d.scad>",
     "includes": [
       {
         "statement": "use <dotSCAD/src/line2d.scad>",
@@ -1352,7 +1349,6 @@
     "version": "v21.41.1",
     "default_branch": "master",
     "install_as": "NopSCADlib",
-    "include_statement": "include <NopSCADlib/lib.scad>",
     "includes": [
       {
         "statement": "include <NopSCADlib/lib.scad>",
@@ -1540,7 +1536,6 @@
     "version": "β315|21",
     "default_branch": "main",
     "install_as": "UB.scad",
-    "include_statement": "include <UB.scad/libraries/ub.scad>",
     "includes": [
       {
         "statement": "include <UB.scad/libraries/ub.scad>",
@@ -1576,7 +1571,6 @@
     "version": "51588ff",
     "default_branch": "master",
     "install_as": "FunctionalOpenSCAD",
-    "include_statement": "use <FunctionalOpenSCAD/functional.scad>",
     "includes": [
       {
         "statement": "use <FunctionalOpenSCAD/functional.scad>",
@@ -1630,7 +1624,6 @@
     "version": "8aad3ca",
     "default_branch": "main",
     "install_as": "constructive",
-    "include_statement": "include <constructive/constructive-compiled.scad>",
     "includes": [
       {
         "statement": "include <constructive/constructive-compiled.scad>",
@@ -1714,7 +1707,6 @@
     "version": "37cbbfb",
     "default_branch": "main",
     "install_as": "StoneAgeLib",
-    "include_statement": "use <StoneAgeLib/StoneAgeLib.scad>",
     "includes": [
       {
         "statement": "use <StoneAgeLib/StoneAgeLib.scad>",
@@ -1734,7 +1726,6 @@
     "version": "dd53a1d",
     "default_branch": "master",
     "install_as": "BOLTS",
-    "include_statement": "include <BOLTS/BOLTS.scad>",
     "includes": [
       {
         "statement": "include <BOLTS/backends/openscad/common.scad>",
@@ -1793,7 +1784,6 @@
     "version": "714acd7",
     "default_branch": "main",
     "install_as": "OpenSCAD-Snippet",
-    "include_statement": "use <OpenSCAD-Snippet/Import_Library.scad>",
     "includes": [
       {
         "statement": "use <OpenSCAD-Snippet/Import_Library.scad>",
@@ -2061,7 +2051,6 @@
     "version": "cc9b533",
     "default_branch": "main",
     "install_as": "openscad_boardgame_toolkit",
-    "include_statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>",
     "includes": [
       {
         "statement": "use <openscad_boardgame_toolkit/boardgame_toolkit.scad>",
@@ -2081,7 +2070,6 @@
     "version": "1.0.4",
     "default_branch": "master",
     "install_as": "Round-Anything",
-    "include_statement": "use <Round-Anything/polyround.scad>",
     "includes": [
       {
         "statement": "use <Round-Anything/polyround.scad>",
@@ -2109,7 +2097,6 @@
     "version": "77f016d",
     "default_branch": "master",
     "install_as": "MarksEnclosureHelper",
-    "include_statement": "use <MarksEnclosureHelper/hingebox_code.scad>",
     "includes": [
       {
         "statement": "use <MarksEnclosureHelper/hingebox_code.scad>",
@@ -2161,7 +2148,6 @@
     "version": "fac6ac1",
     "default_branch": "master",
     "install_as": "funcutils",
-    "include_statement": "use <funcutils/funcutils.scad>",
     "includes": [
       {
         "statement": "use <funcutils/funcutils.scad>",
@@ -2181,7 +2167,6 @@
     "version": "4ae9aeb",
     "default_branch": "master",
     "install_as": "threads-scad",
-    "include_statement": "use <threads-scad/threads.scad>",
     "includes": [
       {
         "statement": "use <threads-scad/threads.scad>",
@@ -2201,7 +2186,6 @@
     "version": "0d0038f",
     "default_branch": "master",
     "install_as": "smooth-prim",
-    "include_statement": "use <smooth-prim/smooth_prim.scad>",
     "includes": [
       {
         "statement": "use <smooth-prim/smooth_prim.scad>",
@@ -2221,7 +2205,6 @@
     "version": "5f78d03",
     "default_branch": "master",
     "install_as": "plot-function",
-    "include_statement": "use <plot-function/plot_function.scad>",
     "includes": [
       {
         "statement": "use <plot-function/plot_function.scad>",
@@ -2245,7 +2228,6 @@
     "version": "8ce827f",
     "default_branch": "master",
     "install_as": "closepoints",
-    "include_statement": "use <closepoints/closepoints.scad>",
     "includes": [
       {
         "statement": "use <closepoints/closepoints.scad>",
@@ -2285,7 +2267,6 @@
     "version": "9fc4720",
     "default_branch": "main",
     "install_as": "openscad-tray",
-    "include_statement": "use <openscad-tray/tray.scad>",
     "includes": [
       {
         "statement": "use <openscad-tray/tray.scad>",
@@ -2305,7 +2286,6 @@
     "version": "v3.3",
     "default_branch": "main",
     "install_as": "YAPP_Box",
-    "include_statement": "include <YAPP_Box/YAPPgenerator_v3.scad>",
     "includes": [
       {
         "statement": "include <YAPP_Box/YAPPgenerator_v3.scad>",
@@ -2329,7 +2309,6 @@
     "version": "440c084",
     "default_branch": "main",
     "install_as": "Stemfie_OpenSCAD",
-    "include_statement": "include <Stemfie_OpenSCAD/stemfie.scad>",
     "includes": [
       {
         "statement": "include <Stemfie_OpenSCAD/stemfie.scad>",
@@ -2353,7 +2332,6 @@
     "version": "v3.0.2",
     "default_branch": "latest",
     "install_as": "catchnhole",
-    "include_statement": "use <catchnhole/catchnhole.scad>",
     "includes": [
       {
         "statement": "use <catchnhole/catchnhole.scad>",
@@ -2373,7 +2351,6 @@
     "default_branch": "main",
     "install_as": "pathbuilder",
     "version": "V1.0",
-    "include_statement": "use <pathbuilder/pathbuilder.scad>",
     "includes": [
       {
         "statement": "use <pathbuilder/pathbuilder.scad>",
@@ -2393,7 +2370,6 @@
     "install_as": "openscad-scon",
     "version": "v1.0.0",
     "default_branch": "main",
-    "include_statement": "use <openscad-scon/scon.scad>",
     "includes": [
       {
         "statement": "use <openscad-scon/scon.scad>",
@@ -2413,7 +2389,6 @@
     "install_as": "A2D",
     "version": "v1.6.2",
     "default_branch": "master",
-    "include_statement": "include <A2D/A2D.scad>",
     "includes": [
       {
         "statement": "include <A2D/A2D.scad>",
@@ -2469,7 +2444,6 @@
     "version": "a866a80",
     "default_branch": "main",
     "install_as": "openscad-doll-house",
-    "include_statement": "include <openscad-doll-house/roof.scad>",
     "includes": [
       {
         "statement": "include <openscad-doll-house/roof.scad>",
@@ -2493,7 +2467,6 @@
     "version": "d37828e",
     "default_branch": "main",
     "install_as": "openscad-new-dimensions",
-    "include_statement": "use <openscad-new-dimensions/dimensions.scad>",
     "includes": [
       {
         "statement": "use <openscad-new-dimensions/dimensions.scad>",

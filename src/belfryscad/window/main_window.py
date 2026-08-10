@@ -2185,7 +2185,18 @@ class MainWindow(QMainWindow):
         for lib in catalog:
             install_as = lib.get("install_as", lib["name"])
             if (lib_dir / install_as).is_dir():
-                stmt = lib.get("include_statement", f"use <{install_as}/{install_as}.scad>")
+                # The catalogue's `includes` list is the source of truth for
+                # what a library can be reached through: the row marked
+                # primary is its entry point, and the rest are the files it
+                # does not already pull in. Falling back to the first row
+                # covers a library with no single entry point -- BOLTS has
+                # none -- which is still better than guessing at a filename.
+                stmts = [r["statement"] for r in lib.get("includes", [])]
+                primary = next((r["statement"] for r in lib.get("includes", [])
+                                if r.get("primary")), None)
+                stmt = primary or (stmts[0] if stmts else None)
+                if stmt is None:
+                    continue
                 act = menu.addAction(lib["name"])
                 act.triggered.connect(lambda checked=False, s=stmt: self._insert_use_statement(s))
                 found = True

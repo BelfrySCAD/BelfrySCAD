@@ -46,7 +46,7 @@ def test_each_library_uses_one_verb_throughout(catalog):
     # library, not of the file.
     for e in catalog:
         verbs = {r["statement"].split()[0] for r in e["includes"]}
-        assert verbs == {e["include_statement"].split()[0]}, e["install_as"]
+        assert len(verbs) == 1, (e["install_as"], verbs)
 
 
 def test_paths_are_rooted_at_the_install_directory(catalog):
@@ -71,19 +71,17 @@ def test_no_duplicate_paths_within_a_library(catalog):
     assert dupes == []
 
 
-def test_include_statement_matches_a_listed_file(catalog):
-    # BOLTS is the known exception: its repository ships no .scad entry
-    # point at all, so the statement names a file the install cannot have.
-    mismatched = []
-    for e in catalog:
-        m = re.search(r"[<\"]([^>\"]+)[>\"]", e["include_statement"])
-        assert m, e["install_as"]
-        if m.group(1) not in {_named(r) for r in e["includes"]}:
-            mismatched.append(e["install_as"])
-    assert mismatched == ["BOLTS"]
+def test_the_entry_point_lives_in_the_list_only(catalog):
+    # There is no separate include_statement field any more: the entry
+    # point is the row marked primary, so nothing can drift out of step
+    # with the list beside it.
+    assert all("include_statement" not in e for e in catalog)
 
 
 def test_exactly_one_primary_per_library(catalog):
+    # BOLTS is the standing exception: its repository ships no .scad entry
+    # point at all, only the generator that builds one, so there is nothing
+    # to mark.
     for e in catalog:
         primaries = [r for r in e["includes"] if r.get("primary")]
         expected = 0 if e["install_as"] == "BOLTS" else 1
