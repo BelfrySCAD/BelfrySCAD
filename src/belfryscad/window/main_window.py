@@ -1086,6 +1086,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.use_library_requested.connect(self._open_use_library)
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
                 tab,
@@ -1313,6 +1314,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.use_library_requested.connect(self._open_use_library)
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),

@@ -961,6 +961,7 @@ class CodeEditor(QPlainTextEdit):
     print_to_console = Signal(str)             # emits formatted assignment string
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
     source_edited_externally = Signal()        # emits after an "Edit as..." Save writes back to source
+    use_library_requested = Signal()           # emits to open the Use Library picker
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1710,6 +1711,17 @@ class CodeEditor(QPlainTextEdit):
                 word = '$' + word
 
         menu = self.createStandardContextMenu()
+
+        # Near the top, and not conditional on what is under the cursor:
+        # everything below this point comes and goes with the word clicked,
+        # so an item added at the end would sit in a different place each
+        # time. Read-only tabs (library files) get nothing to insert with.
+        if not self.isReadOnly():
+            menu.addSeparator()
+            use_act = QAction("Use Library…", self)
+            use_act.triggered.connect(
+                lambda checked=False: self.use_library_requested.emit())
+            menu.addAction(use_act)
 
         sel_cursor = self.textCursor()
         if not self.isReadOnly() and sel_cursor.hasSelection():

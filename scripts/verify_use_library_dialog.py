@@ -139,6 +139,57 @@ def main():
     check("and it is visible again", dlg.isVisible())
     check("with the list still populated", dlg._files.count() > 0)
 
+    # --- reachable from the editor's right-click menu too ----------------
+    # Reached the same way a user does: build the real context menu.
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+
+    w._use_library_dialog.close()
+    app.processEvents()
+
+    editor = w._current_tab().editor
+    opened = []
+    editor.use_library_requested.connect(lambda: opened.append(True))
+
+    def context_items(ed):
+        """The menu the editor really shows.
+
+        QMenu.exec cannot be monkeypatched (it dispatches through C++), so
+        the menu is caught while it is up: a timer reads
+        QApplication.activePopupWidget() and closes it again.
+        """
+        from PySide6.QtCore import QTimer
+        grabbed = {}
+
+        def grab():
+            popup = QApplication.activePopupWidget()
+            if popup is not None:
+                grabbed["actions"] = list(popup.actions())
+                popup.close()
+
+        QTimer.singleShot(80, grab)
+        ev = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5))
+        ed.contextMenuEvent(ev)
+        app.processEvents()
+        return grabbed.get("actions", [])
+
+    items = context_items(editor)
+    entry = next((a for a in items if a.text().startswith("Use Library")), None)
+    check("the editor's right-click menu offers Use Library", entry is not None,
+          str([a.text() for a in items if a.text()][:8]))
+    if entry is not None:
+        entry.trigger()
+        app.processEvents()
+        check("choosing it asks for the picker", opened == [True], str(opened))
+        check("and the picker is open", w._use_library_dialog.isVisible())
+
+    # A read-only tab -- a library file -- has nothing to insert into.
+    editor.setReadOnly(True)
+    ro_items = context_items(editor)
+    check("a read-only tab is not offered it",
+          not any(a.text().startswith("Use Library") for a in ro_items))
+    editor.setReadOnly(False)
+
     # --- every statement names a real file -------------------------------
     for lib in installed:
         for row in lib["includes"]:
