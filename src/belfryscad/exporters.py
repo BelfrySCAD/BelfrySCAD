@@ -84,9 +84,30 @@ def write_obj(path: str, mesh):
             f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
 
 
+def exportable(bodies):
+    """The bodies that belong in an exported file.
+
+    `%` marks something as scenery: it is drawn so you can line other
+    things up against it, and the reference leaves it out of the model
+    entirely -- `%cube(10);` on its own exports nothing at all, where this
+    used to write the cube. It is excluded from booleans upstream for the
+    same reason, so letting it reach a file put geometry there that no
+    boolean had ever accounted for.
+
+    Highlighted (`#`) bodies are NOT filtered here. `#` does not change
+    the model, so a highlighted object at top level is real geometry and
+    has to be written; only the display copy of one consumed by a boolean
+    is redundant, and nothing in a ColoredBody tells the two apart. See
+    docs/rendering.md.
+    """
+    return [b for b in bodies if getattr(b, "role", "normal") != "background"]
+
+
 def write_3mf(path: str, bodies):
     import lib3mf
     import numpy as np
+
+    bodies = exportable(bodies)
 
     _FA3 = type(lib3mf.Position().Coordinates)
     _UI3 = type(lib3mf.Triangle().Indices)
@@ -180,7 +201,8 @@ def body_mesh_arrays(b):
 
 
 def merge_bodies_to_mesh(bodies, open_parts=None):
-    """Union the bodies into one mesh for STL/OBJ. None if all are empty.
+    """Union the exportable bodies into one mesh for STL/OBJ. None if all
+    are empty.
 
     `open_parts`, if a list is passed, receives the 1-based index of every
     body that is not a closed solid. Manifold discards such a body outright
@@ -205,6 +227,7 @@ def merge_bodies_to_mesh(bodies, open_parts=None):
     from types import SimpleNamespace
     import manifold3d
 
+    bodies = exportable(bodies)
     parts, loose = [], []
     for i, b in enumerate(bodies):
         if b.body.is_empty():
