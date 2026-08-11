@@ -91,13 +91,19 @@ def _draw_vline_avoiding_cursor(painter: QPainter, x: int, y_top: float, y_botto
     cursor (a child can't be told to render behind its own parent's
     content, only reordered among siblings), otherwise fully hiding the
     blinking caret whenever a guide happens to land on top of it."""
-    if not (cursor_rect.left() <= x <= cursor_rect.right()):
-        painter.drawLine(x, round(y_top), x, round(y_bottom))
+    y_top, y_bottom = round(y_top), round(y_bottom)
+    # The cursor only carves a notch out of a segment it actually crosses.
+    # Testing the column alone left the two branches below drawing from the
+    # segment all the way to a caret elsewhere in the file -- a guide on one
+    # line reaching down to the caret dozens of lines later.
+    if not (cursor_rect.left() <= x <= cursor_rect.right()
+            and cursor_rect.top() <= y_bottom and y_top <= cursor_rect.bottom()):
+        painter.drawLine(x, y_top, x, y_bottom)
         return
     if y_top < cursor_rect.top():
-        painter.drawLine(x, round(y_top), x, cursor_rect.top())
+        painter.drawLine(x, y_top, x, cursor_rect.top())
     if cursor_rect.bottom() < y_bottom:
-        painter.drawLine(x, cursor_rect.bottom(), x, round(y_bottom))
+        painter.drawLine(x, cursor_rect.bottom(), x, y_bottom)
 
 
 class _IndentGuides(QWidget):
