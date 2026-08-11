@@ -61,7 +61,7 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 | | model | viewport | export |
 |---|---|---|---|
 | `#` highlight | unchanged | drawn see-through in red, never solid | included — `#` does not change the model |
-| `%` background | excluded | drawn as a translucent ghost | **excluded** |
+| `%` background | excluded | drawn as a translucent grey ghost | **excluded** |
 | `!` show only | becomes the whole model | its subtree only | its subtree only |
 | `*` disable | removed | nothing | nothing |
 
@@ -69,6 +69,12 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 the booleans upstream, and `exporters.exportable()` keeps it out of files
 too — `%cube(10);` on its own exports nothing at all, matching the
 reference.
+
+Its ghost is a fixed neutral grey (`_BACKGROUND_COLOR`), not the body's own
+colour and not an explicit `color()`: tinting scenery with the live theme
+made it read as part of the model. The alpha is measured against the empty
+viewport — at 0.2 the ghost sat 23 levels off the background and barely
+registered; at 0.35 it sits 35 off and still shows what is behind it.
 
 `#` bodies are drawn only in the see-through pass (`_HIGHLIGHT_COLOR`),
 never opaquely: `#` marks something to look at, not something to look at

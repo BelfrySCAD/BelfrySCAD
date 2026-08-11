@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`#` draws its object see-through, in red, the way the reference does.
+"""How `#` and `%` are drawn: see-through red, and neutral grey.
 
 The bug this covers: a `#` body was drawn solid in the opaque pass and
 then given a 0.35-alpha wash, which lands within a shade of the untouched
@@ -116,11 +116,40 @@ def main():
     check("a highlighted body outside any boolean is red too", alone_red > 200,
           f"{alone_red} reddish pixels")
 
-    # --- the other modifiers still behave --------------------------------
+    # --- % is a grey ghost -----------------------------------------------
     bg = render("difference() {\n    cylinder(h=10,d=10);\n    %cube(10);\n}\n")
     bg_red = sum(n for rgb, n in bg.items() if reddish(rgb))
     check("% is not drawn in the highlight colour", bg_red < 200,
           f"{bg_red} reddish pixels")
+
+    def neutral(rgb):
+        return max(rgb) - min(rgb) <= 6 and 120 < max(rgb) < 235
+
+    ghost = [rgb for rgb in bg if neutral(rgb) and bg[rgb] > 200]
+    check("% is drawn in grey, not the body's own colour", bool(ghost),
+          f"no neutral shade covering an area; commonest {bg.most_common(3)}")
+
+    # Scenery still has to be visible: it is there to line other work up
+    # against. A 0.2 ghost sat about 15 off the empty background.
+    BG = (240, 240, 240)
+    if ghost:
+        # The palest ghost shade is the one lying over empty background --
+        # the darker ones have the model behind them, which would flatter
+        # a ghost far too faint to see on its own.
+        over_empty = max(ghost, key=lambda rgb: sum(rgb))
+        gap = BG[0] - over_empty[0]
+        check("and is solid enough to see", gap >= 30,
+              f"only {gap} from the empty background at {over_empty}")
+        check("while still being see-through", len(ghost) >= 2,
+              f"one shade only: {ghost}")
+
+    # An explicit colour must not leak into it -- grey is what says
+    # "not part of the model".
+    colored = render("difference() {\n    cylinder(h=10,d=10);\n"
+                     "    %color(\"red\") cube(10);\n}\n")
+    check("a coloured % is still grey",
+          not any(reddish(rgb) and colored[rgb] > 200 for rgb in colored),
+          str(colored.most_common(3)))
 
     w.close()
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
