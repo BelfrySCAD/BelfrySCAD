@@ -45,6 +45,10 @@ htmlcov/
 # Scratch files
 test*.scad
 ntest*.scad
+# A local working copy of BOSL2's, sitting next to the test-*.scad that
+# includes it. Twice swept into a commit by a `git add -A`; add -f if it
+# is ever meant to be tracked.
+nurbs.scad
 test30_mesh.off
 test30_surface.dat
 profile_eval.py
