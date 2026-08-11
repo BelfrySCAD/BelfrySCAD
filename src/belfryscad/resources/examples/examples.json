@@ -2,8 +2,14 @@
   "Basics": [
     "csg.scad",
     "transforms.scad",
-    "modules.scad",
-    "extrude.scad"
+    "mirror.scad",
+    "resize.scad",
+    "color.scad",
+    "polygon.scad",
+    "text.scad",
+    "linear_extrude.scad",
+    "rotate_extrude.scad",
+    "modules.scad"
   ],
   "Functions": [
     "functions.scad",
@@ -11,8 +17,15 @@
     "recursion.scad"
   ],
   "Advanced": [
-    "children.scad",
-    "hull_minkowski.scad",
-    "polyhedron.scad"
+    "hull.scad",
+    "minkowski.scad",
+    "offset.scad",
+    "projection.scad",
+    "polyhedron.scad",
+    "multmatrix.scad",
+    "intersection_for.scad",
+    "import.scad",
+    "surface.scad",
+    "children.scad"
   ]
 }
