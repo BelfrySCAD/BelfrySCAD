@@ -43,6 +43,7 @@ resources/*.iconset/
 htmlcov/
 
 # Scratch files
+scratch/
 test*.scad
 ntest*.scad
 # A local working copy of BOSL2's, sitting next to the test-*.scad that
