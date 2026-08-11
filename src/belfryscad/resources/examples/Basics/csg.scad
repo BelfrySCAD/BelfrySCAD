@@ -4,7 +4,10 @@
 // and intersection() keeps only what all children share.
 
 module demo(label) {
-    translate([0, 0, -14]) linear_extrude(1) text(label, size=5, halign="center");
+    color("black")
+        translate([0, -10, -6])
+            linear_extrude(0.01)
+                text(label, size=3, halign="center");
     children();
 }
 

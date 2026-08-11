@@ -576,6 +576,8 @@ Keyboard shortcuts (Cmd+0–9 views, Cmd+1–3 toggles, Ctrl+Cmd+1–3 toggles) 
 
 **File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / — / Export… / — / Quit
 
+**Examples** covers one feature per file, named for it, so the menu is a lookup: Basics holds the shapes and moves (`csg`, `transforms`, `mirror`, `resize`, `color`, `polygon`, `text`, `linear_extrude`, `rotate_extrude`, `modules`), Advanced the rest (`hull`, `minkowski`, `offset`, `projection`, `polyhedron`, `multmatrix`, `intersection_for`, `import`, `surface`, `children`). `import` and `surface` ship their data alongside in `Advanced/data/`, which works because both resolve a relative path against the file naming it.
+
 **Examples** is built on demand from `resources/examples/examples.json`, a category → filenames manifest with the scripts in per-category subdirectories (the same shape OpenSCAD uses). Each category becomes a submenu. They open read-only, on the same rule as an installed library file: they live inside the application, so Save would write into the package — Save As is the way to start from one. Hatchling ships everything under the package directory, so no packaging entry is needed for them.
 
 The editor's right-click menu offers **Use Library…** as well, near the top so it does not shift position with whatever word is under the cursor; a read-only tab (a library file) does not get it, having nothing to insert into. It goes up through `CodeEditor.use_library_requested`, the same signal-to-MainWindow pattern as Go to Definition.

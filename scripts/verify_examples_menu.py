@@ -106,6 +106,37 @@ def main():
               (bad[0] if bad else tail[-100:]))
         check(f"{cat}/{name} renders without warnings", not bad, bad[0] if bad else "")
 
+    # --- nothing in an example renders silently empty ---------------------
+    # Two of these shipped in a first draft with a whole copy missing and
+    # no warning: a difference() whose cutter swallowed the import, and a
+    # 2D minkowski() that this evaluator does not implement. Both looked
+    # fine on "does it render". An example laid out in a row across X
+    # gives that away -- the furthest translate() has to be reached.
+    import re
+    from belfryscad import exporters
+    from openscad_cpp_evaluator import Evaluator
+    for cat, name in listed:
+        path = root / cat / name
+        src = path.read_text(encoding="utf-8")
+        offsets = [float(m) for m in
+                   re.findall(r"translate\(\[\s*(-?\d+(?:\.\d+)?)\s*,", src)]
+        offsets = sorted({o for o in offsets if o >= 20})
+        if not offsets:
+            continue        # not laid out in a row; nothing to check against
+        bodies, _ = Evaluator(echo_fn=lambda m: None).evaluate(str(path))
+        spans = []
+        for b in bodies:
+            v, _t = exporters.body_mesh_arrays(b)
+            if len(v):
+                spans.append((float(v[:, 0].min()), float(v[:, 0].max())))
+        # Every place something is put down has to have something at it.
+        # Checking only the rightmost would miss a copy dropped from the
+        # middle of the row, which is exactly what happened.
+        missing = [o for o in offsets
+                   if not any(lo - 1 <= o <= hi + 1 for lo, hi in spans)]
+        check(f"{cat}/{name} renders a copy at every offset it names",
+              not missing, f"nothing at x={missing}; geometry spans {[(round(a),round(b)) for a,b in spans]}")
+
     w.close()
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
     return 1 if failures else 0
