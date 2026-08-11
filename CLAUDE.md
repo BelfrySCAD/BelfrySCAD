@@ -12,8 +12,8 @@ BelfrySCAD is a hybrid procedural CAD application combining OpenSCAD-style scrip
 
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
-- **Parser**: openscad_lalr_parser ≥1.1.0 (LALR-based, generates AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Fetched from PyPI.
-- **Evaluator**: openscad_evaluator ≥1.0.0 (walks the parser's AST and produces Manifold geometry — the two-pass resolve/generate pipeline, built-ins, `ManifoldCache`, profiling; GUI-agnostic, callback-injection API). Fetched from PyPI; see its own `docs/evaluator.md` for the full architecture reference.
+- **Parser**: openscad_cpp_parser (C++, Bison `lalr1.cc`; generates an AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Not a dependency of this project directly: it is vendored at `external/openscad_cpp_parser` inside openscad_cpp_evaluator and built with it.
+- **Evaluator**: openscad_cpp_evaluator ≥0.29.1 (C++ with nanobind bindings; walks the parser's AST and produces Manifold geometry — the two-pass resolve/generate pipeline, built-ins, `ManifoldCache`, profiling; GUI-agnostic, callback-injection API). The only OpenSCAD-side dependency in `pyproject.toml`, fetched from PyPI as a wheel; see its own `CLAUDE.md` for the full architecture reference.
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
@@ -23,7 +23,7 @@ BelfrySCAD is a hybrid procedural CAD application combining OpenSCAD-style scrip
 The pipeline flows strictly one direction during normal operation:
 
 ```
-Source Code → Code Editor → openscad_lalr_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
+Source Code → Code Editor → openscad_cpp_parser (AST) → Evaluator → Manifold (CSG/mesh) → ModernGL → PySide6 UI
 ```
 
 **The AST is the single source of truth** — not the rendered geometry, not the editor text.
@@ -42,13 +42,13 @@ Dragging geometry in the viewport:
 Drag event → ray cast → pick geometry ID → map ID to AST node (via span) → modify AST parameter → regenerate code + model
 ```
 
-Requires every AST node to carry both its **source span** (file/line/col) and its **geometry ID(s)** from Manifold output. This mapping is the hardest design problem in the project. See `docs/wysiwyg.md` for the full interaction design and openscad_evaluator's own `docs/evaluator.md` for the AST ↔ geometry ID mapping pattern.
+Requires every AST node to carry both its **source span** (file/line/col) and its **geometry ID(s)** from Manifold output. This mapping is the hardest design problem in the project. See `docs/wysiwyg.md` for the full interaction design and openscad_cpp_evaluator's own `CLAUDE.md` for the AST ↔ geometry ID mapping pattern.
 
 ## Key Design Requirements
 
 - **Code ↔ Geometry mapping**: every geometry-producing AST node owns an `originalID`; the `originalID → AST node` table rebuilds on each render trigger.
 - **Stability under invalid code**: UI must never crash or go blank.
-- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Every render trigger walks the whole tree, but unchanged subtrees skip actual Manifold work via a content-hash cache (`ManifoldCache`, see openscad_evaluator's `docs/evaluator.md`) — a fresh AST/CSG tree is still built every render (no incremental *parsing*), but a node whose resolved content matches a previous render/debug pause reuses that prior result instead of recomputing it.
+- **Deterministic regeneration**: AST → geometry must be reproducible with no hidden rendering state. Every render trigger walks the whole tree, but unchanged subtrees skip actual Manifold work via a content-hash cache (`ManifoldCache`, see openscad_cpp_evaluator's `CLAUDE.md`) — a fresh AST/CSG tree is still built every render (no incremental *parsing*), but a node whose resolved content matches a previous render/debug pause reuses that prior result instead of recomputing it.
 - **Performance**: <200ms model regeneration for small/medium models; 60 FPS viewport.
 
 ## File Format & Export
@@ -73,7 +73,7 @@ No live preview. Full Manifold CSG processing runs when:
 - The user **accepts an AI proposal** in the chat pane (`_on_ai_proposal_accepted` goes through `replace_span` + `source_edited_externally`, the same path "Edit as..." uses)
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
 
-**"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_evaluator's `docs/evaluator.md`'s "Profiling" section.
+**"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
 
@@ -89,7 +89,7 @@ Every PR bumps the version (`version` in both `[project]` and `[tool.briefcase]`
 
 ## Further Documentation
 
-Detailed implementation notes live in `docs/`. AST Evaluator internals (scope processing, assignment order, built-ins reference, 2D/3D geometry handling, error format, `$variables` scoping, `include`/`use`, implementation quirks, and the Manifold provenance / AST ↔ geometry ID mapping API) now live in the separate `openscad_evaluator` package's own `docs/evaluator.md`, not here.
+Detailed implementation notes live in `docs/`. AST Evaluator internals (scope processing, assignment order, built-ins reference, 2D/3D geometry handling, error format, `$variables` scoping, `include`/`use`, implementation quirks, and the Manifold provenance / AST ↔ geometry ID mapping API) now live in the separate `openscad_cpp_evaluator` package's own `CLAUDE.md`, not here.
 
 - **`docs/wysiwyg.md`** — Viewport camera controls, selection model, transform gizmos, value overlay, and source rewrite rules for drag-to-edit.
 - **`docs/debugger.md`** — `DebugSession` signals, call stack display, per-frame variable inspection, expression-level stepping, and `DebuggerPane` states.
