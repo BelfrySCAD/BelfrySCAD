@@ -56,6 +56,37 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 
 **View menu → "Spin"** (Ctrl+Cmd+1) continuously rotates the camera azimuth at 6 RPM (1.2°/tick at 30 FPS, driven by a `QTimer` with a 33 ms interval). Spin state is **not** saved between sessions — the app always starts with Spin off.
 
+## Modifier characters
+
+| | model | viewport | export |
+|---|---|---|---|
+| `#` highlight | unchanged | drawn see-through in red, never solid | included — `#` does not change the model |
+| `%` background | excluded | drawn as a translucent ghost | **excluded** |
+| `!` show only | becomes the whole model | its subtree only | its subtree only |
+| `*` disable | removed | nothing | nothing |
+
+`%` is scenery: something to line other work up against. It is kept out of
+the booleans upstream, and `exporters.exportable()` keeps it out of files
+too — `%cube(10);` on its own exports nothing at all, matching the
+reference.
+
+`#` bodies are drawn only in the see-through pass (`_HIGHLIGHT_COLOR`),
+never opaquely: `#` marks something to look at, not something to look at
+the outside of, and a solid draw underneath leaves nothing to see through
+to. The alpha is measured — below about 0.4 the wash lands within a shade
+of the untouched surface colour and reads as no highlight at all.
+
+### Known divergence
+
+A `#` on an operand of a boolean is exported twice over. The evaluator
+returns the boolean's result *and* a copy of the highlighted operand for
+the viewport to ghost, and nothing in a `ColoredBody` distinguishes that
+display copy from a highlighted object at top level, which is real
+geometry and must be exported. Measured against the reference:
+`difference() { cylinder(h=10,d=10); #cube(10); }` writes 64 triangles
+where it should write 52. Fixing it means marking the copy in the
+evaluator, not guessing in the exporter.
+
 ## Viewport visuals
 
 **Clip planes**: `Camera.clip_planes()` returns `(near, far)`, scaled to `camera.distance` rather than fixed constants (floors at the original `0.1`/`10000.0`, so typical/small scenes are unaffected). `frame_bounds()` sets `distance` proportional to the framed object's radius (same distance-scaling heuristic `_render_axes`/`_axis_extent` use for tick/axis extent) — a fixed `far=10000` clipped large or elongated models once that pushed the camera far enough away to fit them at the default FOV: `cylinder(h=3500, d=1000)` needs `distance≈10438` to fit at `fov=22.5`, already past a fixed `far=10000`, silently clipping whichever end of the cylinder was farther from the eye (and varying with zoom, since that changes `distance`). `far = max(10000.0, distance * 3.0)`; `near = max(0.1, far / 100000.0)` — grown proportionally rather than held fixed, preserving the original `far/near` ratio (holding `near` fixed while `far` grows would only worsen depth-buffer precision for large scenes on top of the clipping bug). `projection_matrix()` uses these for both perspective (`_perspective`'s own near/far) and orthographic (`_ortho`'s symmetric `±far` depth range) modes. Pure math, unit-tested in `test_renderer.py::TestCameraClipPlanes` — no GL/Qt dependency.

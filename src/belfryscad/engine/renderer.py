@@ -12,6 +12,15 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
 from openscad_cpp_evaluator import ColoredBody
 
+# What `#` looks like: transparent red, as the reference draws it. Both
+# numbers are measured against it rather than picked. The hue is a true
+# red, not the pink this was: over the default surface it lands on
+# (218, 130, 130) against the reference's (247, 124, 124). The alpha
+# matters because below about 0.4 the wash comes within a shade of the
+# untouched colour and reads as no highlight at all -- which is how the
+# old 0.35 went unnoticed once it was the only thing drawn.
+_HIGHLIGHT_COLOR = (1.0, 0.20, 0.20, 0.55)
+
 _VERT = """
 #version 330 core
 in vec3 in_position;
@@ -1084,9 +1093,12 @@ class SceneRenderer:
             self._ctx.polygon_offset = (2.0, 2.0)
             self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
 
-        # --- Pass 1: opaque bodies (normal, show_only, highlight = real geometry) ---
-        # highlight_ghost bodies are only shown in the overlay pass, not opaquely.
-        opaque_bufs = [buf for buf in self._buffers if buf.role not in ("background", "highlight_ghost")]
+        # --- Pass 1: opaque bodies (normal, show_only) ---
+        # Highlighted bodies are drawn only in the overlay pass below, never
+        # opaquely: `#` means "show me this see-through", and a solid draw
+        # underneath leaves nothing to see through to.
+        opaque_bufs = [buf for buf in self._buffers
+                       if buf.role not in ("background", "highlight", "highlight_ghost")]
         buf_models: list[np.ndarray] = []
         translucent: list[tuple] = []  # (buf, buf_model, color) deferred to Pass 1b
         for buf in opaque_bufs:
@@ -1214,37 +1226,32 @@ class SceneRenderer:
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
-        # --- Pass 3: highlight overlay (#) — pink transparent overlay ---
-        # "highlight" bodies are real geometry already in the opaque pass; polygon offset
-        # shifts them toward the camera so the overlay passes the LESS depth test.
-        # "highlight_ghost" bodies (# inside CSG) are NOT in the opaque pass; they render
-        # as pink ghosts occluded by whatever solid geometry is in the depth buffer.
-        hi_solid_pairs = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models) if buf.role == "highlight"]
-        hi_ghost_bufs = [buf for buf in self._buffers if buf.role == "highlight_ghost"]
-        if hi_solid_pairs or hi_ghost_bufs:
+        # --- Pass 3: highlighted bodies (#) — drawn see-through, never solid ---
+        # `#` marks something to look at, not something to look at the
+        # outside of: the reference draws it in transparent red and you can
+        # see what is behind it. That is the whole treatment, whether the
+        # body is part of the model (`#` on a union operand) or not (`#` on
+        # what a difference subtracts, which is what makes the cut visible).
+        #
+        # Back faces are culled so the far wall of a box does not show
+        # through the near one and read as solid.
+        hi_bufs = [buf for buf in self._buffers
+                   if buf.role in ("highlight", "highlight_ghost")]
+        if hi_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
-            if hi_solid_pairs:
-                self._ctx.polygon_offset = (-1.0, -1.0)
-                self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
-                for buf, buf_model in hi_solid_pairs:
-                    self._prog["model"].write(buf_model.T.tobytes())
-                    self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
-                    self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
-                    self._prog["flat_preview"].value = buf.flat_preview
-                    buf.vao.render()
-                self._ctx.disable_direct(0x8037)
-                self._ctx.polygon_offset = (0.0, 0.0)
-            if hi_ghost_bufs:
-                self._ctx.enable(mgl.CULL_FACE)  # cull back faces so interior isn't visible
-                for buf in hi_ghost_bufs:
-                    self._prog["model"].write(model.T.tobytes())
-                    self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
-                    self._prog["object_color"].value = (1.0, 0.08, 0.45, 0.35)  # pink
-                    self._prog["flat_preview"].value = buf.flat_preview
-                    buf.vao.render()
-                self._ctx.disable(mgl.CULL_FACE)
+            self._ctx.enable(mgl.CULL_FACE)
+            for buf in hi_bufs:
+                self._prog["model"].write(model.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
+                # Measured, not guessed: below about 0.4 the wash lands
+                # within a shade of the untouched colour and reads as no
+                # highlight at all.
+                self._prog["object_color"].value = _HIGHLIGHT_COLOR
+                self._prog["flat_preview"].value = buf.flat_preview
+                buf.vao.render()
+            self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
 
