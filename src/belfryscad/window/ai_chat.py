@@ -671,13 +671,18 @@ class AIChatPane(QWidget):
         """
         parts = []
         for kind, text in self._entries:
-            if kind == "user":
+            if kind in ("user", "followup"):
                 if parts:
                     # A paragraph holding only a non-breaking space: extra
                     # blank lines collapse in Markdown, so this is what
                     # actually opens up space before each new request.
                     parts.append(" ")
-                parts.append(f"**You:** {text}")
+                # A follow-up is the model prompting itself through
+                # schedule_followup. It reads as a new request, and gets a
+                # request's spacing, but the user never wrote it and it
+                # must not be attributed to them.
+                who = "You" if kind == "user" else "Follow-up"
+                parts.append(f"**{who}:** {text}")
             elif kind == "assistant":
                 parts.append(text)
             else:
@@ -1107,7 +1112,7 @@ class AIChatPane(QWidget):
         self._followup_timer.stop()
         self._followup_bar.hide()
         self._followup_chain += 1
-        self._say(followup.prompt, kind="user")
+        self._say(followup.prompt, kind="followup")
         self.send_requested.emit(followup.prompt)
 
     def on_render_finished(self):
