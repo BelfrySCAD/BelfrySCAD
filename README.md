@@ -62,7 +62,7 @@ uv run pytest
 ## Technology Stack
 
 - **UI**: PySide6 (Qt)
-- **Parser**: [openscad_lalr_parser](https://pypi.org/project/openscad-lalr-parser/)
+- **Parser & evaluator**: [openscad_cpp_evaluator](https://pypi.org/project/openscad-cpp-evaluator/) (C++; bundles the Bison-based `openscad_cpp_parser`)
 - **CSG kernel**: [Manifold](https://github.com/elalish/manifold)
 - **Renderer**: ModernGL
 - **Language**: Python
