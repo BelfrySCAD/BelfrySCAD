@@ -36,10 +36,47 @@ def _strip_comments(text: str) -> str:
     return re.sub(r'//[^\n]*', '', text)
 
 
+def _library_dirs() -> list[Path]:
+    """Where a use/include is looked for when it is not next to its
+    includer: OPENSCADPATH if set, else the platform's default library
+    directory. Same list, same order, as the parser's own findLibraryFile.
+    """
+    import os
+    import platform
+
+    env = os.environ.get("OPENSCADPATH")
+    if env:
+        return [Path(part) for part in env.split(os.pathsep) if part]
+    home = Path.home()
+    if platform.system() == "Linux":
+        return [home / ".local" / "share" / "OpenSCAD" / "libraries"]
+    return [home / "Documents" / "OpenSCAD" / "libraries"]
+
+
 def _resolve(target: str, base_dir: Path) -> Path | None:
+    """Where `target` really lives, searched the way OpenSCAD searches.
+
+    The directory of the file that wrote the statement comes first, and
+    only then the library path -- a library of your own next to the model
+    beats one of the same name installed system-wide, and a library file
+    including its own sibling gets that sibling rather than something
+    beside the top-level model.
+
+    The library fallback was missing entirely, so `-d` on a script with
+    `include <BOSL2/std.scad>` listed one dependency where the reference
+    listed 33.
+    """
     p = Path(target)
-    candidate = p if p.is_absolute() else base_dir / p
-    return candidate if candidate.is_file() else None
+    if p.is_absolute():
+        return p if p.is_file() else None
+    candidate = base_dir / p
+    if candidate.is_file():
+        return candidate
+    for d in _library_dirs():
+        candidate = d / p
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def scan_dependencies(main_path: str) -> list[str]:
