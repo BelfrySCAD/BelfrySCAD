@@ -21,6 +21,12 @@ from openscad_cpp_evaluator import ColoredBody
 # old 0.35 went unnoticed once it was the only thing drawn.
 _HIGHLIGHT_COLOR = (1.0, 0.20, 0.20, 0.55)
 
+# What `%` looks like: a neutral grey ghost. Deliberately not the body's
+# own colour -- scenery is there to be looked past, and tinting it with
+# the live theme (or an explicit color()) made it read as part of the
+# model rather than as a backdrop.
+_BACKGROUND_COLOR = (0.62, 0.62, 0.62, 0.35)
+
 _VERT = """
 #version 330 core
 in vec3 in_position;
@@ -1215,11 +1221,9 @@ class SceneRenderer:
             self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
             for buf in bg_bufs:
-                base_color = buf.color if buf.color is not None else self._default_color
-                ghost_color = (*base_color[:3], 0.2)
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
-                self._prog["object_color"].value = ghost_color
+                self._prog["object_color"].value = _BACKGROUND_COLOR
                 self._prog["flat_preview"].value = buf.flat_preview
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
