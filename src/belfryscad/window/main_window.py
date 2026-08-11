@@ -20,11 +20,20 @@ from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
+import json
 import re
 from pathlib import Path
 from typing import Optional
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
+_EXAMPLES_DIR = Path(__file__).parent.parent / "resources" / "examples"
+
+
+def examples_dir() -> Path:
+    """The example scripts shipped inside the application."""
+    return _EXAMPLES_DIR
+
+
 def _fmt_elapsed(elapsed_ms: float) -> str:
     if elapsed_ms >= 1000:
         return f"({elapsed_ms / 1000:.3f}s)"
@@ -847,6 +856,8 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "New", self._new_document, QKeySequence.StandardKey.New)
         self._add_action(file_menu, "Open…", self._open_file, QKeySequence.StandardKey.Open)
         self._recent_menu = file_menu.addMenu("Open Recent")
+        self._examples_menu = file_menu.addMenu("Examples")
+        self._examples_menu.aboutToShow.connect(self._populate_examples_menu)
         self._rebuild_recent_menu()
         file_menu.addSeparator()
         self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
@@ -1295,7 +1306,13 @@ class MainWindow(QMainWindow):
 
         tab = FileTab()
         tab.file_path = path
-        tab.editor.setReadOnly(Path(path).resolve().is_relative_to(_library_dir().resolve()))
+        # Read-only for anything that is not the user's to edit in place:
+        # an installed library, or an example inside the application's own
+        # resources. Save As still works, which is how you start from one.
+        resolved = Path(path).resolve()
+        tab.editor.setReadOnly(
+            resolved.is_relative_to(_library_dir().resolve())
+            or resolved.is_relative_to(examples_dir().resolve()))
         tab._last_text = text
         tab._last_cursor = 0
         tab._suppress_text_undo = False
@@ -2175,6 +2192,37 @@ class MainWindow(QMainWindow):
         self._library_manager.show()
         self._library_manager.raise_()
         self._library_manager.activateWindow()
+
+    def _populate_examples_menu(self):
+        """One submenu per category, from the bundled manifest.
+
+        Built on demand like the other menus, though nothing here changes
+        at runtime -- it keeps the cost off startup and puts the failure,
+        if the manifest is ever missing, in front of whoever opened the
+        menu rather than in a traceback at launch.
+        """
+        menu = self._examples_menu
+        menu.clear()
+        try:
+            manifest = json.loads((examples_dir() / "examples.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = {}
+        found = False
+        for category, names in manifest.items():
+            paths = [examples_dir() / category / n for n in names]
+            paths = [p for p in paths if p.is_file()]
+            if not paths:
+                continue
+            sub = menu.addMenu(category)
+            for path in paths:
+                act = sub.addAction(path.stem.replace("_", " "))
+                act.setStatusTip(str(path))
+                act.triggered.connect(
+                    lambda checked=False, p=str(path): self.open_file_by_path(p))
+            found = True
+        if not found:
+            act = menu.addAction("(No examples installed)")
+            act.setEnabled(False)
 
     def _open_use_library(self):
         """Pick a library and the file to pull in from it.

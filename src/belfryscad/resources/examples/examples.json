@@ -1,0 +1,18 @@
+{
+  "Basics": [
+    "csg.scad",
+    "transforms.scad",
+    "modules.scad",
+    "extrude.scad"
+  ],
+  "Functions": [
+    "functions.scad",
+    "list_comprehensions.scad",
+    "recursion.scad"
+  ],
+  "Advanced": [
+    "children.scad",
+    "hull_minkowski.scad",
+    "polyhedron.scad"
+  ]
+}
