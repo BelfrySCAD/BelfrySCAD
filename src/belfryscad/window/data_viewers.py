@@ -1730,6 +1730,11 @@ class _AffineViewport(Viewport):
         self._renderer.line_width = 2.0
         self._is_2d = len(matrix) == 3
         self._corners: np.ndarray = np.zeros((0, 3), dtype=np.float32)
+        # Vertex markers start on here, unlike _VNFViewport where they are
+        # opt-in: a path/grid/region carries few enough points to draw them
+        # all by default, but they still hide the shape underneath, so the
+        # viewer offers the same "Show Vertices" toggle to clear the view.
+        self._show_unselected = True
         if self._is_2d:
             cam.azimuth = 270.0
             # Not exactly 90: gimbal lock at precisely elevation=+-90 makes
@@ -1783,8 +1788,24 @@ class _AffineViewport(Viewport):
         self.doneCurrent()
         self.update()
 
+    def set_show_unselected(self, enabled: bool):
+        """Show or hide the markers on every point that isn't selected.
+
+        Selected points keep their own blinking markers regardless -- the
+        toggle exists to get the indicators out of the way of the shape
+        they sit on, not to lose track of what you picked. Same name and
+        behaviour as `_VNFViewport.set_show_unselected`.
+        """
+        self._show_unselected = enabled
+        self.makeCurrent()
+        self._build_point_markers()
+        self.doneCurrent()
+        self.update()
+
     def _build_point_markers(self):
         self._renderer.clear_points()
+        if not self._show_unselected:
+            return
         if len(self._corners) == 0 or self._ctx is None:
             return
         unit_faces = _dodecahedron_faces(1.0, self._is_2d)
@@ -1876,6 +1897,14 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
+        # Same control as VNFViewer's, but checked by default here:
+        # these shapes have always drawn every point, and unchecking
+        # it is what clears the view.
+        self._show_verts_cb = QCheckBox("Show Vertices")
+        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._show_verts_cb.setChecked(True)
+        self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
+        btn_row.addWidget(self._show_verts_cb)
         if editable:
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
@@ -3138,6 +3167,14 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        # Same control as VNFViewer's, but checked by default here:
+        # these shapes have always drawn every point, and unchecking
+        # it is what clears the view.
+        self._show_verts_cb = QCheckBox("Show Vertices")
+        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._show_verts_cb.setChecked(True)
+        self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
+        btn_row.addWidget(self._show_verts_cb)
         self._closed_cb = QCheckBox("Close Path")
         self._closed_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._closed_cb.toggled.connect(self._rebuild)
@@ -3493,6 +3530,11 @@ class _PathViewport(Viewport):
         cam.fov = 45.0
         self._renderer.line_width = 2.0
         self._editable = editable
+        # Vertex markers start on here, unlike _VNFViewport where they are
+        # opt-in: a path/grid/region carries few enough points to draw them
+        # all by default, but they still hide the shape underneath, so the
+        # viewer offers the same "Show Vertices" toggle to clear the view.
+        self._show_unselected = True
         self._press_pos = None
         self._drag_started = False
         self._drag_vertex_idx = -1
@@ -3748,8 +3790,24 @@ class _PathViewport(Viewport):
             return shape_fn(1.0, self._is_2d)
         return self._marker_faces(1.0)
 
+    def set_show_unselected(self, enabled: bool):
+        """Show or hide the markers on every point that isn't selected.
+
+        Selected points keep their own blinking markers regardless -- the
+        toggle exists to get the indicators out of the way of the shape
+        they sit on, not to lose track of what you picked. Same name and
+        behaviour as `_VNFViewport.set_show_unselected`.
+        """
+        self._show_unselected = enabled
+        self.makeCurrent()
+        self._build_point_markers()
+        self.doneCurrent()
+        self.update()
+
     def _build_point_markers(self):
         self._renderer.clear_points()
+        if not self._show_unselected:
+            return
 
         pts = self._path_pts
         if len(pts) == 0 or self._ctx is None:
@@ -4189,6 +4247,14 @@ class GridViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        # Same control as VNFViewer's, but checked by default here:
+        # these shapes have always drawn every point, and unchecking
+        # it is what clears the view.
+        self._show_verts_cb = QCheckBox("Show Vertices")
+        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._show_verts_cb.setChecked(True)
+        self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
+        btn_row.addWidget(self._show_verts_cb)
         self._face_mode_combo = QComboBox()
         self._face_mode_combo.addItem("Grid Only")
         self._face_mode_combo.addItem("Grid Faces")
@@ -4637,6 +4703,11 @@ class _GridViewport(Viewport):
         self._renderer.depth_test_points = True
         self._renderer.show_edges = True  # enables polygon offset fill so skeleton lines render in front of faces
         self._editable = editable
+        # Vertex markers start on here, unlike _VNFViewport where they are
+        # opt-in: a path/grid/region carries few enough points to draw them
+        # all by default, but they still hide the shape underneath, so the
+        # viewer offers the same "Show Vertices" toggle to clear the view.
+        self._show_unselected = True
         self._press_pos = None
         self._drag_started = False
         self._context_menu_suppressed = False   # set from mouseReleaseEvent -- a real drag shouldn't also pop a menu
@@ -4839,8 +4910,24 @@ class _GridViewport(Viewport):
     def _marker_faces(self, r):
         return _dodecahedron_faces(r, self._is_2d)
 
+    def set_show_unselected(self, enabled: bool):
+        """Show or hide the markers on every point that isn't selected.
+
+        Selected points keep their own blinking markers regardless -- the
+        toggle exists to get the indicators out of the way of the shape
+        they sit on, not to lose track of what you picked. Same name and
+        behaviour as `_VNFViewport.set_show_unselected`.
+        """
+        self._show_unselected = enabled
+        self.makeCurrent()
+        self._build_point_markers()
+        self.doneCurrent()
+        self.update()
+
     def _build_point_markers(self):
         self._renderer.clear_points()
+        if not self._show_unselected:
+            return
 
         pts = self._all_pts
         if len(pts) == 0 or self._ctx is None:
@@ -5199,6 +5286,14 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        # Same control as VNFViewer's, but checked by default here:
+        # these shapes have always drawn every point, and unchecking
+        # it is what clears the view.
+        self._show_verts_cb = QCheckBox("Show Vertices")
+        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._show_verts_cb.setChecked(True)
+        self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
+        btn_row.addWidget(self._show_verts_cb)
         self._fill_combo = QComboBox()
         self._fill_combo.addItem("Region Only")
         self._fill_combo.addItem("Region Filled")
@@ -5534,6 +5629,11 @@ class _RegionViewport(Viewport):
         self._renderer.line_width = 2.0
         self._renderer.show_edges = True   # polygon-offsets the fill mesh back so outlines win the depth tie
         self._editable = editable
+        # Vertex markers start on here, unlike _VNFViewport where they are
+        # opt-in: a path/grid/region carries few enough points to draw them
+        # all by default, but they still hide the shape underneath, so the
+        # viewer offers the same "Show Vertices" toggle to clear the view.
+        self._show_unselected = True
         self._press_pos: QPoint | None = None
         self._drag_started = False
         self._drag_vertex_idx = -1
@@ -5604,8 +5704,24 @@ class _RegionViewport(Viewport):
     def _marker_faces(self, r):
         return _dodecahedron_faces(r, True)
 
+    def set_show_unselected(self, enabled: bool):
+        """Show or hide the markers on every point that isn't selected.
+
+        Selected points keep their own blinking markers regardless -- the
+        toggle exists to get the indicators out of the way of the shape
+        they sit on, not to lose track of what you picked. Same name and
+        behaviour as `_VNFViewport.set_show_unselected`.
+        """
+        self._show_unselected = enabled
+        self.makeCurrent()
+        self._build_point_markers()
+        self.doneCurrent()
+        self.update()
+
     def _build_point_markers(self):
         self._renderer.clear_points()
+        if not self._show_unselected:
+            return
 
         pts = self._all_pts
         if len(pts) == 0 or self._ctx is None:
