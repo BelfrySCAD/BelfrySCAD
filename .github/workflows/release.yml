@@ -72,8 +72,16 @@ jobs:
         include:
           - runner: ubuntu-latest
             name: linux-x86_64
+            # glibc 2.28 keeps the x86_64 AppImage runnable on older
+            # distributions; PySide6 still has a wheel that old for x86_64.
+            manylinux: manylinux_2_28
           - runner: ubuntu-24.04-arm
             name: linux-aarch64
+            # PySide6 only ships manylinux_2_39_aarch64 -- there has never
+            # been a lower-glibc aarch64 wheel -- so the 2.28 image finds no
+            # installable PySide6 at all and the build dies at pip. This is
+            # the floor for Linux ARM, not a preference.
+            manylinux: manylinux_2_39
     steps:
       - uses: actions/checkout@v5
 
@@ -89,9 +97,9 @@ jobs:
 
       - name: Build Linux AppImage
         run: |
-          uv run --python 3.12 briefcase create linux appimage
-          uv run --python 3.12 briefcase build linux appimage
-          uv run --python 3.12 briefcase package linux appimage
+          uv run --python 3.12 briefcase create linux appimage -C manylinux="${{ matrix.manylinux }}"
+          uv run --python 3.12 briefcase build linux appimage -C manylinux="${{ matrix.manylinux }}"
+          uv run --python 3.12 briefcase package linux appimage -C manylinux="${{ matrix.manylinux }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
