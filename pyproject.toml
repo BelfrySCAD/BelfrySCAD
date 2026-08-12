@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "0.59.3"
+version = "0.60.0"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -13,7 +13,6 @@ dependencies = [
     "manifold3d",
     "moderngl",
     "numpy",
-    "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
     "setproctitle>=1.3.7",
     "openscad_cpp_evaluator>=0.29.1",
     "certifi",
@@ -43,7 +42,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "0.59.3"
+version = "0.60.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
@@ -59,7 +58,6 @@ requires = [
     "manifold3d",
     "moderngl",
     "numpy",
-    "lib3mf; platform_machine != 'aarch64' and platform_machine != 'ARM64'",
     "setproctitle>=1.3.7",
     "openscad_cpp_evaluator>=0.29.1",
     "certifi",

@@ -144,13 +144,6 @@ def _export(output_path: str, ext: str, bodies, export_format: str | None = None
     except OSError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return False
-    except ImportError:
-        # lib3mf is a conditional dependency (not installed on aarch64/ARM64
-        # -- see pyproject.toml), same gap the GUI's own _export() sidesteps
-        # by only offering ".3mf" in its save dialog when the import
-        # succeeds.
-        print("belfryscad: .3mf export is unavailable (lib3mf not installed on this platform)", file=sys.stderr)
-        return False
     return True
 
 

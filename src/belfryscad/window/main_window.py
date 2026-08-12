@@ -1727,12 +1727,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
             return
 
-        filters = "STL Files (*.stl);;OBJ Files (*.obj)"
-        try:
-            import lib3mf  # noqa: F401
-            filters += ";;3MF Files (*.3mf)"
-        except ImportError:
-            pass
+        # 3MF is always available now that it is written directly rather
+        # than through lib3mf, which had no wheels for ARM platforms.
+        filters = "STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf)"
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "", filters
         )
