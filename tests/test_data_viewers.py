@@ -1148,3 +1148,71 @@ class TestTubeTriangles:
 
     def test_a_zero_length_segment_produces_nothing(self):
         assert self.rows(p1=self.P0) == []
+
+
+class TestValidationColors:
+    """The overlay palette has to survive the surfaces it is drawn on.
+
+    A mark that matches what is behind it is not a mark. Two surfaces
+    are always in play: the hardcoded magenta the viewport paints
+    backfaces (its inverted-normal cue, and the whole surface of a
+    single-sided sheet seen from behind), and the theme's object colour.
+    """
+    # Two thresholds, in RGB space. Two tubes seen side by side need a
+    # wider gap than a tube against a surface does -- the surface is
+    # shaded across its area, the tube is one flat hue, so a smaller
+    # difference still separates them. Both offenders in the first
+    # palette (magenta on magenta at 0.22, purple at 0.38) fail the
+    # looser one, so the split is not what let them through.
+    MIN_MUTUAL = 0.55
+    MIN_VS_SURFACE = 0.40
+
+    @staticmethod
+    def dist(a, b):
+        return float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
+
+    def colors(self):
+        from belfryscad.window.data_viewers import _VNFViewport
+        return _VNFViewport.VALIDATION_COLORS
+
+    def test_none_of_them_reads_as_a_backface(self):
+        from belfryscad.window.data_viewers import _VNFViewport
+        magenta = _VNFViewport.BACKFACE_MAGENTA
+        for name, c in self.colors().items():
+            assert self.dist(c, magenta) >= self.MIN_VS_SURFACE, (name, c)
+
+    def test_the_backface_colour_is_still_the_magenta_we_avoided(self):
+        # If the renderer's cue ever changes, the constant above is a
+        # stale copy and the check above stops meaning anything.
+        import re
+        from pathlib import Path
+        from belfryscad.window.data_viewers import _VNFViewport
+        src = (Path(__file__).resolve().parent.parent / "src" / "belfryscad"
+               / "engine" / "renderer.py").read_text()
+        m = re.search(r"backface_color\s+or\s+\(([^)]*)\)", src)
+        assert m, "renderer no longer has a default backface colour"
+        actual = tuple(float(x) for x in m.group(1).split(","))[:3]
+        assert actual == _VNFViewport.BACKFACE_MAGENTA, actual
+
+    def test_none_of_them_reads_as_the_default_theme_object(self):
+        from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
+        obj = COLOR_THEMES[DEFAULT_COLOR_THEME]["object"]
+        for name, c in self.colors().items():
+            assert self.dist(c, obj) >= self.MIN_VS_SURFACE, (name, c)
+
+    def test_they_are_distinguishable_from_each_other(self):
+        items = list(self.colors().items())
+        for i, (n1, c1) in enumerate(items):
+            for n2, c2 in items[i + 1:]:
+                assert self.dist(c1, c2) >= self.MIN_MUTUAL, (n1, n2)
+
+    def test_every_condition_the_report_can_raise_has_a_colour(self):
+        # A finding with no colour would be silently undrawable.
+        from belfryscad.vnf_validate import VNFReport
+        fields = {f for f in vars(VNFReport()) if f.endswith(("edges", "joints"))}
+        fields |= {"intersecting", "overlapping"}
+        names = {"hole_edges", "flipped_edges", "nonmanifold_edges", "t_joints",
+                 "intersecting", "overlapping"}
+        assert fields == names, fields
+        assert set(self.colors()) == {n.replace("_edges", "").replace("t_joints", "t_joint")
+                                       for n in names}

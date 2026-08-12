@@ -2328,13 +2328,24 @@ class _VNFViewport(Viewport):
 
     # Validation overlay colours. Each condition gets its own so a mesh
     # failing several ways can still be read apart at a glance.
+    # None of them may sit near magenta: the viewport paints backfaces a
+    # hardcoded magenta as its inverted-normal cue (SceneRenderer's
+    # `buf.backface_color or (1, 0, 1, 1)`), so on a single-sided sheet
+    # -- seen from behind, which is most of the meshes worth validating
+    # -- that magenta IS the surface a mark has to stand out against.
+    # The first palette put a magenta and a purple on it, and a yellow
+    # on the default theme's yellow front faces. The object colour is
+    # themeable, though, so no fixed palette can clear every theme --
+    # the default is what is checked. See tests/test_data_viewers.py's
+    # TestValidationColors.
+    BACKFACE_MAGENTA = (1.0, 0.0, 1.0)
     VALIDATION_COLORS = {
-        "hole": (1.0, 0.15, 0.15),          # red -- open boundary
-        "flipped": (1.0, 0.55, 0.0),        # orange -- wound backwards
-        "nonmanifold": (0.65, 0.1, 0.9),    # purple -- 3+ faces on an edge
-        "t_joint": (1.0, 0.1, 0.8),         # magenta -- unwelded crack
-        "intersecting": (1.0, 0.0, 0.0),    # red -- faces through faces
-        "overlapping": (1.0, 0.9, 0.0),     # yellow -- coplanar double skin
+        "hole": (1.0, 0.45, 0.0),           # bright orange -- open boundary
+        "flipped": (0.0, 0.85, 1.0),        # cyan -- wound backwards
+        "nonmanifold": (0.15, 0.2, 1.0),    # blue -- 3+ faces on an edge
+        "t_joint": (0.0, 0.85, 0.1),        # green -- unwelded crack
+        "intersecting": (0.6, 0.0, 0.0),    # dark red -- faces through faces
+        "overlapping": (1.0, 1.0, 1.0),     # white -- coplanar double skin
     }
 
     def show_validation(self, report, faces):
@@ -2404,9 +2415,13 @@ class _VNFViewport(Viewport):
         for p0, p1, colour in self._validation_segs:
             c = np.asarray(colour, dtype=np.float32)
             mid = (np.asarray(p0, dtype=np.float32) + np.asarray(p1, dtype=np.float32)) / 2.0
-            # A fraction of the vertex-marker radius: a tube as fat as a
-            # marker buries the geometry it is pointing at.
-            r = _marker_radius_for_point(self, mid) * 0.28
+            # Half the vertex-marker radius: a tube as fat as a marker
+            # buries the geometry it is pointing at, but a marker is only
+            # about 5px in radius on screen -- measured, not the ~12 the
+            # first draft assumed -- so anything much under half of that
+            # lands back at hairline width, which is what the tubes were
+            # meant to fix.
+            r = _marker_radius_for_point(self, mid) * 0.5
             rows.extend(_tube_triangles(p0, p1, r, c))
         if not rows:
             return
