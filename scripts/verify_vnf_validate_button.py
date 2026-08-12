@@ -118,6 +118,41 @@ def main():
     dlg.close()
     pump(0.3)
 
+    # --- indices as an evaluated VNF carries them ---------------------
+    # A VNF that came from a value, not from source text, has float
+    # indices -- this is what the button actually failed on in use.
+    v = [[0., 0., 0.], [10., 0., 0.], [10., 10., 0.], [0., 10., 0.]]
+    dlg = open_viewer([v, [[0., 1., 2.], [0., 2., 3.]]])
+    dlg._validate_btn.click()
+    pump(1.2)
+    msg = dlg._validation_label.text()
+    check("float face indices validate rather than failing",
+          "hole edge" in msg, msg)
+    check("and the overlay is drawn", overlay_segments(dlg._vp) == 1, msg)
+    dlg.close()
+    pump(0.3)
+
+    # --- face outlines survive float indices too ----------------------
+    # These go through a second index path (the viewer's own remap
+    # lookup), which silently drew nothing rather than raising.
+    v = [[0., 0., 0.], [10., 0., 0.], [0., 10., 0.],
+         [1., 1., 0.], [11., 1., 0.], [1., 11., 0.]]
+    dlg = open_viewer([v, [[0., 1., 2.], [3., 4., 5.]]])
+    dlg._validate_btn.click()
+    pump(1.2)
+    msg = dlg._validation_label.text()
+    check("coplanar overlap on float indices is reported",
+          "overlapping coplanar pair" in msg, msg)
+    # Counting the buffer would not isolate this: two open triangles also
+    # produce hole edges, so an overlay exists either way. Look for the
+    # overlap colour specifically -- only the outline path emits it.
+    want = dlg._vp.VALIDATION_COLORS["overlapping"]
+    check("and its face outlines are drawn",
+          any(tuple(c) == want for _a, _b, c in dlg._vp._validation_segs),
+          f"no {want} segments among {len(dlg._vp._validation_segs)}")
+    dlg.close()
+    pump(0.3)
+
     # --- re-validating clears the previous overlay --------------------
     # Otherwise a fixed mesh keeps its old highlights and reads as broken.
     tris = [t[:] for t in CUBE_TRIS]
