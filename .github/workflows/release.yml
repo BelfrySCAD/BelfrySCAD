@@ -97,9 +97,9 @@ jobs:
 
       - name: Build Linux AppImage
         run: |
-          uv run --python 3.12 briefcase create linux appimage -C manylinux="${{ matrix.manylinux }}"
-          uv run --python 3.12 briefcase build linux appimage -C manylinux="${{ matrix.manylinux }}"
-          uv run --python 3.12 briefcase package linux appimage -C manylinux="${{ matrix.manylinux }}"
+          uv run --python 3.12 briefcase create linux appimage -C manylinux='"${{ matrix.manylinux }}"'
+          uv run --python 3.12 briefcase build linux appimage -C manylinux='"${{ matrix.manylinux }}"'
+          uv run --python 3.12 briefcase package linux appimage -C manylinux='"${{ matrix.manylinux }}"'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
