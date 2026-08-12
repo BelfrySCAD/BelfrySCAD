@@ -2344,19 +2344,25 @@ class _VNFViewport(Viewport):
     # `buf.backface_color or (1, 0, 1, 1)`), so on a single-sided sheet
     # -- seen from behind, which is most of the meshes worth validating
     # -- that magenta IS the surface a mark has to stand out against.
-    # The first palette put a magenta and a purple on it, and a yellow
-    # on the default theme's yellow front faces. The object colour is
-    # themeable, though, so no fixed palette can clear every theme --
-    # the default is what is checked. See tests/test_data_viewers.py's
-    # TestValidationColors.
+    # The first palette put a magenta and a purple on it. The second put
+    # a cyan a hair from the Cyan/Nature themes' own object colour (a
+    # distance of 0.03 in RGB -- indistinguishable) and a white on the
+    # two near-white themes, because it was only ever checked against
+    # the default theme.
+    #
+    # So these clear *every* theme's object colour, not just Cornfield's,
+    # which is a real constraint: all thirteen are light, so the palette
+    # is forced dark or fully saturated. Hues are kept 45 degrees apart
+    # as well, since RGB distance alone will happily call two greens
+    # distinct. See tests/test_data_viewers.py's TestValidationColors.
     BACKFACE_MAGENTA = (1.0, 0.0, 1.0)
     VALIDATION_COLORS = {
-        "hole": (1.0, 0.45, 0.0),           # bright orange -- open boundary
-        "flipped": (0.0, 0.85, 1.0),        # cyan -- wound backwards
-        "nonmanifold": (0.15, 0.2, 1.0),    # blue -- 3+ faces on an edge
-        "t_joint": (0.0, 0.85, 0.1),        # green -- unwelded crack
-        "intersecting": (0.6, 0.0, 0.0),    # dark red -- faces through faces
-        "overlapping": (1.0, 1.0, 1.0),     # white -- coplanar double skin
+        "hole": (1.0, 0.0, 0.35),           # crimson -- open boundary
+        "flipped": (1.0, 0.45, 0.0),        # orange -- wound backwards
+        "nonmanifold": (0.6, 0.15, 0.85),   # violet -- 3+ faces on an edge
+        "t_joint": (0.0, 1.0, 0.0),         # green -- unwelded crack
+        "intersecting": (0.0, 0.15, 0.85),  # blue -- faces through faces
+        "overlapping": (0.0, 0.0, 0.0),     # black -- coplanar double skin
     }
 
     def show_validation(self, report, faces):
