@@ -201,11 +201,26 @@ def bodies_to_3mf_meshes(bodies):
     return meshes
 
 
+# Deflate level, chosen rather than inherited. Measured on the 224k-triangle
+# Dalek, zip step only:
+#
+#     level 0   14.77 MB     2 ms      level 6    2.37 MB   284 ms
+#     level 1    2.99 MB    65 ms      level 9    2.27 MB  1503 ms
+#     level 3    2.82 MB   116 ms
+#
+# 6 is the knee: 9 costs 5x the time for 4% more saving, and 1 -- which is
+# what lib3mf used, and the real reason its files came out larger than
+# ours rather than anything about the XML -- gives back 26% of the size to
+# save 0.2s on an export nobody does in a loop.
+_3MF_COMPRESS_LEVEL = 6
+
+
 def write_3mf(path: str, bodies):
     import zipfile
 
     xml = build_3mf_model_xml(bodies_to_3mf_meshes(exportable(bodies)))
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED,
+                         compresslevel=_3MF_COMPRESS_LEVEL) as z:
         z.writestr("[Content_Types].xml", _3MF_CONTENT_TYPES)
         z.writestr("_rels/.rels", _3MF_RELS)
         z.writestr("3D/3dmodel.model", xml)
