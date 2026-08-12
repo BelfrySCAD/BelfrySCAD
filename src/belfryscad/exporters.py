@@ -149,11 +149,15 @@ def _3mf_num(v):
 def build_3mf_model_xml(meshes):
     """The 3D/3dmodel.model part for [(verts, tris, rgba-or-None), ...].
 
+    Indented with tabs and spaced before each `/>`, matching what lib3mf
+    wrote, so the part reads sensibly when someone unzips a .3mf to look
+    at it. Neither costs much once deflated -- see _3MF_COMPRESS_LEVEL.
+
     Split out from the zip writing so it can be asserted on directly.
     """
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            f'<model unit="millimeter" xml:lang="en-US" xmlns="{_3MF_CORE}" '
-           f'xmlns:m="{_3MF_MATERIAL}">', "<resources>"]
+           f'xmlns:m="{_3MF_MATERIAL}">', "\t<resources>"]
     next_id = 1
     items = []
     for verts, tris, rgba in meshes:
@@ -162,26 +166,34 @@ def build_3mf_model_xml(meshes):
             cid = next_id
             next_id += 1
             r, g, b, a = (max(0, min(255, int(round(c * 255)))) for c in rgba)
-            out.append(f'<m:colorgroup id="{cid}">'
-                       f'<m:color color="#{r:02X}{g:02X}{b:02X}{a:02X}"/></m:colorgroup>')
+            out.append(f'\t\t<m:colorgroup id="{cid}">')
+            out.append(f'\t\t\t<m:color color="#{r:02X}{g:02X}{b:02X}{a:02X}" />')
+            out.append("\t\t</m:colorgroup>")
             # One colour for the whole object, so it hangs off the object
             # rather than repeating on every triangle -- which is what
             # lib3mf collapsed our per-triangle properties into anyway.
             colour_attrs = f' pid="{cid}" pindex="0"'
         oid = next_id
         next_id += 1
-        out.append(f'<object id="{oid}" type="model"{colour_attrs}><mesh><vertices>')
-        out.extend(f'<vertex x="{_3mf_num(v[0])}" y="{_3mf_num(v[1])}" '
-                   f'z="{_3mf_num(v[2])}"/>' for v in verts)
-        out.append("</vertices><triangles>")
-        out.extend(f'<triangle v1="{int(t[0])}" v2="{int(t[1])}" v3="{int(t[2])}"/>'
-                   for t in tris)
-        out.append("</triangles></mesh></object>")
+        out.append(f'\t\t<object id="{oid}" type="model"{colour_attrs}>')
+        out.append("\t\t\t<mesh>")
+        out.append("\t\t\t\t<vertices>")
+        out.extend(f'\t\t\t\t\t<vertex x="{_3mf_num(v[0])}" y="{_3mf_num(v[1])}" '
+                   f'z="{_3mf_num(v[2])}" />' for v in verts)
+        out.append("\t\t\t\t</vertices>")
+        out.append("\t\t\t\t<triangles>")
+        out.extend(f'\t\t\t\t\t<triangle v1="{int(t[0])}" v2="{int(t[1])}" '
+                   f'v3="{int(t[2])}" />' for t in tris)
+        out.append("\t\t\t\t</triangles>")
+        out.append("\t\t\t</mesh>")
+        out.append("\t\t</object>")
         items.append(oid)
-    out.append("</resources><build>")
-    out.extend(f'<item objectid="{i}"/>' for i in items)
-    out.append("</build></model>")
-    return "\n".join(out)
+    out.append("\t</resources>")
+    out.append("\t<build>")
+    out.extend(f'\t\t<item objectid="{i}" />' for i in items)
+    out.append("\t</build>")
+    out.append("</model>")
+    return "\n".join(out) + "\n"
 
 
 def bodies_to_3mf_meshes(bodies):
@@ -204,14 +216,19 @@ def bodies_to_3mf_meshes(bodies):
 # Deflate level, chosen rather than inherited. Measured on the 224k-triangle
 # Dalek, zip step only:
 #
-#     level 0   14.77 MB     2 ms      level 6    2.37 MB   284 ms
-#     level 1    2.99 MB    65 ms      level 9    2.27 MB  1503 ms
-#     level 3    2.82 MB   116 ms
+#     level 0   16.80 MB     3 ms      level 6    2.41 MB   314 ms
+#     level 1    3.06 MB    71 ms      level 9    2.30 MB  1912 ms
+#     level 3    2.85 MB   119 ms
 #
-# 6 is the knee: 9 costs 5x the time for 4% more saving, and 1 -- which is
+# 6 is the knee: 9 costs six times the time for 5% more saving, and 1 --
 # what lib3mf used, and the real reason its files came out larger than
-# ours rather than anything about the XML -- gives back 26% of the size to
-# save 0.2s on an export nobody does in a loop.
+# ours rather than anything about the XML -- gives back 27% of the size to
+# save a quarter-second on an export nobody runs in a loop.
+#
+# The tab indentation and the space before each "/>" cost 2MB raw and 43KB
+# (1.8%) compressed here. Deflate eats repeated tabs almost entirely, which
+# is why the part can be readable when unzipped for nearly nothing. Do not
+# "optimise" them away for size; that trade was made deliberately.
 _3MF_COMPRESS_LEVEL = 6
 
 

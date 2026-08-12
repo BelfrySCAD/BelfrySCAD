@@ -142,3 +142,28 @@ def test_an_empty_model_still_writes_a_valid_package(tmp_path):
     model = model_of(out)
     assert model.find("c:resources", NS) is not None
     assert model.find("c:build", NS) is not None
+
+
+# --- readability ------------------------------------------------------
+# The model part is deliberately pretty-printed so it can be read when
+# someone unzips a .3mf. It costs ~1.8% compressed (2MB raw of tabs that
+# deflate almost entirely away), and that trade was made on purpose.
+def test_the_model_part_is_indented_with_tabs(tmp_path):
+    out = write("cube(10);", tmp_path)
+    with zipfile.ZipFile(out) as z:
+        text = z.read("3D/3dmodel.model").decode()
+    lines = text.splitlines()
+    assert any(ln.startswith("\t<resources>") for ln in lines), lines[:4]
+    assert any(ln.startswith("\t\t\t\t\t<vertex ") for ln in lines)
+    assert any(ln.startswith("\t\t\t\t\t<triangle ") for ln in lines)
+    assert any(ln.startswith("\t\t<item ") for ln in lines)
+
+
+def test_empty_elements_keep_the_space_before_the_slash(tmp_path):
+    out = write('color("red") cube(10);', tmp_path)
+    with zipfile.ZipFile(out) as z:
+        text = z.read("3D/3dmodel.model").decode()
+    assert "<vertex " in text and '"/>' not in text.replace(' />', '')
+    for frag in ("<vertex ", "<triangle ", "<item ", "<m:color "):
+        line = next(ln for ln in text.splitlines() if frag in ln)
+        assert line.rstrip().endswith(" />"), line
