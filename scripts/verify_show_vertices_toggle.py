@@ -75,12 +75,21 @@ def main():
 
         vp = dlg._vp
         check(f"{name}: has the toggle", hasattr(vp, "set_show_unselected"))
-        cbs = [c for c in dlg.findChildren(type(dlg._show_verts_cb))
-               if c.text() == "Show Vertices"] if hasattr(dlg, "_show_verts_cb") else []
-        if name != "VNFViewer":
-            check(f"{name}: shows a \"Show Vertices\" checkbox", bool(cbs))
-            check(f"{name}: checked by default, preserving old behaviour",
-                  bool(cbs) and cbs[0].isChecked())
+        from PySide6.QtWidgets import QCheckBox
+        cbs = [c for c in dlg.findChildren(QCheckBox) if c.text() == "Show Vertices"]
+        check(f"{name}: shows a \"Show Vertices\" checkbox", bool(cbs))
+
+        # Path/Grid/Region/Affine draw every point on open; VNFViewer does
+        # not, because a mesh has far more vertices and the markers cost
+        # ~0.7ms each to build -- ~6s for 9,600 -- and rebuild on zoom.
+        wanted = (name != "VNFViewer")
+        check(f"{name}: {'checked' if wanted else 'unchecked'} by default",
+              bool(cbs) and cbs[0].isChecked() == wanted,
+              f"checkbox={cbs[0].isChecked() if cbs else None}, wanted {wanted}")
+        check(f"{name}: and the viewport agrees with its checkbox",
+              bool(cbs) and vp._show_unselected == cbs[0].isChecked(),
+              f"checkbox={cbs[0].isChecked() if cbs else None} "
+              f"viewport={vp._show_unselected}")
 
         def markers():
             return len(vp._renderer._point_buffers)
@@ -107,7 +116,7 @@ def main():
             vp.set_selected([])
             pump(0.5)
 
-        if name == "VNFViewer":       # opt-in: turn it on first
+        if name == "VNFViewer":      # opt-in: turn it on to measure
             vp.set_show_unselected(True)
             pump(0.6)
 
