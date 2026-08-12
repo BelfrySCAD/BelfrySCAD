@@ -1091,10 +1091,12 @@ class TestTubeTriangles:
     P1 = np.array([10.0, 0.0, 0.0])
     C = np.array([1.0, 0.0, 0.0], dtype=np.float32)
 
-    def rows(self, p0=None, p1=None, sides=6):
+    def rows(self, p0=None, p1=None, r0=None, r1=None, sides=6):
         return _tube_triangles(self.P0 if p0 is None else p0,
                                self.P1 if p1 is None else p1,
-                               self.R, self.C, sides=sides)
+                               self.R if r0 is None else r0,
+                               self.R if r1 is None else r1,
+                               self.C, sides=sides)
 
     def tris(self, **kw):
         rows = np.array(self.rows(**kw), dtype=np.float64)
@@ -1113,12 +1115,15 @@ class TestTubeTriangles:
         assert set(uses.values()) == {2}, sorted(set(uses.values()))
 
     def test_faces_are_wound_outward(self):
-        # Cross product of the winding must agree with the outward normal
-        # the row carries, or culling hides the side facing the camera.
-        verts, normals = self.tris()
-        for tri, n in zip(verts, normals):
-            wind = np.cross(tri[1] - tri[0], tri[2] - tri[0])
-            assert np.dot(wind, n) > 0, (tri, n)
+        # Normals now come from the winding, so comparing the two would
+        # prove nothing. A convex solid's outward faces all point away
+        # from its centre -- that is what a reversed winding breaks, and
+        # culling then hides the side facing the camera.
+        for r1 in (self.R, self.R * 3):          # cylinder and cone
+            verts, normals = self.tris(r1=r1)
+            centre = verts.reshape(-1, 3).mean(axis=0)
+            for tri, n in zip(verts, normals):
+                assert np.dot(n, tri.mean(axis=0) - centre) > 0, (tri, n)
 
     def test_the_surface_sits_at_the_requested_radius(self):
         verts, _ = self.tris()
@@ -1127,6 +1132,37 @@ class TestTubeTriangles:
         rel = pts - self.P0
         perp = rel - np.outer(rel @ axis, axis)
         assert np.allclose(np.linalg.norm(perp, axis=1), self.R)
+
+    def test_each_end_takes_its_own_radius(self):
+        # The whole point of two radii: apparent width in perspective
+        # depends on each point's own distance from the eye, so a tube
+        # sized from its midpoint is wrong at both ends.
+        verts, _ = self.tris(r0=1.0, r1=4.0)
+        pts = verts.reshape(-1, 3)
+        near = pts[np.isclose(pts[:, 0], 0.0)]
+        far = pts[np.isclose(pts[:, 0], 10.0)]
+        assert np.allclose(np.linalg.norm(near[:, 1:], axis=1), 1.0)
+        assert np.allclose(np.linalg.norm(far[:, 1:], axis=1), 4.0)
+
+    def test_a_tapered_tube_is_still_closed(self):
+        verts, _ = self.tris(r0=1.0, r1=4.0)
+        uses = {}
+        for tri in verts:
+            for k in range(3):
+                e = tuple(sorted((tuple(np.round(tri[k], 6)),
+                                  tuple(np.round(tri[(k + 1) % 3], 6)))))
+                uses[e] = uses.get(e, 0) + 1
+        assert set(uses.values()) == {2}
+
+    def test_side_normals_tilt_with_the_taper(self):
+        # A cone's sides do not point straight out from the axis. Using
+        # the radial direction (right for a cylinder) would light a
+        # steeply tapered tube as though it were not tapered.
+        _verts, normals = self.tris(r0=0.2, r1=4.0)
+        axis = (self.P1 - self.P0) / np.linalg.norm(self.P1 - self.P0)
+        side = [n for n in normals if abs(np.dot(n, axis)) < 0.99]
+        assert side, "no side faces found"
+        assert any(abs(np.dot(n, axis)) > 0.05 for n in side)
 
     def test_it_spans_exactly_the_segment(self):
         verts, _ = self.tris()
