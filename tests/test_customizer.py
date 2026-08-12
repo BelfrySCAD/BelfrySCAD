@@ -12,6 +12,7 @@ used a hardcoded (-1e9, 1e9) range regardless of what the comment said.
 a list (confirmed below), so the bug was entirely in the widget-dispatch/
 `_VectorWidget` layer, not the parsing layer these tests cover -- verified
 separately via a throwaway Qt script per this project's convention."""
+from pathlib import Path
 import json
 
 from belfryscad.window.customizer import (
@@ -284,11 +285,16 @@ class TestDeleteParameter:
 
 
 class TestPresetPathFor:
-    def test_swaps_scad_extension_for_json(self):
-        assert preset_path_for('/tmp/model.scad') == '/tmp/model.json'
+    # Compared as paths, not strings: preset_path_for goes through pathlib,
+    # so on Windows '/tmp/model.scad' comes back as '\\tmp\\model.json' and a
+    # literal POSIX expectation fails there for no real reason.
+    def test_swaps_scad_extension_for_json(self, tmp_path):
+        src = tmp_path / 'model.scad'
+        assert Path(preset_path_for(str(src))) == tmp_path / 'model.json'
 
-    def test_no_extension(self):
-        assert preset_path_for('/tmp/model') == '/tmp/model.json'
+    def test_no_extension(self, tmp_path):
+        src = tmp_path / 'model'
+        assert Path(preset_path_for(str(src))) == tmp_path / 'model.json'
 
 
 class TestPresetIO:

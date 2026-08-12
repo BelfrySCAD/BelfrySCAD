@@ -5,6 +5,7 @@ OpenSCAD's src/handle_dep.cc rather than guessed from --help text alone;
 see the module's own doc comment."""
 
 import os
+import sys
 
 from belfryscad.scad_deps import scan_dependencies, write_deps_file, run_make_for_missing
 
@@ -76,12 +77,20 @@ class TestWriteDepsFile:
 
 class TestRunMakeForMissing:
     def _make_cmd(self, tmp_path, content="cube(1);\n"):
-        script = tmp_path / "gen.sh"
+        """A generator command that works on every platform.
+
+        This used to be a `#!/bin/sh` script with `cp`, which simply cannot
+        run on Windows -- the tests using it failed there with the target
+        file never appearing. Driving the interpreter running the tests
+        needs no shell at all.
+        """
+        script = tmp_path / "gen.py"
         marker = tmp_path / "gen_content.txt"
         marker.write_text(content)
-        script.write_text(f'#!/bin/sh\ncp {marker} "$1"\n')
-        os.chmod(script, 0o755)
-        return str(script)
+        script.write_text(
+            "import shutil, sys\n"
+            f"shutil.copyfile({str(marker)!r}, sys.argv[1])\n")
+        return f'"{sys.executable}" "{script}"'
 
     def test_generates_missing_main_file(self, tmp_path):
         main = tmp_path / "generated.scad"

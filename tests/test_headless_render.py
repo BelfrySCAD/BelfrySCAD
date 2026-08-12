@@ -25,6 +25,33 @@ from belfryscad.headless_render import (
 )
 
 
+# Every test below needs a real offscreen OpenGL context. GitHub's
+# windows-latest runner has no GL driver -- moderngl fails there with
+# "wglCreateContextAttribsARB not found" -- and a headless Linux box
+# without libEGL is the same story. That is the environment's limit, not
+# a defect in the code under test, so these skip rather than fail.
+#
+# Gated on actually creating a context, not on the OS name: a Windows
+# machine with a GPU runs them, and any other GL-less environment skips
+# them for the same honest reason.
+def _offscreen_gl_available():
+    try:
+        import moderngl
+        ctx = moderngl.create_context(standalone=True, require=330)
+    except Exception:
+        return False
+    try:
+        ctx.release()
+    except Exception:
+        pass
+    return True
+
+
+needs_gl = pytest.mark.skipif(
+    not _offscreen_gl_available(),
+    reason="no offscreen OpenGL 3.3 context available on this machine")
+
+
 def _read_png(path):
     """Minimal reader matching belfryscad.png_writer.write_png's own
     output exactly (single IDAT, filter type 0 on every scanline, no
@@ -134,6 +161,7 @@ class TestApplyCamera:
             _apply_camera(cam, "a,b,c,d,e,f,g")
 
 
+@needs_gl
 class TestRenderPng:
     def test_basic_render_succeeds_with_requested_size(self, tmp_path):
         src = tmp_path / "in.scad"
@@ -197,6 +225,7 @@ class TestRenderPng:
         assert code == 0
 
 
+@needs_gl
 class TestRenderPngAnimation:
     def test_frame_filenames(self, tmp_path):
         src = tmp_path / "in.scad"
