@@ -1187,21 +1187,27 @@ class TestTubeTriangles:
 
 
 class TestValidationColors:
-    """The overlay palette has to survive the surfaces it is drawn on.
+    """The overlay palette has to survive every surface it is drawn on.
 
-    A mark that matches what is behind it is not a mark. Two surfaces
-    are always in play: the hardcoded magenta the viewport paints
+    A mark that matches what is behind it is not a mark. Two kinds of
+    surface are in play: the hardcoded magenta the viewport paints
     backfaces (its inverted-normal cue, and the whole surface of a
-    single-sided sheet seen from behind), and the theme's object colour.
+    single-sided sheet seen from behind), and the object colour -- which
+    is themeable, so ALL of them count. Checking only the default let a
+    cyan mark ship that was 0.03 from the Cyan theme's own objects.
     """
     # Two thresholds, in RGB space. Two tubes seen side by side need a
     # wider gap than a tube against a surface does -- the surface is
     # shaded across its area, the tube is one flat hue, so a smaller
-    # difference still separates them. Both offenders in the first
-    # palette (magenta on magenta at 0.22, purple at 0.38) fail the
-    # looser one, so the split is not what let them through.
+    # difference still separates them.
     MIN_MUTUAL = 0.55
     MIN_VS_SURFACE = 0.40
+
+    # Orange on Solarized's dark gold is closer than that, and stays:
+    # orange for flipped normals was asked for directly. Listed rather
+    # than skipped, so any *other* collision still fails -- and so this
+    # one fails too if it ever gets worse.
+    KNOWN_CLOSE = {("flipped", "Solarized")}
 
     @staticmethod
     def dist(a, b):
@@ -1230,17 +1236,41 @@ class TestValidationColors:
         actual = tuple(float(x) for x in m.group(1).split(","))[:3]
         assert actual == _VNFViewport.BACKFACE_MAGENTA, actual
 
-    def test_none_of_them_reads_as_the_default_theme_object(self):
-        from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
-        obj = COLOR_THEMES[DEFAULT_COLOR_THEME]["object"]
-        for name, c in self.colors().items():
-            assert self.dist(c, obj) >= self.MIN_VS_SURFACE, (name, c)
+    def test_none_of_them_reads_as_any_theme_object(self):
+        from belfryscad.window.color_themes import all_themes
+        close = set()
+        for theme, spec in all_themes().items():
+            for name, c in self.colors().items():
+                if self.dist(c, spec["object"]) < self.MIN_VS_SURFACE:
+                    close.add((name, theme))
+        assert close == self.KNOWN_CLOSE, close
+
+    def test_the_known_exception_is_only_barely_close(self):
+        # An allow-list is worth nothing if what it allows is invisible.
+        from belfryscad.window.color_themes import all_themes
+        for name, theme in self.KNOWN_CLOSE:
+            d = self.dist(self.colors()[name], all_themes()[theme]["object"])
+            assert d >= 0.25, (name, theme, d)
 
     def test_they_are_distinguishable_from_each_other(self):
         items = list(self.colors().items())
         for i, (n1, c1) in enumerate(items):
             for n2, c2 in items[i + 1:]:
                 assert self.dist(c1, c2) >= self.MIN_MUTUAL, (n1, n2)
+
+    def test_their_hues_are_spread_not_just_their_rgb(self):
+        # RGB distance calls a dark green and a bright green different.
+        # An eye does not, so hue is checked separately.
+        import colorsys
+        hues = []
+        for name, c in self.colors().items():
+            h, _l, s = colorsys.rgb_to_hls(*c[:3])
+            if s > 0.2:                     # black has no meaningful hue
+                hues.append((name, h * 360))
+        for i, (n1, h1) in enumerate(hues):
+            for n2, h2 in hues[i + 1:]:
+                sep = abs(h1 - h2)
+                assert min(sep, 360 - sep) >= 45, (n1, n2, h1, h2)
 
     def test_every_condition_the_report_can_raise_has_a_colour(self):
         # A finding with no colour would be silently undrawable.
