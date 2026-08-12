@@ -1897,9 +1897,9 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 20, 0)
-        # Same control as VNFViewer's, but checked by default here:
-        # these shapes have always drawn every point, and unchecking
-        # it is what clears the view.
+        # Checked by default here, unlike VNFViewer's opt-in: these
+        # shapes carry few enough points to draw them all, and
+        # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
         self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
@@ -2161,6 +2161,10 @@ class _VNFViewport(Viewport):
         self._vert_marker_vbo_w = None
         self._vert_blink_red = True
         self._vert_indices: list[int] = []
+        # Opt-in here, unlike the other viewers. Markers cost roughly
+        # 0.7ms per vertex to build and are rebuilt on zoom, and a mesh
+        # carries far more vertices than a path or grid -- see
+        # set_show_unselected for the measurements.
         self._show_unselected = False
         self._vert_blink_timer = QTimer(self)
         self._vert_blink_timer.setInterval(250)
@@ -2262,12 +2266,17 @@ class _VNFViewport(Viewport):
         self.update()
 
     def set_show_unselected(self, enabled: bool):
-        """Toggle the "Show Vertices" checkbox -- unlike the
-        selected-vertex markers (always shown, blinking), this is opt-in:
-        a VNF mesh can have far more vertices than a Path/Grid, where the
-        equivalent "always show every point in green" markers
-        (`_PathViewport`/`_GridViewport._build_point_markers`) are cheap
-        enough to leave permanently on."""
+        """Toggle the "Show Vertices" checkbox. Selected-vertex markers are
+        always shown and blinking; this governs every other vertex.
+
+        Off by default here, unlike the Path/Grid/Region/Affine viewers,
+        because a mesh carries far more vertices than a path does and the
+        cost is linear in that count -- and paid again whenever the markers
+        are rebuilt, which includes zoom (`frame_scene`). Measured on an
+        M1: ~0.33s for 448 vertices, ~1.6s for 2,400, ~6s for 9,600 and
+        ~19s for 28,000. Turning it on for a large mesh is a deliberate
+        choice with a visible cost, so it is not made on the viewer's
+        behalf."""
         self._show_unselected = enabled
         self.makeCurrent()
         self._build_unselected_markers()
@@ -3167,9 +3176,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
-        # Same control as VNFViewer's, but checked by default here:
-        # these shapes have always drawn every point, and unchecking
-        # it is what clears the view.
+        # Checked by default here, unlike VNFViewer's opt-in: these
+        # shapes carry few enough points to draw them all, and
+        # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
         self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
@@ -4247,9 +4256,9 @@ class GridViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
-        # Same control as VNFViewer's, but checked by default here:
-        # these shapes have always drawn every point, and unchecking
-        # it is what clears the view.
+        # Checked by default here, unlike VNFViewer's opt-in: these
+        # shapes carry few enough points to draw them all, and
+        # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
         self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
@@ -5286,9 +5295,9 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
-        # Same control as VNFViewer's, but checked by default here:
-        # these shapes have always drawn every point, and unchecking
-        # it is what clears the view.
+        # Checked by default here, unlike VNFViewer's opt-in: these
+        # shapes carry few enough points to draw them all, and
+        # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
         self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
