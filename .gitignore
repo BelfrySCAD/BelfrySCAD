@@ -20,7 +20,6 @@ env/
 # Distribution / packaging
 *.whl
 *.tar.gz
-!vendor/wheels/*.whl
 
 # IDE
 .vscode/
