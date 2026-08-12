@@ -648,11 +648,6 @@ class SceneRenderer:
         self._line_buffers: list[LineBuffer] = []
         self._point_buffers: list[PointBuffer] = []
         self.depth_test_points: bool = False
-        # False draws lines through the surface. Off by default so
-        # ordinary overlays stay depth-correct; the VNF viewer turns
-        # it off while showing validation marks, which are useless
-        # hidden behind the very faces they are complaining about.
-        self.depth_test_lines: bool = True
         self.line_width: float = 1.0
         self.camera = Camera()
         self._viewport: tuple[int, int] = (800, 600)
@@ -978,13 +973,9 @@ class SceneRenderer:
             return
         old_lw = self._ctx.line_width
         self._ctx.line_width = self.line_width
-        if not self.depth_test_lines:
-            self._ctx.disable(mgl.DEPTH_TEST)
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         for lb in self._line_buffers:
             lb.vao.render(mgl.LINES)
-        if not self.depth_test_lines:
-            self._ctx.enable(mgl.DEPTH_TEST)
         self._ctx.line_width = old_lw
 
     def _render_simple_points(self, mvp: np.ndarray, eye_pos: np.ndarray, L_world: np.ndarray):

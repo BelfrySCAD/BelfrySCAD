@@ -55,8 +55,7 @@ def main():
         return dlg
 
     def overlay_segments(vp):
-        buf = getattr(vp, "_validation_lines", None)
-        return 0 if buf is None else 1
+        return 0 if getattr(vp, "_validation_vao", None) is None else 1
 
     # --- a sound cube -------------------------------------------------
     dlg = open_viewer([[p[:] for p in CUBE_PTS], [t[:] for t in CUBE_TRIS]])
