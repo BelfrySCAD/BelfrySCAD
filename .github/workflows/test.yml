@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  platforms:
     # macOS and Windows were only ever built by release.yml, which runs
     # briefcase but never pytest -- so the suite had never run on either,
     # on a project mostly developed on macOS. macos-latest is arm64, which
@@ -33,3 +33,21 @@ jobs:
       - run: uv sync --frozen
 
       - run: uv run pytest
+
+  # Branch protection requires a check called exactly "test". A matrix job
+  # reports as "test (ubuntu-latest)" and friends, so a job of that name
+  # would never produce the required check and every PR would sit BLOCKED
+  # with all three platforms green -- which is precisely what happened.
+  # This gate keeps that name stable however the matrix changes.
+  test:
+    needs: platforms
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every platform passed
+        run: |
+          if [ "${{ needs.platforms.result }}" != "success" ]; then
+            echo "platform matrix: ${{ needs.platforms.result }}"
+            exit 1
+          fi
+          echo "all platforms passed"
