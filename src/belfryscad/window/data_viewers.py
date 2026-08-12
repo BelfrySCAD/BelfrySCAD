@@ -2265,6 +2265,99 @@ class _VNFViewport(Viewport):
         self.doneCurrent()
         self.update()
 
+    # Validation overlay colours. Each condition gets its own so a mesh
+    # failing several ways can still be read apart at a glance.
+    VALIDATION_COLORS = {
+        "hole": (1.0, 0.15, 0.15),          # red -- open boundary
+        "flipped": (1.0, 0.55, 0.0),        # orange -- wound backwards
+        "nonmanifold": (0.65, 0.1, 0.9),    # purple -- 3+ faces on an edge
+        "t_joint": (1.0, 0.1, 0.8),         # magenta -- unwelded crack
+        "intersecting": (1.0, 0.0, 0.0),    # red -- faces through faces
+        "overlapping": (1.0, 0.9, 0.0),     # yellow -- coplanar double skin
+    }
+
+    def show_validation(self, report, faces):
+        """Draw a VNFReport over the mesh.
+
+        Edges are drawn as line segments and faces as their outlines --
+        one mechanism for everything, rather than a second translucent
+        mesh pass whose depth interaction would have to be tuned
+        separately. Lines already draw over the surface.
+        """
+        self.clear_validation()
+        if report is None or report.welded_points is None:
+            return
+        pts = report.welded_points
+        if len(pts) == 0:
+            return
+        remap = report.remap
+        segs = []
+
+        def edge(a, b, colour):
+            segs.append((pts[a], colour))
+            segs.append((pts[b], colour))
+
+        for a, b in report.hole_edges:
+            edge(a, b, self.VALIDATION_COLORS["hole"])
+        for a, b in report.flipped_edges:
+            edge(a, b, self.VALIDATION_COLORS["flipped"])
+        for a, b in report.nonmanifold_edges:
+            edge(a, b, self.VALIDATION_COLORS["nonmanifold"])
+        for _v, (a, b) in report.t_joints:
+            edge(a, b, self.VALIDATION_COLORS["t_joint"])
+
+        def outline(fi, colour):
+            try:
+                idx = [int(remap[i]) for i in faces[fi]]
+            except (IndexError, TypeError):
+                return
+            for k in range(len(idx)):
+                edge(idx[k], idx[(k + 1) % len(idx)], colour)
+
+        for fi, fj in report.intersecting:
+            outline(fi, self.VALIDATION_COLORS["intersecting"])
+            outline(fj, self.VALIDATION_COLORS["intersecting"])
+        for fi, fj in report.overlapping:
+            outline(fi, self.VALIDATION_COLORS["overlapping"])
+            outline(fj, self.VALIDATION_COLORS["overlapping"])
+
+        if not segs:
+            return
+        data = np.array([[p[0], p[1], p[2], c[0], c[1], c[2]] for p, c in segs],
+                        dtype=np.float32)
+        self.makeCurrent()
+        # Thicker while the overlay is up: at the default width the marks
+        # sit on mesh edges and are almost impossible to pick out against
+        # the surface, which defeats the point of highlighting them.
+        self._pre_validation_line_width = self._renderer.line_width
+        self._renderer.line_width = 4.0
+        # Draw through the surface: a hole in the far side is exactly the
+        # thing you cannot see, and rotating to find each mark defeats the
+        # purpose of highlighting them.
+        self._renderer.depth_test_lines = False
+        self._validation_lines = self._renderer.upload_lines(data)
+        self.doneCurrent()
+        self.update()
+
+    def clear_validation(self):
+        """Remove any validation overlay."""
+        if getattr(self, "_validation_lines", None) is None:
+            return
+        self.makeCurrent()
+        try:
+            self._validation_lines.vao.release()
+            self._validation_lines.vbo.release()
+            self._renderer._line_buffers.remove(self._validation_lines)
+        except (ValueError, AttributeError):
+            pass
+        self._validation_lines = None
+        if getattr(self, "_pre_validation_line_width", None) is not None:
+            self._renderer.line_width = self._pre_validation_line_width
+            self._pre_validation_line_width = None
+        self._renderer.depth_test_lines = True
+        self.doneCurrent()
+        self.update()
+
     def set_show_unselected(self, enabled: bool):
         """Toggle the "Show Vertices" checkbox. Selected-vertex markers are
         always shown and blinking; this governs every other vertex.
@@ -2666,6 +2759,19 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
         btn_row.addWidget(show_unselected_cb)
+
+        # Manifold validation. Deliberately a button rather than something
+        # that runs on open: the pairwise face tests are the expensive part
+        # and a mesh is usually opened to look at, not to audit.
+        self._validate_btn = QPushButton("Validate")
+        self._validate_btn.setToolTip(
+            "Check for holes, flipped normals, T-joints, intersecting faces "
+            "and overlapping coplanar faces, and highlight what it finds")
+        self._validate_btn.clicked.connect(self._on_validate)
+        btn_row.addWidget(self._validate_btn)
+        self._validation_label = QLabel("")
+        self._validation_label.setWordWrap(True)
+        btn_row.addWidget(self._validation_label, 1)
         if editable:
             self._setup_undo(vnf_value)
             btn_row.addLayout(self._make_reset_button_row())
@@ -2692,6 +2798,32 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._vp.duplicate_vertex_requested.connect(self._duplicate_vertex)
             self._vp.delete_face_requested.connect(self._delete_face)
             self._vp.reverse_face_requested.connect(self._reverse_face)
+
+    def _on_validate(self):
+        """Run manifold validation over the VNF as it currently stands."""
+        from belfryscad.vnf_validate import validate_vnf
+
+        self._validate_btn.setEnabled(False)
+        self._validation_label.setText("Checking…")
+        QApplication.processEvents()
+        try:
+            report = validate_vnf(self._vnf)
+        except Exception as e:                       # noqa: BLE001
+            # A check must never take the viewer down with it.
+            self._validation_label.setText(f"Validation failed: {e}")
+            self._vp.clear_validation()
+            return
+        finally:
+            self._validate_btn.setEnabled(True)
+
+        faces = self._vnf[1] if len(self._vnf) > 1 else []
+        self._vp.show_validation(None if report.ok else report, faces)
+        text = report.summary()
+        if report.notes:
+            text += "  (" + "; ".join(report.notes) + ")"
+        self._validation_label.setText(text)
+        self._validation_label.setStyleSheet(
+            "color: #1a7f37;" if report.ok else "color: #b32020;")
 
     @staticmethod
     def _make_vert_table(verts, editable: bool = False) -> QTableWidget:
