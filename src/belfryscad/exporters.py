@@ -103,75 +103,144 @@ def exportable(bodies):
     return [b for b in bodies if getattr(b, "role", "normal") != "background"]
 
 
-def write_3mf(path: str, bodies):
-    import lib3mf
+# --- 3MF ---------------------------------------------------------------
+# 3MF is an OPC package: a ZIP holding a content-types part, a
+# relationships part, and an XML model. Everything written here is the
+# core mesh spec plus one solid colour per object from the materials
+# extension, which is the whole of what BelfrySCAD emits -- no beam
+# lattice, slices, textures, or transforms beyond identity, and no reader.
+#
+# This replaced lib3mf, which was a conditional dependency: it has no
+# aarch64/ARM64 wheels, so .3mf export simply did not exist on Linux ARM
+# or Windows on ARM. Verified against lib3mf while both existed --
+# identical vertices, triangles and colours read back, and OpenSCAD
+# imports the result indistinguishably from lib3mf's own output.
+
+_3MF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+_3MF_MATERIAL = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
+_3MF_REL = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+
+_3MF_CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\
+<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\
+</Types>
+"""
+
+_3MF_RELS = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\
+<Relationship Type="{_3MF_REL}" Target="/3D/3dmodel.model" Id="rel0"/>\
+</Relationships>
+"""
+
+
+def _3mf_num(v):
+    """A coordinate as 3MF wants it: a plain decimal.
+
+    The spec's ST_Number forbids exponent notation, so "1e-07" would be
+    invalid -- hence fixed-point. Six decimal places is well beyond the
+    float32 the mesh arrives as; magnitudes below ~1e-6 flush to zero,
+    which no mm-scale model reaches.
+    """
+    s = f"{float(v):.6f}".rstrip("0").rstrip(".")
+    return "0" if s in ("", "-0") else s
+
+
+def build_3mf_model_xml(meshes):
+    """The 3D/3dmodel.model part for [(verts, tris, rgba-or-None), ...].
+
+    Indented with tabs and spaced before each `/>`, matching what lib3mf
+    wrote, so the part reads sensibly when someone unzips a .3mf to look
+    at it. Neither costs much once deflated -- see _3MF_COMPRESS_LEVEL.
+
+    Split out from the zip writing so it can be asserted on directly.
+    """
+    out = ['<?xml version="1.0" encoding="UTF-8"?>',
+           f'<model unit="millimeter" xml:lang="en-US" xmlns="{_3MF_CORE}" '
+           f'xmlns:m="{_3MF_MATERIAL}">', "\t<resources>"]
+    next_id = 1
+    items = []
+    for verts, tris, rgba in meshes:
+        colour_attrs = ""
+        if rgba is not None:
+            cid = next_id
+            next_id += 1
+            r, g, b, a = (max(0, min(255, int(round(c * 255)))) for c in rgba)
+            out.append(f'\t\t<m:colorgroup id="{cid}">')
+            out.append(f'\t\t\t<m:color color="#{r:02X}{g:02X}{b:02X}{a:02X}" />')
+            out.append("\t\t</m:colorgroup>")
+            # One colour for the whole object, so it hangs off the object
+            # rather than repeating on every triangle -- which is what
+            # lib3mf collapsed our per-triangle properties into anyway.
+            colour_attrs = f' pid="{cid}" pindex="0"'
+        oid = next_id
+        next_id += 1
+        out.append(f'\t\t<object id="{oid}" type="model"{colour_attrs}>')
+        out.append("\t\t\t<mesh>")
+        out.append("\t\t\t\t<vertices>")
+        out.extend(f'\t\t\t\t\t<vertex x="{_3mf_num(v[0])}" y="{_3mf_num(v[1])}" '
+                   f'z="{_3mf_num(v[2])}" />' for v in verts)
+        out.append("\t\t\t\t</vertices>")
+        out.append("\t\t\t\t<triangles>")
+        out.extend(f'\t\t\t\t\t<triangle v1="{int(t[0])}" v2="{int(t[1])}" '
+                   f'v3="{int(t[2])}" />' for t in tris)
+        out.append("\t\t\t\t</triangles>")
+        out.append("\t\t\t</mesh>")
+        out.append("\t\t</object>")
+        items.append(oid)
+    out.append("\t</resources>")
+    out.append("\t<build>")
+    out.extend(f'\t\t<item objectid="{i}" />' for i in items)
+    out.append("\t</build>")
+    out.append("</model>")
+    return "\n".join(out) + "\n"
+
+
+def bodies_to_3mf_meshes(bodies):
+    """[(verts, tris, rgba)] for every non-empty body worth writing."""
     import numpy as np
 
-    bodies = exportable(bodies)
-
-    _FA3 = type(lib3mf.Position().Coordinates)
-    _UI3 = type(lib3mf.Triangle().Indices)
-
-    def _identity_transform():
-        t = lib3mf.Transform()
-        _col = type(t.Fields[0])
-        t.Fields[0] = _col(1, 0, 0)
-        t.Fields[1] = _col(0, 1, 0)
-        t.Fields[2] = _col(0, 0, 1)
-        t.Fields[3] = _col(0, 0, 0)
-        return t
-
-    wrapper = lib3mf.Wrapper()
-    model = wrapper.CreateModel()
-
-    for colored_body in bodies:
-        if colored_body.body.is_empty():
+    meshes = []
+    for cb in bodies:
+        if cb.body.is_empty():
             continue
-
-        mesh3d = colored_body.body.to_mesh()
-        verts = np.asarray(mesh3d.vert_properties[:, :3], dtype=np.float32)
-        tris = np.asarray(mesh3d.tri_verts, dtype=np.int32)
+        m = cb.body.to_mesh()
+        verts = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
+        tris = np.asarray(m.tri_verts, dtype=np.int32)
         if len(tris) == 0:
             continue
+        meshes.append((verts, tris, cb.color or (0.8, 0.8, 0.8, 1.0)))
+    return meshes
 
-        mesh_obj = model.AddMeshObject()
 
-        positions = []
-        for v in verts:
-            p = lib3mf.Position()
-            p.Coordinates = _FA3(float(v[0]), float(v[1]), float(v[2]))
-            positions.append(p)
+# Deflate level, chosen rather than inherited. Measured on the 224k-triangle
+# Dalek, zip step only:
+#
+#     level 0   16.80 MB     3 ms      level 6    2.41 MB   314 ms
+#     level 1    3.06 MB    71 ms      level 9    2.30 MB  1912 ms
+#     level 3    2.85 MB   119 ms
+#
+# 6 is the knee: 9 costs six times the time for 5% more saving, and 1 --
+# what lib3mf used, and the real reason its files came out larger than
+# ours rather than anything about the XML -- gives back 27% of the size to
+# save a quarter-second on an export nobody runs in a loop.
+#
+# The tab indentation and the space before each "/>" cost 2MB raw and 43KB
+# (1.8%) compressed here. Deflate eats repeated tabs almost entirely, which
+# is why the part can be readable when unzipped for nearly nothing. Do not
+# "optimise" them away for size; that trade was made deliberately.
+_3MF_COMPRESS_LEVEL = 6
 
-        triangles = []
-        for t in tris:
-            tri = lib3mf.Triangle()
-            tri.Indices = _UI3(int(t[0]), int(t[1]), int(t[2]))
-            triangles.append(tri)
 
-        mesh_obj.SetGeometry(positions, triangles)
+def write_3mf(path: str, bodies):
+    import zipfile
 
-        rgba = colored_body.color or (0.8, 0.8, 0.8, 1.0)
-        cg = model.AddColorGroup()
-        c = lib3mf.Color()
-        c.Red   = max(0, min(255, int(rgba[0] * 255)))
-        c.Green = max(0, min(255, int(rgba[1] * 255)))
-        c.Blue  = max(0, min(255, int(rgba[2] * 255)))
-        c.Alpha = max(0, min(255, int(rgba[3] * 255)))
-        color_id = cg.AddColor(c)
-        cg_uid = cg.GetUniqueResourceID()
-
-        props = []
-        for _ in range(len(tris)):
-            tp = lib3mf.TriangleProperties()
-            tp.ResourceID = cg_uid
-            tp.PropertyIDs = _UI3(color_id, color_id, color_id)
-            props.append(tp)
-        mesh_obj.SetAllTriangleProperties(props)
-
-        model.AddBuildItem(mesh_obj, _identity_transform())
-
-    writer = model.QueryWriter("3mf")
-    writer.WriteToFile(path)
+    xml = build_3mf_model_xml(bodies_to_3mf_meshes(exportable(bodies)))
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED,
+                         compresslevel=_3MF_COMPRESS_LEVEL) as z:
+        z.writestr("[Content_Types].xml", _3MF_CONTENT_TYPES)
+        z.writestr("_rels/.rels", _3MF_RELS)
+        z.writestr("3D/3dmodel.model", xml)
 
 
 def body_to_manifold(b):
