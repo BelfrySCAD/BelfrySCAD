@@ -1081,10 +1081,10 @@ class TestOwningV0Index:
 class TestTubeTriangles:
     """The validation overlay's line-replacement geometry.
 
-    These are drawn with depth testing off and back faces culled, so the
-    two things that break silently are the winding (a tube turns inside
-    out and mostly disappears) and the caps not closing (an end reads as
-    a hole). Neither shows up as an exception.
+    These are drawn with back faces culled, so the two things that break
+    silently are the winding (a tube turns inside out and mostly
+    disappears) and the caps not closing (an end reads as a hole).
+    Neither shows up as an exception.
     """
     R = 0.5
     P0 = np.array([0.0, 0.0, 0.0])

@@ -627,8 +627,8 @@ def _tube_triangles(p0, p1, r0: float, r1: float, color: np.ndarray,
     for k in range(sides):
         k2 = (k + 1) % sides
         # Wound CCW seen from outside -- the overlay is drawn with back
-        # faces culled, which is what stops a tube's own far wall from
-        # painting over its near one once depth testing is off.
+        # faces culled, so a wrong winding here does not merely light the
+        # tube oddly, it drops the side facing the camera.
         tri(a[k], b[k2], b[k])
         tri(a[k], a[k2], b[k2])
     # Caps, so an end seen down the axis is not a hole.
@@ -2601,19 +2601,29 @@ class _VNFViewport(Viewport):
             self._ctx.disable_direct(0x8037)
             self._ctx.polygon_offset = (0.0, 0.0)
 
-        # Validation tubes, drawn through the surface: a hole in the far
-        # side is exactly the thing you cannot see, and having to rotate
-        # to find each mark defeats the purpose of highlighting them.
+        # Validation tubes. Depth-tested, like the vertex markers above
+        # and for the same reason: a mark on the far side of the mesh
+        # showing through the near surface reads as geometry that is not
+        # there. They were drawn through the surface while they were
+        # hairlines and needed the help to be seen at all; now that they
+        # are solid tubes they do not, and the count in the label says
+        # what is round the back.
+        #
+        # Same polygon offset as the markers: a mark lies exactly on a
+        # mesh edge, so it needs to win that coincident-depth tie rather
+        # than z-fight with the wireframe drawn at the same position.
         if self._validation_vao is not None:
             marker_prog = self._renderer._marker_prog
             marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
             marker_prog["light_dir"].value = tuple(L_world)
             marker_prog["eye_pos"].value = tuple(eye_pos)
-            self._ctx.disable(mgl.DEPTH_TEST)
+            self._ctx.polygon_offset = (-1.0, -1.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             self._ctx.enable(mgl.CULL_FACE)
             self._validation_vao.render(mgl.TRIANGLES)
             self._ctx.disable(mgl.CULL_FACE)
-            self._ctx.enable(mgl.DEPTH_TEST)
+            self._ctx.disable_direct(0x8037)
+            self._ctx.polygon_offset = (0.0, 0.0)
 
         if self._highlight_vao is None:
             return
