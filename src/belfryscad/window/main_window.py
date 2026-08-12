@@ -3879,6 +3879,30 @@ class MainWindow(QMainWindow):
         tab.editor._column_guide.set_column(guide_col)
         tab.editor._column_guide.setVisible(show_guide)
 
+    def _park_idle_dock_tabbars(self):
+        """Move dock tab bars that have nothing to show out of the way.
+
+        After restoreState(), a tab group whose docks are all hidden keeps
+        its QTabBar at the widget default (0, 0) -- which is on top of the
+        toolbar, where it shows as a stray one-tab "AI Chat" tab in the
+        top-left corner. Qt parks the tab bars it considers idle off-screen
+        at negative coordinates; this one is simply never positioned at all,
+        because the layout only places a group's bar once that group has
+        something to display.
+
+        So park it the same way Qt does, by moving rather than hiding it.
+        Hiding was tried first and is wrong: Qt positions the bar when a
+        second dock joins the group but does not call setVisible on it, so a
+        hidden bar stays hidden and the Customizer/AI Chat tabs never appear.
+        Moving leaves visibility alone, and the layout moves it back the
+        moment it has real tabs to draw.
+        """
+        for bar in self.findChildren(QTabBar):
+            if bar.parent() is not self:
+                continue                      # the document tab bar, etc.
+            if bar.count() < 2 and bar.x() >= 0 and bar.y() >= 0:
+                bar.move(-600, -530)          # Qt's own parking spot
+
     def _restore_settings(self):
         s = QSettings("BelfrySCAD", "BelfrySCAD")
         # The as-built arrangement, captured before any saved layout is
@@ -3893,6 +3917,7 @@ class MainWindow(QMainWindow):
         if state is not None and layout_version == self._LAYOUT_VERSION:
             self._first_show = False
             self.restoreState(state)
+            self._park_idle_dock_tabbars()
         perspective = s.value("perspective", True, type=bool)
         self._act_perspective.blockSignals(True)
         self._act_perspective.setChecked(perspective)
@@ -4037,6 +4062,7 @@ class MainWindow(QMainWindow):
         default = getattr(self, "_default_window_state", None)
         if default is not None:
             self.restoreState(default)
+            self._park_idle_dock_tabbars()
         s = QSettings("BelfrySCAD", "BelfrySCAD")
         s.remove("windowState")
         s.remove("windowGeometry")
