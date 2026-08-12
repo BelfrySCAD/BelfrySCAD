@@ -7,6 +7,7 @@ write_deps_file/run_make_for_missing in isolation)."""
 
 import json
 import os
+import sys
 import struct
 
 import pytest
@@ -123,13 +124,15 @@ class TestDepsAndMake:
 
     def test_make_cmd_generates_missing_input(self, tmp_path, monkeypatch):
         src = tmp_path / "generated.scad"
-        gen = tmp_path / "gen.sh"
-        gen.write_text(f'#!/bin/sh\nprintf "cube(1);\\n" > "$1"\n')
-        os.chmod(gen, 0o755)
+        # Python rather than /bin/sh: the shell form cannot run on Windows.
+        gen = tmp_path / "gen.py"
+        gen.write_text('import sys\n'
+                       'open(sys.argv[1], "w").write("cube(1);\\n")\n')
         out = tmp_path / "out.stl"
         monkeypatch.setattr(
             "sys.argv",
-            ["belfryscad", "-o", str(out), "-m", str(gen), str(src)],
+            ["belfryscad", "-o", str(out), "-m",
+             f'"{sys.executable}" "{gen}"', str(src)],
         )
         with pytest.raises(SystemExit) as exc:
             main()

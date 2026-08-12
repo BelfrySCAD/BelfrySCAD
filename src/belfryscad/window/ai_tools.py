@@ -236,7 +236,10 @@ def list_library_files(ctx: AIToolContext) -> str:
     root = ctx.library_dir
     if not root.is_dir():
         return "No OpenSCAD libraries are installed."
-    paths = sorted(str(p.relative_to(root)) for p in root.rglob("*.scad"))
+    # as_posix(), not str(): these become `include <BOSL2/std.scad>`
+    # statements, and OpenSCAD wants forward slashes on every platform --
+    # str() hands back BOSL2\\std.scad on Windows, which does not resolve.
+    paths = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.scad"))
     if not paths:
         return "No OpenSCAD libraries are installed."
     listed = paths[:_MAX_LIBRARY_FILES]
@@ -298,7 +301,7 @@ def search_library(ctx: AIToolContext, pattern: str, path: str = "",
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel = f.relative_to(root)
+        rel = f.relative_to(root).as_posix()   # quoted back as an include path
         for n, line in enumerate(text.splitlines(), start=1):
             if rx.search(line):
                 if len(hits) >= limit:
@@ -389,7 +392,7 @@ def list_project_files(ctx: AIToolContext) -> str:
             continue
         listed = found[:_MAX_LIBRARY_FILES]
         out.append(f"{root}:")
-        out.extend(f"  {p.relative_to(root)}" for p in listed)
+        out.extend(f"  {p.relative_to(root).as_posix()}" for p in listed)
         if len(found) > len(listed):
             out.append(f"  ... ({len(found) - len(listed)} more not shown)")
     if len(out) <= len(roots):
