@@ -1091,10 +1091,12 @@ class TestTubeTriangles:
     P1 = np.array([10.0, 0.0, 0.0])
     C = np.array([1.0, 0.0, 0.0], dtype=np.float32)
 
-    def rows(self, p0=None, p1=None, sides=6):
+    def rows(self, p0=None, p1=None, r0=None, r1=None, sides=6):
         return _tube_triangles(self.P0 if p0 is None else p0,
                                self.P1 if p1 is None else p1,
-                               self.R, self.C, sides=sides)
+                               self.R if r0 is None else r0,
+                               self.R if r1 is None else r1,
+                               self.C, sides=sides)
 
     def tris(self, **kw):
         rows = np.array(self.rows(**kw), dtype=np.float64)
@@ -1113,12 +1115,15 @@ class TestTubeTriangles:
         assert set(uses.values()) == {2}, sorted(set(uses.values()))
 
     def test_faces_are_wound_outward(self):
-        # Cross product of the winding must agree with the outward normal
-        # the row carries, or culling hides the side facing the camera.
-        verts, normals = self.tris()
-        for tri, n in zip(verts, normals):
-            wind = np.cross(tri[1] - tri[0], tri[2] - tri[0])
-            assert np.dot(wind, n) > 0, (tri, n)
+        # Normals now come from the winding, so comparing the two would
+        # prove nothing. A convex solid's outward faces all point away
+        # from its centre -- that is what a reversed winding breaks, and
+        # culling then hides the side facing the camera.
+        for r1 in (self.R, self.R * 3):          # cylinder and cone
+            verts, normals = self.tris(r1=r1)
+            centre = verts.reshape(-1, 3).mean(axis=0)
+            for tri, n in zip(verts, normals):
+                assert np.dot(n, tri.mean(axis=0) - centre) > 0, (tri, n)
 
     def test_the_surface_sits_at_the_requested_radius(self):
         verts, _ = self.tris()
@@ -1127,6 +1132,37 @@ class TestTubeTriangles:
         rel = pts - self.P0
         perp = rel - np.outer(rel @ axis, axis)
         assert np.allclose(np.linalg.norm(perp, axis=1), self.R)
+
+    def test_each_end_takes_its_own_radius(self):
+        # The whole point of two radii: apparent width in perspective
+        # depends on each point's own distance from the eye, so a tube
+        # sized from its midpoint is wrong at both ends.
+        verts, _ = self.tris(r0=1.0, r1=4.0)
+        pts = verts.reshape(-1, 3)
+        near = pts[np.isclose(pts[:, 0], 0.0)]
+        far = pts[np.isclose(pts[:, 0], 10.0)]
+        assert np.allclose(np.linalg.norm(near[:, 1:], axis=1), 1.0)
+        assert np.allclose(np.linalg.norm(far[:, 1:], axis=1), 4.0)
+
+    def test_a_tapered_tube_is_still_closed(self):
+        verts, _ = self.tris(r0=1.0, r1=4.0)
+        uses = {}
+        for tri in verts:
+            for k in range(3):
+                e = tuple(sorted((tuple(np.round(tri[k], 6)),
+                                  tuple(np.round(tri[(k + 1) % 3], 6)))))
+                uses[e] = uses.get(e, 0) + 1
+        assert set(uses.values()) == {2}
+
+    def test_side_normals_tilt_with_the_taper(self):
+        # A cone's sides do not point straight out from the axis. Using
+        # the radial direction (right for a cylinder) would light a
+        # steeply tapered tube as though it were not tapered.
+        _verts, normals = self.tris(r0=0.2, r1=4.0)
+        axis = (self.P1 - self.P0) / np.linalg.norm(self.P1 - self.P0)
+        side = [n for n in normals if abs(np.dot(n, axis)) < 0.99]
+        assert side, "no side faces found"
+        assert any(abs(np.dot(n, axis)) > 0.05 for n in side)
 
     def test_it_spans_exactly_the_segment(self):
         verts, _ = self.tris()
@@ -1148,3 +1184,71 @@ class TestTubeTriangles:
 
     def test_a_zero_length_segment_produces_nothing(self):
         assert self.rows(p1=self.P0) == []
+
+
+class TestValidationColors:
+    """The overlay palette has to survive the surfaces it is drawn on.
+
+    A mark that matches what is behind it is not a mark. Two surfaces
+    are always in play: the hardcoded magenta the viewport paints
+    backfaces (its inverted-normal cue, and the whole surface of a
+    single-sided sheet seen from behind), and the theme's object colour.
+    """
+    # Two thresholds, in RGB space. Two tubes seen side by side need a
+    # wider gap than a tube against a surface does -- the surface is
+    # shaded across its area, the tube is one flat hue, so a smaller
+    # difference still separates them. Both offenders in the first
+    # palette (magenta on magenta at 0.22, purple at 0.38) fail the
+    # looser one, so the split is not what let them through.
+    MIN_MUTUAL = 0.55
+    MIN_VS_SURFACE = 0.40
+
+    @staticmethod
+    def dist(a, b):
+        return float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
+
+    def colors(self):
+        from belfryscad.window.data_viewers import _VNFViewport
+        return _VNFViewport.VALIDATION_COLORS
+
+    def test_none_of_them_reads_as_a_backface(self):
+        from belfryscad.window.data_viewers import _VNFViewport
+        magenta = _VNFViewport.BACKFACE_MAGENTA
+        for name, c in self.colors().items():
+            assert self.dist(c, magenta) >= self.MIN_VS_SURFACE, (name, c)
+
+    def test_the_backface_colour_is_still_the_magenta_we_avoided(self):
+        # If the renderer's cue ever changes, the constant above is a
+        # stale copy and the check above stops meaning anything.
+        import re
+        from pathlib import Path
+        from belfryscad.window.data_viewers import _VNFViewport
+        src = (Path(__file__).resolve().parent.parent / "src" / "belfryscad"
+               / "engine" / "renderer.py").read_text()
+        m = re.search(r"backface_color\s+or\s+\(([^)]*)\)", src)
+        assert m, "renderer no longer has a default backface colour"
+        actual = tuple(float(x) for x in m.group(1).split(","))[:3]
+        assert actual == _VNFViewport.BACKFACE_MAGENTA, actual
+
+    def test_none_of_them_reads_as_the_default_theme_object(self):
+        from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME
+        obj = COLOR_THEMES[DEFAULT_COLOR_THEME]["object"]
+        for name, c in self.colors().items():
+            assert self.dist(c, obj) >= self.MIN_VS_SURFACE, (name, c)
+
+    def test_they_are_distinguishable_from_each_other(self):
+        items = list(self.colors().items())
+        for i, (n1, c1) in enumerate(items):
+            for n2, c2 in items[i + 1:]:
+                assert self.dist(c1, c2) >= self.MIN_MUTUAL, (n1, n2)
+
+    def test_every_condition_the_report_can_raise_has_a_colour(self):
+        # A finding with no colour would be silently undrawable.
+        from belfryscad.vnf_validate import VNFReport
+        fields = {f for f in vars(VNFReport()) if f.endswith(("edges", "joints"))}
+        fields |= {"intersecting", "overlapping"}
+        names = {"hole_edges", "flipped_edges", "nonmanifold_edges", "t_joints",
+                 "intersecting", "overlapping"}
+        assert fields == names, fields
+        assert set(self.colors()) == {n.replace("_edges", "").replace("t_joints", "t_joint")
+                                       for n in names}

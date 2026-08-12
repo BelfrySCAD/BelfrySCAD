@@ -571,14 +571,22 @@ def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> 
     return rows
 
 
-def _tube_triangles(p0, p1, r: float, color: np.ndarray, sides: int = 6) -> list:
-    """Build one capped low-poly cylinder from `p0` to `p1` as marker rows.
+def _tube_triangles(p0, p1, r0: float, r1: float, color: np.ndarray,
+                     sides: int = 6) -> list:
+    """Build one capped low-poly tube from `p0` to `p1` as marker rows.
 
     Used instead of `GL_LINES` for the validation overlay: line width is a
     no-op in a core profile on macOS, so a "thick" line is a hairline and
     a mark on a mesh edge is unreadable. Real faces have a real thickness
     at any width, and go through the same phong-lit `_marker_prog` rows
     (`[x,y,z, nx,ny,nz, r,g,b]`) the vertex markers already use.
+
+    A radius per end, not one for the whole tube: apparent size in
+    perspective depends on each point's own distance from the eye, so a
+    tube sized from its midpoint is too thin at the near end and too fat
+    at the far one -- the same reason `_marker_radius_for_point` is called
+    per vertex rather than once per mesh. An edge running away from the
+    camera is exactly where a single radius shows.
 
     Six sides: at a few pixels across, more is invisible and each extra
     side costs two triangles on every edge of a possibly large report."""
@@ -599,31 +607,34 @@ def _tube_triangles(p0, p1, r: float, color: np.ndarray, sides: int = 6) -> list
 
     ring = [(u * np.cos(t) + v * np.sin(t)).astype(np.float32)
             for t in np.linspace(0.0, 2.0 * np.pi, sides, endpoint=False)]
-    a = [p0 + d * r for d in ring]
-    b = [p1 + d * r for d in ring]
+    a = [p0 + d * r0 for d in ring]
+    b = [p1 + d * r1 for d in ring]
 
     rows = []
 
-    def tri(q0, q1, q2, n):
-        rows.append(np.concatenate([q0, n, color]))
-        rows.append(np.concatenate([q1, n, color]))
-        rows.append(np.concatenate([q2, n, color]))
+    def tri(q0, q1, q2):
+        # Faceted, not smoothed: the flat shading is what makes a tube
+        # this thin read as solid rather than as a soft smear. Taken from
+        # the winding rather than from the radial direction, which is only
+        # the true normal when the two ends share a radius.
+        n = np.cross(q1 - q0, q2 - q0)
+        ln = np.linalg.norm(n)
+        if ln > 0:
+            n = (n / ln).astype(np.float32)
+        for q in (q0, q1, q2):
+            rows.append(np.concatenate([q, n, color]))
 
     for k in range(sides):
         k2 = (k + 1) % sides
-        # Faceted, not smoothed: the flat shading is what makes a tube this
-        # thin read as solid rather than as a soft smear.
-        n = ((ring[k] + ring[k2]) / 2.0).astype(np.float32)
-        n /= np.linalg.norm(n)
         # Wound CCW seen from outside -- the overlay is drawn with back
         # faces culled, which is what stops a tube's own far wall from
         # painting over its near one once depth testing is off.
-        tri(a[k], b[k2], b[k], n)
-        tri(a[k], a[k2], b[k2], n)
+        tri(a[k], b[k2], b[k])
+        tri(a[k], a[k2], b[k2])
     # Caps, so an end seen down the axis is not a hole.
     for k in range(1, sides - 1):
-        tri(a[0], a[k + 1], a[k], -axis)
-        tri(b[0], b[k], b[k + 1], axis)
+        tri(a[0], a[k + 1], a[k])
+        tri(b[0], b[k], b[k + 1])
     return rows
 
 
@@ -2328,13 +2339,24 @@ class _VNFViewport(Viewport):
 
     # Validation overlay colours. Each condition gets its own so a mesh
     # failing several ways can still be read apart at a glance.
+    # None of them may sit near magenta: the viewport paints backfaces a
+    # hardcoded magenta as its inverted-normal cue (SceneRenderer's
+    # `buf.backface_color or (1, 0, 1, 1)`), so on a single-sided sheet
+    # -- seen from behind, which is most of the meshes worth validating
+    # -- that magenta IS the surface a mark has to stand out against.
+    # The first palette put a magenta and a purple on it, and a yellow
+    # on the default theme's yellow front faces. The object colour is
+    # themeable, though, so no fixed palette can clear every theme --
+    # the default is what is checked. See tests/test_data_viewers.py's
+    # TestValidationColors.
+    BACKFACE_MAGENTA = (1.0, 0.0, 1.0)
     VALIDATION_COLORS = {
-        "hole": (1.0, 0.15, 0.15),          # red -- open boundary
-        "flipped": (1.0, 0.55, 0.0),        # orange -- wound backwards
-        "nonmanifold": (0.65, 0.1, 0.9),    # purple -- 3+ faces on an edge
-        "t_joint": (1.0, 0.1, 0.8),         # magenta -- unwelded crack
-        "intersecting": (1.0, 0.0, 0.0),    # red -- faces through faces
-        "overlapping": (1.0, 0.9, 0.0),     # yellow -- coplanar double skin
+        "hole": (1.0, 0.45, 0.0),           # bright orange -- open boundary
+        "flipped": (0.0, 0.85, 1.0),        # cyan -- wound backwards
+        "nonmanifold": (0.15, 0.2, 1.0),    # blue -- 3+ faces on an edge
+        "t_joint": (0.0, 0.85, 0.1),        # green -- unwelded crack
+        "intersecting": (0.6, 0.0, 0.0),    # dark red -- faces through faces
+        "overlapping": (1.0, 1.0, 1.0),     # white -- coplanar double skin
     }
 
     def show_validation(self, report, faces):
@@ -2403,11 +2425,20 @@ class _VNFViewport(Viewport):
         rows = []
         for p0, p1, colour in self._validation_segs:
             c = np.asarray(colour, dtype=np.float32)
-            mid = (np.asarray(p0, dtype=np.float32) + np.asarray(p1, dtype=np.float32)) / 2.0
-            # A fraction of the vertex-marker radius: a tube as fat as a
-            # marker buries the geometry it is pointing at.
-            r = _marker_radius_for_point(self, mid) * 0.28
-            rows.extend(_tube_triangles(p0, p1, r, c))
+            # Sized exactly like the vertex indicators: the same
+            # screen-space radius helper, called at each end on its own
+            # point rather than once on the midpoint, so a tube running
+            # away from the camera keeps a constant apparent width along
+            # its length the way a row of markers does.
+            #
+            # Half the marker radius: a tube as fat as a marker buries
+            # the geometry it is pointing at, and a marker is only about
+            # 5px in radius on screen -- measured, not the ~12 the first
+            # draft assumed -- so much less than half lands back at
+            # hairline width, which is what tubes were meant to fix.
+            r0 = _marker_radius_for_point(self, p0) * 0.5
+            r1 = _marker_radius_for_point(self, p1) * 0.5
+            rows.extend(_tube_triangles(p0, p1, r0, r1, c))
         if not rows:
             return
         data = np.array(rows, dtype=np.float32)
