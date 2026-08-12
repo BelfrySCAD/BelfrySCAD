@@ -2940,6 +2940,22 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._vp.delete_face_requested.connect(self._delete_face)
             self._vp.reverse_face_requested.connect(self._reverse_face)
 
+    def _clear_validation(self):
+        """Drop a validation result that no longer describes the mesh.
+
+        A report is a statement about one exact VNF. After an edit its
+        marks sit on vertices that have moved, or on faces that are gone
+        -- a hole edge left over on a mesh you just repaired reads as a
+        defect that is not there, which is worse than no answer.
+
+        Called outside `_rebuild`'s makeCurrent bracket on purpose:
+        `clear_validation` brackets itself, and a nested `doneCurrent`
+        would release the context out from under the caller's remaining
+        work (the same trap `frame_scene` documents)."""
+        self._vp.clear_validation()
+        self._validation_label.setText("")
+        self._validation_label.setStyleSheet("")
+
     def _on_validate(self):
         """Run manifold validation over the VNF as it currently stands."""
         from belfryscad.vnf_validate import validate_vnf
@@ -3086,7 +3102,13 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         would otherwise keep showing the *old* vertex positions for
         whichever face is currently highlighted. `reframe=False` (used for
         a live vertex drag/nudge) skips the camera re-fit -- see
-        `_on_viewport_vertex_moved`."""
+        `_on_viewport_vertex_moved`.
+
+        Every path that changes the VNF comes through here -- table
+        edits, vertex drags, face add/delete/reverse, undo and redo --
+        which is why the validation report is dropped here rather than
+        at each of them."""
+        self._clear_validation()
         if self._vp._ctx is not None:
             self._vp.makeCurrent()
             self._load_mesh(reframe=reframe)
