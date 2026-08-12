@@ -173,6 +173,35 @@ def main():
     dlg.close()
     pump(0.3)
 
+    # --- editing the VNF drops the result -----------------------------
+    # A report describes one exact mesh. Left up after an edit, its marks
+    # sit on vertices that have moved and claim defects that may be gone.
+    edits = [
+        ("a table edit", lambda d: d._vert_table.item(0, 0).setText("3")),
+        ("a vertex drag", lambda d: d._on_viewport_vertex_moved(0, 1.0, 2.0, 3.0)),
+        ("deleting a face", lambda d: d._delete_face(1)),
+        ("reversing a face", lambda d: d._reverse_face(1)),
+        ("undo", lambda d: (d._delete_face(1), d._undo_stack.undo())),
+    ]
+    for label, do_edit in edits:
+        tris = [t[:] for t in CUBE_TRIS]
+        del tris[0]
+        dlg = open_viewer([[p[:] for p in CUBE_PTS], tris])
+        dlg._validate_btn.click()
+        pump(1.0)
+        before = overlay_segments(dlg._vp)
+        had_text = bool(dlg._validation_label.text())
+        do_edit(dlg)
+        pump(0.8)
+        check(f"{label} clears the marks",
+              before == 1 and overlay_segments(dlg._vp) == 0,
+              f"before={before} after={overlay_segments(dlg._vp)}")
+        check(f"{label} clears the message",
+              had_text and dlg._validation_label.text() == "",
+              f"had={had_text!r} now={dlg._validation_label.text()!r}")
+        dlg.close()
+        pump(0.3)
+
     print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
     return 1 if failures else 0
 
