@@ -205,3 +205,46 @@ def test_report_points_survive_for_the_viewer_to_draw():
     r = validate_vnf(cube())
     assert isinstance(r.welded_points, np.ndarray)
     assert r.welded_points.shape == (8, 3)
+
+
+# --- indices as the evaluator delivers them ----------------------------
+# OpenSCAD has no integer type, so a VNF that came from an evaluated
+# value carries its face indices as 0.0, 1.0, 2.0 -- which index nothing
+# in numpy. Every case above uses int literals and so missed this; the
+# viewer reported "Validation failed: only integers, slices ..." on the
+# first real mesh it was pointed at.
+def test_float_face_indices_are_accepted():
+    v = [[0., 0., 0.], [10., 0., 0.], [10., 10., 0.], [0., 10., 0.]]
+    r = validate_vnf([v, [[0., 1., 2.], [0., 2., 3.]]])
+    assert not r.notes or all("index" not in n for n in r.notes), r.notes
+    assert len(r.hole_edges) == 4, r.summary()
+
+
+def test_float_indices_agree_with_int_indices():
+    v, f = cube()
+    fl = [[float(i) for i in face] for face in f]
+    assert validate_vnf([v, fl]).summary() == validate_vnf([v, f]).summary()
+
+
+def test_a_non_integral_index_is_refused_not_truncated():
+    # 2.5 is not vertex 2. Truncating would silently check a mesh the
+    # user does not have.
+    v, f = cube()
+    f[0] = [0, 1, 2.5]
+    r = validate_vnf([v, f])
+    assert any("not lists of vertex indices" in n for n in r.notes), r.notes
+
+
+def test_an_out_of_range_index_is_reported_not_raised():
+    v, f = cube()
+    f[0] = [0, 1, 99]
+    r = validate_vnf([v, f])
+    assert any("outside the vertex list" in n for n in r.notes), r.notes
+
+
+def test_a_negative_index_is_reported():
+    # Python would happily index backwards; a VNF has no such convention.
+    v, f = cube()
+    f[0] = [0, 1, -1]
+    r = validate_vnf([v, f])
+    assert any("outside the vertex list" in n for n in r.notes), r.notes

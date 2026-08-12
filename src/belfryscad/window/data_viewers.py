@@ -2367,8 +2367,10 @@ class _VNFViewport(Viewport):
 
         def outline(fi, colour):
             try:
-                idx = [int(remap[i]) for i in faces[fi]]
-            except (IndexError, TypeError):
+                # int(i) first: evaluated VNF indices are doubles, and a
+                # float cannot index remap -- see vnf_validate._int_faces.
+                idx = [int(remap[int(i)]) for i in faces[fi]]
+            except (IndexError, TypeError, ValueError):
                 return
             for k in range(len(idx)):
                 edge(idx[k], idx[(k + 1) % len(idx)], colour)

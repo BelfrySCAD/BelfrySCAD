@@ -90,6 +90,27 @@ def _weld(points, tol=1e-6):
     return keys, inverse.ravel()
 
 
+def _int_faces(faces):
+    """Coerce faces to lists of `int`, or None if they are not indices.
+
+    Rejects a non-integral value (2.5 is not a vertex) rather than
+    truncating it into a valid-looking index.
+    """
+    out = []
+    try:
+        for f in faces:
+            row = []
+            for i in f:
+                n = int(i)
+                if n != i:
+                    return None
+                row.append(n)
+            out.append(row)
+    except (TypeError, ValueError):
+        return None
+    return out
+
+
 def _triangles(faces, remap):
     """Fan-triangulate every face, keeping which face each came from.
 
@@ -344,6 +365,20 @@ def validate_vnf(vnf, weld_tol=1e-6, max_pairs=MAX_PAIRS) -> VNFReport:
     if len(points) < len(points_in):
         rep.notes.append(f"{len(points_in) - len(points)} coincident vertices welded "
                          f"before checking")
+
+    # Every number in an evaluated VNF is a double -- OpenSCAD has no
+    # integer type -- so real face indices arrive as 0.0, 1.0, 2.0 and
+    # cannot index anything until they are coerced. Done once here rather
+    # than at each `remap[i]` below.
+    faces = _int_faces(faces)
+    if faces is None:
+        rep.notes.append("faces are not lists of vertex indices")
+        return rep
+    bad = [i for f in faces for i in f if not 0 <= i < len(points_in)]
+    if bad:
+        rep.notes.append(f"{len(bad)} face indices are outside the vertex list "
+                         f"(e.g. {bad[0]}); nothing else could be checked")
+        return rep
 
     rep.hole_edges, rep.flipped_edges, rep.nonmanifold_edges = _edges_report(faces, remap)
     rep.t_joints = _t_joints(points, faces, remap)
