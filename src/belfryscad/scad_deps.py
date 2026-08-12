@@ -21,6 +21,7 @@ fix here.
 """
 
 import re
+import os
 import shlex
 import subprocess
 import sys
@@ -145,7 +146,14 @@ def run_make_for_missing(main_path: str, make_cmd: str) -> None:
     afterward, the subsequent parse/import fails on its own with a clear
     error, same as upstream."""
     def make(path_str: str):
-        cmd = f"{make_cmd} {shlex.quote(path_str)}"
+        # shlex.quote is POSIX quoting -- single quotes. shell=True runs
+        # cmd.exe on Windows, which does not treat ' as a quote character,
+        # so the target arrived as "'C:\\path\\file.scad'", quotes and all,
+        # and every make command there failed with EINVAL. cmd.exe does
+        # honour double quotes, and so does sh, but only shlex.quote knows
+        # how to escape a path safely for the latter.
+        quoted = f'"{path_str}"' if os.name == "nt" else shlex.quote(path_str)
+        cmd = f"{make_cmd} {quoted}"
         result = subprocess.run(cmd, shell=True)
         if result.returncode != 0:
             print(f"belfryscad: {cmd!r}: exit status {result.returncode}", file=sys.stderr)
