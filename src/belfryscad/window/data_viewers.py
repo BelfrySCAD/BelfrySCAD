@@ -571,6 +571,62 @@ def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> 
     return rows
 
 
+def _tube_triangles(p0, p1, r: float, color: np.ndarray, sides: int = 6) -> list:
+    """Build one capped low-poly cylinder from `p0` to `p1` as marker rows.
+
+    Used instead of `GL_LINES` for the validation overlay: line width is a
+    no-op in a core profile on macOS, so a "thick" line is a hairline and
+    a mark on a mesh edge is unreadable. Real faces have a real thickness
+    at any width, and go through the same phong-lit `_marker_prog` rows
+    (`[x,y,z, nx,ny,nz, r,g,b]`) the vertex markers already use.
+
+    Six sides: at a few pixels across, more is invisible and each extra
+    side costs two triangles on every edge of a possibly large report."""
+    p0 = np.asarray(p0, dtype=np.float32)
+    p1 = np.asarray(p1, dtype=np.float32)
+    axis = p1 - p0
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        return []
+    axis = axis / length
+    # Any vector not parallel to the axis will do for the first radial.
+    ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    if abs(float(np.dot(ref, axis))) > 0.9:
+        ref = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    u = np.cross(axis, ref)
+    u /= np.linalg.norm(u)
+    v = np.cross(axis, u)
+
+    ring = [(u * np.cos(t) + v * np.sin(t)).astype(np.float32)
+            for t in np.linspace(0.0, 2.0 * np.pi, sides, endpoint=False)]
+    a = [p0 + d * r for d in ring]
+    b = [p1 + d * r for d in ring]
+
+    rows = []
+
+    def tri(q0, q1, q2, n):
+        rows.append(np.concatenate([q0, n, color]))
+        rows.append(np.concatenate([q1, n, color]))
+        rows.append(np.concatenate([q2, n, color]))
+
+    for k in range(sides):
+        k2 = (k + 1) % sides
+        # Faceted, not smoothed: the flat shading is what makes a tube this
+        # thin read as solid rather than as a soft smear.
+        n = ((ring[k] + ring[k2]) / 2.0).astype(np.float32)
+        n /= np.linalg.norm(n)
+        # Wound CCW seen from outside -- the overlay is drawn with back
+        # faces culled, which is what stops a tube's own far wall from
+        # painting over its near one once depth testing is off.
+        tri(a[k], b[k2], b[k], n)
+        tri(a[k], a[k2], b[k2], n)
+    # Caps, so an end seen down the axis is not a hole.
+    for k in range(1, sides - 1):
+        tri(a[0], a[k + 1], a[k], -axis)
+        tri(b[0], b[k], b[k + 1], axis)
+    return rows
+
+
 def _view_locked_axis(camera) -> int:
     """Return 0/1/2 (X/Y/Z) for whichever world axis is most nearly parallel
     to the camera's current view direction — the one axis a 2D mouse drag
@@ -2161,6 +2217,11 @@ class _VNFViewport(Viewport):
         self._vert_marker_vbo_w = None
         self._vert_blink_red = True
         self._vert_indices: list[int] = []
+        # (p0, p1, rgb) per validation mark; kept so the tubes can be
+        # rebuilt at a new radius when the camera distance changes.
+        self._validation_segs: list = []
+        self._validation_vao = None
+        self._validation_vbo = None
         # Opt-in here, unlike the other viewers. Markers cost roughly
         # 0.7ms per vertex to build and are rebuilt on zoom, and a mesh
         # carries far more vertices than a path or grid -- see
@@ -2265,6 +2326,112 @@ class _VNFViewport(Viewport):
         self.doneCurrent()
         self.update()
 
+    # Validation overlay colours. Each condition gets its own so a mesh
+    # failing several ways can still be read apart at a glance.
+    VALIDATION_COLORS = {
+        "hole": (1.0, 0.15, 0.15),          # red -- open boundary
+        "flipped": (1.0, 0.55, 0.0),        # orange -- wound backwards
+        "nonmanifold": (0.65, 0.1, 0.9),    # purple -- 3+ faces on an edge
+        "t_joint": (1.0, 0.1, 0.8),         # magenta -- unwelded crack
+        "intersecting": (1.0, 0.0, 0.0),    # red -- faces through faces
+        "overlapping": (1.0, 0.9, 0.0),     # yellow -- coplanar double skin
+    }
+
+    def show_validation(self, report, faces):
+        """Draw a VNFReport over the mesh.
+
+        Edges are drawn as tubes and faces as their tubed outlines -- one
+        mechanism for everything, rather than a second translucent mesh
+        pass whose depth interaction would have to be tuned separately.
+        """
+        self.clear_validation()
+        if report is None or report.welded_points is None:
+            return
+        pts = report.welded_points
+        if len(pts) == 0:
+            return
+        remap = report.remap
+        segs = []
+
+        def edge(a, b, colour):
+            segs.append((pts[a], pts[b], colour))
+
+        for a, b in report.hole_edges:
+            edge(a, b, self.VALIDATION_COLORS["hole"])
+        for a, b in report.flipped_edges:
+            edge(a, b, self.VALIDATION_COLORS["flipped"])
+        for a, b in report.nonmanifold_edges:
+            edge(a, b, self.VALIDATION_COLORS["nonmanifold"])
+        for _v, (a, b) in report.t_joints:
+            edge(a, b, self.VALIDATION_COLORS["t_joint"])
+
+        def outline(fi, colour):
+            try:
+                idx = [int(remap[i]) for i in faces[fi]]
+            except (IndexError, TypeError):
+                return
+            for k in range(len(idx)):
+                edge(idx[k], idx[(k + 1) % len(idx)], colour)
+
+        for fi, fj in report.intersecting:
+            outline(fi, self.VALIDATION_COLORS["intersecting"])
+            outline(fj, self.VALIDATION_COLORS["intersecting"])
+        for fi, fj in report.overlapping:
+            outline(fi, self.VALIDATION_COLORS["overlapping"])
+            outline(fj, self.VALIDATION_COLORS["overlapping"])
+
+        if not segs:
+            return
+        self._validation_segs = segs
+        self.makeCurrent()
+        self._build_validation_tubes()
+        self.doneCurrent()
+        self.update()
+
+    def _build_validation_tubes(self):
+        """(Re)build the overlay geometry for `_validation_segs`.
+
+        Separate from `show_validation` because tube radius is chosen in
+        screen space, so this has to run again whenever the camera
+        distance changes -- same reason the vertex markers rebuild on
+        zoom. Caller must already be current."""
+        self._release_validation_tubes()
+        if not self._validation_segs or self._ctx is None:
+            return
+        rows = []
+        for p0, p1, colour in self._validation_segs:
+            c = np.asarray(colour, dtype=np.float32)
+            mid = (np.asarray(p0, dtype=np.float32) + np.asarray(p1, dtype=np.float32)) / 2.0
+            # A fraction of the vertex-marker radius: a tube as fat as a
+            # marker buries the geometry it is pointing at.
+            r = _marker_radius_for_point(self, mid) * 0.28
+            rows.extend(_tube_triangles(p0, p1, r, c))
+        if not rows:
+            return
+        data = np.array(rows, dtype=np.float32)
+        self._validation_vbo = self._ctx.buffer(data.tobytes())
+        self._validation_vao = self._ctx.vertex_array(
+            self._renderer._marker_prog,
+            [(self._validation_vbo, "3f 3f 3f", "in_position", "in_normal", "in_color")],
+        )
+
+    def _release_validation_tubes(self):
+        for attr in ("_validation_vao", "_validation_vbo"):
+            obj = getattr(self, attr, None)
+            if obj is not None:
+                obj.release()
+                setattr(self, attr, None)
+
+    def clear_validation(self):
+        """Remove any validation overlay."""
+        if not getattr(self, "_validation_segs", None):
+            return
+        self._validation_segs = []
+        self.makeCurrent()
+        self._release_validation_tubes()
+        self.doneCurrent()
+        self.update()
+
     def set_show_unselected(self, enabled: bool):
         """Toggle the "Show Vertices" checkbox. Selected-vertex markers are
         always shown and blinking; this governs every other vertex.
@@ -2354,6 +2521,8 @@ class _VNFViewport(Viewport):
             self._build_vert_markers()
         if self._show_unselected:
             self._build_unselected_markers()
+        if self._validation_segs:
+            self._build_validation_tubes()
 
     def _on_zoom_changed(self):
         # Screen-space marker sizes depend on camera distance/FOV, so they
@@ -2362,12 +2531,14 @@ class _VNFViewport(Viewport):
         # class's notification covers both. Unlike frame_scene above, this
         # runs from a genuine external Qt event, never from inside another
         # makeCurrent'd block, so it does need its own bracket.
-        if self._vert_indices or self._show_unselected:
+        if self._vert_indices or self._show_unselected or self._validation_segs:
             self.makeCurrent()
             if self._vert_indices:
                 self._build_vert_markers()
             if self._show_unselected:
                 self._build_unselected_markers()
+            if self._validation_segs:
+                self._build_validation_tubes()
             self.doneCurrent()
 
     def _paint_extra(self, mvp: np.ndarray):
@@ -2396,6 +2567,20 @@ class _VNFViewport(Viewport):
             vao.render(mgl.TRIANGLES)
             self._ctx.disable_direct(0x8037)
             self._ctx.polygon_offset = (0.0, 0.0)
+
+        # Validation tubes, drawn through the surface: a hole in the far
+        # side is exactly the thing you cannot see, and having to rotate
+        # to find each mark defeats the purpose of highlighting them.
+        if self._validation_vao is not None:
+            marker_prog = self._renderer._marker_prog
+            marker_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            marker_prog["light_dir"].value = tuple(L_world)
+            marker_prog["eye_pos"].value = tuple(eye_pos)
+            self._ctx.disable(mgl.DEPTH_TEST)
+            self._ctx.enable(mgl.CULL_FACE)
+            self._validation_vao.render(mgl.TRIANGLES)
+            self._ctx.disable(mgl.CULL_FACE)
+            self._ctx.enable(mgl.DEPTH_TEST)
 
         if self._highlight_vao is None:
             return
@@ -2666,6 +2851,19 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
         btn_row.addWidget(show_unselected_cb)
+
+        # Manifold validation. Deliberately a button rather than something
+        # that runs on open: the pairwise face tests are the expensive part
+        # and a mesh is usually opened to look at, not to audit.
+        self._validate_btn = QPushButton("Validate")
+        self._validate_btn.setToolTip(
+            "Check for holes, flipped normals, T-joints, intersecting faces "
+            "and overlapping coplanar faces, and highlight what it finds")
+        self._validate_btn.clicked.connect(self._on_validate)
+        btn_row.addWidget(self._validate_btn)
+        self._validation_label = QLabel("")
+        self._validation_label.setWordWrap(True)
+        btn_row.addWidget(self._validation_label, 1)
         if editable:
             self._setup_undo(vnf_value)
             btn_row.addLayout(self._make_reset_button_row())
@@ -2692,6 +2890,32 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             self._vp.duplicate_vertex_requested.connect(self._duplicate_vertex)
             self._vp.delete_face_requested.connect(self._delete_face)
             self._vp.reverse_face_requested.connect(self._reverse_face)
+
+    def _on_validate(self):
+        """Run manifold validation over the VNF as it currently stands."""
+        from belfryscad.vnf_validate import validate_vnf
+
+        self._validate_btn.setEnabled(False)
+        self._validation_label.setText("Checking…")
+        QApplication.processEvents()
+        try:
+            report = validate_vnf(self._vnf)
+        except Exception as e:                       # noqa: BLE001
+            # A check must never take the viewer down with it.
+            self._validation_label.setText(f"Validation failed: {e}")
+            self._vp.clear_validation()
+            return
+        finally:
+            self._validate_btn.setEnabled(True)
+
+        faces = self._vnf[1] if len(self._vnf) > 1 else []
+        self._vp.show_validation(None if report.ok else report, faces)
+        text = report.summary()
+        if report.notes:
+            text += "  (" + "; ".join(report.notes) + ")"
+        self._validation_label.setText(text)
+        self._validation_label.setStyleSheet(
+            "color: #1a7f37;" if report.ok else "color: #b32020;")
 
     @staticmethod
     def _make_vert_table(verts, editable: bool = False) -> QTableWidget:

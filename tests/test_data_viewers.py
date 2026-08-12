@@ -33,6 +33,7 @@ from belfryscad.window.data_viewers import (
     _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
     _v0_handle_indices, _snap_handles_to_node_type, _fit_merged_segment,
     _owning_v0_index, _dodecahedron_faces, _DODECA_VERTS, _DODECA_FACES,
+    _tube_triangles,
 )
 
 
@@ -1075,3 +1076,75 @@ class TestOwningV0Index:
     def test_v2_wraps_on_closed_path(self):
         # Closed, 2 segments: v0=0, C1=1, C2=2, v0=3, C1=4, C2=5 (wraps to v0=0)
         assert _owning_v0_index(5, 6, True) == 0
+
+
+class TestTubeTriangles:
+    """The validation overlay's line-replacement geometry.
+
+    These are drawn with depth testing off and back faces culled, so the
+    two things that break silently are the winding (a tube turns inside
+    out and mostly disappears) and the caps not closing (an end reads as
+    a hole). Neither shows up as an exception.
+    """
+    R = 0.5
+    P0 = np.array([0.0, 0.0, 0.0])
+    P1 = np.array([10.0, 0.0, 0.0])
+    C = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+    def rows(self, p0=None, p1=None, sides=6):
+        return _tube_triangles(self.P0 if p0 is None else p0,
+                               self.P1 if p1 is None else p1,
+                               self.R, self.C, sides=sides)
+
+    def tris(self, **kw):
+        rows = np.array(self.rows(**kw), dtype=np.float64)
+        return rows[:, :3].reshape(-1, 3, 3), rows[:, 3:6].reshape(-1, 3, 3)[:, 0]
+
+    def test_it_is_a_closed_surface(self):
+        # Every edge shared by exactly two triangles -- if the caps did
+        # not line up with the sides, the ring edges would be used once.
+        verts, _ = self.tris()
+        uses = {}
+        for tri in verts:
+            for k in range(3):
+                e = tuple(sorted((tuple(np.round(tri[k], 6)),
+                                  tuple(np.round(tri[(k + 1) % 3], 6)))))
+                uses[e] = uses.get(e, 0) + 1
+        assert set(uses.values()) == {2}, sorted(set(uses.values()))
+
+    def test_faces_are_wound_outward(self):
+        # Cross product of the winding must agree with the outward normal
+        # the row carries, or culling hides the side facing the camera.
+        verts, normals = self.tris()
+        for tri, n in zip(verts, normals):
+            wind = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+            assert np.dot(wind, n) > 0, (tri, n)
+
+    def test_the_surface_sits_at_the_requested_radius(self):
+        verts, _ = self.tris()
+        pts = verts.reshape(-1, 3)
+        axis = (self.P1 - self.P0) / np.linalg.norm(self.P1 - self.P0)
+        rel = pts - self.P0
+        perp = rel - np.outer(rel @ axis, axis)
+        assert np.allclose(np.linalg.norm(perp, axis=1), self.R)
+
+    def test_it_spans_exactly_the_segment(self):
+        verts, _ = self.tris()
+        xs = verts.reshape(-1, 3)[:, 0]
+        assert np.isclose(xs.min(), 0.0) and np.isclose(xs.max(), 10.0)
+
+    def test_triangle_count_is_sides_plus_caps(self):
+        for sides in (3, 6, 12):
+            verts, _ = self.tris(sides=sides)
+            assert len(verts) == 2 * sides + 2 * (sides - 2)
+
+    def test_an_axis_aligned_segment_does_not_degenerate(self):
+        # The radial reference vector is chosen relative to the axis; a
+        # segment along that reference would give a zero-length cross.
+        for p1 in ([0, 0, 10], [10, 0, 0], [0, 10, 0]):
+            verts, _ = self.tris(p1=np.array(p1, dtype=float))
+            assert np.isfinite(verts).all()
+            assert len(verts) == 20
+
+    def test_a_zero_length_segment_produces_nothing(self):
+        assert self.rows(p1=self.P0) == []
