@@ -11,6 +11,7 @@ import time
 from belfryscad import exporters
 from belfryscad.window.editor import CodeEditor
 from belfryscad.window.console import ConsoleWidget
+from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
 from belfryscad.window.animate import AnimatePane
@@ -534,7 +535,8 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QActionGroup
 
         def make(name, icon, tip):
-            act = QAction(QIcon(str(_ICONS_DIR / icon)), name, self)
+            act = QAction(name, self)
+            apply_themed_icon(act, _ICONS_DIR / icon)
             act.setCheckable(True)
             act.setToolTip(tip)
             return act
@@ -781,7 +783,17 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _toolbar_icon(name: str) -> QIcon:
         path = _ICONS_DIR / f"toolbar-{name}.svg"
-        return QIcon(str(path)) if path.exists() else QIcon()
+        return themed_icon(path) if path.exists() else QIcon()
+
+    @staticmethod
+    def _set_toolbar_icon(action, name: str) -> None:
+        """Give `action` the `toolbar-{name}` icon, kept correct across a
+        light/dark switch."""
+        path = _ICONS_DIR / f"toolbar-{name}.svg"
+        if path.exists():
+            apply_themed_icon(action, path)
+        else:
+            action.setIcon(QIcon())
 
     def _make_toolbar(self):
         tb = QToolBar("Main")
@@ -790,17 +802,20 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self._act_new = QAction(self._toolbar_icon("new"), "New", self)
+        self._act_new = QAction("New", self)
+        self._set_toolbar_icon(self._act_new, "new")
         self._act_new.setToolTip("New (Ctrl+N)")
         self._act_new.triggered.connect(self._new_document)
         tb.addAction(self._act_new)
 
-        self._act_open = QAction(self._toolbar_icon("open"), "Open", self)
+        self._act_open = QAction("Open", self)
+        self._set_toolbar_icon(self._act_open, "open")
         self._act_open.setToolTip("Open (Ctrl+O)")
         self._act_open.triggered.connect(self._open_file)
         tb.addAction(self._act_open)
 
-        self._act_export = QAction(self._toolbar_icon("export"), "Export", self)
+        self._act_export = QAction("Export", self)
+        self._set_toolbar_icon(self._act_export, "export")
         self._act_export.setToolTip("Export…")
         self._act_export.triggered.connect(self._export)
         tb.addAction(self._act_export)
@@ -808,30 +823,33 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
-        self._act_undo.setIcon(self._toolbar_icon("undo"))
+        self._set_toolbar_icon(self._act_undo, "undo")
         self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
         self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
-        self._act_redo.setIcon(self._toolbar_icon("redo"))
+        self._set_toolbar_icon(self._act_redo, "redo")
         self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_redo)
 
         tb.addSeparator()
 
-        self._act_render = QAction(self._toolbar_icon("render"), "Render", self)
+        self._act_render = QAction("Render", self)
+        self._set_toolbar_icon(self._act_render, "render")
         self._act_render.setToolTip("Render (F6)")
         self._act_render.triggered.connect(self._render)
         tb.addAction(self._act_render)
 
-        self._act_debug_tb = QAction(self._toolbar_icon("debug"), "Debug", self)
+        self._act_debug_tb = QAction("Debug", self)
+        self._set_toolbar_icon(self._act_debug_tb, "debug")
         self._act_debug_tb.setToolTip("Debug (Shift+F6)")
         self._act_debug_tb.triggered.connect(self._start_debug)
         tb.addAction(self._act_debug_tb)
 
-        self._act_animate_tb = QAction(self._toolbar_icon("animate"), "Animate", self)
+        self._act_animate_tb = QAction("Animate", self)
+        self._set_toolbar_icon(self._act_animate_tb, "animate")
         self._act_animate_tb.setToolTip("Animate (F7)")
         self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F7))
         self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)

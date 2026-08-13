@@ -31,6 +31,7 @@ from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
 from belfryscad.window.viewport import Viewport
+from belfryscad.window.ui_colors import header_colors, on_appearance_change
 
 
 def _fmt_short(v) -> str:
@@ -392,18 +393,40 @@ def _compose_after(op: np.ndarray, current: list) -> list:
     return (op @ np.array(current, dtype=np.float64)).tolist()
 
 
-_HEADER_STYLE = (
-    "QHeaderView::section {"
-    "  background-color: #e8e8e8;"
-    "  border: 1px solid #c0c0c0;"
-    "  padding: 2px 4px;"
-    "}"
-)
+def _header_style() -> str:
+    """QHeaderView section styling for the current appearance.
+
+    The colours used to be a fixed near-white, which on a Mac in Dark Mode
+    left bright header bars sitting on top of dark tables. The text colour
+    is now stated explicitly in both appearances rather than left to
+    inherit, since a stylesheet that sets only a background hands you
+    whatever foreground the style felt like.
+    """
+    bg, border, fg = header_colors()
+    return (
+        "QHeaderView::section {"
+        f"  background-color: {bg};"
+        f"  border: 1px solid {border};"
+        f"  color: {fg};"
+        "  padding: 2px 4px;"
+        "}"
+    )
 
 
 def _style_table_headers(table: QTableWidget):
-    table.horizontalHeader().setStyleSheet(_HEADER_STYLE)
-    table.verticalHeader().setStyleSheet(_HEADER_STYLE)
+    """Style `table`'s headers, and restyle them on every appearance change.
+
+    Registered here rather than at each call site, so every table in the
+    app -- viewers, debugger panes, anything added later -- follows a
+    light/dark switch just by calling this the way it always did.
+    """
+    def apply():
+        style = _header_style()
+        table.horizontalHeader().setStyleSheet(style)
+        table.verticalHeader().setStyleSheet(style)
+
+    apply()
+    on_appearance_change(table, apply)
 
 
 def _size_combo_to_widest_item(combo: QComboBox, extra: int = 40):

@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QMenu, QLineEdit,
 )
 from PySide6.QtGui import QFont, QIcon, QPalette
+
+from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from PySide6.QtCore import Qt, QObject, Signal
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -18,7 +20,18 @@ _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
 def _debug_icon(name: str) -> QIcon:
     path = _ICONS_DIR / f"debug-{name}.svg"
-    return QIcon(str(path)) if path.exists() else QIcon()
+    return themed_icon(path) if path.exists() else QIcon()
+
+
+def _set_debug_icon(target, name: str) -> None:
+    """Give `target` the `debug-{name}` icon, kept correct across a
+    light/dark switch. Used for the continue/pause button too, whose icon
+    changes at runtime -- see apply_themed_icon."""
+    path = _ICONS_DIR / f"debug-{name}.svg"
+    if path.exists():
+        apply_themed_icon(target, path)
+    else:
+        target.setIcon(QIcon())
 
 
 def _fmt(v) -> str:
@@ -516,31 +529,31 @@ class DebuggerPane(QWidget):
         layout.setSpacing(4)
 
         self._btn_continue = QPushButton()
-        self._btn_continue.setIcon(_debug_icon("continue"))
+        _set_debug_icon(self._btn_continue, "continue")
         self._btn_continue.setToolTip("Continue / Pause (F5)")
         self._btn_continue.setFixedSize(28, 28)
         self._btn_step_over = QPushButton()
-        self._btn_step_over.setIcon(_debug_icon("step-over"))
+        _set_debug_icon(self._btn_step_over, "step-over")
         self._btn_step_over.setToolTip("Step Over (F10)")
         self._btn_step_over.setFixedSize(28, 28)
         self._btn_step_into = QPushButton()
-        self._btn_step_into.setIcon(_debug_icon("step-into"))
+        _set_debug_icon(self._btn_step_into, "step-into")
         self._btn_step_into.setToolTip("Step Into Call (F11)")
         self._btn_step_into.setFixedSize(28, 28)
         self._btn_step_to_child = QPushButton()
-        self._btn_step_to_child.setIcon(_debug_icon("step-to-child"))
+        _set_debug_icon(self._btn_step_to_child, "step-to-child")
         self._btn_step_to_child.setToolTip("Step to Child (⌃F11)")
         self._btn_step_to_child.setFixedSize(28, 28)
         self._btn_step_out = QPushButton()
-        self._btn_step_out.setIcon(_debug_icon("step-out"))
+        _set_debug_icon(self._btn_step_out, "step-out")
         self._btn_step_out.setToolTip("Step Out (⇧F11)")
         self._btn_step_out.setFixedSize(28, 28)
         self._btn_restart = QPushButton()
-        self._btn_restart.setIcon(_debug_icon("restart"))
+        _set_debug_icon(self._btn_restart, "restart")
         self._btn_restart.setToolTip("Restart (⇧⌘F5)")
         self._btn_restart.setFixedSize(28, 28)
         self._btn_stop = QPushButton()
-        self._btn_stop.setIcon(_debug_icon("stop"))
+        _set_debug_icon(self._btn_stop, "stop")
         self._btn_stop.setToolTip("Stop (⇧F5)")
         self._btn_stop.setFixedSize(28, 28)
 
@@ -877,14 +890,14 @@ class DebuggerPane(QWidget):
 
     def _set_continue_mode(self):
         self._is_running = False
-        self._btn_continue.setIcon(_debug_icon("continue"))
+        _set_debug_icon(self._btn_continue, "continue")
         self._btn_continue.setToolTip("Continue / Pause (F5)")
 
     def set_running(self):
         self._is_running = True
         self._set_partial_warning(None)
         self._status.setText("Running…")
-        self._btn_continue.setIcon(_debug_icon("pause"))
+        _set_debug_icon(self._btn_continue, "pause")
         self._btn_continue.setToolTip("Pause (F5)")
         self._btn_continue.setEnabled(True)
         for btn in (self._btn_step_into, self._btn_step_over, self._btn_step_to_child, self._btn_step_out):

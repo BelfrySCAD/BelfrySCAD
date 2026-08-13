@@ -359,6 +359,88 @@ The scan runs on every edit rather than debounced: it measures 15ms on BOSL2's `
 
 An unmatched opener still counts towards the depth, so the brackets that *do* pair below it keep the colours they had. Bracket kind is not checked when popping: `( ]` is a mismatch, not an unclosed bracket, and treating it as one would put the red on a bracket the user did close.
 
+## Appearance (Light / Dark Mode)
+
+Most widgets follow the system palette on their own. The ones that paint or
+style *themselves* do not, and every one of those had its colours picked
+against a light appearance — so on a Mac in Dark Mode they came out
+illegible. `window/ui_colors.py` is where all of them now get their
+colours.
+
+| what | was | dark mode |
+|---|---|---|
+| console text | black, whatever the palette said | palette foreground |
+| editor gutter | `#CCCCCC` bg / `#000000` text | `#3A3A3A` / `#FFFFFF` |
+| gutter fold arrows | `#606060` | `#B0B0B0` |
+| debugger execution line | `#FFFF88` | `#4A3D00` |
+| table headers (`QHeaderView`) | `#e8e8e8`, no text colour | `#3A3A3A` bg, `#E0E0E0` text |
+| toolbar / debug / anim icons | SVG assets inked `#444` | re-inked `#D0D0D0` |
+
+Two of those need explaining.
+
+**Console text was black because QTextDocument makes it black.** A
+document's default character format is black *regardless of the palette* —
+measured, with the palette reporting `#e0e0e0` text on a `#252526` base
+while every block still resolved to `#000000`. Anything inserting into a
+document has to set the colour itself, which `_plain_fmt()` now does per
+append. The fold headers are inserted as HTML and set it inline, because
+`a { color: inherit }` in a document stylesheet inherits that same black.
+
+**Icons are re-inked in the SVG source, not the rendered pixmap.** Every
+asset under `resources/icons` is drawn in `#444`/`#444444` (checked across
+the set; the `#ffffff`/`#d1d1d1`/`#111111` that also appear are inside
+Inkscape's `<sodipodi:namedview>` and never rendered), so a flat string
+substitution before `QSvgRenderer` recolours them all and keeps the shapes
+vector-clean. Recolouring the rendered pixmap instead — what
+`viewport.py`'s `_recolored_icon_pixmap` does for its always-white overlay
+icons — fringes antialiased edges with the old ink.
+
+Colours were chosen by measurement, not eye: `#D0D0D0` ink scores 8.93
+contrast on a `#2D2D2D` toolbar against the 8.24 the assets' own `#444444`
+scores on `#ECECEC`, i.e. the same perceived weight rather than a harsh
+white. The execution-line shade is a trade-off pinned from both ends —
+darker reads the code better but sinks the band into the editor
+background — and `tests/test_ui_colors.py` asserts both bounds so neither
+can be tuned away by accident. **Light mode is deliberately byte-for-byte
+unchanged**; it was never the bug.
+
+### Switching appearance while running
+
+`ui_colors.on_appearance_change(owner, callback)` re-themes live. Which Qt
+signal to hang this on was measured, because the obvious approach silently
+never fires:
+
+- A widget's `changeEvent()` receives **`PaletteChange`**, *not*
+  `ApplicationPaletteChange`.
+- An event filter installed on the `QApplication` **does** receive
+  `ApplicationPaletteChange` addressed to the application object — one
+  central hook for the whole app.
+- `QStyleHints.colorSchemeChanged` is connected as well, since that is what
+  a real macOS appearance switch emits; `setPalette()` alone does not
+  trigger it, so it cannot be the only hook.
+
+Both paths run the same idempotent callbacks. Registration lifetime is tied
+to `owner`, so nothing unregisters explicitly; entries are pruned when the
+owner dies, covering both Python garbage collection and C++-side widget
+destruction (which raise differently).
+
+Anything that paints — the gutter, the syntax view — just asks at paint
+time and needs no registration. Registration is for state that outlives the
+call: a stylesheet, a `QIcon` already handed to an action, or text already
+sitting in a document. `_style_table_headers()` registers the table itself,
+so every table in the app follows a switch just by calling it as before.
+
+Two subtleties in the implementation:
+
+- **Console back-text.** New appends colour themselves; text written before
+  the switch does not. A document-wide `mergeCharFormat` touches only the
+  foreground, leaving the fold anchors' hrefs — and so the fold toggles —
+  intact.
+- **Buttons that swap icons.** Continue/pause and play/pause change icon at
+  runtime. `apply_themed_icon()` stores the path on the target and
+  registers exactly one callback that re-reads it; registering per call
+  would pile up stale callbacks, each restoring whichever icon it captured.
+
 ## Startup Behavior
 
 Opens with a single blank untitled document. When opening a file while the only tab is an empty, unmodified "Untitled" tab, that tab is replaced by the new file tab (in `_create_and_add_tab`).

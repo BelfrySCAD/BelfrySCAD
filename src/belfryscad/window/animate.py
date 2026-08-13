@@ -6,12 +6,24 @@ from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
+from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
+
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
 
 def _anim_icon(name: str) -> QIcon:
     path = _ICONS_DIR / f"anim-{name}.svg"
-    return QIcon(str(path)) if path.exists() else QIcon()
+    return themed_icon(path) if path.exists() else QIcon()
+
+
+def _set_anim_icon(target, name: str) -> None:
+    """As _set_debug_icon, for the anim-* set -- the play/pause button
+    swaps its icon at runtime."""
+    path = _ICONS_DIR / f"anim-{name}.svg"
+    if path.exists():
+        apply_themed_icon(target, path)
+    else:
+        target.setIcon(QIcon())
 
 
 class AnimatePane(QWidget):
@@ -97,32 +109,32 @@ class AnimatePane(QWidget):
 
         transport = QHBoxLayout()
         self._btn_first = QPushButton()
-        self._btn_first.setIcon(_anim_icon("first"))
+        _set_anim_icon(self._btn_first, "first")
         self._btn_first.setToolTip("First Frame")
         self._btn_first.clicked.connect(self.go_first)
 
         self._btn_prev = QPushButton()
-        self._btn_prev.setIcon(_anim_icon("prev"))
+        _set_anim_icon(self._btn_prev, "prev")
         self._btn_prev.setToolTip("Previous Frame")
         self._btn_prev.clicked.connect(self.step_back)
 
         self._btn_play = QPushButton()
-        self._btn_play.setIcon(_anim_icon("play"))
+        _set_anim_icon(self._btn_play, "play")
         self._btn_play.setToolTip("Play")
         self._btn_play.clicked.connect(self.play)
 
         self._btn_pause = QPushButton()
-        self._btn_pause.setIcon(_anim_icon("pause"))
+        _set_anim_icon(self._btn_pause, "pause")
         self._btn_pause.setToolTip("Pause")
         self._btn_pause.clicked.connect(self.pause)
 
         self._btn_next = QPushButton()
-        self._btn_next.setIcon(_anim_icon("next"))
+        _set_anim_icon(self._btn_next, "next")
         self._btn_next.setToolTip("Next Frame")
         self._btn_next.clicked.connect(self.step_forward)
 
         self._btn_last = QPushButton()
-        self._btn_last.setIcon(_anim_icon("last"))
+        _set_anim_icon(self._btn_last, "last")
         self._btn_last.setToolTip("Last Frame")
         self._btn_last.clicked.connect(self.go_last)
 
@@ -371,5 +383,4 @@ class AnimatePane(QWidget):
         self._time_edit.setText(f"{self.current_t():.6f}")
 
     def _update_play_icons(self):
-        icon = _anim_icon("pause") if self._playing else _anim_icon("play")
-        self._btn_play_big.setIcon(icon)
+        _set_anim_icon(self._btn_play_big, "pause" if self._playing else "play")
