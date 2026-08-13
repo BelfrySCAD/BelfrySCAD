@@ -81,8 +81,13 @@ class _HardWarning(RuntimeError):
 
 
 def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_warnings: bool = False):
-    """Parse + evaluate parse_path. Returns (bodies, elapsed_seconds) on
-    success, or None after printing an error to stderr."""
+    """Parse + evaluate parse_path.
+
+    Returns (bodies, elapsed_seconds, geometry) on success, or None after
+    printing an error to stderr. `geometry` is the evaluator's own handle to
+    the same bodies, kept on the C++ side for export; PNG rendering only
+    wants `bodies` and can ignore it.
+    """
     from openscad_cpp_evaluator import Evaluator, EvalError, ParseError, parse as _oce_parse, to_renderable_bodies
 
     t0 = time.perf_counter()
@@ -112,46 +117,22 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
     if not bodies:
         print("ERROR: Current top level object is not a 3D object.", file=sys.stderr)
         return None
-    return to_renderable_bodies(bodies), elapsed
+    return to_renderable_bodies(bodies), elapsed, evaluator.geometry
 
 
-def _export(output_path: str, ext: str, bodies, export_format: str | None = None) -> bool:
-    """Writes bodies to output_path. Returns True on success, False after
-    printing an error to stderr."""
+def _export(output_path: str, ext: str, geometry, export_format: str | None = None) -> bool:
+    """Writes `geometry` to output_path. Returns True on success, False
+    after printing an error to stderr.
+
+    One call into the evaluator, which owns the split, the colour handling,
+    the mesh repair and the per-format writing, and hands back the problems
+    worth surfacing."""
     from belfryscad import exporters
 
     try:
-        if ext in (".3mf", ".obj", ".ply", ".wrl", ".x3d"):
-            # Formats that can hold separate objects share one split: the
-            # top-level union, cut so no two objects overlap, one per
-            # colour and per connected part. See split_bodies_for_export.
-            open_parts = []
-            objects = exporters.split_bodies_for_export(bodies, open_parts)
-            for n in open_parts:
-                print(f"WARNING: part {n} is not a closed solid; its surface "
-                      f"is written as-is.", file=sys.stderr)
-            if not objects:
-                print("ERROR: No geometry to export.", file=sys.stderr)
-                return False
-            writer = {".3mf": exporters.write_3mf,
-                      ".obj": exporters.write_obj,
-                      ".ply": exporters.write_ply,
-                      ".wrl": exporters.write_vrml,
-                      ".x3d": exporters.write_x3d}[ext]
-            writer(output_path, objects)
-        else:
-            open_parts = []
-            mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
-            for n in open_parts:
-                print(f"WARNING: part {n} is not a closed solid; its surface "
-                      f"is written as-is.", file=sys.stderr)
-            if mesh is None:
-                print("ERROR: No geometry to export.", file=sys.stderr)
-                return False
-            if ext == ".stl" and export_format == "asciistl":
-                exporters.write_stl_ascii(output_path, mesh)
-            else:
-                exporters.write_stl(output_path, mesh)
+        for problem in exporters.export_model(
+                output_path, geometry, ascii_stl=(ext == ".stl" and export_format == "asciistl")):
+            print(f"WARNING: export: {problem}", file=sys.stderr)
     except OSError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return False
@@ -275,9 +256,9 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
         _cleanup(tmp_path)
     if result is None:
         return 1
-    bodies, elapsed = result
+    bodies, elapsed, geometry = result
 
-    if not _export(output_path, ext, bodies, export_format=export_format):
+    if not _export(output_path, ext, geometry, export_format=export_format):
         return 1
     if summary is not None and not _emit_summary(bodies, elapsed, summary, summary_file):
         return 1
@@ -334,8 +315,8 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)
                 ok = False
                 continue
-            bodies, elapsed = result
-            if not _export(str(frame_path), ext, bodies, export_format=export_format):
+            bodies, elapsed, geometry = result
+            if not _export(str(frame_path), ext, geometry, export_format=export_format):
                 print(f"belfryscad: frame {i}: export failed", file=sys.stderr)
                 ok = False
                 continue

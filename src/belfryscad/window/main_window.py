@@ -262,9 +262,10 @@ class _RenderCallback(QObject):
             self._file_tab.editor.update_user_names(root_scope)
 
     @Slot(object, object, float, object, object, object)
-    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result):
+    def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,
+                    geometry=None):
         self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
-                                 profile_result=profile_result)
+                                 profile_result=profile_result, geometry=geometry)
 
     @Slot()
     def on_done(self):
@@ -279,7 +280,7 @@ class _RenderWorker(QObject):
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
-    finished = Signal(object, object, float, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result)
+    finished = Signal(object, object, float, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
@@ -347,6 +348,10 @@ class _RenderWorker(QObject):
         evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache, profile=self._profile)
         try:
             bodies, id_to_node = evaluator.evaluate(parse_path, self._viewport_params)
+            # The same geometry, still on the C++ side. Export needs real
+            # Manifolds, not the flattened arrays the renderer gets, so the
+            # handle rides along rather than being rebuilt at save time.
+            geometry = evaluator.geometry
         except RecursionError:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
             self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  {_fmt_elapsed(elapsed_ms)}")
@@ -381,7 +386,8 @@ class _RenderWorker(QObject):
             if k in evaluator.dyn_explicit:
                 v = evaluator.dyn[k]
                 final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
-        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result)
+        self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
+                            geometry)
 
 
 class _DetachedTabBar(QWidget):
@@ -1611,6 +1617,7 @@ class MainWindow(QMainWindow):
         selecting against a model with no source behind it any more.
         """
         self._bodies = []
+        self._geometry = None   # C++-side handle for Export; see _on_render_done
         self._rendered_tab = None
         self.id_to_node = {}
         self._last_csg_tree = None
@@ -1787,169 +1794,21 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        path, ext = _resolve_export_format(path, chosen)
+        path, _ext = _resolve_export_format(path, chosen)
+        if self._geometry is None:
+            QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
+            return
         try:
-            if ext in (".3mf", ".obj", ".ply", ".wrl", ".x3d"):
-                # These keep the parts as separate objects, so each is
-                # checked on its own -- that is what the file contains.
-                for problem in self._check_export_bodies(bodies):
-                    self.log(f"WARNING: export: {problem}")
-                open_parts = []
-                objects = exporters.split_bodies_for_export(bodies, open_parts)
-                for n in open_parts:
-                    self.log(f"WARNING: export: part {n} is not a closed "
-                             f"solid; its surface is written as-is, and most "
-                             f"slicers will reject it.")
-                if not objects:
-                    QMessageBox.warning(self, "Export", "No geometry to export.")
-                    return
-                writer = {".3mf": exporters.write_3mf,
-                          ".obj": exporters.write_obj,
-                          ".ply": exporters.write_ply,
-                          ".wrl": exporters.write_vrml,
-                          ".x3d": exporters.write_x3d}[ext]
-                writer(path, objects)
-            else:
-                open_parts = []
-                mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
-                for n in open_parts:
-                    self.log(f"WARNING: export: part {n} is not a closed "
-                             f"solid; its surface is written as-is, and most "
-                             f"slicers will reject it.")
-                if mesh is None:
-                    QMessageBox.warning(self, "Export", "No geometry to export.")
-                    return
-                # Zero-area faces are removed before writing. They break no
-                # topology, but slicers commonly discard them and are then
-                # left with the holes their removal opens -- which is how a
-                # sound model becomes a failed print. Removing them here
-                # closes those gaps properly instead.
-                mesh = self._strip_export_slivers(mesh)
-
-                # Checked AFTER merging and stripping, because that is what
-                # gets written. Checking the parts instead passed a Menger
-                # sponge whose 160,000 cubes were each fine and whose file
-                # was riddled with duplicate faces.
-                #
-                # Warned rather than refused: a deliberately open surface is
-                # a legitimate export, and blocking a save the user asked
-                # for would be worse than saying so.
-                for problem in self._check_export_mesh(mesh):
-                    self.log(f"WARNING: export: {problem}")
-                exporters.write_stl(path, mesh)
+            # One call: the evaluator owns the split, the colour handling,
+            # the mesh repair and the per-format writing, and hands back the
+            # problems worth surfacing. Warned rather than refused -- a
+            # deliberately open surface is a legitimate export, and blocking
+            # a save the user asked for would be worse than saying so.
+            for problem in exporters.export_model(path, self._geometry):
+                self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
-
-    def _strip_export_slivers(self, mesh):
-        """Remove zero-area faces from the mesh about to be written.
-
-        A retriangulation, not a repair: the solid is unchanged and no
-        vertex moves. A sliver's three corners are collinear, so removing
-        one leaves its middle vertex on the neighbour's edge -- the
-        neighbour is split there to keep the surface closed.
-
-        Logged rather than silent, because it changes the triangle list of
-        a file the user asked for.
-        """
-        try:
-            import numpy as np
-            from openscad_cpp_evaluator import strip_slivers
-        except ImportError:
-            return mesh       # older evaluator: leave the mesh alone
-        try:
-            v = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
-            t = np.asarray(mesh.tri_verts, dtype=np.uint32).ravel()
-            # Welded by position first. The slivers only exist once
-            # coincident vertices are one vertex, which is what writing the
-            # file does -- an STL has no indices at all. On a level-4 Menger
-            # sponge the unwelded mesh has none and the welded one has 14,
-            # so stripping without welding finds nothing to do.
-            keys, inverse = np.unique(np.round(v, 6), axis=0, return_inverse=True)
-            nv, nt, rep = strip_slivers(keys.ravel().tolist(),
-                                        inverse[t].astype(np.uint32).tolist())
-        except Exception:      # noqa: BLE001 -- must never block a save
-            return mesh
-        if not rep.get("removed"):
-            return mesh
-        n = rep["removed"]
-        note = f"stripped {n} zero-area face{'' if n == 1 else 's'}"
-        if rep.get("restitched"):
-            k = rep["restitched"]
-            note += f", splitting {k} neighbour{'' if k == 1 else 's'} to keep it closed"
-        self.log(f"export: {note}")
-        from types import SimpleNamespace
-        return SimpleNamespace(
-            vert_properties=np.asarray(nv, dtype=np.float32).reshape(-1, 3),
-            tri_verts=np.asarray(nt, dtype=np.uint32).reshape(-1, 3))
-
-    @staticmethod
-    def _check_export_mesh(mesh) -> list:
-        """Problems with the single mesh about to be written, if any."""
-        try:
-            import numpy as np
-            from openscad_cpp_evaluator import check_mesh
-        except ImportError:
-            return []
-        try:
-            v = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
-            t = np.asarray(mesh.tri_verts, dtype=np.uint32).ravel()
-            # Welded by position first, because that is what reading the
-            # file does. An STL carries no indices at all, and OBJ's are
-            # discarded by most importers, so two coincident-but-separately
-            # indexed copies of a face -- which look like two sound solids
-            # to an index-based check -- become the doubled faces a slicer
-            # actually chokes on.
-            keys, inverse = np.unique(np.round(v, 6), axis=0, return_inverse=True)
-            d = check_mesh(keys.ravel().tolist(), inverse[t].tolist())
-        except Exception:      # noqa: BLE001 -- a check must never block a save
-            return []
-        if not d.get("ok", True):
-            return [f"the exported mesh is not a closed manifold solid -- {d['summary']}"]
-        if d.get("degenerate_faces"):
-            # Said separately, and not as "not manifold", because it still
-            # is one: CSG emits zero-area triangles routinely and they break
-            # no topology. They are worth mentioning only because some
-            # slicers discard them and are then left with real holes.
-            n = d["degenerate_faces"]
-            return [f"the exported mesh is a closed manifold solid, but contains {n} "
-                    f"zero-area triangle{'' if n == 1 else 's'}; some slicers drop "
-                    f"these and report holes as a result"]
-        return []
-
-    @staticmethod
-    def _check_export_bodies(bodies) -> list:
-        """One message per body that is not a closed manifold solid.
-
-        Uses the evaluator's own check rather than a second implementation
-        here: the GUI writes files through belfryscad.exporters instead of
-        the C++ writers, so without this the CLI and the GUI would disagree
-        about what counts as sound.
-        """
-        try:
-            import numpy as np
-            from openscad_cpp_evaluator import check_mesh
-        except ImportError:
-            return []      # older evaluator: nothing to say rather than a crash
-        out = []
-        for n, b in enumerate(bodies, start=1):
-            body = getattr(b, "body", None)
-            if body is None or body.is_empty():
-                continue
-            try:
-                m = body.to_mesh()
-                verts = np.asarray(m.vert_properties[:, :3], dtype=np.float32).ravel().tolist()
-                tris = np.asarray(m.tri_verts, dtype=np.uint32).ravel().tolist()
-                d = check_mesh(verts, tris)
-            except Exception:      # noqa: BLE001 -- a check must never block a save
-                continue
-            if not d.get("ok", True):
-                out.append(f"part {n} is not a closed manifold solid -- {d['summary']}")
-        return out
-
-    # ------------------------------------------------------------------
-    # Render
-    # ------------------------------------------------------------------
 
     def _viewport_params(self) -> dict:
         """Snapshot camera state and animation time as OpenSCAD $vp*/$t special variables."""
@@ -2121,12 +1980,18 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
-                        final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None):
+                        final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None,
+                        geometry=None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
+        # Stored only past the render_id guard above, so a superseded render
+        # can never leave its geometry behind for Export to write -- the
+        # handle has to stay in step with self._bodies, which is what the
+        # viewport is showing.
+        self._geometry = geometry
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
         if profile_result is not None:
@@ -4076,6 +3941,7 @@ class MainWindow(QMainWindow):
         # refcounting from clearing these references is sufficient for
         # nanobind to free the objects during interpreter shutdown.
         self._bodies = []
+        self._geometry = None   # C++-side handle for Export; see _on_render_done
         self._viewport.load_geometry([])
         super().closeEvent(event)
 

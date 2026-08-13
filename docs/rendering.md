@@ -102,160 +102,56 @@ evaluator, not guessing in the exporter.
 
 ## Export
 
-**3MF is the default.** It is the only format here that carries colour,
-separate objects and per-triangle colour at once — i.e. everything
-`split_bodies_for_export` produces — where STL keeps none of it. It leads
-the filter list, so it is what the Export dialog opens on.
+**Export lives in openscad_cpp_evaluator, not here.** Every writer -- STL
+(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D -- and the whole colour
+pipeline behind them now live in that package's `export.cpp`. This used to
+be ~400 lines of Python in `exporters.py` that the evaluator's own CLI never
+saw, and the two disagreed: the CLI wrote `cube(100); cube(100,
+center=true);` as two overlapping objects of 24 triangles where this side
+wrote one of 36. One implementation, one answer.
 
-The dialog returns both a path and the selected filter, and they can
-disagree. `_resolve_export_format()` settles it: **a suffix the user typed
-wins over the dropdown** (typing `part.ply` with 3MF selected means PLY),
-and otherwise the dropdown decides and its extension is appended. Before
-this the selected filter was discarded outright, so choosing PLY and typing
-a bare name silently wrote an STL. An unrecognised suffix is appended to
-rather than replaced (`part.v2` → `part.v2.3mf`), since that text is the
-user's and may not be a suffix at all; matching is case-insensitive while
-the path keeps its own case, so `PART.STL` is STL and stays `PART.STL`
-(appending to it, which the old code did, gave `PART.STL.stl`).
+`exporters.py` is now the interface plus the mesh helpers the rest of the
+GUI shares (`body_to_manifold`, `body_mesh_arrays`, `merge_bodies_to_mesh`
+are used by the validation panel, and `exportable` is the `%`-background
+rule). The rules themselves -- the implicit top-level union, one object per
+colour with the later shape winning an overlap, the connected-component
+split, per-triangle colour, and the sliver-strip/mesh-check repair policy --
+are documented in openscad_cpp_evaluator's own `CLAUDE.md`.
 
-Formats split into two groups by whether the container can hold more than
-one object.
+### The geometry handle
 
-| format | objects | colour | per-triangle colour |
-|---|---|---|---|
-| STL (binary/ASCII) | one merged mesh | none | — |
-| OBJ | one `o` group each | `usemtl` + companion `.mtl` | `usemtl` runs |
-| 3MF | one `<object>` each | `m:colorgroup` per object | `pid`/`p1` per `<triangle>` |
-| PLY | one flat mesh | per-vertex RGB | unwelded, 3 verts/triangle |
-| VRML (`.wrl`) | one `Shape` each | `Material diffuseColor` | `Color` + `colorIndex` |
-| X3D (`.x3d`) | one `<Shape>` each | `<Material diffuseColor>` | `<Color>` + `colorIndex` |
+`bodyToDict` flattens every Manifold into numpy arrays on the way to
+Python, which is all the *renderer* needs. Export has to do real CSG, so
+rebuilding Manifolds from those arrays would cost ~146ms on a
+224k-triangle model and throw away Manifold's provenance. Instead the
+evaluator stashes an opaque handle on itself:
 
-STL goes through `merge_bodies_to_mesh`; the other three share
-`split_bodies_for_export`.
+```python
+bodies, id_to_node = evaluator.evaluate(path)   # unchanged
+geometry = evaluator.geometry                   # opaque, C++-side
+...
+for problem in exporters.export_model(path, geometry):
+    self.log(f"WARNING: export: {problem}")
+```
 
-### The object split
+`_RenderWorker` carries the handle in its `finished` payload and
+`_on_render_done` stores it as `self._geometry` -- **only past the
+`render_id` guard**, so a superseded render can never leave its geometry
+behind for Export to write. The handle has to stay in step with
+`self._bodies`, which is what the viewport is showing.
 
-`exporters.split_bodies_for_export()` is what the multi-object formats
-share. The evaluator hands back one `ColoredBody` per top-level coloured
-region, un-unioned; writing those straight out was wrong, because **top
-level in OpenSCAD is an implicit union**. `cube(100); cube(100,
-center=true);` used to write two overlapping objects with their interior
-faces intact — 24 triangles. Real OpenSCAD 2022.08.22 writes one object of
-20 vertices and 36 triangles for that script (checked directly), which is
-what this now produces.
+Measured honestly, the handle is **not** faster today: like-for-like on
+Dalek it is 1045ms against the old Python path's 976ms. The rebuild saving
+is real in isolation but swamped by the mesh checks and the split, which
+dominate and which both sides hand to the same Manifold library. It is kept
+for the architecture and the provenance, not for a speedup it does not
+deliver.
 
-Three rules, applied in order:
+Warnings are returned rather than logged, so the GUI and the CLI can
+present them their own way. Nothing refuses to write: a deliberately open
+surface is a legitimate export, and blocking a save the user asked for
+would be worse than saying so.
 
-1. **Union, never concatenate.** Same reasoning `merge_bodies_to_mesh` has
-   always used for STL: concatenating is only right while the bodies are
-   disjoint, and where two touch each writes its own copy of the shared
-   face.
-2. **One object per colour, and no two objects share volume.** Where
-   differently-coloured solids overlap, the **later** one owns the shared
-   volume and the earlier is notched around it — painter's order, so
-   `color("red") body(); color("blue") detail();` leaves the detail whole.
-   Implemented by walking the bodies in reverse and subtracting everything
-   already claimed. Only the invisible interior is affected: the visible
-   surface is identical either way, since whichever solid is outermost at
-   a given face is what you see. Same-coloured pieces then merge into one
-   object.
-3. **One object per connected component.** Whatever rules 1 and 2 leave is
-   run through Manifold's `decompose()`, so a model that falls into
-   unconnected pieces writes one object per piece.
-
-The guarantee the tests assert is that the parts *tile* the union: summed
-part volumes equal the union volume, and every pairwise intersection is
-empty (`test_export_object_split.py`).
-
-The all-one-colour case — by far the most common — skips the per-body
-subtraction entirely and goes straight to a `batch_boolean` Add, since one
-colour cannot overlap itself into a different answer.
-
-### Per-triangle colour
-
-An explicit CSG op over differently-coloured children — `union() {
-color("red") a(); color("blue") b(); }` — produces **one** solid whose
-*surface* carries two colours, which the evaluator hands over as
-`ColoredBody.tri_colors`, an `(nTri, 4)` array. There is no volume split to
-make: the volumes really did merge, and nothing in the surface says where
-one colour's material would end. Such a body used to export entirely in its
-base colour, which for a merge is just whichever child came first.
-
-3MF's own model is the answer, and the spec is explicit about it —
-"physically based materials specify only the appearance of material at the
-surface of the object. They do not describe the distribution of the
-material through the volume." So colour is written *per triangle*: one
-`<colorgroup>` holding the distinct colours, and each `<triangle>` carrying
-`pid` + `p1` into it. (`p1` alone applies to the whole triangle; the spec
-requires `p2`/`p3` to be absent or equal to it, and absent is the right
-form for a flat-shaded face.) This is what the surface-colour printers
-consume — PolyJet, Mimaki, HP Jet Fusion 580, binder jetting.
-
-The other two formats carry it as far as they can:
-
-- **OBJ** has no per-face colour except through the material in effect, so
-  a multi-coloured surface becomes runs of faces with a `usemtl` between
-  them, emitted in triangle order.
-- **PLY** puts colour on vertices, and a vertex shared by two
-  differently-coloured triangles has no single answer — so those objects
-  are **unwelded**, three vertices per triangle. Only the objects that need
-  it pay for it; a single-coloured cube still writes 8 vertices.
-
-**When it is dropped.** A per-triangle array indexes the triangle list it
-was built against, and every boolean rewrites that list. `_carry_tri_colors`
-therefore checks rather than assumes: `batch_boolean` over a single operand
-and `decompose()` of a single component both return the triangles unchanged
-(measured), so an object that was not actually cut keeps its colours, and
-one that was falls back to its base colour. Mis-colouring a recut surface
-would be worse than losing the detail.
-
-### VRML and X3D
-
-The two surface-colour interchange formats, and the ones the full-colour
-printers actually read — VRML is what GrabCAD Print (PolyJet), Mimaki 3D
-Link and HP's Jet Fusion 580 all list, and X3D is its XML successor. They
-are the same scene graph in different syntax, so `write_vrml` and
-`write_x3d` share `_shape_parts()`.
-
-VRML is written as **VRML97** (`#VRML V2.0 utf8`), which is the version
-those front ends name. X3D declares **version 3.3, Interchange profile** —
-the accurate claim rather than the safe-looking Immersive: per Annex B,
-Interchange is Geometry3D level 2 (`IndexedFaceSet`), Rendering level 3
-(`Coordinate`, `Color`) and Shape level 1 (`Appearance`, `Material`),
-which is exactly the node set used and nothing more.
-
-Per-face colour is native to both: an `IndexedFaceSet` with
-`colorPerVertex FALSE` takes one `colorIndex` entry per face. Note that
-`colorIndex`, unlike `coordIndex`, must contain **no negative entries** —
-`-1` terminates a face in `coordIndex` and means nothing here.
-
-One lossy corner: neither format's `Color` node carries alpha, so a
-per-triangle *alpha* has nowhere to go and the object's base alpha applies
-to the whole shape via `Material.transparency` (which is `1 - alpha`, not
-alpha).
-
-### What the split does not cover
-
-- **Open shells.** Manifold discards anything that is not a closed solid,
-  so an open surface cannot take part in any boolean. Its triangles are
-  written as their own object as-is and its 1-based index is reported
-  through `open_parts` for the caller to warn about — the same contract
-  `merge_bodies_to_mesh` has.
-
-### OBJ writes two files
-
-OBJ carries no colour of its own, so `write_obj` emits a `.mtl` next to
-the `.obj` and references it with `mtllib`. Exporting `m.obj` therefore
-also writes `m.mtl`. One material per distinct RGBA however many objects
-share it; alpha below 1 becomes `d` (opacity, not transparency). A reader
-that ignores the `mtllib` still gets correct geometry.
-
-### PLY has no objects
-
-Standard PLY has no multi-object concept, so the objects are concatenated
-into one vertex/face list and the colour rides on the vertices instead.
-That is lossless only because the split guarantees the objects are
-disjoint and never share a vertex.
 
 ## Viewport visuals
 
