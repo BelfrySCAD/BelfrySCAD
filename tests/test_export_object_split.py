@@ -35,14 +35,14 @@ def as_manifold(verts, tris):
 
 
 def volumes(objects):
-    return [as_manifold(v, t).volume() for v, t, _c in objects]
+    return [as_manifold(o[0], o[1]).volume() for o in objects]
 
 
 # --- rule 1: the implicit union ---------------------------------------
 def test_two_overlapping_bodies_become_one_object(tmp_path):
     objects = objects_for("cube(100, center=false); cube(100, center=true);", tmp_path)
     assert len(objects) == 1
-    verts, tris, _rgba = objects[0]
+    verts, tris = objects[0][0], objects[0][1]
     # Exactly what real OpenSCAD writes for this script.
     assert len(verts) == 20
     assert len(tris) == 36
@@ -81,7 +81,7 @@ def test_the_later_colour_wins_the_shared_volume(tmp_path):
 def test_no_two_objects_occupy_the_same_space(src, tmp_path):
     """The core guarantee: the parts tile the union, they don't overlap it."""
     objects = objects_for(src, tmp_path)
-    mans = [as_manifold(v, t) for v, t, _c in objects]
+    mans = [as_manifold(o[0], o[1]) for o in objects]
     for a, b in itertools.combinations(mans, 2):
         assert (a ^ b).volume() == pytest.approx(0.0, abs=1e-6)
     union = manifold3d.Manifold.batch_boolean(mans, manifold3d.OpType.Add)
@@ -227,3 +227,227 @@ def test_an_open_shell_keeps_its_own_object_and_is_reported(tmp_path):
     assert open_parts == [1]
     assert len(objects) == 1
     assert len(objects[0][1]) == 1          # its one triangle survived
+
+
+# --- per-triangle colour ----------------------------------------------
+# An explicit CSG op over differently-coloured children produces ONE solid
+# whose *surface* carries two colours (the evaluator's tri_colors). There is
+# no volume split to make here -- the volumes really did merge -- and 3MF's
+# own model says so: its spec is explicit that colour describes the surface,
+# not the distribution of material through the volume. So the colours are
+# written per triangle instead.
+TWO_TONE = ('union() { color("red") cube(10); '
+            'color("blue") translate([5,5,5]) cube(10); }')
+
+
+def test_a_merged_body_keeps_both_colours(tmp_path):
+    objects = objects_for(TWO_TONE, tmp_path)
+    assert len(objects) == 1
+    tri_rgba = objects[0][3]
+    assert tri_rgba is not None
+    distinct = {tuple(round(float(x), 3) for x in c) for c in tri_rgba}
+    assert distinct == {(1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0)}
+
+
+def test_per_triangle_colour_covers_every_triangle(tmp_path):
+    objects = objects_for(TWO_TONE, tmp_path)
+    verts, tris, _rgba, tri_rgba = objects[0]
+    assert len(tri_rgba) == len(tris)
+
+
+def test_a_single_coloured_body_carries_no_per_triangle_array(tmp_path):
+    # The ordinary case must not pay for this.
+    objects = objects_for("cube(10);", tmp_path)
+    assert objects[0][3] is None
+
+
+def test_3mf_writes_a_colorgroup_and_indexes_it_per_triangle(tmp_path):
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    out = tmp_path / "m.3mf"
+    exporters.write_3mf(str(out), objects_for(TWO_TONE, tmp_path))
+    with zipfile.ZipFile(out) as z:
+        model = ET.fromstring(z.read("3D/3dmodel.model"))
+    ns = {"c": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02",
+          "m": "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"}
+    group = model.find(".//m:colorgroup", ns)
+    colours = [c.get("color") for c in group.findall("m:color", ns)]
+    assert set(colours) == {"#FF0000FF", "#0000FFFF"}
+
+    tris = model.findall(".//c:triangle", ns)
+    assert tris and all(t.get("p1") is not None for t in tris)
+    assert all(t.get("pid") == group.get("id") for t in tris)
+    # The spec requires p2/p3 to be absent or equal to p1; absent is the
+    # correct form for a flat-shaded face.
+    assert all(t.get("p2") is None and t.get("p3") is None for t in tris)
+    assert {t.get("p1") for t in tris} == {"0", "1"}
+
+
+def test_obj_switches_material_along_the_surface(tmp_path):
+    out = tmp_path / "m.obj"
+    exporters.write_obj(str(out), objects_for(TWO_TONE, tmp_path))
+    text = out.read_text()
+    assert text.count("usemtl") >= 2
+    mtl = (tmp_path / "m.mtl").read_text()
+    assert mtl.count("newmtl ") == 2
+    assert "Kd 1 0 0" in mtl and "Kd 0 0 1" in mtl
+
+
+def test_ply_unwelds_a_multi_coloured_surface(tmp_path):
+    # A vertex shared by two differently-coloured triangles has no single
+    # colour, so those objects get three vertices per triangle.
+    out = tmp_path / "m.ply"
+    exporters.write_ply(str(out), objects_for(TWO_TONE, tmp_path))
+    _header, verts, faces = read_ply(out)
+    assert len(verts) == 3 * len(faces)
+    assert {v[3:] for v in verts} == {(255, 0, 0), (0, 0, 255)}
+
+
+def test_ply_does_not_unweld_a_single_coloured_object(tmp_path):
+    out = tmp_path / "m.ply"
+    exporters.write_ply(str(out), objects_for("cube(10);", tmp_path))
+    _header, verts, faces = read_ply(out)
+    assert len(verts) == 8 and len(faces) == 12
+
+
+def test_per_triangle_colour_is_dropped_when_the_solid_is_recut(tmp_path):
+    """A boolean rewrites the triangle list, which the colours index -- so
+    when a later body cuts into a two-tone one, the array cannot survive and
+    the object falls back to its base colour rather than mis-colouring."""
+    src = TWO_TONE + '\ncolor("green") translate([-2,-2,-2]) cube(6);'
+    objects = objects_for(src, tmp_path)
+    recut = [o for o in objects if tuple(o[2]) != (0.0, 0.5019607843137255, 0.0, 1.0)]
+    assert recut, objects
+    assert all(o[3] is None for o in recut)
+
+
+def test_the_volume_guarantee_still_holds_with_a_two_tone_body(tmp_path):
+    src = TWO_TONE + '\ncolor("green") translate([-2,-2,-2]) cube(6);'
+    objects = objects_for(src, tmp_path)
+    mans = [as_manifold(o[0], o[1]) for o in objects]
+    for a, b in itertools.combinations(mans, 2):
+        assert (a ^ b).volume() == pytest.approx(0.0, abs=1e-6)
+
+
+# --- VRML / X3D --------------------------------------------------------
+# The two surface-colour interchange formats, and the ones the full-colour
+# printers read: VRML is what GrabCAD Print (PolyJet), Mimaki 3D Link and
+# HP's Jet Fusion 580 all list; X3D is its XML successor. Both take
+# per-face colour natively via colorPerVertex FALSE.
+import xml.etree.ElementTree as ET
+
+
+def test_vrml_has_the_v2_header_and_one_shape_per_object(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(
+        'color("red") cube(10);\ncolor("blue") translate([50,0,0]) cube(10);',
+        tmp_path))
+    text = out.read_text()
+    # GrabCAD Print and the other full-colour front ends want VRML 2.0/97.
+    assert text.startswith("#VRML V2.0 utf8\n")
+    assert text.count("Shape {") == 2
+    assert text.count("IndexedFaceSet") == 2
+    assert "diffuseColor 1 0 0" in text and "diffuseColor 0 0 1" in text
+
+
+def test_vrml_terminates_every_face_with_minus_one(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for("cube(10);", tmp_path))
+    text = out.read_text()
+    assert text.count(" -1,") == 12
+
+
+def test_vrml_writes_transparency_not_alpha(tmp_path):
+    # VRML has no alpha; Material.transparency is its complement.
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(
+        "color([0,1,0,0.25]) cube(10);", tmp_path))
+    assert "transparency 0.75" in out.read_text()
+
+
+def test_vrml_omits_transparency_when_opaque(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for("cube(10);", tmp_path))
+    assert "transparency" not in out.read_text()
+
+
+def test_vrml_carries_per_face_colour(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(TWO_TONE, tmp_path))
+    text = out.read_text()
+    assert "colorPerVertex FALSE" in text
+    assert "color Color {" in text
+    assert "colorIndex [" in text
+
+
+def test_x3d_is_well_formed_and_declares_the_interchange_profile(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for("cube(10);", tmp_path))
+    root = ET.parse(out).getroot()
+    assert root.tag == "X3D"
+    # Checked against Annex B: Interchange is Geometry3D L2 (IndexedFaceSet),
+    # Rendering L3 (Coordinate/Color), Shape L1 -- exactly what is used here.
+    assert root.get("profile") == "Interchange"
+    assert root.get("version") == "3.3"
+    assert root.find("Scene") is not None
+
+
+def test_x3d_writes_one_shape_per_object(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for(
+        "cube(10);\ntranslate([50,0,0]) cube(10);", tmp_path))
+    assert len(ET.parse(out).getroot().findall(".//Shape")) == 2
+
+
+def test_x3d_indices_are_in_range_and_faces_terminate(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for("sphere(6,$fn=16);", tmp_path))
+    ifs = ET.parse(out).getroot().find(".//IndexedFaceSet")
+    idx = ifs.get("coordIndex").split()
+    npoints = len(ifs.find("Coordinate").get("point").split()) // 3
+    assert idx.count("-1") == len(idx) // 4        # one terminator per triangle
+    assert max(int(i) for i in idx if i != "-1") < npoints
+
+
+def test_x3d_carries_per_face_colour_with_no_negative_indices(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for(TWO_TONE, tmp_path))
+    ifs = ET.parse(out).getroot().find(".//IndexedFaceSet")
+    assert ifs.get("colorPerVertex") == "false"
+    colour_index = [int(i) for i in ifs.get("colorIndex").split()]
+    faces = ifs.get("coordIndex").split().count("-1")
+    # The spec is explicit: one index per face, and -- unlike coordIndex,
+    # where -1 terminates a face -- colorIndex may contain no negatives.
+    assert len(colour_index) == faces
+    assert min(colour_index) >= 0
+    ncolours = len(ifs.find("Color").get("color").split()) // 3
+    assert max(colour_index) < ncolours == 2
+
+
+def test_every_format_agrees_on_the_triangle_count(tmp_path):
+    """Same geometry however it is encoded -- a cheap guard against one
+    writer dropping or duplicating faces."""
+    objects = objects_for(TWO_TONE + "\ntranslate([50,0,0]) cube(5);", tmp_path)
+    expected = sum(len(o[1]) for o in objects)
+
+    exporters.write_vrml(str(tmp_path / "m.wrl"), objects)
+    assert (tmp_path / "m.wrl").read_text().count(" -1,") == expected
+
+    exporters.write_x3d(str(tmp_path / "m.x3d"), objects)
+    root = ET.parse(tmp_path / "m.x3d").getroot()
+    assert sum(s.find("IndexedFaceSet").get("coordIndex").split().count("-1")
+               for s in root.findall(".//Shape")) == expected
+
+    exporters.write_obj(str(tmp_path / "m.obj"), objects)
+    assert (tmp_path / "m.obj").read_text().count("\nf ") == expected
+
+
+def test_a_disjoint_body_does_not_cost_a_two_tone_body_its_colours(tmp_path):
+    """`A - disjoint B` returns A's volume but reorders its triangle list,
+    which would drop the per-triangle colours. Most models are mostly
+    disjoint parts, so the bounding-box skip is what makes this usable."""
+    objects = objects_for(
+        TWO_TONE + '\ncolor("green") translate([100,0,0]) cube(5);', tmp_path)
+    two_tone = [o for o in objects if o[3] is not None]
+    assert two_tone, "the two-tone body lost its per-triangle colours"

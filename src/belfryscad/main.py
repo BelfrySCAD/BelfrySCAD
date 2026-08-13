@@ -8,7 +8,7 @@ def _parse_args(argv):
     parser = argparse.ArgumentParser(prog="belfryscad", add_help=False)
     parser.add_argument("file", nargs="?")
     parser.add_argument("-o", "--output", metavar="FILE",
-                         help="Render FILE headlessly and export to this path (.stl/.obj/.3mf/.ply/.png); "
+                         help="Render FILE headlessly and export to this path (.stl/.obj/.3mf/.ply/.wrl/.x3d/.png); "
                               "no GUI window opens")
     parser.add_argument("-D", dest="defines", action="append", default=[], metavar="var=value",
                          help="Override a top-level variable (repeatable). Only applies together with -o")

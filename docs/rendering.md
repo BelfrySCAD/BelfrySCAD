@@ -102,15 +102,36 @@ evaluator, not guessing in the exporter.
 
 ## Export
 
+**3MF is the default.** It is the only format here that carries colour,
+separate objects and per-triangle colour at once — i.e. everything
+`split_bodies_for_export` produces — where STL keeps none of it. It leads
+the filter list, so it is what the Export dialog opens on.
+
+The dialog returns both a path and the selected filter, and they can
+disagree. `_resolve_export_format()` settles it: **a suffix the user typed
+wins over the dropdown** (typing `part.ply` with 3MF selected means PLY),
+and otherwise the dropdown decides and its extension is appended. Before
+this the selected filter was discarded outright, so choosing PLY and typing
+a bare name silently wrote an STL. An unrecognised suffix is appended to
+rather than replaced (`part.v2` → `part.v2.3mf`), since that text is the
+user's and may not be a suffix at all; matching is case-insensitive while
+the path keeps its own case, so `PART.STL` is STL and stays `PART.STL`
+(appending to it, which the old code did, gave `PART.STL.stl`).
+
 Formats split into two groups by whether the container can hold more than
 one object.
 
-| format | objects | colour | source |
+| format | objects | colour | per-triangle colour |
 |---|---|---|---|
-| STL (binary/ASCII) | one merged mesh | none | `merge_bodies_to_mesh` |
-| OBJ | one `o` group each | `usemtl` + companion `.mtl` | `split_bodies_for_export` |
-| 3MF | one `<object>` each | `m:colorgroup` per object | `split_bodies_for_export` |
-| PLY | one flat mesh | per-vertex RGB | `split_bodies_for_export` |
+| STL (binary/ASCII) | one merged mesh | none | — |
+| OBJ | one `o` group each | `usemtl` + companion `.mtl` | `usemtl` runs |
+| 3MF | one `<object>` each | `m:colorgroup` per object | `pid`/`p1` per `<triangle>` |
+| PLY | one flat mesh | per-vertex RGB | unwelded, 3 verts/triangle |
+| VRML (`.wrl`) | one `Shape` each | `Material diffuseColor` | `Color` + `colorIndex` |
+| X3D (`.x3d`) | one `<Shape>` each | `<Material diffuseColor>` | `<Color>` + `colorIndex` |
+
+STL goes through `merge_bodies_to_mesh`; the other three share
+`split_bodies_for_export`.
 
 ### The object split
 
@@ -150,13 +171,71 @@ The all-one-colour case — by far the most common — skips the per-body
 subtraction entirely and goes straight to a `batch_boolean` Add, since one
 colour cannot overlap itself into a different answer.
 
+### Per-triangle colour
+
+An explicit CSG op over differently-coloured children — `union() {
+color("red") a(); color("blue") b(); }` — produces **one** solid whose
+*surface* carries two colours, which the evaluator hands over as
+`ColoredBody.tri_colors`, an `(nTri, 4)` array. There is no volume split to
+make: the volumes really did merge, and nothing in the surface says where
+one colour's material would end. Such a body used to export entirely in its
+base colour, which for a merge is just whichever child came first.
+
+3MF's own model is the answer, and the spec is explicit about it —
+"physically based materials specify only the appearance of material at the
+surface of the object. They do not describe the distribution of the
+material through the volume." So colour is written *per triangle*: one
+`<colorgroup>` holding the distinct colours, and each `<triangle>` carrying
+`pid` + `p1` into it. (`p1` alone applies to the whole triangle; the spec
+requires `p2`/`p3` to be absent or equal to it, and absent is the right
+form for a flat-shaded face.) This is what the surface-colour printers
+consume — PolyJet, Mimaki, HP Jet Fusion 580, binder jetting.
+
+The other two formats carry it as far as they can:
+
+- **OBJ** has no per-face colour except through the material in effect, so
+  a multi-coloured surface becomes runs of faces with a `usemtl` between
+  them, emitted in triangle order.
+- **PLY** puts colour on vertices, and a vertex shared by two
+  differently-coloured triangles has no single answer — so those objects
+  are **unwelded**, three vertices per triangle. Only the objects that need
+  it pay for it; a single-coloured cube still writes 8 vertices.
+
+**When it is dropped.** A per-triangle array indexes the triangle list it
+was built against, and every boolean rewrites that list. `_carry_tri_colors`
+therefore checks rather than assumes: `batch_boolean` over a single operand
+and `decompose()` of a single component both return the triangles unchanged
+(measured), so an object that was not actually cut keeps its colours, and
+one that was falls back to its base colour. Mis-colouring a recut surface
+would be worse than losing the detail.
+
+### VRML and X3D
+
+The two surface-colour interchange formats, and the ones the full-colour
+printers actually read — VRML is what GrabCAD Print (PolyJet), Mimaki 3D
+Link and HP's Jet Fusion 580 all list, and X3D is its XML successor. They
+are the same scene graph in different syntax, so `write_vrml` and
+`write_x3d` share `_shape_parts()`.
+
+VRML is written as **VRML97** (`#VRML V2.0 utf8`), which is the version
+those front ends name. X3D declares **version 3.3, Interchange profile** —
+the accurate claim rather than the safe-looking Immersive: per Annex B,
+Interchange is Geometry3D level 2 (`IndexedFaceSet`), Rendering level 3
+(`Coordinate`, `Color`) and Shape level 1 (`Appearance`, `Material`),
+which is exactly the node set used and nothing more.
+
+Per-face colour is native to both: an `IndexedFaceSet` with
+`colorPerVertex FALSE` takes one `colorIndex` entry per face. Note that
+`colorIndex`, unlike `coordIndex`, must contain **no negative entries** —
+`-1` terminates a face in `coordIndex` and means nothing here.
+
+One lossy corner: neither format's `Color` node carries alpha, so a
+per-triangle *alpha* has nowhere to go and the object's base alpha applies
+to the whole shape via `Material.transparency` (which is `1 - alpha`, not
+alpha).
+
 ### What the split does not cover
 
-- **Per-triangle colours.** A `ColoredBody` coming out of a multi-colour
-  CSG merge carries `triColors`, surface colours with no volume behind
-  them. An object takes its body's single `color`, and such a body exports
-  as one object in its base colour. Splitting it would mean inferring
-  volumes from surface attribution, which the surface does not determine.
 - **Open shells.** Manifold discards anything that is not a closed solid,
   so an open surface cannot take part in any boolean. Its triangles are
   written as their own object as-is and its 1-based index is reported

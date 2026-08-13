@@ -86,22 +86,46 @@ def write_obj(path: str, objects):
 
     mtl_path = os.path.splitext(path)[0] + ".mtl"
 
-    # One material per distinct colour, in first-seen order.
+    # One material per distinct colour, in first-seen order -- counting
+    # every colour a per-triangle object uses, not just its base.
     materials = {}
-    for _v, _t, rgba in objects:
-        materials.setdefault(tuple(rgba), f"color_{len(materials) + 1}")
+    for obj in objects:
+        rgba, tri_rgba = obj[2], (obj[3] if len(obj) > 3 else None)
+        if tri_rgba is None:
+            materials.setdefault(tuple(rgba), f"color_{len(materials) + 1}")
+        else:
+            for c in tri_rgba:
+                materials.setdefault(tuple(float(x) for x in c),
+                                     f"color_{len(materials) + 1}")
 
     with open(path, "w", encoding="utf-8") as f:
         if materials:
             f.write(f"mtllib {os.path.basename(mtl_path)}\n\n")
         offset = 1          # OBJ vertex indices are 1-based and file-global
-        for i, (verts, tris, rgba) in enumerate(objects, start=1):
+        for i, obj in enumerate(objects, start=1):
+            verts, tris, rgba = obj[0], obj[1], obj[2]
+            tri_rgba = obj[3] if len(obj) > 3 else None
             f.write(f"o object_{i}\n")
-            f.write(f"usemtl {materials[tuple(rgba)]}\n")
             for v in verts:
                 f.write(f"v {v[0]:.6g} {v[1]:.6g} {v[2]:.6g}\n")
-            for tri in tris:
-                f.write(f"f {tri[0]+offset} {tri[1]+offset} {tri[2]+offset}\n")
+            if tri_rgba is None:
+                f.write(f"usemtl {materials[tuple(rgba)]}\n")
+                for tri in tris:
+                    f.write(f"f {tri[0]+offset} {tri[1]+offset} {tri[2]+offset}\n")
+            else:
+                # OBJ carries colour per face only through the material in
+                # effect, so a multi-coloured surface becomes runs of faces
+                # with a usemtl between them. Emitted in triangle order and
+                # only when the colour actually changes, rather than
+                # grouped, so the face order still matches every other
+                # format's.
+                current = None
+                for tri, c in zip(tris, tri_rgba):
+                    name = materials[tuple(float(x) for x in c)]
+                    if name != current:
+                        f.write(f"usemtl {name}\n")
+                        current = name
+                    f.write(f"f {tri[0]+offset} {tri[1]+offset} {tri[2]+offset}\n")
             f.write("\n")
             offset += len(verts)
 
@@ -130,13 +154,30 @@ def write_ply(path: str, objects):
     import numpy as np
 
     verts, faces, colors, offset = [], [], [], 0
-    for v, t, rgba in objects:
-        verts.append(np.asarray(v, dtype="<f4"))
-        faces.append(np.asarray(t, dtype="<i4") + offset)
-        rgb = np.array([max(0, min(255, int(round(c * 255)))) for c in rgba[:3]],
-                       dtype=np.uint8)
-        colors.append(np.tile(rgb, (len(v), 1)))
-        offset += len(v)
+    for obj in objects:
+        v, t, rgba = obj[0], obj[1], obj[2]
+        tri_rgba = obj[3] if len(obj) > 3 else None
+        v = np.asarray(v, dtype="<f4")
+        t = np.asarray(t, dtype="<i4")
+        if tri_rgba is None:
+            verts.append(v)
+            faces.append(t + offset)
+            rgb = np.array([max(0, min(255, int(round(c * 255)))) for c in rgba[:3]],
+                           dtype=np.uint8)
+            colors.append(np.tile(rgb, (len(v), 1)))
+            offset += len(v)
+            continue
+        # PLY puts colour on vertices, and a vertex shared by two
+        # differently-coloured triangles has no single answer -- so an
+        # object with per-triangle colour is unwelded: three vertices per
+        # triangle, each carrying that triangle's colour. Costs vertices
+        # only for the objects that actually need it.
+        flat = v[t.reshape(-1)]
+        verts.append(flat)
+        faces.append(np.arange(len(flat), dtype="<i4").reshape(-1, 3) + offset)
+        rgb = np.clip(np.rint(np.asarray(tri_rgba)[:, :3] * 255), 0, 255).astype(np.uint8)
+        colors.append(np.repeat(rgb, 3, axis=0))
+        offset += len(flat)
 
     if verts:
         verts = np.concatenate(verts)
@@ -241,8 +282,13 @@ def _3mf_num(v):
     return "0" if s in ("", "-0") else s
 
 
+def _rgba_hex(rgba):
+    r, g, b, a = (max(0, min(255, int(round(c * 255)))) for c in rgba)
+    return f"#{r:02X}{g:02X}{b:02X}{a:02X}"
+
+
 def build_3mf_model_xml(meshes):
-    """The 3D/3dmodel.model part for [(verts, tris, rgba-or-None), ...].
+    """The 3D/3dmodel.model part for [(verts, tris, rgba, tri_rgba), ...].
 
     Indented with tabs and spaced before each `/>`, matching what lib3mf
     wrote, so the part reads sensibly when someone unzips a .3mf to look
@@ -255,14 +301,32 @@ def build_3mf_model_xml(meshes):
            f'xmlns:m="{_3MF_MATERIAL}">', "\t<resources>"]
     next_id = 1
     items = []
-    for verts, tris, rgba in meshes:
+    for mesh in meshes:
+        verts, tris, rgba = mesh[0], mesh[1], mesh[2]
+        tri_rgba = mesh[3] if len(mesh) > 3 else None
         colour_attrs = ""
-        if rgba is not None:
+        cid = None
+        palette = {}
+        if tri_rgba is not None:
+            # One colorgroup holding every distinct colour the surface
+            # uses; each triangle then indexes into it. This is 3MF's own
+            # model -- the spec is explicit that colour describes the
+            # surface, not the volume -- so a body whose surface came out
+            # of a multi-colour CSG merge needs no volume split to be
+            # written faithfully.
             cid = next_id
             next_id += 1
-            r, g, b, a = (max(0, min(255, int(round(c * 255)))) for c in rgba)
+            for c in tri_rgba:
+                palette.setdefault(_rgba_hex(c), len(palette))
             out.append(f'\t\t<m:colorgroup id="{cid}">')
-            out.append(f'\t\t\t<m:color color="#{r:02X}{g:02X}{b:02X}{a:02X}" />')
+            out.extend(f'\t\t\t<m:color color="{h}" />' for h in palette)
+            out.append("\t\t</m:colorgroup>")
+            colour_attrs = f' pid="{cid}" pindex="0"'
+        elif rgba is not None:
+            cid = next_id
+            next_id += 1
+            out.append(f'\t\t<m:colorgroup id="{cid}">')
+            out.append(f'\t\t\t<m:color color="{_rgba_hex(rgba)}" />')
             out.append("\t\t</m:colorgroup>")
             # One colour for the whole object, so it hangs off the object
             # rather than repeating on every triangle -- which is what
@@ -277,8 +341,17 @@ def build_3mf_model_xml(meshes):
                    f'z="{_3mf_num(v[2])}" />' for v in verts)
         out.append("\t\t\t\t</vertices>")
         out.append("\t\t\t\t<triangles>")
-        out.extend(f'\t\t\t\t\t<triangle v1="{int(t[0])}" v2="{int(t[1])}" '
-                   f'v3="{int(t[2])}" />' for t in tris)
+        if tri_rgba is not None:
+            # p1 alone applies to the whole triangle -- the spec requires
+            # p2/p3 to be either absent or equal to it, so the shorter form
+            # is the correct one for a flat-shaded face.
+            out.extend(
+                f'\t\t\t\t\t<triangle v1="{int(t[0])}" v2="{int(t[1])}" '
+                f'v3="{int(t[2])}" pid="{cid}" p1="{palette[_rgba_hex(c)]}" />'
+                for t, c in zip(tris, tri_rgba))
+        else:
+            out.extend(f'\t\t\t\t\t<triangle v1="{int(t[0])}" v2="{int(t[1])}" '
+                       f'v3="{int(t[2])}" />' for t in tris)
         out.append("\t\t\t\t</triangles>")
         out.append("\t\t\t</mesh>")
         out.append("\t\t</object>")
@@ -305,8 +378,11 @@ def _manifold_arrays(man):
 def split_bodies_for_export(bodies, open_parts=None):
     """The implicit top-level union, cut into objects that never overlap.
 
-    Returns [(verts, tris, rgba), ...] for the formats that can hold more
-    than one object -- 3MF, OBJ, PLY. Three rules, in order:
+    Returns [(verts, tris, rgba, tri_rgba), ...] for the formats that can
+    hold more than one object -- 3MF, OBJ, PLY. `tri_rgba` is None for the
+    ordinary single-coloured object, or an (nTri, 4) array when the object
+    carries a colour per triangle (see _carry_tri_colors). Three rules, in
+    order:
 
     1. **Union, never concatenate.** Top level in OpenSCAD is an implicit
        union, so `cube(100); cube(100, center=true);` is ONE solid. Writing
@@ -343,14 +419,15 @@ def split_bodies_for_export(bodies, open_parts=None):
             continue
         man = manifold3d.Manifold(manifold3d.Mesh(v, t))
         if man.is_empty():
-            loose.append((v, t.astype("int32"), cb.color or DEFAULT_COLOR))
+            loose.append((v, t.astype("int32"), cb.color or DEFAULT_COLOR,
+                          getattr(cb, "tri_colors", None)))
             if open_parts is not None:
                 open_parts.append(i + 1)
         else:
-            solids.append((man, cb.color))
+            solids.append((man, cb.color, getattr(cb, "tri_colors", None)))
 
     out = []
-    for man, color in _claim_by_colour(solids):
+    for man, color, tri_colors, source in _claim_by_colour(solids):
         # decompose() is the rule-3 split. A single-component solid comes
         # back as a one-element list, so there is no special case here.
         for part in man.decompose() or [man]:
@@ -358,47 +435,114 @@ def split_bodies_for_export(bodies, open_parts=None):
                 continue
             verts, tris = _manifold_arrays(part)
             if len(tris):
-                out.append((verts, tris, color or DEFAULT_COLOR))
+                out.append((verts, tris, color or DEFAULT_COLOR,
+                            _carry_tri_colors(tri_colors, source, tris)))
     out.extend(loose)
     return out
 
 
+def _carry_tri_colors(tri_colors, source_tris, out_tris):
+    """`tri_colors` if it still lines up with `out_tris`, else None.
+
+    A per-triangle colour array indexes the triangle list it was built
+    against, and every boolean rewrites that list -- so the array can only
+    survive an object whose triangles came through untouched. Rather than
+    reason about which paths are no-ops, this checks: `batch_boolean` over a
+    single operand and `decompose()` of a single component both return the
+    triangles unchanged (measured), and anything that actually cut geometry
+    will not match.
+
+    Falling back to None costs the object its per-triangle detail and it
+    exports in its base colour -- the behaviour before any of this existed.
+    """
+    import numpy as np
+
+    if tri_colors is None or source_tris is None:
+        return None
+    if len(tri_colors) != len(source_tris) or len(source_tris) != len(out_tris):
+        return None
+    if not np.array_equal(np.asarray(source_tris), np.asarray(out_tris)):
+        return None
+    return np.asarray(tri_colors, dtype=np.float32)
+
+
 def _claim_by_colour(solids):
-    """[(manifold, colour)] -- `solids` unioned, partitioned by colour so no
-    two entries occupy the same space. Later entries win the overlap."""
+    """[(manifold, colour, tri_colours, source_tris)] -- `solids` unioned,
+    partitioned by colour so no two entries occupy the same space. Later
+    entries win the overlap.
+
+    `source_tris` is the triangle list the entry's `tri_colours` was built
+    against, for _carry_tri_colors to check against the result.
+    """
     import manifold3d
+    import numpy as np
 
     def add(parts):
         if len(parts) == 1:
             return parts[0]
         return manifold3d.Manifold.batch_boolean(parts, manifold3d.OpType.Add)
 
+    def tris_of(man):
+        return np.asarray(man.to_mesh().tri_verts)
+
     if not solids:
         return []
-    colors = {c for _m, c in solids}
+
+    # A body carrying per-triangle colours is never merged with anything:
+    # its colours index its own triangle list, and a union would rewrite
+    # that list and lose them. Keyed by position so each stays its own
+    # object even when two of them share a base colour.
+    def key(i, color, tri_colors):
+        return (i, "tri") if tri_colors is not None else color
+
+    colors = {key(i, c, tc) for i, (_m, c, tc) in enumerate(solids)}
     if len(colors) == 1:
         # The common case by far, and it needs no per-body subtraction at
         # all: one colour cannot overlap itself into a different answer.
-        return [(add([m for m, _c in solids]), solids[0][1])]
+        man, color, tri_colors = solids[0][0], solids[0][1], solids[0][2]
+        merged = add([m for m, _c, _tc in solids])
+        source = tris_of(man) if tri_colors is not None else None
+        return [(merged, color, tri_colors, source)]
 
     # Reverse order + subtract-what-is-already-claimed is what makes the
     # LATER body win: by the time an earlier one is reached, everything
     # after it has already taken its volume.
+    def boxes_overlap(a, b):
+        ax0, ay0, az0, ax1, ay1, az1 = a.bounding_box()
+        bx0, by0, bz0, bx1, by1, bz1 = b.bounding_box()
+        return not (ax1 < bx0 or bx1 < ax0 or ay1 < by0
+                    or by1 < ay0 or az1 < bz0 or bz1 < az0)
+
     claimed = None
     owned = []
-    for man, color in reversed(solids):
-        piece = man if claimed is None else man - claimed
+    for i, (man, color, tri_colors) in reversed(list(enumerate(solids))):
+        # Skipping the subtraction when the bounding boxes cannot overlap
+        # is not just a shortcut: `A - disjoint B` returns A's volume but
+        # REORDERS its triangle list (measured), which throws away any
+        # per-triangle colours A was carrying. Most models are mostly
+        # disjoint parts, so without this a two-tone body lost its colours
+        # the moment any other differently-coloured body existed.
+        if claimed is None or not boxes_overlap(man, claimed):
+            piece = man
+        else:
+            piece = man - claimed
         claimed = man if claimed is None else claimed + man
         if not piece.is_empty():
-            owned.append((piece, color))
+            source = tris_of(man) if tri_colors is not None else None
+            owned.append((key(i, color, tri_colors), piece, color, tri_colors, source))
     owned.reverse()
 
     # Same-coloured pieces merge into one object; distinct colours stay
     # apart. Insertion-ordered so object order still follows the source.
     grouped = {}
-    for piece, color in owned:
-        grouped.setdefault(color, []).append(piece)
-    return [(add(parts), color) for color, parts in grouped.items()]
+    for k, piece, color, tri_colors, source in owned:
+        grouped.setdefault(k, []).append((piece, color, tri_colors, source))
+    out = []
+    for entries in grouped.values():
+        pieces = [e[0] for e in entries]
+        _p, color, tri_colors, source = entries[0]
+        out.append((add(pieces), color, tri_colors, source))
+    return out
 
 
 
@@ -523,3 +667,139 @@ def merge_bodies_to_mesh(bodies, open_parts=None):
     return SimpleNamespace(
         vert_properties=np.concatenate(verts) if len(verts) > 1 else verts[0],
         tri_verts=np.concatenate(faces) if len(faces) > 1 else faces[0])
+
+
+# --- VRML / X3D --------------------------------------------------------
+# The two surface-colour interchange formats, and the ones the full-colour
+# printers actually read -- VRML is what GrabCAD Print (PolyJet), Mimaki 3D
+# Link and HP's Jet Fusion 580 all list, and X3D is its XML successor.
+#
+# Both are the same scene graph with different syntax, so they share
+# _shape_parts() below. Per-triangle colour is native to both: an
+# IndexedFaceSet with `colorPerVertex FALSE` takes one colorIndex entry per
+# face. Note colorIndex, unlike coordIndex, must contain no negative
+# entries -- -1 terminates a face in coordIndex and means nothing here.
+
+def _num(v) -> str:
+    """A coordinate or colour component, compactly."""
+    return f"{float(v):.6g}"
+
+
+def _shape_parts(obj):
+    """(rgba, transparency, faces, palette, color_index) for one object.
+
+    `palette` is the distinct colours the surface uses and `color_index`
+    one entry per face, both None when the object is a single flat colour.
+    """
+    verts, tris, rgba = obj[0], obj[1], obj[2]
+    tri_rgba = obj[3] if len(obj) > 3 else None
+    alpha = float(rgba[3]) if len(rgba) > 3 else 1.0
+    if tri_rgba is None:
+        return verts, tris, rgba, 1.0 - alpha, None, None
+
+    palette, index = [], []
+    seen = {}
+    for c in tri_rgba:
+        key = tuple(round(float(x), 6) for x in c[:3])
+        if key not in seen:
+            seen[key] = len(palette)
+            palette.append(key)
+        index.append(seen[key])
+    return verts, tris, rgba, 1.0 - alpha, palette, index
+
+
+def write_vrml(path: str, objects):
+    """VRML97 (`#VRML V2.0 utf8`), one Shape per object.
+
+    Per-face colour rides on a Color node with `colorPerVertex FALSE`.
+    Where that is present the spec says the Material's diffuseColor is
+    ignored for the geometry, so the Material is still written -- it is
+    what carries transparency, which a Color node (RGB only) cannot.
+
+    That is also the one lossy corner: a per-triangle *alpha* has nowhere
+    to go, so the object's base alpha applies to the whole shape.
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("#VRML V2.0 utf8\n")
+        f.write("# Written by BelfrySCAD\n\n")
+        for obj in objects:
+            verts, tris, rgba, transparency, palette, index = _shape_parts(obj)
+            f.write("Shape {\n")
+            f.write("  appearance Appearance {\n")
+            f.write("    material Material {\n")
+            f.write(f"      diffuseColor {_num(rgba[0])} {_num(rgba[1])} {_num(rgba[2])}\n")
+            if transparency > 0:
+                f.write(f"      transparency {_num(transparency)}\n")
+            f.write("    }\n  }\n")
+            f.write("  geometry IndexedFaceSet {\n")
+            f.write("    solid TRUE\n")
+            f.write("    coord Coordinate {\n      point [\n")
+            for v in verts:
+                f.write(f"        {_num(v[0])} {_num(v[1])} {_num(v[2])},\n")
+            f.write("      ]\n    }\n")
+            if palette is not None:
+                f.write("    colorPerVertex FALSE\n")
+                f.write("    color Color {\n      color [\n")
+                for c in palette:
+                    f.write(f"        {_num(c[0])} {_num(c[1])} {_num(c[2])},\n")
+                f.write("      ]\n    }\n")
+                f.write("    colorIndex [\n")
+                for i in index:
+                    f.write(f"      {i},\n")
+                f.write("    ]\n")
+            f.write("    coordIndex [\n")
+            for t in tris:
+                f.write(f"      {int(t[0])} {int(t[1])} {int(t[2])} -1,\n")
+            f.write("    ]\n")
+            f.write("  }\n}\n\n")
+
+
+_X3D_DOCTYPE = ('<!DOCTYPE X3D PUBLIC "ISO//Web3D//DTD X3D 3.3//EN" '
+                '"https://www.web3d.org/specifications/x3d-3.3.dtd">')
+
+
+def write_x3d(path: str, objects):
+    """X3D 3.3, Interchange profile -- the XML encoding of what write_vrml
+    emits, node for node.
+
+    Interchange is the right claim rather than the safe-looking Immersive:
+    checked against Annex B, it is Geometry3D level 2 (IndexedFaceSet),
+    Rendering level 3 (Coordinate, Color) and Shape level 1 (Appearance,
+    Material), which is exactly the set used here and nothing more.
+    """
+    from xml.sax.saxutils import escape
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        f.write(_X3D_DOCTYPE + "\n")
+        f.write('<X3D profile="Interchange" version="3.3">\n')
+        f.write("  <head>\n")
+        f.write('    <meta name="generator" content="BelfrySCAD" />\n')
+        f.write("  </head>\n")
+        f.write("  <Scene>\n")
+        for obj in objects:
+            verts, tris, rgba, transparency, palette, index = _shape_parts(obj)
+            diffuse = f"{_num(rgba[0])} {_num(rgba[1])} {_num(rgba[2])}"
+            trans = f' transparency="{_num(transparency)}"' if transparency > 0 else ""
+            f.write("    <Shape>\n")
+            f.write("      <Appearance>\n")
+            f.write(f'        <Material diffuseColor="{escape(diffuse)}"{trans} />\n')
+            f.write("      </Appearance>\n")
+            coord_index = " ".join(
+                f"{int(t[0])} {int(t[1])} {int(t[2])} -1" for t in tris)
+            extra = ""
+            if palette is not None:
+                extra = (' colorPerVertex="false" colorIndex="'
+                         + " ".join(str(i) for i in index) + '"')
+            f.write(f'      <IndexedFaceSet solid="true"{extra} '
+                    f'coordIndex="{coord_index}">\n')
+            point = " ".join(f"{_num(v[0])} {_num(v[1])} {_num(v[2])}" for v in verts)
+            f.write(f'        <Coordinate point="{point}" />\n')
+            if palette is not None:
+                colour = " ".join(
+                    f"{_num(c[0])} {_num(c[1])} {_num(c[2])}" for c in palette)
+                f.write(f'        <Color color="{colour}" />\n')
+            f.write("      </IndexedFaceSet>\n")
+            f.write("    </Shape>\n")
+        f.write("  </Scene>\n")
+        f.write("</X3D>\n")
