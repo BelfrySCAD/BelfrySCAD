@@ -1,10 +1,25 @@
 from html import escape
 
 from PySide6.QtWidgets import QTextBrowser
-from PySide6.QtGui import QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtCore import QUrl, Qt
 
-_PLAIN_FMT = QTextCharFormat()  # default format with no anchor href
+from belfryscad.window.ui_colors import on_appearance_change, text_color
+
+
+def _plain_fmt() -> QTextCharFormat:
+    """Default format with no anchor href, and an explicit foreground.
+
+    The colour is not decoration: a QTextDocument's default character
+    format is black no matter what the palette says, so on a Mac in Dark
+    Mode this text was black on a near-black base. Built per append rather
+    than once at import, so it costs nothing to be right after the user
+    switches appearance mid-session -- and so it does not need a
+    QApplication to exist at import time.
+    """
+    fmt = QTextCharFormat()
+    fmt.setForeground(QColor(text_color()))
+    return fmt
 
 
 class ConsoleWidget(QTextBrowser):
@@ -27,10 +42,23 @@ class ConsoleWidget(QTextBrowser):
         # fold_id → (name, value) for blocks appended via append_value()
         self._fold_values: dict[int, tuple[str, object]] = {}
         self.setOpenLinks(False)
-        self.document().setDefaultStyleSheet(
-            "a { color: inherit; text-decoration: none; }"
-        )
+        self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self._on_anchor_clicked)
+        on_appearance_change(self, self._retheme)
+
+    def _retheme(self):
+        """Recolour text already in the document after a light/dark switch.
+
+        New appends pick the colour up on their own; text written before
+        the switch keeps whatever it was given, so it has to be rewritten.
+        `mergeCharFormat` only touches the foreground, leaving the fold
+        anchors' hrefs -- and so the fold toggles -- intact.
+        """
+        cursor = QTextCursor(self.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(text_color()))
+        cursor.mergeCharFormat(fmt)
 
     def append_output(self, text: str):
         """Append text. Multi-line output gets a fold toggle on the first line."""
@@ -65,7 +93,7 @@ class ConsoleWidget(QTextBrowser):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if cursor.position() > 0:
             cursor.insertBlock()
-        cursor.insertText(text, _PLAIN_FMT)
+        cursor.insertText(text, _plain_fmt())
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _append_foldable(self, summary: str, detail: str):
@@ -75,8 +103,12 @@ class ConsoleWidget(QTextBrowser):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if cursor.position() > 0:
             cursor.insertBlock()
+        # Colour set inline rather than through the document stylesheet:
+        # `a { color: inherit }` inherits the same black default the plain
+        # text had, which is the bug this is avoiding.
         cursor.insertHtml(
-            f'<a href="fold:{fold_id}">{self._EXPANDED} {escape(summary)}</a>'
+            f'<a href="fold:{fold_id}" style="color:{text_color()};'
+            f'text-decoration:none">{self._EXPANDED} {escape(summary)}</a>'
         )
         header_bn = doc.blockCount() - 1
         first_body_bn = header_bn + 1
@@ -84,7 +116,7 @@ class ConsoleWidget(QTextBrowser):
             cursor = QTextCursor(doc)
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertBlock()
-            cursor.insertText(line, _PLAIN_FMT)
+            cursor.insertText(line, _plain_fmt())
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())

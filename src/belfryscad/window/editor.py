@@ -12,6 +12,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
 
+from belfryscad.window.ui_colors import (
+    execution_line_color, fold_arrow_color, gutter_colors, on_appearance_change,
+)
+
 
 def _compute_fold_regions(doc) -> dict[int, int]:
     """Scan for foldable regions.  Returns {open_block_number: close_block_number}.
@@ -973,6 +977,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self._line_number_area = LineNumberArea(self)
         self._highlighter = OpenSCADHighlighter(self.document())
+        on_appearance_change(self, self._retheme)
 
         self.setUndoRedoEnabled(False)
 
@@ -1049,7 +1054,10 @@ class CodeEditor(QPlainTextEdit):
             self._fold_busy = False
 
         painter = QPainter(self._line_number_area)
-        painter.fillRect(event.rect(), QColor("#CCCCCC"))
+        # Asked at paint time, so switching appearance mid-session just
+        # redraws correctly with no palette-change plumbing.
+        gutter_bg, gutter_fg = gutter_colors()
+        painter.fillRect(event.rect(), QColor(gutter_bg))
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -1073,7 +1081,7 @@ class CodeEditor(QPlainTextEdit):
                         painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
 
                 # Line number
-                painter.setPen(QColor("#000000"))
+                painter.setPen(QColor(gutter_fg))
                 painter.drawText(
                     bp_w, top, num_w, lh,
                     Qt.AlignmentFlag.AlignRight,
@@ -1084,7 +1092,7 @@ class CodeEditor(QPlainTextEdit):
                     cx = bp_w + num_w + 7
                     cy = int(top) + lh // 2
                     painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(QColor("#606060"))
+                    painter.setBrush(QColor(fold_arrow_color()))
                     if block_number in self._folded:
                         pts = [QPoint(cx - 3, cy - 4),
                                QPoint(cx + 3, cy),
@@ -1560,7 +1568,7 @@ class CodeEditor(QPlainTextEdit):
     def set_execution_line(self, line: int):
         """Highlight the currently executing line (1-indexed)."""
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor("#FFFF88"))
+        fmt.setBackground(QColor(execution_line_color()))
         fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
         block = self.document().findBlockByLineNumber(line - 1)
         if not block.isValid():
@@ -1573,6 +1581,20 @@ class CodeEditor(QPlainTextEdit):
         self._exec_selection = [sel]
         self._refresh_extra_selections()
         self.scroll_to_line(line)
+
+    def _retheme(self):
+        """Follow a light/dark switch.
+
+        The gutter reads its colours as it paints, so it only needs a
+        repaint. The execution-line highlight does not: its colour is baked
+        into a QTextCharFormat held in `_exec_selection`, so that format is
+        rewritten in place -- rather than re-running set_execution_line(),
+        which would also scroll the view out from under the user.
+        """
+        for sel in self._exec_selection:
+            sel.format.setBackground(QColor(execution_line_color()))
+        self._refresh_extra_selections()
+        self._line_number_area.update()
 
     def clear_execution_line(self):
         self._exec_selection = []
