@@ -9,6 +9,13 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 
 **Source input**: `_render()` reads the editor's current text (`toPlainText()`), not the saved file. The worker writes this to a temp file in the same directory as the original (so relative `include`/`use` paths resolve) and passes that to the parser.
 
+Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the render worker, the debug session, the AI expression probe, and the CLI's `-D` prelude. Because they land in the *user's* project directory rather than `/tmp`, a leaked one is visible clutter in their work, so that module does two things a bare `tempfile` call does not:
+
+- Names them `belfryscad-*.scad`. A default `tmp*.scad` is indistinguishable from a file the user wrote, which makes it unsafe to ever clean up automatically.
+- Sweeps its own stale leftovers from that directory on each new write. `try/finally` covers every failure the process survives; it cannot cover SIGKILL or a segfault in the C++ evaluator, and those are what strand a temp. The sweep only touches the app's own prefix, only in the one directory it was already writing to, and only files older than an hour — so a second BelfrySCAD window rendering out of the same folder never loses its in-flight temp.
+
+`mkstemp` is used rather than `NamedTemporaryFile(delete=False)` because it returns the path at the moment the file starts existing, leaving no window where the file is on disk but the caller has nothing to clean up yet.
+
 **Cancellation**: `_render()` passes a `threading.Event` to the worker, which checks `cancel.is_set()` between major steps. A `render_id` counter increments per render; the callback discards results whose `render_id` no longer matches.
 
 **Progress indicator**: a QLabel overlay centered in the viewport shows elapsed seconds and cycling dots (`.` → `..` → `...` → blank) during rendering, updated every 100ms via QTimer. A `WaitCursor` override is set/restored at the same time. The viewport geometry is cleared at render start so only the overlay is visible.
