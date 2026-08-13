@@ -82,9 +82,25 @@ def write_temp_scad(text: str, near=None) -> str:
     # window in which the file is on disk but the caller has nothing to
     # clean up yet. Every previous version of this assigned its path
     # variable only after writing and closing.
+    #
+    # The two failure paths are separated because Windows will not unlink a
+    # file that still has an open handle. If fdopen() itself fails, the raw
+    # descriptor is still open and still ours, so it has to be closed before
+    # the file can go -- and it must NOT be closed on the other path, where
+    # the `with` already closed it and the number may since have been reused
+    # by another thread (_RenderWorker renders on one).
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        remove(path)
+        raise
+    try:
+        with handle:
+            handle.write(text)
     except BaseException:
         remove(path)
         raise

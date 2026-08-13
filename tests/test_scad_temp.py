@@ -59,23 +59,50 @@ def test_remove_is_safe_on_none_and_on_an_already_gone_file(script):
     scad_temp.remove(None)
 
 
+def _ours_in(directory):
+    return [p for p in os.listdir(directory) if p.startswith("belfryscad-")]
+
+
 def test_a_failed_write_leaves_nothing_behind(script, monkeypatch):
     """The window this closes: the file exists on disk from the moment it
     is created, so a write that raises must not strand it."""
-    seen = []
     real = scad_temp.os.fdopen
 
-    def boom(fd, *a, **kw):
-        f = real(fd, *a, **kw)
-        seen.append(f.name if hasattr(f, "name") else None)
-        raise OSError("disk full")
+    class _WriteFails:
+        """Opens for real -- so the handle is genuinely closed on the way
+        out -- and fails only at write. Windows will not unlink a file that
+        still has an open handle, so a fake that skipped the close would
+        test the OS rather than this module."""
+        def __init__(self, fd, *a, **kw):
+            self._f = real(fd, *a, **kw)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._f.close()
+            return False
+
+        def write(self, *_a):
+            raise OSError("disk full")
+
+    monkeypatch.setattr(scad_temp.os, "fdopen", _WriteFails)
+    with pytest.raises(OSError):
+        scad_temp.write_temp_scad("x\n", near=script)
+    assert _ours_in(os.path.dirname(script)) == []
+
+
+def test_a_failed_open_leaves_nothing_behind(script, monkeypatch):
+    """If fdopen() fails the descriptor is still open and still ours. On
+    Windows the file cannot be unlinked until it is closed, so failing to
+    close it there strands the temp -- caught on CI, not locally."""
+    def boom(fd, *_a, **_kw):
+        raise OSError("out of handles")
 
     monkeypatch.setattr(scad_temp.os, "fdopen", boom)
     with pytest.raises(OSError):
         scad_temp.write_temp_scad("x\n", near=script)
-    leftovers = [p for p in os.listdir(os.path.dirname(script))
-                 if p.startswith("belfryscad-")]
-    assert leftovers == []
+    assert _ours_in(os.path.dirname(script)) == []
 
 
 # --- the sweep --------------------------------------------------------
