@@ -13,7 +13,7 @@ BelfrySCAD is a hybrid procedural CAD application combining OpenSCAD-style scrip
 - **UI Framework**: PySide6 (Qt)
 - **Code Editor**: `QPlainTextEdit` + `QSyntaxHighlighter` (PySide6 built-ins; text layer only — not semantically aware)
 - **Parser**: openscad_cpp_parser (C++, Bison `lalr1.cc`; generates an AST with file/line/col/span metadata; parses full OpenSCAD syntax but has no knowledge of built-in functions/modules — the evaluator implements all built-ins). Not a dependency of this project directly: it is vendored at `external/openscad_cpp_parser` inside openscad_cpp_evaluator and built with it.
-- **Evaluator**: openscad_cpp_evaluator ≥0.29.1 (C++ with nanobind bindings; walks the parser's AST and produces Manifold geometry — the two-pass resolve/generate pipeline, built-ins, `ManifoldCache`, profiling; GUI-agnostic, callback-injection API). The only OpenSCAD-side dependency in `pyproject.toml`, fetched from PyPI as a wheel; see its own `CLAUDE.md` for the full architecture reference.
+- **Evaluator**: openscad_cpp_evaluator ≥0.30.0 (C++ with nanobind bindings; walks the parser's AST and produces Manifold geometry — the two-pass resolve/generate pipeline, built-ins, `ManifoldCache`, profiling; GUI-agnostic, callback-injection API). The only OpenSCAD-side dependency in `pyproject.toml`, fetched from PyPI as a wheel; see its own `CLAUDE.md` for the full architecture reference.
 - **CSG Kernel**: Manifold (union, difference, intersection, boolean ops)
 - **Renderer**: ModernGL (GPU mesh rendering, camera controls)
 - **Language**: Python
