@@ -55,8 +55,8 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
 
 - **File format**: `.scad` (OpenSCAD-compatible plain text)
 - **Language**: Full OpenSCAD language (variables, functions, modules, loops, conditionals, all built-in primitives and transforms)
-- **Export**: 3MF (default), STL, OBJ, PLY, VRML, X3D; STEP under investigation (Manifold produces triangle meshes; STEP is B-rep, so any export would be a faceted solid of limited downstream value)
-- **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The formats that can hold separate objects (OBJ/3MF/PLY) go through `exporters.split_bodies_for_export()`, which cuts that union into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component. STL stays a single merged mesh. OBJ additionally writes a companion `.mtl`. See `docs/rendering.md`'s Export section.
+- **Export**: 3MF (default), STL, OBJ, OFF, PLY, VRML, X3D — all written by openscad_cpp_evaluator's `export.cpp`, which owns the colour pipeline and mesh repair; `exporters.py` is just the interface. STEP under investigation (Manifold produces triangle meshes; STEP is B-rep, so any export would be a faceted solid of limited downstream value)
+- **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The evaluator's `splitBodiesForExport` cuts it into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component — and carries per-triangle colour where a CSG merge produced it. The GUI calls `exporters.export_model(path, evaluator.geometry)` and logs the warnings it returns. See `docs/rendering.md`'s Export section.
 - **Export workflow**: if no current render exists, Export triggers a render first
 
 ## Render Triggers

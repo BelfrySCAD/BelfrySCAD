@@ -268,7 +268,7 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
         _cleanup(tmp_path)
     if result is None:
         return 1
-    bodies, elapsed = result
+    bodies, elapsed, _geometry = result
 
     setup = _make_offscreen_renderer(opts)
     if setup is None:
@@ -329,7 +329,7 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)
                 ok = False
                 continue
-            bodies, _elapsed = result
+            bodies, _elapsed, _geometry = result
 
             if setup is None:
                 setup = _make_offscreen_renderer(opts)
