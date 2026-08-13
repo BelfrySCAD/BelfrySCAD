@@ -328,3 +328,126 @@ def test_the_volume_guarantee_still_holds_with_a_two_tone_body(tmp_path):
     mans = [as_manifold(o[0], o[1]) for o in objects]
     for a, b in itertools.combinations(mans, 2):
         assert (a ^ b).volume() == pytest.approx(0.0, abs=1e-6)
+
+
+# --- VRML / X3D --------------------------------------------------------
+# The two surface-colour interchange formats, and the ones the full-colour
+# printers read: VRML is what GrabCAD Print (PolyJet), Mimaki 3D Link and
+# HP's Jet Fusion 580 all list; X3D is its XML successor. Both take
+# per-face colour natively via colorPerVertex FALSE.
+import xml.etree.ElementTree as ET
+
+
+def test_vrml_has_the_v2_header_and_one_shape_per_object(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(
+        'color("red") cube(10);\ncolor("blue") translate([50,0,0]) cube(10);',
+        tmp_path))
+    text = out.read_text()
+    # GrabCAD Print and the other full-colour front ends want VRML 2.0/97.
+    assert text.startswith("#VRML V2.0 utf8\n")
+    assert text.count("Shape {") == 2
+    assert text.count("IndexedFaceSet") == 2
+    assert "diffuseColor 1 0 0" in text and "diffuseColor 0 0 1" in text
+
+
+def test_vrml_terminates_every_face_with_minus_one(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for("cube(10);", tmp_path))
+    text = out.read_text()
+    assert text.count(" -1,") == 12
+
+
+def test_vrml_writes_transparency_not_alpha(tmp_path):
+    # VRML has no alpha; Material.transparency is its complement.
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(
+        "color([0,1,0,0.25]) cube(10);", tmp_path))
+    assert "transparency 0.75" in out.read_text()
+
+
+def test_vrml_omits_transparency_when_opaque(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for("cube(10);", tmp_path))
+    assert "transparency" not in out.read_text()
+
+
+def test_vrml_carries_per_face_colour(tmp_path):
+    out = tmp_path / "m.wrl"
+    exporters.write_vrml(str(out), objects_for(TWO_TONE, tmp_path))
+    text = out.read_text()
+    assert "colorPerVertex FALSE" in text
+    assert "color Color {" in text
+    assert "colorIndex [" in text
+
+
+def test_x3d_is_well_formed_and_declares_the_interchange_profile(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for("cube(10);", tmp_path))
+    root = ET.parse(out).getroot()
+    assert root.tag == "X3D"
+    # Checked against Annex B: Interchange is Geometry3D L2 (IndexedFaceSet),
+    # Rendering L3 (Coordinate/Color), Shape L1 -- exactly what is used here.
+    assert root.get("profile") == "Interchange"
+    assert root.get("version") == "3.3"
+    assert root.find("Scene") is not None
+
+
+def test_x3d_writes_one_shape_per_object(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for(
+        "cube(10);\ntranslate([50,0,0]) cube(10);", tmp_path))
+    assert len(ET.parse(out).getroot().findall(".//Shape")) == 2
+
+
+def test_x3d_indices_are_in_range_and_faces_terminate(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for("sphere(6,$fn=16);", tmp_path))
+    ifs = ET.parse(out).getroot().find(".//IndexedFaceSet")
+    idx = ifs.get("coordIndex").split()
+    npoints = len(ifs.find("Coordinate").get("point").split()) // 3
+    assert idx.count("-1") == len(idx) // 4        # one terminator per triangle
+    assert max(int(i) for i in idx if i != "-1") < npoints
+
+
+def test_x3d_carries_per_face_colour_with_no_negative_indices(tmp_path):
+    out = tmp_path / "m.x3d"
+    exporters.write_x3d(str(out), objects_for(TWO_TONE, tmp_path))
+    ifs = ET.parse(out).getroot().find(".//IndexedFaceSet")
+    assert ifs.get("colorPerVertex") == "false"
+    colour_index = [int(i) for i in ifs.get("colorIndex").split()]
+    faces = ifs.get("coordIndex").split().count("-1")
+    # The spec is explicit: one index per face, and -- unlike coordIndex,
+    # where -1 terminates a face -- colorIndex may contain no negatives.
+    assert len(colour_index) == faces
+    assert min(colour_index) >= 0
+    ncolours = len(ifs.find("Color").get("color").split()) // 3
+    assert max(colour_index) < ncolours == 2
+
+
+def test_every_format_agrees_on_the_triangle_count(tmp_path):
+    """Same geometry however it is encoded -- a cheap guard against one
+    writer dropping or duplicating faces."""
+    objects = objects_for(TWO_TONE + "\ntranslate([50,0,0]) cube(5);", tmp_path)
+    expected = sum(len(o[1]) for o in objects)
+
+    exporters.write_vrml(str(tmp_path / "m.wrl"), objects)
+    assert (tmp_path / "m.wrl").read_text().count(" -1,") == expected
+
+    exporters.write_x3d(str(tmp_path / "m.x3d"), objects)
+    root = ET.parse(tmp_path / "m.x3d").getroot()
+    assert sum(s.find("IndexedFaceSet").get("coordIndex").split().count("-1")
+               for s in root.findall(".//Shape")) == expected
+
+    exporters.write_obj(str(tmp_path / "m.obj"), objects)
+    assert (tmp_path / "m.obj").read_text().count("\nf ") == expected
+
+
+def test_a_disjoint_body_does_not_cost_a_two_tone_body_its_colours(tmp_path):
+    """`A - disjoint B` returns A's volume but reorders its triangle list,
+    which would drop the per-triangle colours. Most models are mostly
+    disjoint parts, so the bounding-box skip is what makes this usable."""
+    objects = objects_for(
+        TWO_TONE + '\ncolor("green") translate([100,0,0]) cube(5);', tmp_path)
+    two_tone = [o for o in objects if o[3] is not None]
+    assert two_tone, "the two-tone body lost its per-triangle colours"

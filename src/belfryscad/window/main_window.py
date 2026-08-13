@@ -39,6 +39,8 @@ _EXPORT_FORMATS = (
     ("STL Files (*.stl)", ".stl"),
     ("OBJ Files (*.obj)", ".obj"),
     ("PLY Files (*.ply)", ".ply"),
+    ("VRML Files (*.wrl)", ".wrl"),
+    ("X3D Files (*.x3d)", ".x3d"),
 )
 
 
@@ -1787,7 +1789,7 @@ class MainWindow(QMainWindow):
 
         path, ext = _resolve_export_format(path, chosen)
         try:
-            if ext in (".3mf", ".obj", ".ply"):
+            if ext in (".3mf", ".obj", ".ply", ".wrl", ".x3d"):
                 # These keep the parts as separate objects, so each is
                 # checked on its own -- that is what the file contains.
                 for problem in self._check_export_bodies(bodies):
@@ -1801,12 +1803,12 @@ class MainWindow(QMainWindow):
                 if not objects:
                     QMessageBox.warning(self, "Export", "No geometry to export.")
                     return
-                if ext == ".3mf":
-                    exporters.write_3mf(path, objects)
-                elif ext == ".obj":
-                    exporters.write_obj(path, objects)
-                else:
-                    exporters.write_ply(path, objects)
+                writer = {".3mf": exporters.write_3mf,
+                          ".obj": exporters.write_obj,
+                          ".ply": exporters.write_ply,
+                          ".wrl": exporters.write_vrml,
+                          ".x3d": exporters.write_x3d}[ext]
+                writer(path, objects)
             else:
                 open_parts = []
                 mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)

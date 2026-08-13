@@ -507,10 +507,25 @@ def _claim_by_colour(solids):
     # Reverse order + subtract-what-is-already-claimed is what makes the
     # LATER body win: by the time an earlier one is reached, everything
     # after it has already taken its volume.
+    def boxes_overlap(a, b):
+        ax0, ay0, az0, ax1, ay1, az1 = a.bounding_box()
+        bx0, by0, bz0, bx1, by1, bz1 = b.bounding_box()
+        return not (ax1 < bx0 or bx1 < ax0 or ay1 < by0
+                    or by1 < ay0 or az1 < bz0 or bz1 < az0)
+
     claimed = None
     owned = []
     for i, (man, color, tri_colors) in reversed(list(enumerate(solids))):
-        piece = man if claimed is None else man - claimed
+        # Skipping the subtraction when the bounding boxes cannot overlap
+        # is not just a shortcut: `A - disjoint B` returns A's volume but
+        # REORDERS its triangle list (measured), which throws away any
+        # per-triangle colours A was carrying. Most models are mostly
+        # disjoint parts, so without this a two-tone body lost its colours
+        # the moment any other differently-coloured body existed.
+        if claimed is None or not boxes_overlap(man, claimed):
+            piece = man
+        else:
+            piece = man - claimed
         claimed = man if claimed is None else claimed + man
         if not piece.is_empty():
             source = tris_of(man) if tri_colors is not None else None
@@ -652,3 +667,139 @@ def merge_bodies_to_mesh(bodies, open_parts=None):
     return SimpleNamespace(
         vert_properties=np.concatenate(verts) if len(verts) > 1 else verts[0],
         tri_verts=np.concatenate(faces) if len(faces) > 1 else faces[0])
+
+
+# --- VRML / X3D --------------------------------------------------------
+# The two surface-colour interchange formats, and the ones the full-colour
+# printers actually read -- VRML is what GrabCAD Print (PolyJet), Mimaki 3D
+# Link and HP's Jet Fusion 580 all list, and X3D is its XML successor.
+#
+# Both are the same scene graph with different syntax, so they share
+# _shape_parts() below. Per-triangle colour is native to both: an
+# IndexedFaceSet with `colorPerVertex FALSE` takes one colorIndex entry per
+# face. Note colorIndex, unlike coordIndex, must contain no negative
+# entries -- -1 terminates a face in coordIndex and means nothing here.
+
+def _num(v) -> str:
+    """A coordinate or colour component, compactly."""
+    return f"{float(v):.6g}"
+
+
+def _shape_parts(obj):
+    """(rgba, transparency, faces, palette, color_index) for one object.
+
+    `palette` is the distinct colours the surface uses and `color_index`
+    one entry per face, both None when the object is a single flat colour.
+    """
+    verts, tris, rgba = obj[0], obj[1], obj[2]
+    tri_rgba = obj[3] if len(obj) > 3 else None
+    alpha = float(rgba[3]) if len(rgba) > 3 else 1.0
+    if tri_rgba is None:
+        return verts, tris, rgba, 1.0 - alpha, None, None
+
+    palette, index = [], []
+    seen = {}
+    for c in tri_rgba:
+        key = tuple(round(float(x), 6) for x in c[:3])
+        if key not in seen:
+            seen[key] = len(palette)
+            palette.append(key)
+        index.append(seen[key])
+    return verts, tris, rgba, 1.0 - alpha, palette, index
+
+
+def write_vrml(path: str, objects):
+    """VRML97 (`#VRML V2.0 utf8`), one Shape per object.
+
+    Per-face colour rides on a Color node with `colorPerVertex FALSE`.
+    Where that is present the spec says the Material's diffuseColor is
+    ignored for the geometry, so the Material is still written -- it is
+    what carries transparency, which a Color node (RGB only) cannot.
+
+    That is also the one lossy corner: a per-triangle *alpha* has nowhere
+    to go, so the object's base alpha applies to the whole shape.
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("#VRML V2.0 utf8\n")
+        f.write("# Written by BelfrySCAD\n\n")
+        for obj in objects:
+            verts, tris, rgba, transparency, palette, index = _shape_parts(obj)
+            f.write("Shape {\n")
+            f.write("  appearance Appearance {\n")
+            f.write("    material Material {\n")
+            f.write(f"      diffuseColor {_num(rgba[0])} {_num(rgba[1])} {_num(rgba[2])}\n")
+            if transparency > 0:
+                f.write(f"      transparency {_num(transparency)}\n")
+            f.write("    }\n  }\n")
+            f.write("  geometry IndexedFaceSet {\n")
+            f.write("    solid TRUE\n")
+            f.write("    coord Coordinate {\n      point [\n")
+            for v in verts:
+                f.write(f"        {_num(v[0])} {_num(v[1])} {_num(v[2])},\n")
+            f.write("      ]\n    }\n")
+            if palette is not None:
+                f.write("    colorPerVertex FALSE\n")
+                f.write("    color Color {\n      color [\n")
+                for c in palette:
+                    f.write(f"        {_num(c[0])} {_num(c[1])} {_num(c[2])},\n")
+                f.write("      ]\n    }\n")
+                f.write("    colorIndex [\n")
+                for i in index:
+                    f.write(f"      {i},\n")
+                f.write("    ]\n")
+            f.write("    coordIndex [\n")
+            for t in tris:
+                f.write(f"      {int(t[0])} {int(t[1])} {int(t[2])} -1,\n")
+            f.write("    ]\n")
+            f.write("  }\n}\n\n")
+
+
+_X3D_DOCTYPE = ('<!DOCTYPE X3D PUBLIC "ISO//Web3D//DTD X3D 3.3//EN" '
+                '"https://www.web3d.org/specifications/x3d-3.3.dtd">')
+
+
+def write_x3d(path: str, objects):
+    """X3D 3.3, Interchange profile -- the XML encoding of what write_vrml
+    emits, node for node.
+
+    Interchange is the right claim rather than the safe-looking Immersive:
+    checked against Annex B, it is Geometry3D level 2 (IndexedFaceSet),
+    Rendering level 3 (Coordinate, Color) and Shape level 1 (Appearance,
+    Material), which is exactly the set used here and nothing more.
+    """
+    from xml.sax.saxutils import escape
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        f.write(_X3D_DOCTYPE + "\n")
+        f.write('<X3D profile="Interchange" version="3.3">\n')
+        f.write("  <head>\n")
+        f.write('    <meta name="generator" content="BelfrySCAD" />\n')
+        f.write("  </head>\n")
+        f.write("  <Scene>\n")
+        for obj in objects:
+            verts, tris, rgba, transparency, palette, index = _shape_parts(obj)
+            diffuse = f"{_num(rgba[0])} {_num(rgba[1])} {_num(rgba[2])}"
+            trans = f' transparency="{_num(transparency)}"' if transparency > 0 else ""
+            f.write("    <Shape>\n")
+            f.write("      <Appearance>\n")
+            f.write(f'        <Material diffuseColor="{escape(diffuse)}"{trans} />\n')
+            f.write("      </Appearance>\n")
+            coord_index = " ".join(
+                f"{int(t[0])} {int(t[1])} {int(t[2])} -1" for t in tris)
+            extra = ""
+            if palette is not None:
+                extra = (' colorPerVertex="false" colorIndex="'
+                         + " ".join(str(i) for i in index) + '"')
+            f.write(f'      <IndexedFaceSet solid="true"{extra} '
+                    f'coordIndex="{coord_index}">\n')
+            point = " ".join(f"{_num(v[0])} {_num(v[1])} {_num(v[2])}" for v in verts)
+            f.write(f'        <Coordinate point="{point}" />\n')
+            if palette is not None:
+                colour = " ".join(
+                    f"{_num(c[0])} {_num(c[1])} {_num(c[2])}" for c in palette)
+                f.write(f'        <Color color="{colour}" />\n')
+            f.write("      </IndexedFaceSet>\n")
+            f.write("    </Shape>\n")
+        f.write("  </Scene>\n")
+        f.write("</X3D>\n")

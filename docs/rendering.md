@@ -127,6 +127,8 @@ one object.
 | OBJ | one `o` group each | `usemtl` + companion `.mtl` | `usemtl` runs |
 | 3MF | one `<object>` each | `m:colorgroup` per object | `pid`/`p1` per `<triangle>` |
 | PLY | one flat mesh | per-vertex RGB | unwelded, 3 verts/triangle |
+| VRML (`.wrl`) | one `Shape` each | `Material diffuseColor` | `Color` + `colorIndex` |
+| X3D (`.x3d`) | one `<Shape>` each | `<Material diffuseColor>` | `<Color>` + `colorIndex` |
 
 STL goes through `merge_bodies_to_mesh`; the other three share
 `split_bodies_for_export`.
@@ -206,6 +208,31 @@ and `decompose()` of a single component both return the triangles unchanged
 (measured), so an object that was not actually cut keeps its colours, and
 one that was falls back to its base colour. Mis-colouring a recut surface
 would be worse than losing the detail.
+
+### VRML and X3D
+
+The two surface-colour interchange formats, and the ones the full-colour
+printers actually read — VRML is what GrabCAD Print (PolyJet), Mimaki 3D
+Link and HP's Jet Fusion 580 all list, and X3D is its XML successor. They
+are the same scene graph in different syntax, so `write_vrml` and
+`write_x3d` share `_shape_parts()`.
+
+VRML is written as **VRML97** (`#VRML V2.0 utf8`), which is the version
+those front ends name. X3D declares **version 3.3, Interchange profile** —
+the accurate claim rather than the safe-looking Immersive: per Annex B,
+Interchange is Geometry3D level 2 (`IndexedFaceSet`), Rendering level 3
+(`Coordinate`, `Color`) and Shape level 1 (`Appearance`, `Material`),
+which is exactly the node set used and nothing more.
+
+Per-face colour is native to both: an `IndexedFaceSet` with
+`colorPerVertex FALSE` takes one `colorIndex` entry per face. Note that
+`colorIndex`, unlike `coordIndex`, must contain **no negative entries** —
+`-1` terminates a face in `coordIndex` and means nothing here.
+
+One lossy corner: neither format's `Color` node carries alpha, so a
+per-triangle *alpha* has nowhere to go and the object's base alpha applies
+to the whole shape via `Material.transparency` (which is `1 - alpha`, not
+alpha).
 
 ### What the split does not cover
 
