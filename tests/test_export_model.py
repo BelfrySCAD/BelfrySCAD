@@ -66,7 +66,14 @@ def test_ascii_stl_is_opt_in(tmp_path):
     exporters.export_model(str(binary), g)
     exporters.export_model(str(ascii_), g, ascii_stl=True)
     assert not binary.read_bytes().startswith(b"solid")
-    assert ascii_.read_bytes().startswith(b"solid OpenSCAD_Model\n")
+    # No trailing newline in the assertion: the text formats are written in
+    # text mode, so Windows gets CRLF here. That matches what the Python
+    # writer did before the port (open(path, "w") translates newlines too),
+    # so it is the existing behaviour rather than a regression -- but it
+    # does mean the text formats are not byte-identical across platforms.
+    # PLY is unaffected; its header rides on a binary-mode stream.
+    assert ascii_.read_bytes().startswith(b"solid OpenSCAD_Model")
+    assert b"endsolid OpenSCAD_Model" in ascii_.read_bytes()
 
 
 def test_the_extension_list_matches_what_the_dialog_offers():
