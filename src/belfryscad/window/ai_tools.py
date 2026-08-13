@@ -929,7 +929,7 @@ def evaluate_expression(ctx: AIToolContext, id: int, expression: str) -> str:
     if not expr:
         return "Error: expression is required."
 
-    import tempfile
+    from belfryscad import scad_temp
     try:
         from openscad_cpp_evaluator import Evaluator
     except ImportError:
@@ -938,25 +938,17 @@ def evaluate_expression(ctx: AIToolContext, id: int, expression: str) -> str:
     lines: list[str] = []
     # Written beside the script when it has one, so its relative use/include
     # statements still resolve -- the same convention _RenderWorker follows.
-    tmp_dir = str(Path(tab.path).parent) if tab.path else None
     tmp = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".scad", mode="w", delete=False,
-                                         encoding="utf-8", dir=tmp_dir) as f:
-            tmp = Path(f.name)
-            f.write(tab.text)
-            f.write(f"\necho({_EVAL_MARK} = {expr});\n")
-        Evaluator(echo_fn=lines.append).evaluate(str(tmp))
+        tmp = scad_temp.write_temp_scad(
+            tab.text + f"\necho({_EVAL_MARK} = {expr});\n", near=tab.path)
+        Evaluator(echo_fn=lines.append).evaluate(tmp)
     except Exception as e:      # noqa: BLE001 -- reported, not raised
         first = str(e).strip().splitlines()
         return ("Error: " + (first[0] if first else str(e))
                 + ("\n" + "\n".join(first[1:6]) if len(first) > 1 else ""))
     finally:
-        if tmp is not None:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+        scad_temp.remove(tmp)
 
     for line in reversed(lines):
         if _EVAL_MARK in line:

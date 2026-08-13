@@ -4,9 +4,10 @@ dependency, so this is plain pytest-testable unlike the GUI code (see
 tests/ conventions -- real Qt widgets/GL contexts crash pytest here)."""
 
 import sys
-import tempfile
 import time
 from pathlib import Path
+
+from belfryscad import scad_temp
 
 _VALID_EXPORT_FORMATS = {"asciistl", "binstl"}
 _VALID_SUMMARY_KEYS = {"time", "geometry", "bounding-box", "area", "camera"}
@@ -63,14 +64,9 @@ def _prepare_source(source_path: str, defines: list[str]):
     # Written into the SAME directory as the real file so relative
     # use/include paths still resolve, matching _RenderWorker's own
     # unsaved-buffer convention (main_window.py).
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".scad", mode="w", encoding="utf-8", delete=False, dir=str(src.parent)
-    )
-    tmp.write(src.read_text(encoding="utf-8"))
-    tmp.write("\n")
-    tmp.write(prelude)
-    tmp.close()
-    return tmp.name, tmp.name
+    path = scad_temp.write_temp_scad(
+        src.read_text(encoding="utf-8") + "\n" + prelude, near=src)
+    return path, path
 
 
 class _HardWarning(RuntimeError):
@@ -349,10 +345,4 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
 
 
 def _cleanup(tmp_path: str | None):
-    if not tmp_path:
-        return
-    import os
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
+    scad_temp.remove(tmp_path)

@@ -10,6 +10,7 @@ import time
 
 from belfryscad import exporters
 from belfryscad.window.editor import CodeEditor
+from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
@@ -262,17 +263,12 @@ class _RenderWorker(QObject):
             # The C++ evaluator reads the file at eval time, so the temp
             # file _do_render always writes the live buffer to must outlive
             # it -- clean it up here.
-            if self._tmp_path:
-                import os as _os
-                try:
-                    _os.unlink(self._tmp_path)
-                except OSError:
-                    pass
-                self._tmp_path = None
+            scad_temp.remove(self._tmp_path)
+            self._tmp_path = None
             self.done.emit()
 
     def _do_render(self):
-        import time as _time, tempfile, traceback
+        import time as _time, traceback
         from openscad_cpp_evaluator import Evaluator, EvalError, ParseError, parse as _oce_parse, to_renderable_bodies
 
         _t0 = _time.perf_counter()
@@ -286,13 +282,8 @@ class _RenderWorker(QObject):
         # goes in *that* file's own directory so relative use/include
         # statements still resolve (same convention as
         # belfryscad.headless's CLI -D handling, _prepare_source).
-        tmp_dir = str(Path(self._file_path).parent) if self._file_path else None
-        _tmp = tempfile.NamedTemporaryFile(
-            suffix=".scad", mode="w", encoding="utf-8", delete=False, dir=tmp_dir
-        )
-        _tmp.write(self._source)
-        _tmp.close()
-        parse_path = self._tmp_path = _tmp.name
+        parse_path = self._tmp_path = scad_temp.write_temp_scad(
+            self._source, near=self._file_path)
         # Every position the evaluator reports (errors, warnings, profile
         # call sites) names this temp file rather than the tab, since that
         # is genuinely what it parsed. Announce it so the UI can show the
@@ -3462,7 +3453,6 @@ class MainWindow(QMainWindow):
 
         self._console.clear()
 
-        import tempfile
         from openscad_cpp_evaluator import parse as _oce_parse, ParseError
 
         # Always parse the live buffer, same as _do_render (see its own
@@ -3472,13 +3462,8 @@ class MainWindow(QMainWindow):
         # Written into file_path's own directory (when set) so relative
         # use/include still resolve. The debug session owns the temp's
         # lifetime -- it unlinks cleanup_path when it ends.
-        tmp_dir = str(Path(tab.file_path).parent) if tab.file_path else None
-        _tmp = tempfile.NamedTemporaryFile(
-            suffix=".scad", mode="w", encoding="utf-8", delete=False, dir=tmp_dir
-        )
-        _tmp.write(source)
-        _tmp.close()
-        parse_path = cleanup_path = _tmp.name
+        parse_path = cleanup_path = scad_temp.write_temp_scad(
+            source, near=tab.file_path)
         tab._last_parse_path = parse_path
 
         # checkDebug()/AST positions now always report *parse_path* as
@@ -3492,21 +3477,11 @@ class MainWindow(QMainWindow):
             root_scope = _oce_parse(parse_path)  # for go-to-definition during debug
         except ParseError as e:
             self._parse_error_to_editor(tab, str(e))
-            if cleanup_path:
-                import os as _os
-                try:
-                    _os.unlink(cleanup_path)
-                except OSError:
-                    pass
+            scad_temp.remove(cleanup_path)
             return
         except Exception as e:
             self.log(f"Parse error: {e}")
-            if cleanup_path:
-                import os as _os
-                try:
-                    _os.unlink(cleanup_path)
-                except OSError:
-                    pass
+            scad_temp.remove(cleanup_path)
             return
 
         tab.editor.clear_errors()
