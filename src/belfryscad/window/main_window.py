@@ -28,6 +28,42 @@ from pathlib import Path
 from typing import Optional
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
+
+
+# Export formats, in dialog order -- the first is what the dialog opens on.
+# 3MF leads because it is the only one that carries colour, separate objects
+# and per-triangle colour at once, i.e. everything split_bodies_for_export
+# produces; STL keeps none of it.
+_EXPORT_FORMATS = (
+    ("3MF Files (*.3mf)", ".3mf"),
+    ("STL Files (*.stl)", ".stl"),
+    ("OBJ Files (*.obj)", ".obj"),
+    ("PLY Files (*.ply)", ".ply"),
+)
+
+
+def _resolve_export_format(path: str, chosen_filter: str):
+    """(path, extension) for a save dialog result.
+
+    A suffix the user typed wins over the format dropdown: typing
+    "part.ply" while 3MF is selected means they want PLY, whatever the
+    dropdown says. Otherwise the dropdown decides and its extension is
+    appended -- which is how picking a format and typing a bare name comes
+    out right, where before it silently wrote STL whatever was selected.
+
+    An unrecognised suffix is appended to, not replaced ("part.v2" ->
+    "part.v2.3mf"), because the text is the user's and may not be a suffix
+    at all. Comparison is case-insensitive but the path keeps its own case,
+    so "PART.STL" is STL and stays "PART.STL" -- appending ".stl" to it,
+    which the old code did, produced "PART.STL.stl".
+    """
+    by_filter = dict(_EXPORT_FORMATS)
+    known = set(by_filter.values())
+    ext = Path(path).suffix.lower()
+    if ext in known:
+        return path, ext
+    ext = by_filter.get(chosen_filter, _EXPORT_FORMATS[0][1])
+    return path + ext, ext
 _EXAMPLES_DIR = Path(__file__).parent.parent / "resources" / "examples"
 
 
@@ -1736,17 +1772,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
             return
 
-        # 3MF is always available now that it is written directly rather
-        # than through lib3mf, which had no wheels for ARM platforms.
-        filters = ("STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf);;"
-                   "PLY Files (*.ply)")
-        path, _ = QFileDialog.getSaveFileName(
+        # 3MF leads, and so is what the dialog opens on: it is the only
+        # format here that carries colour, separate objects and per-triangle
+        # colour all at once, which is what the rest of the export pipeline
+        # actually produces. STL keeps none of it. (3MF is always available
+        # now that it is written directly rather than through lib3mf, which
+        # had no wheels for ARM platforms.)
+        filters = ";;".join(f for f, _e in _EXPORT_FORMATS)
+        path, chosen = QFileDialog.getSaveFileName(
             self, "Export", "", filters
         )
         if not path:
             return
 
-        ext = Path(path).suffix.lower()
+        path, ext = _resolve_export_format(path, chosen)
         try:
             if ext in (".3mf", ".obj", ".ply"):
                 # These keep the parts as separate objects, so each is
@@ -1795,8 +1834,6 @@ class MainWindow(QMainWindow):
                 # for would be worse than saying so.
                 for problem in self._check_export_mesh(mesh):
                     self.log(f"WARNING: export: {problem}")
-                if not path.endswith(".stl"):
-                    path += ".stl"
                 exporters.write_stl(path, mesh)
             self.log(f"Exported to {path}")
         except OSError as e:

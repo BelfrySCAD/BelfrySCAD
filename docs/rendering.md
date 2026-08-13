@@ -102,6 +102,22 @@ evaluator, not guessing in the exporter.
 
 ## Export
 
+**3MF is the default.** It is the only format here that carries colour,
+separate objects and per-triangle colour at once — i.e. everything
+`split_bodies_for_export` produces — where STL keeps none of it. It leads
+the filter list, so it is what the Export dialog opens on.
+
+The dialog returns both a path and the selected filter, and they can
+disagree. `_resolve_export_format()` settles it: **a suffix the user typed
+wins over the dropdown** (typing `part.ply` with 3MF selected means PLY),
+and otherwise the dropdown decides and its extension is appended. Before
+this the selected filter was discarded outright, so choosing PLY and typing
+a bare name silently wrote an STL. An unrecognised suffix is appended to
+rather than replaced (`part.v2` → `part.v2.3mf`), since that text is the
+user's and may not be a suffix at all; matching is case-insensitive while
+the path keeps its own case, so `PART.STL` is STL and stays `PART.STL`
+(appending to it, which the old code did, gave `PART.STL.stl`).
+
 Formats split into two groups by whether the container can hold more than
 one object.
 
