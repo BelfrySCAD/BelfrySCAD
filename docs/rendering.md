@@ -93,6 +93,84 @@ geometry and must be exported. Measured against the reference:
 where it should write 52. Fixing it means marking the copy in the
 evaluator, not guessing in the exporter.
 
+## Export
+
+Formats split into two groups by whether the container can hold more than
+one object.
+
+| format | objects | colour | source |
+|---|---|---|---|
+| STL (binary/ASCII) | one merged mesh | none | `merge_bodies_to_mesh` |
+| OBJ | one `o` group each | `usemtl` + companion `.mtl` | `split_bodies_for_export` |
+| 3MF | one `<object>` each | `m:colorgroup` per object | `split_bodies_for_export` |
+| PLY | one flat mesh | per-vertex RGB | `split_bodies_for_export` |
+
+### The object split
+
+`exporters.split_bodies_for_export()` is what the multi-object formats
+share. The evaluator hands back one `ColoredBody` per top-level coloured
+region, un-unioned; writing those straight out was wrong, because **top
+level in OpenSCAD is an implicit union**. `cube(100); cube(100,
+center=true);` used to write two overlapping objects with their interior
+faces intact — 24 triangles. Real OpenSCAD 2022.08.22 writes one object of
+20 vertices and 36 triangles for that script (checked directly), which is
+what this now produces.
+
+Three rules, applied in order:
+
+1. **Union, never concatenate.** Same reasoning `merge_bodies_to_mesh` has
+   always used for STL: concatenating is only right while the bodies are
+   disjoint, and where two touch each writes its own copy of the shared
+   face.
+2. **One object per colour, and no two objects share volume.** Where
+   differently-coloured solids overlap, the **later** one owns the shared
+   volume and the earlier is notched around it — painter's order, so
+   `color("red") body(); color("blue") detail();` leaves the detail whole.
+   Implemented by walking the bodies in reverse and subtracting everything
+   already claimed. Only the invisible interior is affected: the visible
+   surface is identical either way, since whichever solid is outermost at
+   a given face is what you see. Same-coloured pieces then merge into one
+   object.
+3. **One object per connected component.** Whatever rules 1 and 2 leave is
+   run through Manifold's `decompose()`, so a model that falls into
+   unconnected pieces writes one object per piece.
+
+The guarantee the tests assert is that the parts *tile* the union: summed
+part volumes equal the union volume, and every pairwise intersection is
+empty (`test_export_object_split.py`).
+
+The all-one-colour case — by far the most common — skips the per-body
+subtraction entirely and goes straight to a `batch_boolean` Add, since one
+colour cannot overlap itself into a different answer.
+
+### What the split does not cover
+
+- **Per-triangle colours.** A `ColoredBody` coming out of a multi-colour
+  CSG merge carries `triColors`, surface colours with no volume behind
+  them. An object takes its body's single `color`, and such a body exports
+  as one object in its base colour. Splitting it would mean inferring
+  volumes from surface attribution, which the surface does not determine.
+- **Open shells.** Manifold discards anything that is not a closed solid,
+  so an open surface cannot take part in any boolean. Its triangles are
+  written as their own object as-is and its 1-based index is reported
+  through `open_parts` for the caller to warn about — the same contract
+  `merge_bodies_to_mesh` has.
+
+### OBJ writes two files
+
+OBJ carries no colour of its own, so `write_obj` emits a `.mtl` next to
+the `.obj` and references it with `mtllib`. Exporting `m.obj` therefore
+also writes `m.mtl`. One material per distinct RGBA however many objects
+share it; alpha below 1 becomes `d` (opacity, not transparency). A reader
+that ignores the `mtllib` still gets correct geometry.
+
+### PLY has no objects
+
+Standard PLY has no multi-object concept, so the objects are concatenated
+into one vertex/face list and the colour rides on the vertices instead.
+That is lossless only because the split guarantees the objects are
+disjoint and never share a vertex.
+
 ## Viewport visuals
 
 **Clip planes**: `Camera.clip_planes()` returns `(near, far)`, scaled to `camera.distance` rather than fixed constants (floors at the original `0.1`/`10000.0`, so typical/small scenes are unaffected). `frame_bounds()` sets `distance` proportional to the framed object's radius (same distance-scaling heuristic `_render_axes`/`_axis_extent` use for tick/axis extent) — a fixed `far=10000` clipped large or elongated models once that pushed the camera far enough away to fit them at the default FOV: `cylinder(h=3500, d=1000)` needs `distance≈10438` to fit at `fov=22.5`, already past a fixed `far=10000`, silently clipping whichever end of the cylinder was farther from the eye (and varying with zoom, since that changes `distance`). `far = max(10000.0, distance * 3.0)`; `near = max(0.1, far / 100000.0)` — grown proportionally rather than held fixed, preserving the original `far/near` ratio (holding `near` fixed while `far` grows would only worsen depth-buffer precision for large scenes on top of the clipping bug). `projection_matrix()` uses these for both perspective (`_perspective`'s own near/far) and orthographic (`_ortho`'s symmetric `±far` depth range) modes. Pure math, unit-tested in `test_renderer.py::TestCameraClipPlanes` — no GL/Qt dependency.

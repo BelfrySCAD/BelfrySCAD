@@ -124,8 +124,24 @@ def _export(output_path: str, ext: str, bodies, export_format: str | None = None
     from belfryscad import exporters
 
     try:
-        if ext == ".3mf":
-            exporters.write_3mf(output_path, bodies)
+        if ext in (".3mf", ".obj", ".ply"):
+            # Formats that can hold separate objects share one split: the
+            # top-level union, cut so no two objects overlap, one per
+            # colour and per connected part. See split_bodies_for_export.
+            open_parts = []
+            objects = exporters.split_bodies_for_export(bodies, open_parts)
+            for n in open_parts:
+                print(f"WARNING: part {n} is not a closed solid; its surface "
+                      f"is written as-is.", file=sys.stderr)
+            if not objects:
+                print("ERROR: No geometry to export.", file=sys.stderr)
+                return False
+            if ext == ".3mf":
+                exporters.write_3mf(output_path, objects)
+            elif ext == ".obj":
+                exporters.write_obj(output_path, objects)
+            else:
+                exporters.write_ply(output_path, objects)
         else:
             open_parts = []
             mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
@@ -135,9 +151,7 @@ def _export(output_path: str, ext: str, bodies, export_format: str | None = None
             if mesh is None:
                 print("ERROR: No geometry to export.", file=sys.stderr)
                 return False
-            if ext == ".obj":
-                exporters.write_obj(output_path, mesh)
-            elif ext == ".stl" and export_format == "asciistl":
+            if ext == ".stl" and export_format == "asciistl":
                 exporters.write_stl_ascii(output_path, mesh)
             else:
                 exporters.write_stl(output_path, mesh)
@@ -248,8 +262,8 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
         return 1
 
     ext = Path(output_path).suffix.lower()
-    if ext not in (".stl", ".obj", ".3mf"):
-        print(f"belfryscad: unsupported output extension {ext!r} (expected .stl, .obj, or .3mf)", file=sys.stderr)
+    if ext not in (".stl", ".obj", ".3mf", ".ply"):
+        print(f"belfryscad: unsupported output extension {ext!r} (expected .stl, .obj, .3mf, or .ply)", file=sys.stderr)
         return 1
     if not _validate_export_format(export_format, ext):
         return 1
@@ -298,8 +312,8 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
 
     out = Path(output_path)
     ext = out.suffix.lower()
-    if ext not in (".stl", ".obj", ".3mf"):
-        print(f"belfryscad: unsupported output extension {ext!r} (expected .stl, .obj, or .3mf)", file=sys.stderr)
+    if ext not in (".stl", ".obj", ".3mf", ".ply"):
+        print(f"belfryscad: unsupported output extension {ext!r} (expected .stl, .obj, .3mf, or .ply)", file=sys.stderr)
         return 1
     if not _validate_export_format(export_format, ext):
         return 1

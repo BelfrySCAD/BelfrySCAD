@@ -136,8 +136,23 @@ class TestRenderAndExport:
         code = render_and_export(str(src), str(out))
         assert code == 0
         text = out.read_text()
-        assert text.startswith("v ")
-        assert "\nf " in text
+        # OBJ now carries the object split, so the file opens with its
+        # mtllib and an `o` group rather than going straight to vertices.
+        assert text.startswith("mtllib out.mtl\n")
+        assert "\no object_1\n" in text
+        assert "\nv " in text and "\nf " in text
+        assert (tmp_path / "out.mtl").is_file()
+
+    def test_ply_export_succeeds(self, tmp_path):
+        src = tmp_path / "in.scad"
+        src.write_text('color("red") cube([10, 5, 3]);\n')
+        out = tmp_path / "out.ply"
+        code = render_and_export(str(src), str(out))
+        assert code == 0
+        data = out.read_bytes()
+        assert data.startswith(b"ply\nformat binary_little_endian 1.0\n")
+        assert b"element vertex 8" in data
+        assert b"element face 12" in data
 
 
 class TestRenderAndExportAnimation:
