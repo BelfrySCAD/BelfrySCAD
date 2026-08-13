@@ -1729,7 +1729,8 @@ class MainWindow(QMainWindow):
 
         # 3MF is always available now that it is written directly rather
         # than through lib3mf, which had no wheels for ARM platforms.
-        filters = "STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf)"
+        filters = ("STL Files (*.stl);;OBJ Files (*.obj);;3MF Files (*.3mf);;"
+                   "PLY Files (*.ply)")
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "", filters
         )
@@ -1738,12 +1739,26 @@ class MainWindow(QMainWindow):
 
         ext = Path(path).suffix.lower()
         try:
-            if ext == ".3mf":
-                # 3MF keeps the parts as separate objects, so each is
+            if ext in (".3mf", ".obj", ".ply"):
+                # These keep the parts as separate objects, so each is
                 # checked on its own -- that is what the file contains.
                 for problem in self._check_export_bodies(bodies):
                     self.log(f"WARNING: export: {problem}")
-                exporters.write_3mf(path, bodies)
+                open_parts = []
+                objects = exporters.split_bodies_for_export(bodies, open_parts)
+                for n in open_parts:
+                    self.log(f"WARNING: export: part {n} is not a closed "
+                             f"solid; its surface is written as-is, and most "
+                             f"slicers will reject it.")
+                if not objects:
+                    QMessageBox.warning(self, "Export", "No geometry to export.")
+                    return
+                if ext == ".3mf":
+                    exporters.write_3mf(path, objects)
+                elif ext == ".obj":
+                    exporters.write_obj(path, objects)
+                else:
+                    exporters.write_ply(path, objects)
             else:
                 open_parts = []
                 mesh = exporters.merge_bodies_to_mesh(bodies, open_parts)
@@ -1771,12 +1786,9 @@ class MainWindow(QMainWindow):
                 # for would be worse than saying so.
                 for problem in self._check_export_mesh(mesh):
                     self.log(f"WARNING: export: {problem}")
-                if ext == ".obj":
-                    exporters.write_obj(path, mesh)
-                else:
-                    if not path.endswith(".stl"):
-                        path += ".stl"
-                    exporters.write_stl(path, mesh)
+                if not path.endswith(".stl"):
+                    path += ".stl"
+                exporters.write_stl(path, mesh)
             self.log(f"Exported to {path}")
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))

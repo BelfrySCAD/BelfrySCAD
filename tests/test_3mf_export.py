@@ -31,7 +31,8 @@ def bodies_for(src, tmp_path):
 
 def write(src, tmp_path):
     out = tmp_path / "out.3mf"
-    exporters.write_3mf(str(out), bodies_for(src, tmp_path))
+    objects = exporters.split_bodies_for_export(bodies_for(src, tmp_path))
+    exporters.write_3mf(str(out), objects)
     return out
 
 

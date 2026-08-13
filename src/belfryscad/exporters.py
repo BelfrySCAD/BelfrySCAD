@@ -70,18 +70,113 @@ def write_stl_ascii(path: str, mesh):
         f.write("endsolid OpenSCAD_Model\n")
 
 
-def write_obj(path: str, mesh):
-    import numpy as np
+def write_obj(path: str, objects):
+    """One `o` group per object, plus a companion .mtl for the colours.
 
-    verts = np.asarray(mesh.vert_properties[:, :3], dtype=np.float32)
-    tris = np.asarray(mesh.tri_verts, dtype=np.int32)
+    `objects` is split_bodies_for_export()'s [(verts, tris, rgba)] -- OBJ
+    can hold separate named objects, so it gets the same split 3MF does
+    rather than one merged mesh.
+
+    OBJ carries no colour of its own; `usemtl` names an entry in a .mtl
+    file sitting next to the .obj, so exporting now writes TWO files. A
+    reader that ignores the mtllib still gets correct geometry, and each
+    distinct rgba gets one material however many objects share it.
+    """
+    import os
+
+    mtl_path = os.path.splitext(path)[0] + ".mtl"
+
+    # One material per distinct colour, in first-seen order.
+    materials = {}
+    for _v, _t, rgba in objects:
+        materials.setdefault(tuple(rgba), f"color_{len(materials) + 1}")
 
     with open(path, "w", encoding="utf-8") as f:
-        for v in verts:
-            f.write(f"v {v[0]:.6g} {v[1]:.6g} {v[2]:.6g}\n")
-        f.write("\n")
-        for tri in tris:
-            f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
+        if materials:
+            f.write(f"mtllib {os.path.basename(mtl_path)}\n\n")
+        offset = 1          # OBJ vertex indices are 1-based and file-global
+        for i, (verts, tris, rgba) in enumerate(objects, start=1):
+            f.write(f"o object_{i}\n")
+            f.write(f"usemtl {materials[tuple(rgba)]}\n")
+            for v in verts:
+                f.write(f"v {v[0]:.6g} {v[1]:.6g} {v[2]:.6g}\n")
+            for tri in tris:
+                f.write(f"f {tri[0]+offset} {tri[1]+offset} {tri[2]+offset}\n")
+            f.write("\n")
+            offset += len(verts)
+
+    if not materials:
+        return
+    with open(mtl_path, "w", encoding="utf-8") as f:
+        for rgba, name in materials.items():
+            r, g, b = (max(0.0, min(1.0, float(c))) for c in rgba[:3])
+            a = max(0.0, min(1.0, float(rgba[3]))) if len(rgba) > 3 else 1.0
+            f.write(f"newmtl {name}\n")
+            f.write(f"Kd {r:.6g} {g:.6g} {b:.6g}\n")
+            # d is opacity, not transparency -- 1 is solid.
+            if a < 1.0:
+                f.write(f"d {a:.6g}\n")
+            f.write("\n")
+
+
+def write_ply(path: str, objects):
+    """Binary little-endian PLY, one flat mesh with per-vertex colour.
+
+    PLY has no object concept to map the split onto, so the objects are
+    concatenated into a single vertex/face list and the colour rides on the
+    vertices instead. That is lossless here only because the split
+    guarantees the objects are disjoint and never share a vertex.
+    """
+    import numpy as np
+
+    verts, faces, colors, offset = [], [], [], 0
+    for v, t, rgba in objects:
+        verts.append(np.asarray(v, dtype="<f4"))
+        faces.append(np.asarray(t, dtype="<i4") + offset)
+        rgb = np.array([max(0, min(255, int(round(c * 255)))) for c in rgba[:3]],
+                       dtype=np.uint8)
+        colors.append(np.tile(rgb, (len(v), 1)))
+        offset += len(v)
+
+    if verts:
+        verts = np.concatenate(verts)
+        faces = np.concatenate(faces)
+        colors = np.concatenate(colors)
+    else:
+        verts = np.zeros((0, 3), dtype="<f4")
+        faces = np.zeros((0, 3), dtype="<i4")
+        colors = np.zeros((0, 3), dtype=np.uint8)
+
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        "comment Written by BelfrySCAD\n"
+        f"element vertex {len(verts)}\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        f"element face {len(faces)}\n"
+        "property list uchar int vertex_indices\n"
+        "end_header\n"
+    )
+
+    vert_dtype = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                           ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    vrec = np.zeros(len(verts), dtype=vert_dtype)
+    for i, name in enumerate(("x", "y", "z")):
+        vrec[name] = verts[:, i]
+    for i, name in enumerate(("red", "green", "blue")):
+        vrec[name] = colors[:, i]
+
+    # Each face is a count byte followed by its three int32 indices.
+    face_dtype = np.dtype([("n", "u1"), ("v", "<i4", (3,))])
+    frec = np.zeros(len(faces), dtype=face_dtype)
+    frec["n"] = 3
+    frec["v"] = faces
+
+    with open(path, "wb") as f:
+        f.write(header.encode("ascii"))
+        f.write(vrec.tobytes())
+        f.write(frec.tobytes())
 
 
 def exportable(bodies):
@@ -196,21 +291,116 @@ def build_3mf_model_xml(meshes):
     return "\n".join(out) + "\n"
 
 
-def bodies_to_3mf_meshes(bodies):
-    """[(verts, tris, rgba)] for every non-empty body worth writing."""
+DEFAULT_COLOR = (0.8, 0.8, 0.8, 1.0)
+
+
+def _manifold_arrays(man):
     import numpy as np
 
-    meshes = []
-    for cb in bodies:
+    m = man.to_mesh()
+    return (np.asarray(m.vert_properties[:, :3], dtype=np.float32),
+            np.asarray(m.tri_verts, dtype=np.int32))
+
+
+def split_bodies_for_export(bodies, open_parts=None):
+    """The implicit top-level union, cut into objects that never overlap.
+
+    Returns [(verts, tris, rgba), ...] for the formats that can hold more
+    than one object -- 3MF, OBJ, PLY. Three rules, in order:
+
+    1. **Union, never concatenate.** Top level in OpenSCAD is an implicit
+       union, so `cube(100); cube(100, center=true);` is ONE solid. Writing
+       the two bodies as they arrive put each cube in the file separately,
+       overlapping, with interior faces intact -- real OpenSCAD writes 36
+       triangles for that script and this wrote 24. Same reasoning as
+       merge_bodies_to_mesh's, which STL has always done.
+
+    2. **One object per colour, and no two objects share volume.** Where
+       differently-coloured solids overlap, the LATER one owns the shared
+       volume and the earlier is notched around it -- painter's order, so
+       `color("red") body(); color("blue") detail();` leaves the detail
+       whole. Only the invisible interior is affected: the visible surface
+       is identical either way, because whichever solid is outermost at a
+       given face is what you see.
+
+    3. **One object per connected component.** After 1 and 2, anything that
+       falls into unconnected pieces is written as one object each.
+
+    Bodies Manifold rejects (an open shell is not a solid) can't take part
+    in any of that; they keep their own triangles and their own object, and
+    their 1-based index lands in `open_parts` for the caller to warn about,
+    exactly as merge_bodies_to_mesh does.
+    """
+    import manifold3d
+
+    bodies = exportable(bodies)
+    solids, loose = [], []
+    for i, cb in enumerate(bodies):
         if cb.body.is_empty():
             continue
-        m = cb.body.to_mesh()
-        verts = np.asarray(m.vert_properties[:, :3], dtype=np.float32)
-        tris = np.asarray(m.tri_verts, dtype=np.int32)
-        if len(tris) == 0:
+        v, t = body_mesh_arrays(cb)
+        if len(t) == 0:
             continue
-        meshes.append((verts, tris, cb.color or (0.8, 0.8, 0.8, 1.0)))
-    return meshes
+        man = manifold3d.Manifold(manifold3d.Mesh(v, t))
+        if man.is_empty():
+            loose.append((v, t.astype("int32"), cb.color or DEFAULT_COLOR))
+            if open_parts is not None:
+                open_parts.append(i + 1)
+        else:
+            solids.append((man, cb.color))
+
+    out = []
+    for man, color in _claim_by_colour(solids):
+        # decompose() is the rule-3 split. A single-component solid comes
+        # back as a one-element list, so there is no special case here.
+        for part in man.decompose() or [man]:
+            if part.is_empty():
+                continue
+            verts, tris = _manifold_arrays(part)
+            if len(tris):
+                out.append((verts, tris, color or DEFAULT_COLOR))
+    out.extend(loose)
+    return out
+
+
+def _claim_by_colour(solids):
+    """[(manifold, colour)] -- `solids` unioned, partitioned by colour so no
+    two entries occupy the same space. Later entries win the overlap."""
+    import manifold3d
+
+    def add(parts):
+        if len(parts) == 1:
+            return parts[0]
+        return manifold3d.Manifold.batch_boolean(parts, manifold3d.OpType.Add)
+
+    if not solids:
+        return []
+    colors = {c for _m, c in solids}
+    if len(colors) == 1:
+        # The common case by far, and it needs no per-body subtraction at
+        # all: one colour cannot overlap itself into a different answer.
+        return [(add([m for m, _c in solids]), solids[0][1])]
+
+    # Reverse order + subtract-what-is-already-claimed is what makes the
+    # LATER body win: by the time an earlier one is reached, everything
+    # after it has already taken its volume.
+    claimed = None
+    owned = []
+    for man, color in reversed(solids):
+        piece = man if claimed is None else man - claimed
+        claimed = man if claimed is None else claimed + man
+        if not piece.is_empty():
+            owned.append((piece, color))
+    owned.reverse()
+
+    # Same-coloured pieces merge into one object; distinct colours stay
+    # apart. Insertion-ordered so object order still follows the source.
+    grouped = {}
+    for piece, color in owned:
+        grouped.setdefault(color, []).append(piece)
+    return [(add(parts), color) for color, parts in grouped.items()]
+
+
 
 
 # Deflate level, chosen rather than inherited. Measured on the 224k-triangle
@@ -232,10 +422,13 @@ def bodies_to_3mf_meshes(bodies):
 _3MF_COMPRESS_LEVEL = 6
 
 
-def write_3mf(path: str, bodies):
+def write_3mf(path: str, objects):
+    """`objects` is split_bodies_for_export()'s [(verts, tris, rgba)] --
+    same input write_obj/write_ply take, so all three multi-object writers
+    agree on what "an object" is."""
     import zipfile
 
-    xml = build_3mf_model_xml(bodies_to_3mf_meshes(exportable(bodies)))
+    xml = build_3mf_model_xml(objects)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED,
                          compresslevel=_3MF_COMPRESS_LEVEL) as z:
         z.writestr("[Content_Types].xml", _3MF_CONTENT_TYPES)
