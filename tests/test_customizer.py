@@ -172,8 +172,25 @@ class TestScanParameters:
         source = 'module foo() {\n  x = 5;\n}\n'
         assert scan_parameters(source) == []
 
-    def test_dollar_variable_excluded(self):
-        assert scan_parameters('$fn = 32;\n') == []
+    def test_dollar_variable_is_a_parameter(self):
+        p = scan_parameters('$fn = 32; // [8:128]\n')[0]
+        assert (p.name, p.default, p.constraint) == ('$fn', 32, '[8:128]')
+
+    def test_dollar_variable_from_the_line_fallback(self):
+        # trailing `{` never closes -> the parser fails -> line scanner
+        params = scan_parameters('$fn = 32;\nmodule broken() {\n')
+        assert [p.name for p in params] == ['$fn']
+
+    def test_viewport_variables_excluded(self):
+        source = ('$vpr = [55, 0, 25];\n$vpt = [0, 0, 0];\n'
+                  '$vpd = 140;\n$vpf = 22.5;\n$fn = 32;\n')
+        assert [p.name for p in scan_parameters(source)] == ['$fn']
+
+    def test_dollar_variable_nested_is_not_a_parameter(self):
+        assert scan_parameters('module foo() {\n  $fn = 8;\n}\n') == []
+
+    def test_write_back_reaches_a_dollar_variable(self):
+        assert write_back_value('$fn = 32;\n', '$fn', 64) == '$fn = 64;\n'
 
 
 class TestWriteBackValue:

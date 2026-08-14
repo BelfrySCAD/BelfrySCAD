@@ -69,6 +69,8 @@ read_profile shows where a render spent its time, for questions about why someth
 
 Use search_library to find things in the installed libraries. Their files run to hundreds of kilobytes, so reading one to find a single module wastes most of what you read; search for the definition, then read only if you need the surrounding code.
 
+When the script uses BOSL2, bosl2_docs answers how something is meant to be used far more cheaply than reading the library source -- it returns the wiki's own usage, arguments and examples for a name, everything filed under a topic, or a tutorial.
+
 check_geometry answers whether the model is a sound closed solid and whether it would print -- holes, seams where three faces meet an edge, pinched vertices, disagreeing winding. describe_geometry measures; check_geometry judges. It writes no file.
 
 You can also look at the rendered 3D viewport with view_viewport when the question is about how the model actually looks -- shape, proportion, orientation -- rather than about the source text, and measure it exactly with describe_geometry.
@@ -1093,6 +1095,53 @@ def render(ctx: AIToolContext, id: int | None = None,
             + tail)
 
 
+_MAX_DOC_CHARS = 20_000
+
+
+def _clip(text: str, url_hint: str) -> str:
+    if len(text) <= _MAX_DOC_CHARS:
+        return text
+    return (text[:_MAX_DOC_CHARS]
+            + f"\n\n[truncated -- read the rest at {url_hint}]")
+
+
+def bosl2_docs(ctx: AIToolContext, name: str = "", topic: str = "",
+               tutorial: str = "") -> str:
+    """Look something up in the BOSL2 wiki. The library's own reference
+    documentation, which its source comments only summarise."""
+    from belfryscad.window import bosl2_docs as wiki
+
+    if name:
+        entry = wiki.lookup(name)
+        if entry is not None:
+            return _clip(wiki.entry_doc(entry), entry.url)
+        near = wiki.find(name)
+        if not near:
+            return (f"BOSL2 documents nothing called {name!r}. "
+                    "It may be a local module, or spelled differently.")
+        listed = "\n".join(f"- {e.name} ({e.kind}) -- {e.summary}" for e in near)
+        return f"No exact match for {name!r}. Related entries:\n{listed}"
+
+    if topic:
+        doc = wiki.topic_doc(topic)
+        if doc is not None:
+            return _clip(doc, f"{wiki.WIKI}/Topics")
+        return (f"No BOSL2 topic called {topic!r}. Topics are:\n"
+                + ", ".join(wiki.topics()))
+
+    if tutorial:
+        doc = wiki.tutorial_doc(tutorial)
+        if doc is not None:
+            return _clip(doc, f"{wiki.WIKI}/Tutorials")
+        return (f"No BOSL2 tutorial called {tutorial!r}. Tutorials are:\n"
+                + "\n".join(f"- {t}" for t, _ in wiki.tutorials()))
+
+    return ("Ask for one of these by name, topic= or tutorial=.\n\nTopics: "
+            + ", ".join(wiki.topics())
+            + "\n\nTutorials:\n"
+            + "\n".join(f"- {t}" for t, _ in wiki.tutorials()))
+
+
 # Tool specs. json_schema is plain JSON Schema, which is what both OpenAI's
 # function.parameters and Anthropic's input_schema want -- each provider's
 # request builder wraps these differently, but the schema itself is shared.
@@ -1140,6 +1189,33 @@ TOOLS: list[dict] = [
             "required": ["pattern"],
         },
         "handler": search_library,
+    },
+    {
+        "name": "bosl2_docs",
+        "description": (
+            "Read the BOSL2 wiki -- the library's reference documentation, "
+            "with the full usage, argument list and examples for a function "
+            "or module. Prefer this over search_library/read_library_file "
+            "for 'how do I use X': the source comments are terser and cost "
+            "far more to read. Pass name for one entry (a partial name "
+            "returns candidates), topic for everything filed under a "
+            "subject, or tutorial for a walkthrough. With no argument it "
+            "lists the topics and tutorials available."),
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": ("Function, module or constant, e.g. "
+                                         "cuboid, rounded_prism, $slop.")},
+                "topic": {"type": "string",
+                          "description": "Subject, e.g. Attachable, Chamfers."},
+                "tutorial": {"type": "string",
+                             "description": ("Tutorial title or page, e.g. "
+                                             "VNF, Attachment-Align.")},
+            },
+            "required": [],
+        },
+        "handler": bosl2_docs,
     },
     {
         "name": "list_project_files",

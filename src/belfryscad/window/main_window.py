@@ -917,7 +917,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
         self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
         file_menu.addSeparator()
-        self._add_action(file_menu, "Export…", self._export)
+        self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
         file_menu.addSeparator()
         self._add_action(file_menu, "Quit", self.close, QKeySequence.StandardKey.Quit)
 

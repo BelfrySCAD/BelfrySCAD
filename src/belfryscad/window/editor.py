@@ -3,14 +3,18 @@ import re
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
-    QMenu, QCompleter,
+    QMenu, QCompleter, QApplication, QMessageBox,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
     QAction, QFontMetricsF, QTextDocument, QPixmap, QIcon, QPen,
+    QDesktopServices,
 )
-from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal, QStringListModel
+from PySide6.QtCore import (
+    Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal,
+    QStringListModel, QUrl,
+)
 
 from belfryscad.window.ui_colors import (
     execution_line_color, fold_arrow_color, gutter_colors, on_appearance_change,
@@ -1299,6 +1303,30 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(new_text)
 
+    def _open_bosl2_docs(self, word: str):
+        """Open the BOSL2 wiki at the entry for `word`, in the user's
+        browser -- the wiki pages carry rendered example images, which is
+        most of what makes them worth reading."""
+        from belfryscad.window import bosl2_docs
+        # ponytail: the index fetch is synchronous under a wait cursor; it
+        # is one 150KB GET, cached for a week afterwards. Move it to a
+        # worker thread if the freeze on a slow link ever bites.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            entry = bosl2_docs.lookup(word)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "BOSL2 Documentation",
+                                f"Could not reach the BOSL2 wiki:\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        if entry is None:
+            QMessageBox.information(
+                self, "BOSL2 Documentation",
+                f"BOSL2 documents nothing called '{word}'.")
+            return
+        QDesktopServices.openUrl(QUrl(entry.url))
+
     def _reformat_selection(self, start: int, end: int, selected_text: str):
         """Reformat Selection context-menu action: replace [start, end) with
         format_scad's pretty-printed output, re-based to the selection's own
@@ -1799,6 +1827,17 @@ class CodeEditor(QPlainTextEdit):
                 lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
             )
             menu.addAction(act)
+
+            # Only worth offering where BOSL2 names are what is under the
+            # cursor -- in a plain OpenSCAD script every identifier would
+            # get a menu item that leads nowhere.
+            if re.search(r'^\s*(?:include|use)\s*<\s*BOSL2/',
+                         self.toPlainText(), re.M):
+                doc_act = QAction(f"BOSL2 Documentation for '{word}'…", self)
+                doc_act.triggered.connect(
+                    lambda checked=False, w=word: self._open_bosl2_docs(w)
+                )
+                menu.addAction(doc_act)
 
             # Works from any use of the name, not just its declaration line
             # -- scan_parameters is keyed by name, same as Go to Definition
