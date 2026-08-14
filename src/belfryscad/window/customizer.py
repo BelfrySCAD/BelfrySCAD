@@ -74,9 +74,23 @@ class ParameterDef:
 # ---------------------------------------------------------------------------
 
 def _valid_param_name(name: str) -> bool:
+    """A `$`-prefixed name is a parameter like any other here. OpenSCAD's
+    own Customizer hides them, but a script that sets `$fn = 32;` at the top
+    level is tuning the model with it exactly as it does with `wall = 2;`,
+    and the pane's write-back path is name-keyed throughout, so nothing
+    downstream cares about the `$`. (The Add Parameter dialog still refuses
+    to create one -- `str.isidentifier()` is False for `$fn` -- so this only
+    ever surfaces `$vars` the script already declares.)
+
+    The `$vp*` camera variables are the exception: `$vpr`/`$vpt`/`$vpd`/
+    `$vpf` describe where the viewport is looking, not what the model is,
+    and the camera is already both ends of that conversation -- every render
+    is handed the live camera as `$vp*` (`MainWindow._viewport_params`) and
+    the evaluated result is applied back to it (`_apply_vp_params`). A
+    control for one would be editing a value the next render overrides."""
     _KEYWORDS = {'true', 'false', 'undef', 'use', 'include',
                  'module', 'function', 'for', 'if', 'else', 'let', 'each'}
-    return bool(name) and not name.startswith('$') and name not in _KEYWORDS
+    return bool(name) and name not in _KEYWORDS and not name.startswith('$vp')
 
 
 def scan_parameters(source: str) -> list[ParameterDef]:
@@ -259,7 +273,7 @@ def _scan_parameters_lines(source: str) -> list[ParameterDef]:
             continue
 
         # Assignment: name = literal; // optional constraint
-        assign_m = re.match(r'^\s*(\w+)\s*=\s*(.+?);\s*(?://\s*(.*))?$', line)
+        assign_m = re.match(r'^\s*(\$?\w+)\s*=\s*(.+?);\s*(?://\s*(.*))?$', line)
         if assign_m:
             name = assign_m.group(1)
             val_str = assign_m.group(2).strip()
