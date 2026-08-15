@@ -88,6 +88,25 @@ The viewport always shows the last render's result; it stays static while the us
 
 Every PR bumps the version (`version` in both `[project]` and `[tool.briefcase]` in `pyproject.toml`, kept identical — then run `uv lock` to sync `uv.lock`'s pinned self-version). Patch bump at minimum; use judgment for minor/major on larger changes. Do this as part of preparing the PR, alongside the commit.
 
+### The macOS bundle's Info.plist goes stale on every bump
+
+`briefcase update` and `briefcase build` never rewrite `build/belfryscad/macos/app/BelfrySCAD.app/Contents/Info.plist` — only `briefcase create` generates it, from the `pyproject.toml` values as they stood at scaffold time. So after any version bump the bundle keeps reporting the *old* `CFBundleShortVersionString`, and the same applies to anything else the plist bakes in (`LSMinimumSystemVersion` from `[tool.briefcase.app.belfryscad.macOS] min_os_version`, the bundle identifier, the document-type declarations).
+
+Nothing warns about this. Both values had drifted a long way before anyone looked: the plist still said `0.1.0` and `12.0` while `pyproject.toml` said `0.68.1` and `13.3` — the app itself reported 0.68.1 correctly the whole time, since that comes from the installed package, not the plist. The stale `LSMinimumSystemVersion` was the real problem: it advertised macOS 12 support for a bundle whose `openscad_cpp_evaluator` wheel needs 13.3.
+
+To refresh it, regenerate the scaffold rather than hand-editing the plist (a hand edit is silently discarded the next time anyone runs `create`):
+
+```
+mv build/belfryscad/macos/app build/belfryscad/macos/app.bak   # ~950MB, keep until verified
+uv run briefcase create --no-input
+uv run briefcase build
+/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+    build/belfryscad/macos/app/BelfrySCAD.app/Contents/Info.plist
+rm -rf build/belfryscad/macos/app.bak
+```
+
+`create` re-downloads every wheel (PySide6 alone is ~440MB), so this is a few minutes — worth doing before cutting any real release or notarized build, not on every routine local rebuild. `CFBundleVersion` stays at `1`; that is briefcase's build-number default and is unrelated to the version string.
+
 ## Further Documentation
 
 Detailed implementation notes live in `docs/`. AST Evaluator internals (scope processing, assignment order, built-ins reference, 2D/3D geometry handling, error format, `$variables` scoping, `include`/`use`, implementation quirks, and the Manifold provenance / AST ↔ geometry ID mapping API) now live in the separate `openscad_cpp_evaluator` package's own `CLAUDE.md`, not here.
