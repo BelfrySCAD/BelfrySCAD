@@ -589,10 +589,26 @@ class _SliderWidget(QWidget):
         self._slider.valueChanged.connect(self._on_slide)
         lay.addWidget(self._slider, 1)
 
-        self._lbl = QLabel(self._fmt(value))
-        self._lbl.setMinimumWidth(52)
-        self._lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(self._lbl)
+        # An editable spinbox rather than a read-only label: the slider only
+        # lands on step-sized ticks, so without this there is no way to type
+        # a value between them (or outside a coarse step) at all.
+        if self._is_int:
+            self._spin = QSpinBox()
+            self._spin.setSingleStep(max(1, int(self._step)))
+            self._spin.setRange(int(self._min), int(self._max))
+            self._spin.setValue(int(value))
+        else:
+            self._spin = QDoubleSpinBox()
+            # At least one decimal even for a whole-number step -- a float
+            # parameter with step=1 would otherwise round every typed value,
+            # which is the opposite of the fine control this is here for.
+            self._spin.setDecimals(max(1, self._decimals()))
+            self._spin.setSingleStep(self._step)
+            self._spin.setRange(self._min, self._max)
+            self._spin.setValue(float(value))
+        self._spin.setKeyboardTracking(False)  # one change per committed edit
+        self._spin.valueChanged.connect(self._on_spin)
+        lay.addWidget(self._spin)
 
     def _to_tick(self, v) -> int:
         return max(0, min(self._n, round((float(v) - self._min) / self._step)))
@@ -604,25 +620,35 @@ class _SliderWidget(QWidget):
             return int(round(v))
         return round(v, 12)
 
-    def _fmt(self, v) -> str:
-        if self._is_int:
-            return str(int(round(float(v))))
+    def _decimals(self) -> int:
         step_s = f'{self._step:g}'
         if '.' in step_s:
-            dec = len(step_s.split('.')[1].rstrip('0') or '0')
-        else:
-            dec = 0
-        return f'{float(v):.{dec}f}'
+            return len(step_s.split('.')[1].rstrip('0') or '0')
+        return 0
 
     def _on_slide(self, t: int):
         v = self._from_tick(t)
-        self._lbl.setText(self._fmt(v))
+        self._spin.blockSignals(True)
+        self._spin.setValue(v)
+        self._spin.blockSignals(False)
+        self.value_changed.emit(v)
+
+    def _on_spin(self, v):
+        # Snap the slider to the nearest tick without echoing back into the
+        # spinbox -- a typed value that falls between ticks must survive.
+        if self._is_int:
+            v = int(v)
+        self._slider.blockSignals(True)
+        self._slider.setValue(self._to_tick(v))
+        self._slider.blockSignals(False)
         self.value_changed.emit(v)
 
     def set_value(self, v):
         self._slider.blockSignals(True)
+        self._spin.blockSignals(True)
         self._slider.setValue(self._to_tick(v))
-        self._lbl.setText(self._fmt(v))
+        self._spin.setValue(int(v) if self._is_int else float(v))
+        self._spin.blockSignals(False)
         self._slider.blockSignals(False)
 
 
