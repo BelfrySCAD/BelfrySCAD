@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel, QPushButton
-from PySide6.QtCore import Qt, QPoint, QSize, Signal, QTimer
+from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
+                             QEasingCurve)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon)
 
@@ -171,7 +172,8 @@ class Viewport(QOpenGLWidget):
     measurement_dismissed = Signal(int)                   # index into the list
     measure_progress    = Signal(str)                     # prompt for the next click
 
-    def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0):
+    def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0,
+                 orientation_cube: bool = False):
         super().__init__(parent)
         self.setMinimumSize(400, 300)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -216,6 +218,19 @@ class Viewport(QOpenGLWidget):
         # Measurement readout, one label per finished measurement plus the
         # one being taken. Same treatment as the delta overlay.
         self._measure_labels: list = []
+
+        # Orientation cube (main window only -- the data-viewer subclasses
+        # embed small preview viewports where it would just be in the way).
+        # A plain child QWidget, so it never touches the GL context.
+        self._orientation_cube = None
+        self._view_anim = None      # in-flight orientation-cube view swing
+        if orientation_cube:
+            from .orientation_cube import OrientationCube
+            self._orientation_cube = OrientationCube(self)
+            self._orientation_cube.view_requested.connect(self._on_orientation_cube_view)
+            self._orientation_cube.orbit_requested.connect(self._on_orientation_cube_orbit)
+            self.camera_changed.connect(self._sync_orientation_cube)
+            self._sync_orientation_cube()
 
         # Gizmo drag state
         self._gizmo_drag_axis: int = -1
@@ -314,6 +329,8 @@ class Viewport(QOpenGLWidget):
         if self._ctx:
             self._ctx.viewport = (0, 0, w, h)
             self._renderer.set_viewport(w, h)
+        if self._orientation_cube is not None:
+            self._orientation_cube.place_in(self.width())
         if self._debug_paused or self._render_busy or self._debug_busy:
             self._position_busy_label()
         self.size_changed.emit(w, h)
@@ -715,46 +732,129 @@ class Viewport(QOpenGLWidget):
     # Camera view presets
     # ------------------------------------------------------------------
 
+    # Where each named view puts the camera. Top and bottom are not exactly
+    # +-90: _look_at's world-up ([0,0,1]) becomes parallel to the forward
+    # vector at precisely elevation=+-90 (gimbal lock), so it falls back to a
+    # hardcoded +X "right" vector -- which doesn't match the
+    # azimuth-dependent basis the drag-orbit math continuously converges to
+    # as elevation moves away from the pole. Starting a drag from exactly
+    # elevation=90 therefore snapped the view to whatever direction that
+    # arbitrary +X fallback happened to imply. Landing just shy of the pole
+    # keeps the view visually identical (sin/cos differ by ~1e-6) while
+    # keeping the basis on the continuous (non-fallback) branch.
+    #
+    # The orientation cube derives the same numbers from its face normals
+    # (orientation_cube.azimuth_elevation_for), including this same dodge, so
+    # clicking TOP and pressing Ctrl+4 land on identical values.
+    VIEW_PRESETS = {
+        "top": (270.0, 89.9999),
+        "bottom": (0.0, -89.9999),
+        "front": (270.0, 0.0),
+        "back": (90.0, 0.0),
+        "left": (180.0, 0.0),
+        "right": (0.0, 0.0),
+        "iso": (295.0, 35.0),
+    }
+
     def set_view_preset(self, preset: str):
         cam = self._renderer.camera
-        if preset != "all":
-            cam.fov = cam.DEFAULT_FOV
-            cam.roll = 0.0  # named views are always level, never rolled
-        if preset == "top":
-            # Not exactly 90: _look_at's world-up ([0,0,1]) becomes parallel
-            # to the forward vector at precisely elevation=+-90 (gimbal
-            # lock), so it falls back to a hardcoded +X "right" vector —
-            # which doesn't match the azimuth-dependent basis the drag-orbit
-            # math continuously converges to as elevation moves away from
-            # the pole. Starting a drag from exactly elevation=90 therefore
-            # snapped the view to whatever direction that arbitrary +X
-            # fallback happened to imply. Landing just shy of the pole keeps
-            # the view visually identical (sin/cos differ by ~1e-6) while
-            # keeping the basis on the continuous (non-fallback) branch.
-            cam.azimuth, cam.elevation = 270, 89.9999
-        elif preset == "bottom":
-            cam.azimuth, cam.elevation = 0, -89.9999
-        elif preset == "front":
-            cam.azimuth, cam.elevation = 270, 0
-        elif preset == "back":
-            cam.azimuth, cam.elevation = 90, 0
-        elif preset == "left":
-            cam.azimuth, cam.elevation = 180, 0
-        elif preset == "right":
-            cam.azimuth, cam.elevation = 0, 0
-        elif preset == "iso":
-            cam.azimuth, cam.elevation = 295, 35
-        elif preset == "all":
+        if preset == "all":
+            # Framing, not an orientation change -- nothing to swing through.
+            self.stop_view_animation()
             self._frame_all(cam)
             if self._measurements:
                 self._refresh_measure_labels()
             self.camera_changed.emit()
             self.update()
             return
+        target = self.VIEW_PRESETS.get(preset)
+        if target is None:
+            return
+        # Swung, not cut, so the model's new orientation is readable on the
+        # way in -- same animation the orientation cube uses, so the two
+        # routes to the same view behave identically.
+        self.animate_camera_to(*target)
+
+    def _sync_orientation_cube(self):
+        """Mirror the camera's orientation into the cube. Cheap enough to run
+        on every camera_changed (it is a 3x3 compare, then a repaint only if
+        the rotation actually moved)."""
+        if self._orientation_cube is not None:
+            self._orientation_cube.set_orientation(self._renderer.camera.view_matrix())
+
+    def _on_orientation_cube_view(self, azimuth: float, elevation: float):
+        self.animate_camera_to(azimuth, elevation)
+
+    def _on_orientation_cube_orbit(self, dx: float, dy: float):
+        """Dragging the cube orbits the scene, using the same rule and the
+        same sensitivity as dragging in the viewport itself -- the cube is a
+        second handle on one camera, not a second camera."""
+        self.stop_view_animation()
+        self._orbit_turntable(dx, dy)
         if self._measurements:
             self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
+
+    def stop_view_animation(self):
+        """Drop any in-flight view animation. Any direct camera input (a
+        drag, a zoom, another click) must win immediately rather than fight
+        an animation still writing azimuth/elevation underneath it."""
+        anim = getattr(self, "_view_anim", None)
+        if anim is not None:
+            anim.stop()
+            self._view_anim = None
+
+    def animate_camera_to(self, azimuth: float, elevation: float,
+                           duration_ms: int = 350):
+        """Swing the camera round to an orientation instead of cutting to it.
+
+        Interpolates azimuth/elevation/roll together, so a rolled camera
+        also levels out on the way (the named views are always level). The
+        azimuth leg takes the short way round -- lerping 350 -> 10 the naive
+        way would spin the long way through 180.
+        """
+        cam = self._renderer.camera
+        self.stop_view_animation()
+        cam.fov = cam.DEFAULT_FOV
+
+        start = (cam.azimuth, cam.elevation, cam.roll)
+        # Shortest signed arc, so the cube and the model turn the same way
+        # the user expects rather than taking the long way round.
+        d_az = ((azimuth - cam.azimuth + 180.0) % 360.0) - 180.0
+        delta = (d_az, elevation - cam.elevation, -cam.roll)
+        if not any(abs(d) > 1e-9 for d in delta):
+            return
+
+        anim = QVariantAnimation(self)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(duration_ms)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        def step(t: float):
+            cam.azimuth = start[0] + delta[0] * t
+            cam.elevation = start[1] + delta[1] * t
+            cam.roll = start[2] + delta[2] * t
+            if self._measurements:
+                self._refresh_measure_labels()
+            self.camera_changed.emit()
+            self.update()
+
+        def done():
+            # Land exactly on the requested values rather than on whatever
+            # the last eased sample happened to be.
+            cam.azimuth, cam.elevation, cam.roll = azimuth, elevation, 0.0
+            self._view_anim = None
+            if self._measurements:
+                self._refresh_measure_labels()
+            self.camera_changed.emit()
+            self.update()
+
+        anim.valueChanged.connect(step)
+        anim.finished.connect(done)
+        self._view_anim = anim
+        anim.start()
 
     def _frame_all(self, cam):
         # Prefer the bounds cached by the last frame_scene() call (always
@@ -831,6 +931,7 @@ class Viewport(QOpenGLWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
+        self.stop_view_animation()   # a click always beats an in-flight swing
 
         # Measurement owns the plain click while its mode is on, ahead of
         # selection and orbit -- otherwise every measuring click would also
@@ -927,8 +1028,7 @@ class Viewport(QOpenGLWidget):
                     # fixed world one.
                     cam.orbit_free(-dx * 0.5, -dy * 0.5)
             else:
-                cam.azimuth -= dx * 0.5
-                cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
+                self._orbit_turntable(dx, dy)
         elif self._mouse_button == Qt.MouseButton.RightButton:
             self._pan_by(dx, dy)
 
@@ -936,6 +1036,15 @@ class Viewport(QOpenGLWidget):
             self._refresh_measure_labels()
         self.camera_changed.emit()
         self.update()
+
+    def _orbit_turntable(self, dx: float, dy: float):
+        """The default (non-Shift) drag rule: azimuth follows horizontal
+        travel, elevation vertical, clamped short of the poles so the
+        horizon stays level. Shared with the orientation cube so dragging
+        the cube turns the model exactly as dragging the model does."""
+        cam = self._renderer.camera
+        cam.azimuth -= dx * 0.5
+        cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
 
     def _pan_by(self, dx: float, dy: float):
         """Slide the camera target so on-screen content follows a drag of
@@ -966,6 +1075,7 @@ class Viewport(QOpenGLWidget):
         platform does with it. Cmd+scroll zooms on a trackpad, matching the
         same convention.
         """
+        self.stop_view_animation()
         cam = self._renderer.camera
         pixel = event.pixelDelta()
         mods = event.modifiers()
