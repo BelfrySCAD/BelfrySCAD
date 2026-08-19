@@ -57,17 +57,20 @@ _AXIS_RGB = {
 }
 _NEUTRAL_FACE = (150, 155, 165)
 
+# How far a positive face is pulled from the neutral grey towards its axis
+# colour. Enough to say "this is X" at 92px; much more and the cube reads as
+# three saturated stickers rather than a grey cube with a hint of axis in it.
+_FACE_TINT_MIX = 0.28
+
 
 def _face_color(normal: np.ndarray) -> QColor:
     key = tuple(int(round(float(c))) for c in normal)
     rgb = _AXIS_RGB.get(key)
     if rgb is None:
         return QColor(*_NEUTRAL_FACE)
-    # 55% of the way from neutral grey to the axis colour: enough to read as
-    # "this is X" at 92px, not so much that dark label text disappears.
-    mix = 0.55
+    m = _FACE_TINT_MIX
     return QColor(*[
-        round(n * (1 - mix) + (c * 255) * mix)
+        round(n * (1 - m) + (c * 255) * m)
         for n, c in zip(_NEUTRAL_FACE, rgb)
     ])
 
