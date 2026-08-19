@@ -620,7 +620,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tab_bar_toolbar)
 
         # Viewport is the central widget
-        self._viewport = Viewport()
+        self._viewport = Viewport(orientation_cube=True)
         self._viewport.selection_changed.connect(self._on_selection_changed)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
@@ -1079,6 +1079,9 @@ class MainWindow(QMainWindow):
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._act_show_grid = self._add_checkable(view_menu, "Show Grid", True, self._toggle_grid)
+        self._act_show_grid.setShortcut(QKeySequence("Ctrl+G"))
+        self._act_show_grid.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
         self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
         self._act_show_cross.setShortcut(QKeySequence("Ctrl+3"))
@@ -4073,6 +4076,11 @@ class MainWindow(QMainWindow):
     def _toggle_edges(self, visible):
         vp = self._target_viewport()
         vp._renderer.show_edges = visible
+        vp.update()
+
+    def _toggle_grid(self, visible):
+        vp = self._target_viewport()
+        vp._renderer.show_grid = visible
         vp.update()
 
     def _toggle_scale_markers(self, visible):

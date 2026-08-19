@@ -504,7 +504,7 @@ class Camera:
 
 def _axis_extent(camera: Camera) -> float:
     """World-space half-length used for both the drawn axis-line extent and
-    the target tick/label density (_nice_spacings' raw = L / 28). Scaled by
+    the target tick/label density (_nice_spacings' raw = L / 15). Scaled by
     fov as well as distance -- previously distance-only (a flat `* 2.5`),
     so narrowing fov (Shift+wheel optical zoom-in, distance unchanged) left
     tick spacing unchanged in world-space while showing far fewer ticks on
@@ -666,12 +666,20 @@ class SceneRenderer:
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
         self.show_axes: bool = True
+        # The XY grid is drawn from _render_axes but toggles on its own:
+        # it is the one overlay dense enough to be worth hiding while
+        # leaving the axes and their labels up.
+        self.show_grid: bool = True
         self.show_scale_markers: bool = True
         self.show_edges: bool = False
         self.show_crosshairs: bool = False
         self.light_az_offset: float = 0.0
         self.light_el_offset: float = 0.0
         self._axes_vbo: Optional[mgl.Buffer] = None
+        # The XY grid draws separately from the axes so it can go down
+        # with depth writes off -- see _render_axes.
+        self._grid_vbo: Optional[mgl.Buffer] = None
+        self._grid_vao = None
         self._axes_vao: Optional[mgl.VertexArray] = None
 
     def initialize(self, ctx: mgl.Context):
@@ -1297,9 +1305,25 @@ class SceneRenderer:
         self._gizmo_vao.render()
         self._ctx.enable(mgl.DEPTH_TEST)
 
+    # How far the grid sits from the background towards the axes. A half-way
+    # mix read as a second set of axes rather than as backdrop; a quarter of
+    # the way keeps it clearly subordinate to the axes drawn over it.
+    GRID_AXES_MIX = 0.25
+
+    @property
+    def grid_color(self) -> tuple:
+        """The XY-plane grid's colour: 75% background, 25% axes. Derived
+        rather than stored so it tracks a colour-scheme change on its own --
+        there is no combination of background and axes colours for which a
+        fixed grid colour stays legible against one without disappearing into
+        the other."""
+        m = self.GRID_AXES_MIX
+        return tuple(b * (1.0 - m) + a * m
+                     for b, a in zip(self.bg_color[:3], self.axes_color[:3]))
+
     def _render_axes(self, mvp: np.ndarray):
         L       = _axis_extent(self.camera)
-        label_spacing, major_spacing, minor_spacing = _nice_spacings(L)
+        label_spacing, major_spacing, minor_spacing = _drawn_spacings(L)
         red   = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         green   = np.array([0.15, 0.65, 0.15], dtype=np.float32)
         blue   = np.array([0.25, 0.35, 0.9], dtype=np.float32)
@@ -1345,10 +1369,6 @@ class SceneRenderer:
         perp_axis = [1, 0, 1]   # which axis the tick extends along
         minor_len_actual = tick_len * 0.5
         major_steps = max(1, round(major_spacing / minor_spacing))
-        if major_steps <= 2:
-            minor_spacing = major_spacing
-            major_spacing = label_spacing
-            major_steps = max(1, round(major_spacing / minor_spacing))
 
         k = 1
         while True:
@@ -1374,6 +1394,37 @@ class SceneRenderer:
                     rows.append(np.concatenate([p1, color]))
             k += 1
 
+        # XY-plane grid, one line per minor tick, into its OWN buffer --
+        # it has to be a separate draw, not more rows appended to the axes.
+        # Every grid line lies in the same z=0 plane as the axes and their
+        # ticks, and a tick runs right along a grid line, so the two are
+        # exactly coincident. Ordering within one draw does not settle that:
+        # a grid line spans -L..+L while a tick spans a few pixels, and
+        # interpolating depth across those very different lengths leaves the
+        # shared pixels differing in the last bits either way -- classic
+        # z-fighting, which showed up as ticks disappearing into the grid.
+        # Drawing the grid first with depth WRITES off fixes it outright:
+        # the grid never lands in the depth buffer, so the ticks drawn after
+        # it always win, while the grid is still depth-TESTED and so stays
+        # correctly hidden behind solid geometry.
+        grid = np.array(self.grid_color, dtype=np.float32)
+        grid_rows: list[np.ndarray] = []
+        steps = int(L / minor_spacing) if (self.show_grid and minor_spacing > 0) else 0
+        for j in range(1, steps + 1):
+            t = j * minor_spacing
+            for sign in (1.0, -1.0):
+                pos = sign * t
+                # One line each way: parallel to Y at x=pos, and to X at y=pos.
+                for ai in range(2):
+                    p0 = np.zeros(3, dtype=np.float32)
+                    p1 = np.zeros(3, dtype=np.float32)
+                    other = 1 - ai
+                    p0[ai] = p1[ai] = float(pos)
+                    p0[other] = -float(L)
+                    p1[other] = float(L)
+                    grid_rows.append(np.concatenate([p0, grid]))
+                    grid_rows.append(np.concatenate([p1, grid]))
+
         geo = np.array(rows, dtype=np.float32)
 
         if self._axes_vbo is not None:
@@ -1386,11 +1437,32 @@ class SceneRenderer:
             [(self._axes_vbo, "3f 3f", "in_position", "in_color")],
         )
 
+        if self._grid_vbo is not None:
+            self._grid_vao.release()
+            self._grid_vbo.release()
+            self._grid_vbo = self._grid_vao = None
+        if grid_rows:
+            self._grid_vbo = self._ctx.buffer(np.array(grid_rows, dtype=np.float32).tobytes())
+            self._grid_vao = self._ctx.vertex_array(
+                self._gizmo_prog,
+                [(self._grid_vbo, "3f 3f", "in_position", "in_color")],
+            )
+
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         self._ctx.enable(mgl.BLEND)
         # GL_LINE_SMOOTH is intentionally left off here: its coverage-based
         # antialiasing halves the alpha of axis-aligned lines (which fall
         # exactly between pixel columns/rows), washing out the axis colors.
+        if self._grid_vao is not None:
+            # depth_mask lives on the FRAMEBUFFER, not the context -- setting
+            # self._ctx.depth_mask just creates a Python attribute moderngl
+            # never looks at, so GL kept writing grid depth and the ticks
+            # went on z-fighting exactly as before. Use the same _active_fbo
+            # handle paint() resolves for the blended passes, not
+            # self._ctx.fbo, so this is the framebuffer Qt actually gave us.
+            self._active_fbo.depth_mask = False
+            self._grid_vao.render(mgl.LINES)
+            self._active_fbo.depth_mask = True
         self._axes_vao.render(mgl.LINES)
         self._ctx.disable(mgl.BLEND)
 
@@ -1430,7 +1502,9 @@ class SceneRenderer:
     def _axis_tick_world_points(self) -> list[tuple[np.ndarray, str, int]]:
         """Return (world_position, text, axis_index) for every tick that should be labeled."""
         L = _axis_extent(self.camera)
-        spacing, _, _ = _nice_spacings(L)
+        # Every major tick gets a label, so this walks the major spacing
+        # rather than a separate (coarser) label spacing of its own.
+        _label_spacing, spacing, _ = _drawn_spacings(L)
         end_on_axis, stride = _axis_density(self.camera)
 
         result = []
@@ -1741,6 +1815,11 @@ class SceneRenderer:
             self._axes_vbo.release()
             self._axes_vao = None
             self._axes_vbo = None
+        if self._grid_vbo is not None:
+            self._grid_vao.release()
+            self._grid_vbo.release()
+            self._grid_vao = None
+            self._grid_vbo = None
         if self._label_quad_vbo is not None:
             self._label_quad_vao.release()
             self._label_quad_vbo.release()
@@ -1963,7 +2042,7 @@ def _nice_spacings(L: float) -> tuple[float, float, float]:
     major_spacing is the largest round subdivision below the label interval,
     so e.g. when labels are every 2 there is a major tick at every 1.
     """
-    raw = max(L, 1e-9) / 28
+    raw = max(L, 1e-9) / 15
     mag = 10 ** math.floor(math.log10(raw))
     for f in (1, 2, 5, 10):
         if f * mag >= raw:
@@ -1980,6 +2059,24 @@ def _nice_spacings(L: float) -> tuple[float, float, float]:
             return spacing, major, minor
     spacing = mag * 10.0
     return spacing, spacing / 2, spacing / 10
+
+
+def _drawn_spacings(L: float) -> tuple[float, float, float]:
+    """(label_spacing, major_spacing, minor_spacing) as actually DRAWN.
+
+    _nice_spacings picks the ideal three, but when its minors come out
+    nearly as coarse as its majors the whole ladder gets promoted one level
+    (minors take over the majors' spacing, majors the labels'). That
+    promotion used to live inside _render_axes, where the label code could
+    not see it -- which was fine while labels had their own spacing, and is
+    not now that a label goes on every major tick. Both callers read the
+    final numbers from here so a label cannot land anywhere a major tick
+    isn't.
+    """
+    label, major, minor = _nice_spacings(L)
+    if max(1, round(major / minor)) <= 2:
+        minor, major = major, label
+    return label, major, minor
 
 
 def _fmt_tick(val: float, spacing: float) -> str:
