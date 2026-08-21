@@ -419,11 +419,14 @@ class DebugSession(QObject):
 
     def _run(self, source_path: str, viewport_params: dict):
         from openscad_cpp_evaluator import Evaluator, EvalError
+        from belfryscad.export_name import seed_params
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
                       return_hook=self._on_function_return, manifold_cache=self._manifold_cache,
                       fast_continue_signal=self._fast_continue_signal)
         try:
-            bodies, id_to_node = ev.evaluate(source_path, viewport_params)
+            # Same seed as a normal render, so stepping through a script
+            # sees the same $export_name it would see when rendered.
+            bodies, id_to_node = ev.evaluate(source_path, seed_params(viewport_params, source_path))
             if not self._stopped:
                 self.finished.emit(bodies, id_to_node)
         except EvalError as e:

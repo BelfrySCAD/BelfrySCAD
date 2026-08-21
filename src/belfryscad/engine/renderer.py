@@ -668,8 +668,15 @@ class SceneRenderer:
         self.show_axes: bool = True
         # The XY grid is drawn from _render_axes but toggles on its own:
         # it is the one overlay dense enough to be worth hiding while
-        # leaving the axes and their labels up.
-        self.show_grid: bool = True
+        # leaving the axes and their labels up. Off by default for that
+        # same reason -- Ctrl+G brings it up when it is wanted.
+        #
+        # Must stay in step with the "Show Grid" menu item's own initial
+        # state (main_window._add_checkable), which sets its checkbox
+        # BEFORE connecting the slot, so the default never fires the
+        # toggle. A mismatch here shows an unchecked menu item over a
+        # visible grid.
+        self.show_grid: bool = False
         self.show_scale_markers: bool = True
         self.show_edges: bool = False
         self.show_crosshairs: bool = False
