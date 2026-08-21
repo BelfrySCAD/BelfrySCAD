@@ -71,6 +71,21 @@ def execution_line_color() -> str:
     return "#4A3D00" if is_dark() else "#FFFF88"
 
 
+def guide_colors() -> tuple[str, str]:
+    """(indent guides, column guide) for the editor's overlay rules.
+
+    These are meant to be barely there -- a hint of structure, not a set of
+    lines competing with the code. Hardcoded near-white values measured
+    1.32:1 against a white page but 13.6:1 against the dark editor
+    background (#171717), which is where "too bright" came from: ten times
+    louder than the same lines are in light mode.
+
+    The dark values are chosen to land at the SAME contrast ratio the light
+    ones have, rather than picked by eye.
+    """
+    return ("#2D2D2D", "#303030") if is_dark() else ("#E0E0E0", "#DDDDDD")
+
+
 def find_bar_bg() -> str:
     """Background for the editor's floating Find/Replace overlay.
 
