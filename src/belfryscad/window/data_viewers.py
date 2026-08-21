@@ -256,6 +256,75 @@ def _is_vnf(v) -> bool:
                and all(isinstance(i, (int, float)) for i in f) for f in faces)
 
 
+def _object_field(v, *names):
+    """First present key among `names` on an OscObject, else None.
+
+    Geometry objects name their points `vertices`; `points` is accepted as
+    an alias because that is what polyhedron()/polygon() call the same
+    argument, and a hand-built object may follow either.
+    """
+    if not _is_oscobject(v):
+        return None
+    data = v.data
+    for n in names:
+        if n in data:
+            return data[n]
+    return None
+
+
+def _geometry_object_vnf(v):
+    """`[vertices, faces]` for a 3D geometry object, else None.
+
+    A `render()` expression yields an object() carrying the mesh as separate
+    `vertices` and `faces` keys, so `_is_vnf` -- which only ever matches a
+    bare 2-list -- fires for `obj.vnf` but not for `obj` itself. This is the
+    unwrapping that lets the object go straight to the VNF viewer.
+
+    Deliberately not folded into `_is_vnf`: that predicate is also used to
+    spot VNF *literals* in source text (find_viewable_literals), where an
+    object is not a candidate at all.
+    """
+    verts = _object_field(v, "vertices", "points")
+    faces = _object_field(v, "faces")
+    if verts is None or faces is None:
+        return None
+    candidate = [verts, faces]
+    return candidate if _is_vnf(candidate) else None
+
+
+def _geometry_object_region(v):
+    """A 2D geometry object's contours as real point lists, else None.
+
+    The 2D counterpart of `_geometry_object_vnf`. Unlike the 3D case this is
+    not a straight unwrap: `paths` holds *indices* into `vertices` (matching
+    polygon(points=, paths=)), so the contours have to be resolved before
+    any viewer can use them. The result is a region -- a list of closed 2D
+    paths -- which is exactly what a 2D shape with holes is.
+
+    Indices arrive as floats: OpenSCAD has no integer type.
+    """
+    verts = _object_field(v, "vertices", "points")
+    paths = _object_field(v, "paths")
+    if not (_is_list(verts) and _is_list(paths)) or not paths:
+        return None
+    if not all(_is_numeric_point(p) and len(p) == 2 for p in verts):
+        return None
+    out = []
+    for path in paths:
+        if not (_is_list(path) and len(path) >= 3):
+            return None
+        contour = []
+        for idx in path:
+            if not isinstance(idx, (int, float)):
+                return None
+            i = int(idx)
+            if not (0 <= i < len(verts)):
+                return None
+            contour.append(list(verts[i]))
+        out.append(contour)
+    return out if _is_region(out) else None
+
+
 def _is_matrix(v) -> bool:
     """A matrix is a square list of lists of numbers, 2x2 through 5x5 —
     e.g. a transform matrix. No overlap with `_is_grid`: a grid row is a
@@ -1693,6 +1762,229 @@ class _UndoableViewerMixin:
 # ---------------------------------------------------------------------------
 # Matrix Viewer
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Object Viewer / Editor
+# ---------------------------------------------------------------------------
+
+class ObjectViewer(QDialog, _UndoableViewerMixin):
+    """Key/Type/Value table for an OpenSCAD `object()`.
+
+    Read-only by default, which is the only possibility for a value reached
+    from the debugger -- a runtime value has no source span to write back to.
+    Pass `editable=True` (from "Edit as Object...", which only offers itself
+    for an all-literal `object(...)` call) for Save/Cancel, editable keys and
+    values, and add/delete rows. `committed` fires once, with the whole
+    re-rendered call text, when Save is clicked.
+
+    Values are shown and typed as OpenSCAD source (`true`, `undef`, `[1,2]`),
+    not Python, since that is what the user is editing.
+
+    Right-click a row to open its value in whichever other viewer fits --
+    the same menu the editor's own right-click builds, so a nested mesh
+    reaches the VNF viewer.
+    """
+
+    committed = Signal(str)
+
+    def __init__(self, title: str, value, parent=None, editable: bool = False,
+                 entries: list | None = None):
+        super().__init__(parent)
+        self._title = title
+        self._editable = editable
+        label = "Object Editor" if editable else "Object Viewer"
+        self.setWindowTitle(f"{label}: {title}" if title else label)
+        self.resize(560, 420)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        # `entries` is the parsed literal form (editing); `value` is a live
+        # OscObject (viewing). Exactly one drives the table.
+        if entries is None:
+            entries = [(str(k), v) for k, v in value.items()] if _is_oscobject(value) else []
+        self._entries: list[list] = [[k, v] for k, v in entries]
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        self._table = QTableWidget()
+        self._table.setFont(QFont("Menlo", 11))
+        self._table.setColumnCount(3)
+        self._table.setHorizontalHeaderLabels(["Key", "Type", "Value"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents)
+        _style_table_headers(self._table)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._context_menu)
+        if editable:
+            self._table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                                         | QAbstractItemView.EditTrigger.EditKeyPressed)
+        else:
+            self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self._table)
+
+        self._refresh()
+        if editable:
+            self._table.itemChanged.connect(self._on_item_changed)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 20, 0)
+        if editable:
+            self._setup_undo(self._entries)
+            add = QPushButton("Add Key")
+            add.clicked.connect(self._on_add)
+            btn_row.addWidget(add)
+            self._del_btn = QPushButton("Delete Key")
+            self._del_btn.clicked.connect(self._on_delete)
+            btn_row.addWidget(self._del_btn)
+        btn_row.addStretch()
+        if editable:
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(self.reject)
+            btn_row.addWidget(cancel)
+            save = QPushButton("Save")
+            save.setDefault(True)
+            save.clicked.connect(self._on_save)
+            btn_row.addWidget(save)
+        else:
+            dismiss = QPushButton("Dismiss")
+            dismiss.clicked.connect(self.close)
+            btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+    # -- _UndoableViewerMixin contract ------------------------------------
+
+    def _get_value(self):
+        return [list(e) for e in self._entries]
+
+    def _apply_value(self, value):
+        self._entries = [list(e) for e in value]
+        self._refresh()
+
+    # -- display ----------------------------------------------------------
+
+    def _refresh(self):
+        blocked = self._table.blockSignals(True)
+        self._table.setRowCount(len(self._entries))
+        for row, (key, val) in enumerate(self._entries):
+            key_item = QTableWidgetItem(str(key))
+            self._table.setItem(row, 0, key_item)
+
+            type_item = QTableWidgetItem(_scad_type_name(val))
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, 1, type_item)
+
+            # OpenSCAD source form when it round-trips, else the short
+            # display form -- a live OscObject or a huge mesh has no useful
+            # editable text, and showing one would invite a bad edit.
+            shown = _python_value_to_scad(val) if _is_scad_literal_value(val) else _fmt_short(val)
+            val_item = QTableWidgetItem(shown)
+            if not self._editable or not _is_scad_literal_value(val):
+                val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, 2, val_item)
+            if not self._editable:
+                key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.blockSignals(blocked)
+
+    # -- editing ----------------------------------------------------------
+
+    def _on_item_changed(self, item):
+        # Every mutation builds the NEW list and hands it to _commit_value,
+        # which reads the "before" itself and pushes one undo step. Rejected
+        # edits just refresh, putting the cell back -- the same silent
+        # reject the other editors use for unparseable input.
+        row, col = item.row(), item.column()
+        if row < 0 or row >= len(self._entries):
+            return
+        new_entries = self._get_value()
+        if col == 0:
+            new_key = item.text().strip()
+            if not re.match(r"^\$?[A-Za-z_][A-Za-z0-9_]*$", new_key):
+                self._refresh()
+                return
+            if any(k == new_key for i, (k, _v) in enumerate(self._entries) if i != row):
+                self._refresh()   # an object cannot hold the same key twice
+                return
+            new_entries[row][0] = new_key
+        elif col == 2:
+            ok, parsed = _scad_literal_to_python(item.text().strip())
+            if not ok:
+                self._refresh()
+                return
+            new_entries[row][1] = parsed
+        else:
+            return
+        self._commit_value(new_entries, "Edit Key" if col == 0 else "Edit Value")
+
+    def _on_add(self):
+        new_entries = self._get_value()
+        base, n = "key", 1
+        existing = {k for k, _ in self._entries}
+        while f"{base}{n}" in existing:
+            n += 1
+        new_entries.append([f"{base}{n}", 0])
+        self._commit_value(new_entries, "Add Key")
+        self._table.selectRow(len(self._entries) - 1)
+
+    def _on_delete(self):
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        if not rows:
+            return
+        new_entries = [e for i, e in enumerate(self._get_value()) if i not in rows]
+        self._commit_value(new_entries, "Delete Key")
+
+    def _on_save(self):
+        self.committed.emit(_render_object_call([(k, v) for k, v in self._entries]))
+        self.accept()
+
+    # -- drill-down -------------------------------------------------------
+
+    def _context_menu(self, pos):
+        item = self._table.itemAt(pos)
+        if item is None:
+            return
+        row = item.row()
+        if row < 0 or row >= len(self._entries):
+            return
+        key, val = self._entries[row]
+        menu = QMenu(self)
+        build_viewer_menu(menu, f"{self._title}.{key}" if self._title else str(key), val, self)
+        if menu.isEmpty():
+            return
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+def _scad_type_name(v) -> str:
+    """OpenSCAD's own name for a value's type, matching what `object()`'s
+    diagnostics and the evaluator's oscTypeName() print."""
+    if v is None:
+        return "undef"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if _is_oscobject(v):
+        return "object"
+    if isinstance(v, (list, tuple)):
+        return "vector"
+    return "unknown"
+
+
+def _is_scad_literal_value(v) -> bool:
+    """True when `v` round-trips through OpenSCAD source text, i.e. is safe
+    to show in an editable cell. A live OscObject does not."""
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return True
+    if isinstance(v, (list, tuple)):
+        return all(_is_scad_literal_value(x) for x in v)
+    return False
+
 
 class MatrixViewer(QDialog, _UndoableViewerMixin):
     """Displays a square 2x2-5x5 list of lists of numbers as a grid of
@@ -6411,6 +6703,208 @@ def _iter_enclosing_literals(text: str, offset: int, max_levels: int = 8):
         pos = start
 
 
+# ---------------------------------------------------------------------------
+# object() call parsing, for the Object viewer/editor
+# ---------------------------------------------------------------------------
+#
+# Unlike every other editable shape here, an object is not written as a
+# bracket literal -- it is a CALL, `object(a=42, b=53)`. So it needs its own
+# span finder and its own text round-trip rather than riding on
+# `_iter_enclosing_literals`/`ast.literal_eval`.
+
+_SCAD_WORD_LITERALS = {"true": "True", "false": "False", "undef": "None"}
+
+
+def _scad_literal_to_python(src: str):
+    """`ast.literal_eval` for an OpenSCAD literal, or None if it isn't one.
+
+    OpenSCAD spells three literals differently from Python. Substituting
+    them has to skip string contents -- a plain `str.replace` would turn
+    `"undefined"` into `"Noneined"` -- so this walks the text and only
+    rewrites whole words found outside quotes.
+
+    Returns `(True, value)` on success so that a legitimately-parsed None
+    (OpenSCAD `undef`) is distinguishable from a parse failure.
+    """
+    out = []
+    i = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in "\"'":
+            quote = c
+            out.append(c)
+            i += 1
+            while i < n:
+                out.append(src[i])
+                if src[i] == "\\" and i + 1 < n:   # keep escapes intact
+                    out.append(src[i + 1])
+                    i += 2
+                    continue
+                if src[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c.isalpha() or c == "_":
+            j = i
+            while j < n and (src[j].isalnum() or src[j] == "_"):
+                j += 1
+            word = src[i:j]
+            out.append(_SCAD_WORD_LITERALS.get(word, word))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    try:
+        return True, ast.literal_eval("".join(out))
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        return False, None
+
+
+def _python_value_to_scad(v) -> str:
+    """Render a Python value back as OpenSCAD source. Inverse of
+    `_scad_literal_to_python` for the value shapes an object can hold."""
+    if v is None:
+        return "undef"
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    if isinstance(v, str):
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    if isinstance(v, float):
+        # Trim the ".0" a whole number would otherwise carry: OpenSCAD has
+        # one number type, so `42` and `42.0` are the same value and the
+        # shorter form is what a human would have written.
+        return str(int(v)) if v == int(v) else repr(v)
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_python_value_to_scad(x) for x in v) + "]"
+    return str(v)
+
+
+def _split_top_level(src: str, sep: str = ",") -> list[str]:
+    """Split on `sep`, ignoring separators nested in brackets or quotes."""
+    parts, depth, i, start = [], 0, 0, 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in "\"'":
+            quote = c
+            i += 1
+            while i < n:
+                if src[i] == "\\":
+                    i += 2
+                    continue
+                if src[i] == quote:
+                    break
+                i += 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == sep and depth == 0:
+            parts.append(src[start:i])
+            start = i + 1
+        i += 1
+    parts.append(src[start:])
+    return parts
+
+
+def _parse_object_call_args(argtext: str):
+    """`[(key, value), ...]` for an all-literal `object(...)` argument list,
+    or None if any argument is not `name = <literal>`.
+
+    None is the honest answer for `object(other, [["b"]])`: `other` is a
+    reference whose contents are not knowable from the text, so an editor
+    that rewrote the call would silently destroy it. Such calls stay
+    view-only.
+    """
+    if not argtext.strip():
+        return []
+    entries: list[tuple[str, object]] = []
+    seen: set[str] = set()
+    for raw in _split_top_level(argtext):
+        part = raw.strip()
+        if not part:
+            return None
+        eq = _split_top_level(part, "=")
+        if len(eq) != 2:
+            return None
+        key = eq[0].strip()
+        if not re.match(r"^\$?[A-Za-z_][A-Za-z0-9_]*$", key):
+            return None
+        ok, value = _scad_literal_to_python(eq[1].strip())
+        if not ok:
+            return None
+        # A later duplicate overwrites IN PLACE, keeping the key's original
+        # position -- object(a=42, b=1, a=99) is { a = 99; b = 1; }, checked
+        # against the reference. Removing and re-appending would be DELETE
+        # semantics, and the difference is observable because an object is
+        # insertion-ordered.
+        if key in seen:
+            for i, (k, _v) in enumerate(entries):
+                if k == key:
+                    entries[i] = (key, value)
+                    break
+        else:
+            seen.add(key)
+            entries.append((key, value))
+    return entries
+
+
+def _render_object_call(entries) -> str:
+    inner = ", ".join(f"{k}={_python_value_to_scad(v)}" for k, v in entries)
+    return f"object({inner})"
+
+
+def _find_object_call(text: str, offset: int):
+    """`(start, end, entries)` for the innermost enclosing `object(...)` call
+    around `offset`, or None. `end` is exclusive; `entries` is None when the
+    call is not all-literal (viewable but not editable)."""
+    pos = offset
+    for _ in range(8):
+        depth = 0
+        open_paren = None
+        i = pos - 1
+        while i >= 0:
+            c = text[i]
+            if c == ")":
+                depth += 1
+            elif c == "(":
+                if depth == 0:
+                    open_paren = i
+                    break
+                depth -= 1
+            i -= 1
+        if open_paren is None:
+            return None
+        name_end = open_paren
+        while name_end > 0 and text[name_end - 1].isspace():
+            name_end -= 1
+        name_start = name_end
+        while name_start > 0 and (text[name_start - 1].isalnum() or text[name_start - 1] == "_"):
+            name_start -= 1
+        if text[name_start:name_end] == "object":
+            depth = 0
+            j = open_paren
+            while j < len(text):
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        argtext = text[open_paren + 1:j]
+                        return name_start, j + 1, _parse_object_call_args(argtext)
+                j += 1
+            return None
+        pos = open_paren
+    return None
+
+
 def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
     """Find the innermost enclosing literal matching each of Path/Grid/
     Matrix/Affine/VNF/Region *independently*, as `{shape: (start, end,
@@ -6434,6 +6928,12 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["vnf"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
+    # An object is a CALL, not a bracket literal, so it has its own
+    # finder. entries is None when the call references variables, which
+    # cannot be round-tripped through text -- view-only, never editable.
+    call = _find_object_call(text, offset)
+    if call is not None and call[2] is not None:
+        found["object"] = call
     return found
 
 
@@ -6462,6 +6962,14 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["path"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
+    # Only when the call is all-literal. `object(other, [["k"]])` depends on
+    # `other`, whose contents are not knowable from source text, so there is
+    # nothing truthful to display -- offering it produced an EMPTY viewer.
+    # Such a call is still fully inspectable at runtime, via the debugger's
+    # own "View as Object..." on the variable, which sees resolved values.
+    call = _find_object_call(text, offset)
+    if call is not None and call[2] is not None:
+        found["object"] = call
     return found
 
 
@@ -6494,6 +7002,23 @@ def _open_region_viewer(title: str, value, parent=None):
     dlg.show()
 
 
+def _open_object_viewer(title: str, value, parent=None, entries=None):
+    # Refuse rather than show an empty table. Nothing to display means the
+    # caller had nothing to display -- an object() call that references a
+    # variable, say -- and a viewer with no rows just looks broken.
+    if entries is None and not _is_oscobject(value):
+        return None
+    dlg = ObjectViewer(title, value, parent, editable=False, entries=entries)
+    dlg.show()
+    return dlg
+
+
+def _open_object_editor(title: str, entries, on_commit, parent=None):
+    dlg = ObjectViewer(title, None, parent, editable=True, entries=entries)
+    dlg.committed.connect(on_commit)
+    dlg.show()
+
+
 def _open_matrix_viewer(title: str, value, parent=None):
     dlg = MatrixViewer(title, value, parent)
     dlg.show()
@@ -6506,10 +7031,30 @@ def _open_affine_matrix_viewer(title: str, value, parent=None):
 
 def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
     """Add viewer actions to a QMenu based on the value's type."""
+    if _is_oscobject(value):
+        menu.addAction("View as Object...", lambda: _open_object_viewer(name, value, parent))
     if _is_list(value) or _is_oscobject(value):
         menu.addAction("View as List...", lambda: _open_list_viewer(name, value, parent))
     if _is_vnf(value):
         menu.addAction("View as VNF...", lambda: _open_vnf_viewer(name, value, parent))
+    else:
+        # A geometry object from a render() expression carries the mesh as
+        # separate keys rather than a 2-list, so it needs unwrapping first.
+        geom_vnf = _geometry_object_vnf(value)
+        if geom_vnf is not None:
+            menu.addAction("View as VNF...",
+                            lambda v=geom_vnf: _open_vnf_viewer(name, v, parent))
+    geom_region = _geometry_object_region(value)
+    if geom_region is not None:
+        # `paths` are indices, so these contours are resolved, not unwrapped.
+        menu.addAction("View as Region...",
+                        lambda v=geom_region: _open_region_viewer(name, v, parent))
+        if len(geom_region) == 1:
+            # A single contour is also a valid path. Offering both follows
+            # the same convention as a grid row that also reads as a path --
+            # let the reader pick the interpretation they meant.
+            menu.addAction("View as Path...",
+                            lambda v=geom_region[0]: _open_path_viewer(name, v, parent))
     if _is_grid(value):
         menu.addAction("View as Grid...", lambda: _open_grid_viewer(name, value, parent))
     if _is_path(value):
@@ -6534,6 +7079,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
     def _preview(start, end):
         return _literal_display_name(text, start)
 
+    if "object" in literals:
+        start, end, entries = literals["object"]
+        menu.addAction("View as Object...", lambda start=start, end=end, entries=entries:
+                       _open_object_viewer(_preview(start, end), None, parent, entries=entries))
     if "list" in literals:
         start, end, value = literals["list"]
         menu.addAction("View as List...", lambda start=start, end=end, value=value:
@@ -6629,6 +7178,11 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
     def _preview(start, end):
         return _literal_display_name(text, start)
 
+    if "object" in literals:
+        start, end, entries = literals["object"]
+        menu.addAction("Edit as Object...", lambda start=start, end=end, entries=entries:
+                       _open_object_editor(_preview(start, end), entries,
+                                            lambda t, s=start, e=end: on_commit(t, s, e), parent))
     if "path" in literals:
         start, end, value = literals["path"]
         menu.addAction("Edit as Path...", lambda start=start, end=end, value=value:
