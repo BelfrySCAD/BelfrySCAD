@@ -100,6 +100,32 @@ The viewport always shows the last render's result; it stays static while the us
 
 Every PR bumps the version (`version` in both `[project]` and `[tool.briefcase]` in `pyproject.toml`, kept identical — then run `uv lock` to sync `uv.lock`'s pinned self-version). Patch bump at minimum; use judgment for minor/major on larger changes. Do this as part of preparing the PR, alongside the commit.
 
+### `briefcase update` leaves dependencies at their old versions
+
+Plain `briefcase update` refreshes your app's own code and nothing else. A
+pinned dependency stays at whatever version was last installed into the bundle,
+however far `pyproject.toml`/`uv.lock` have moved on. Use **`briefcase update -r`**
+(`--update-requirements`) after any dependency bump.
+
+Nothing warns about this, and every surface lies convincingly: the build prints
+`Built ... BelfrySCAD.app`, and the app reports its own bumped version, because
+that comes from the app package. Caught in practice with BelfrySCAD at 0.76.1
+bundling `openscad_cpp_evaluator` **0.37.0** — three releases behind, so the
+bundle had none of `render()` expressions, the touching-shells weld fix,
+`polyhedron(vnf)` or `object()`'s delete entry.
+
+Check what actually landed rather than trusting the build log:
+
+```
+find build/belfryscad/macos/app/BelfrySCAD.app -name "*.dist-info" -maxdepth 6 \
+    | sed 's|.*/||' | grep -iE "belfryscad|openscad_cpp"
+```
+
+Better still, run the bundled binary against a script exercising the new
+feature — `BelfrySCAD.app/Contents/MacOS/BelfrySCAD -o /tmp/out.stl probe.scad`
+— since that is the only check that proves the code inside the bundle, not the
+dev environment, is the code you shipped.
+
 ### The macOS bundle's Info.plist goes stale on every bump
 
 `briefcase update` and `briefcase build` never rewrite `build/belfryscad/macos/app/BelfrySCAD.app/Contents/Info.plist` — only `briefcase create` generates it, from the `pyproject.toml` values as they stood at scaffold time. So after any version bump the bundle keeps reporting the *old* `CFBundleShortVersionString`, and the same applies to anything else the plist bakes in (`LSMinimumSystemVersion` from `[tool.briefcase.app.belfryscad.macOS] min_os_version`, the bundle identifier, the document-type declarations).
