@@ -22,7 +22,7 @@ Parse errors get a squiggly underline at the error location via `QTextCharFormat
 
 ## Indent Guides
 
-Faint vertical lines drawn inside each indented line's leading whitespace, every `_indent_size` columns, except at the column of the first non-whitespace character. Implemented as `_IndentGuides(QWidget)`, a transparent overlay on `CodeEditor.viewport()`, created before `_ColumnGuide` so the column guide renders on top. Repainted on `document().contentsChanged` and `set_indent_size()`.
+Faint vertical lines drawn inside each indented line's leading whitespace, every `_indent_size` columns, except at the column of the first non-whitespace character. The pen comes from `ui_colors.guide_colors()` (indent, column) and both overlays register `on_appearance_change` so a live light/dark switch repaints them. The values were hardcoded near-white, which measured 1.3:1 against a white page but **13.6:1** against the dark editor background (`Base` is `#171717`) — ten times louder than the same lines are in light mode, which is what "too bright in dark mode" was. The dark values are chosen to land at the same contrast ratio as the light ones rather than picked by eye; `tests/test_editor_indent.py::TestGuideColors` pins the ratios. Implemented as `_IndentGuides(QWidget)`, a transparent overlay on `CodeEditor.viewport()`, created before `_ColumnGuide` so the column guide renders on top. Repainted on `document().contentsChanged` and `set_indent_size()`.
 
 Both this and the Column Guide overlay are viewport-child widgets whose own geometry has to stay pinned to `(0, 0, viewport.width(), viewport.height())` — `CodeEditor._reposition_scroll_overlays()`, connected to both `horizontalScrollBar().valueChanged` and `verticalScrollBar().valueChanged` (not just `resizeEvent`, which was the only place `update_geometry()` was called before this was added), re-asserts that on every scroll. Without it, `QPlainTextEdit`'s internal scroll optimization moves the viewport's own child widgets by the scroll delta as a side effect (confirmed empirically: scrolling to hbar value 100 left `_column_guide.geometry()` at `x=-100`) — since each overlay's `paintEvent` already recomputes its line's position fresh from `cursorRect()` (itself already scroll-adjusted), a widget origin that *also* drifted by the same delta doubles the effective on-screen movement per scroll step, so the guide moved twice as fast as the actual text and never stayed aligned with its column.
 
@@ -330,7 +330,13 @@ A `QSplitter` puts the list on the left and a live preview, `_ColorThemePreview(
 
 All three share `CodeEditor._selected_block_range(cursor)`, which returns the block numbers a cursor covers and applies the rule that a selection ending exactly at a block start does not include that block.
 
-**Auto-indent on Return**: the new line inherits the current line's indentation. An extra indent level is added when the current line ends with `{`, `[`, `(`, or starts with the keyword `function` or `module`. Typing `}`, `]`, `)` on a whitespace-only line removes one indent level.
+**Auto-indent on Return**: the new line inherits the current line's indentation, plus **one** level (one, however many are open) when `unmatched_open_brackets()` reports anything still open in the text *before the cursor*. Counting before the cursor rather than over the whole line is deliberate: text after it moves down too, so it is the depth at the split that decides where the new line sits.
+
+That replaced a heuristic asking whether the line *ended* with `{`/`[`/`(` or *started* with `function`/`module`, which missed a line broken mid-call (`foo(a,`) and fired on complete statements (`function f(x) = x + 1;`).
+
+`unmatched_open_brackets()` is a module-level scanner, not a regex: brackets inside strings and comments must not count, and a closer with nothing to match *on that line* is ignored rather than counted negative — that last part is what keeps `} else {` indenting, where a net count would give zero. `ponytail:` it is line-local, so a `/*` opened on an earlier line is not known about; tracking that needs the highlighter's block state and is not worth it until someone hits it.
+
+**Indentation moves to a stop, never by a fixed amount.** `_next_indent_stop()`/`_prev_indent_stop()` back Tab, Shift+Tab, Backspace-in-leading-whitespace and the `}`/`]`/`)` auto-unindent. A line whose indent is not a multiple of `_indent_size` has extra spaces past the last stop; those come off one at a time, and a whole level only ever moves stop to stop. Previously all four added or removed exactly `_indent_size` regardless of column, so an off-grid line stayed off-grid whichever key was pressed — reported as backspace on an extra space unindenting a whole level.
 
 **Down arrow on last line**: pressing Down on the last line appends an empty line and moves the cursor to it, so the user doesn't need to move to the end and press Return to extend the file.
 
@@ -366,13 +372,19 @@ A stray closer clamps at depth 0 rather than driving it negative, so one typo ca
 
 ### Unmatched brackets
 
-An opener the document never closes is drawn in bold red (`#FF2D2D`) instead of a depth colour.
+Any bracket without a partner is drawn in bold red (`#FF2D2D`) instead of a depth colour — an opener the document never closes, **and equally a closer that closes nothing**.
 
 This cannot be decided per line — the closer may be thousands of lines below — so `_rescan_unmatched()` walks the whole document on `contentsChanged` and records `{block number: {columns}}` of openers left on the stack at end of document. `highlightBlock()` reads that back for its own line. Only the lines whose verdict changed are repainted, and a `_rescanning` guard stops those repaints re-entering the scan.
 
 The scan runs on every edit rather than debounced: it measures 15ms on BOSL2's `skin.scad` (5400 lines), and a delayed scan would leave the red on a stale line number, so typing above an unclosed bracket would drag the mark down the screen a beat behind the cursor. If a file ever makes that felt, the upgrade path is caching per-block bracket lists and rescanning only edited blocks.
 
-An unmatched opener still counts towards the depth, so the brackets that *do* pair below it keep the colours they had. Bracket kind is not checked when popping: `( ]` is a mismatch, not an unclosed bracket, and treating it as one would put the red on a bracket the user did close.
+An unmatched opener still counts towards the depth, so the brackets that *do* pair below it keep the colours they had.
+
+Pairing lives in the module-level `pair_brackets()`, split out of the document walk so it can be pytest-covered without building a `QSyntaxHighlighter`. It returns every unmatched `(key, pos)`, where the document scan passes a block number as the key. A closer fails three ways, and all three go red: nothing open to close, a **crossing**, or an opener still open at the end.
+
+**Crossings.** Bracket kind used to be deliberately *not* checked when popping, so any closer popped any opener and `( [ { ] ) }` looked entirely fine. It is checked now. When a closer's own partner is open but something else was opened after it, the two spans interleave rather than nest, and there is no honest answer to which open bracket it should have closed — so everything still open is flagged with it and the stack is cleared. Without clearing, `{`/`}` in that example would pair up around the wreckage and only four of the six would show. Clearing also lets a well-formed section *after* the damage match normally instead of reddening the rest of the file.
+
+⚠️ **`highlightBlock()` has to consult the unmatched set in BOTH branches.** The closer branch did not, so a stray `}` was correctly flagged by the scan and then painted the ordinary depth colour anyway — the bug survived a test suite that stopped at the scan, and was only caught by the user looking at the screen. `tests/test_editor_brackets.py::TestScanAndPaintAgree` pins the invariant; the painted colour itself is verified by a throwaway script reading back `block.layout().formats()`, since widget instantiation crashes the pytest runner.
 
 ## Appearance (Light / Dark Mode)
 
