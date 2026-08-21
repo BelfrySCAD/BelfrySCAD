@@ -59,12 +59,14 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   builds its children's geometry, measures it, and returns an `object()` with `vertices`,
   `faces`, `volume`, `area`, `genus`, `boundingbox` and `dim` — then **discards the geometry**
   (nothing is drawn). This is the only way a script can inspect its own geometry.
-  `polyhedron()` and `polygon()` accept the object directly, so the mesh round-trips in one
-  call. Two consequences worth knowing: **`render` is a reserved keyword** (it can no longer
+  `polyhedron()` and `polygon()` accept the object directly, and `polyhedron()` also takes
+  BOSL2's `[vertices, faces]` 2-list, so the mesh round-trips in one call. Two consequences
+  worth knowing: **`render` is a reserved keyword** (it can no longer
   be a variable/module/function/argument/member name — LALR(1) leaves no alternative), and
   **`obj = render() cube(1);` does not parse** — a bare call's `child_statement` swallows the
   `;`, so the braced form is required. Not part of upstream OpenSCAD. Full reference in
-  openscad_cpp_evaluator's `CLAUDE.md`.
+  openscad_cpp_evaluator's `CLAUDE.md`; user-facing docs on the wiki's
+  Language-Other-Modules page.
 - **Export**: 3MF (default), STL, OBJ, OFF, PLY, VRML, X3D — all written by openscad_cpp_evaluator's `export.cpp`, which owns the colour pipeline and mesh repair; `exporters.py` is just the interface. STEP under investigation (Manifold produces triangle meshes; STEP is B-rep, so any export would be a faceted solid of limited downstream value)
 - **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The evaluator's `splitBodiesForExport` cuts it into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component — and carries per-triangle colour where a CSG merge produced it. The GUI calls `exporters.export_model(path, evaluator.geometry)` and logs the warnings it returns. See `docs/rendering.md`'s Export section.
 - **Export workflow**: if no current render exists, Export triggers a render first
