@@ -17,7 +17,8 @@ from PySide6.QtCore import (
 )
 
 from belfryscad.window.ui_colors import (
-    execution_line_color, fold_arrow_color, gutter_colors, on_appearance_change,
+    execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
+    fold_arrow_color, gutter_colors, on_appearance_change,
 )
 
 
@@ -562,12 +563,28 @@ class FindBar(QWidget):
         self._setup_ui()
         self.hide()
 
+    def _apply_theme(self):
+        """Repaint for the current light/dark palette.
+
+        The bar fills its own background (it floats over the code), so the
+        colour cannot be left to inherit -- but it must still follow the
+        theme. This was hardcoded to a light grey, which left the palette's
+        white text sitting on an off-white bar in dark mode.
+        """
+        from PySide6.QtGui import QPalette
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(find_bar_bg()))
+        self.setPalette(pal)
+        # A search may already be showing results when the theme flips.
+        if self._matches:
+            self._update_highlights()
+
     def _setup_ui(self):
         self.setAutoFillBackground(True)
-        pal = self.palette()
-        from PySide6.QtGui import QPalette
-        pal.setColor(QPalette.ColorRole.Window, QColor("#F3F3F3"))
-        self.setPalette(pal)
+        self._apply_theme()
+        # The bar outlives any single appearance change, so track later ones
+        # rather than only painting once at construction.
+        on_appearance_change(self, self._apply_theme)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(6, 4, 6, 4)
@@ -890,7 +907,11 @@ class FindBar(QWidget):
 
         if not self._matches:
             self._match_label.setText("No results")
-            self._find_input.setStyleSheet("background: #FFCCCC;")
+            # Explicit colour, not just a background: the palette's own text
+            # is white in dark mode and would vanish into the tint.
+            no_bg, no_fg = find_no_match_colors()
+            self._find_input.setStyleSheet(
+                f"background: {no_bg}; color: {no_fg};")
             self._current = -1
             self._editor._find_selections = []
             self._editor._refresh_extra_selections()
@@ -915,11 +936,17 @@ class FindBar(QWidget):
         sels = []
         for i, m in enumerate(self._matches):
             sel = QTextEdit.ExtraSelection()
+            # Both foregrounds set explicitly. These backgrounds are pale
+            # amber whatever the theme, so leaving the text to the palette
+            # (as the non-current branch used to) turns it white-on-amber
+            # the moment the app goes dark.
+            cur_bg, cur_fg, other_bg, other_fg = find_match_colors()
             if i == self._current:
-                sel.format.setBackground(QColor("#FF9900"))
-                sel.format.setForeground(QColor("#FFFFFF"))
+                sel.format.setBackground(QColor(cur_bg))
+                sel.format.setForeground(QColor(cur_fg))
             else:
-                sel.format.setBackground(QColor("#FFE080"))
+                sel.format.setBackground(QColor(other_bg))
+                sel.format.setForeground(QColor(other_fg))
             sel.cursor = m
             sels.append(sel)
         self._editor._find_selections = sels

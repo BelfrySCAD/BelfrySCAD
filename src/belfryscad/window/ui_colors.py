@@ -71,6 +71,41 @@ def execution_line_color() -> str:
     return "#4A3D00" if is_dark() else "#FFFF88"
 
 
+def find_bar_bg() -> str:
+    """Background for the editor's floating Find/Replace overlay.
+
+    It has to be opaque and distinct from the code behind it, which is why
+    the bar sets a Window colour at all rather than inheriting one -- but
+    the value must follow the theme. Hardcoded light grey here meant white
+    theme text on an off-white bar in dark mode, i.e. invisible.
+    """
+    return "#3A3A3A" if is_dark() else "#F3F3F3"
+
+
+def find_match_colors() -> tuple[str, str, str, str]:
+    """(current bg, current fg, other bg, other fg) for Find match highlights.
+
+    Both foregrounds are set explicitly and are theme-INDEPENDENT: these
+    backgrounds are pale amber in either theme, so text that follows the
+    palette turns white-on-amber the moment the app goes dark. Black on
+    amber reads in both (and beats the old white-on-#FF9900, which was
+    around 2.3:1 even in light mode).
+    """
+    return ("#FF9900", "#000000", "#FFE080", "#000000")
+
+
+def find_no_match_colors() -> tuple[str, str]:
+    """(background, foreground) for the Find field when nothing matches.
+
+    A pair, not just a background: the palette's own text is white in dark
+    mode and would vanish into the tint. Dark mode inverts the relationship
+    rather than reusing the pale light-mode red -- a deep red with pale text
+    reads as "error" in a dark UI, where black on a dark red measured only
+    3.7:1.
+    """
+    return ("#7A2626", "#FFD5D5") if is_dark() else ("#FFCCCC", "#000000")
+
+
 def header_colors() -> tuple[str, str, str]:
     """(background, border, text) for QHeaderView sections."""
     if is_dark():
