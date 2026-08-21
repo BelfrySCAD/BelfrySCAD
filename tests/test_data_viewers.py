@@ -33,7 +33,10 @@ from belfryscad.window.data_viewers import (
     _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
     _v0_handle_indices, _snap_handles_to_node_type, _fit_merged_segment,
     _owning_v0_index, _dodecahedron_faces, _DODECA_VERTS, _DODECA_FACES,
-    _tube_triangles,
+    _tube_triangles, _is_vnf, _object_field, _geometry_object_vnf,
+    _geometry_object_region, _scad_literal_to_python, _python_value_to_scad,
+    _split_top_level, _parse_object_call_args, _render_object_call,
+    _find_object_call, _scad_type_name, _is_scad_literal_value,
 )
 
 
@@ -1282,3 +1285,283 @@ class TestValidationColors:
         assert fields == names, fields
         assert set(self.colors()) == {n.replace("_edges", "").replace("t_joints", "t_joint")
                                        for n in names}
+
+
+class TestGeometryObjectViewers:
+    """A `render()` expression yields an object() carrying the mesh as
+    separate keys, so `_is_vnf` -- which only matches a bare 2-list -- fires
+    for `obj.vnf` but never for `obj` itself. These helpers unwrap the
+    object so it can reach the VNF/Region viewers directly.
+
+    The real OscObject is used rather than a stub: `_is_oscobject` is
+    duck-typed on `.data`/`.items()`, and the point is that the actual type
+    the debugger hands the editor satisfies it.
+    """
+
+    @staticmethod
+    def _obj(d):
+        from openscad_cpp_evaluator import OscObject
+        return OscObject(d)
+
+    # a unit cube, as render() emits it: CW faces, 0-based indices
+    CUBE_VERTS = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    CUBE_FACES = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+                  [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                  [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]
+
+    def _cube_object(self):
+        return self._obj({"vertices": self.CUBE_VERTS, "faces": self.CUBE_FACES,
+                          "volume": 1.0, "area": 6.0, "genus": 0.0, "dim": 3.0})
+
+    # 10x10 square with a 2x2 hole -- two contours
+    def _square_with_hole(self):
+        return self._obj({
+            "vertices": [[0, 0], [10, 0], [10, 10], [0, 10],
+                         [4, 4], [6, 4], [6, 6], [4, 6]],
+            # indices arrive as floats: OpenSCAD has no integer type
+            "paths": [[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]],
+            "area": 96.0, "perimeter": 48.0, "dim": 2.0,
+        })
+
+    def test_object_field_finds_key(self):
+        assert _object_field(self._cube_object(), "faces") == self.CUBE_FACES
+
+    def test_object_field_accepts_points_as_an_alias_for_vertices(self):
+        o = self._obj({"points": [[0, 0, 0]], "faces": []})
+        assert _object_field(o, "vertices", "points") == [[0, 0, 0]]
+
+    def test_object_field_on_a_non_object_is_none(self):
+        assert _object_field([1, 2, 3], "vertices") is None
+        assert _object_field("nope", "vertices") is None
+
+    def test_3d_object_unwraps_to_a_valid_vnf(self):
+        vnf = _geometry_object_vnf(self._cube_object())
+        assert vnf is not None
+        assert _is_vnf(vnf), "the unwrapped value must satisfy _is_vnf"
+        assert vnf == [self.CUBE_VERTS, self.CUBE_FACES]
+
+    def test_2d_object_resolves_its_path_indices_to_points(self):
+        # Not a straight unwrap: `paths` holds INDICES into `vertices`.
+        region = _geometry_object_region(self._square_with_hole())
+        assert region is not None
+        assert len(region) == 2
+        assert region[0][0] == [0, 0]
+        assert region[1] == [[4, 4], [6, 4], [6, 6], [4, 6]]
+
+    def test_the_two_helpers_do_not_both_fire(self):
+        # A 3D object has no `paths`; a 2D object has no `faces`. Offering
+        # both viewers for one value would be a lie about its dimension.
+        assert _geometry_object_region(self._cube_object()) is None
+        assert _geometry_object_vnf(self._square_with_hole()) is None
+
+    def test_a_plain_object_offers_neither(self):
+        o = self._obj({"volume": 1.0, "area": 6.0})
+        assert _geometry_object_vnf(o) is None
+        assert _geometry_object_region(o) is None
+
+    def test_non_objects_are_rejected_without_raising(self):
+        for v in ([1, 2, 3], "hello", None, 42, [[0, 0], [1, 1]]):
+            assert _geometry_object_vnf(v) is None
+            assert _geometry_object_region(v) is None
+
+    def test_out_of_range_path_index_is_rejected(self):
+        # Better no menu entry than a viewer that raises on open.
+        o = self._obj({"vertices": [[0, 0], [1, 0], [1, 1]],
+                       "paths": [[0.0, 1.0, 99.0]]})
+        assert _geometry_object_region(o) is None
+
+    def test_negative_path_index_is_rejected(self):
+        o = self._obj({"vertices": [[0, 0], [1, 0], [1, 1]],
+                       "paths": [[0.0, 1.0, -1.0]]})
+        assert _geometry_object_region(o) is None
+
+    def test_degenerate_contour_is_rejected(self):
+        # Fewer than 3 points is not a closed polygon.
+        o = self._obj({"vertices": [[0, 0], [1, 0], [1, 1]],
+                       "paths": [[0.0, 1.0]]})
+        assert _geometry_object_region(o) is None
+
+    def test_3d_points_are_not_a_region(self):
+        o = self._obj({"vertices": [[0, 0, 0], [1, 0, 0], [1, 1, 0]],
+                       "paths": [[0.0, 1.0, 2.0]]})
+        assert _geometry_object_region(o) is None
+
+    def test_malformed_mesh_is_rejected(self):
+        # `_is_vnf` is the gate, so a faces list of non-numbers cannot slip
+        # through into the viewer.
+        o = self._obj({"vertices": self.CUBE_VERTS,
+                       "faces": [["a", "b", "c"]]})
+        assert _geometry_object_vnf(o) is None
+
+
+class TestObjectCallParsing:
+    """An object is a CALL, not a bracket literal, so it needs its own span
+    finder and text round-trip rather than riding on
+    `_iter_enclosing_literals`/`ast.literal_eval`.
+
+    The load-bearing rule: a call is only EDITABLE when every argument is a
+    literal. `object(other, [["b"]])` references a variable whose contents
+    are unknowable from the text, so rewriting it would silently destroy
+    the reference -- those stay view-only.
+    """
+
+    # -- OpenSCAD <-> Python literals ------------------------------------
+
+    def test_scad_word_literals_translate(self):
+        assert _scad_literal_to_python("true") == (True, True)
+        assert _scad_literal_to_python("false") == (True, False)
+        assert _scad_literal_to_python("undef") == (True, None)
+
+    def test_undef_parses_as_a_success_not_a_failure(self):
+        # The (ok, value) pair exists precisely so a legitimately-parsed
+        # None is distinguishable from a parse error, which also yields None.
+        ok, value = _scad_literal_to_python("undef")
+        assert ok is True and value is None
+        ok2, value2 = _scad_literal_to_python("some_variable")
+        assert ok2 is False and value2 is None
+
+    def test_word_literals_inside_strings_are_left_alone(self):
+        # A plain str.replace would turn this into "Noneined".
+        assert _scad_literal_to_python('"undefined"') == (True, "undefined")
+        assert _scad_literal_to_python('"true story"') == (True, "true story")
+        assert _scad_literal_to_python('["undef", undef]') == (True, ["undef", None])
+
+    def test_numbers_lists_and_nesting(self):
+        assert _scad_literal_to_python("42") == (True, 42)
+        assert _scad_literal_to_python("[[1,2],[3,4]]") == (True, [[1, 2], [3, 4]])
+
+    def test_render_is_the_inverse(self):
+        assert _python_value_to_scad(None) == "undef"
+        assert _python_value_to_scad(True) == "true"
+        assert _python_value_to_scad(False) == "false"
+        assert _python_value_to_scad("hi") == '"hi"'
+        assert _python_value_to_scad([1, True, None]) == "[1, true, undef]"
+
+    def test_whole_floats_render_without_a_trailing_zero(self):
+        # OpenSCAD has one number type, so 42.0 IS 42 and the short form is
+        # what a human would have written.
+        assert _python_value_to_scad(42.0) == "42"
+        assert _python_value_to_scad(3.5) == "3.5"
+
+    def test_strings_with_quotes_are_escaped(self):
+        assert _python_value_to_scad('say "hi"') == '"say \\"hi\\""'
+
+    # -- splitting --------------------------------------------------------
+
+    def test_split_ignores_separators_inside_brackets_and_quotes(self):
+        assert _split_top_level("a=1, b=[2,3], c=\"x,y\"") == ["a=1", " b=[2,3]", ' c="x,y"']
+
+    # -- argument parsing -------------------------------------------------
+
+    def test_all_literal_named_args_parse(self):
+        assert _parse_object_call_args("a=42, b=53, c=8") == [("a", 42), ("b", 53), ("c", 8)]
+
+    def test_empty_argument_list_is_an_empty_object(self):
+        assert _parse_object_call_args("") == []
+        assert _parse_object_call_args("   ") == []
+
+    def test_a_variable_reference_makes_it_uneditable(self):
+        # THE safety boundary -- None means "viewable, not editable".
+        assert _parse_object_call_args('a, [["b"]]') is None
+        assert _parse_object_call_args("other") is None
+
+    def test_a_non_literal_value_makes_it_uneditable(self):
+        assert _parse_object_call_args("a=some_var") is None
+        assert _parse_object_call_args("a=1+2") is None
+
+    def test_a_non_identifier_key_is_rejected(self):
+        assert _parse_object_call_args("5=1") is None
+        assert _parse_object_call_args('"a"=1') is None
+
+    def test_dollar_keys_are_allowed(self):
+        assert _parse_object_call_args("$fn=32") == [("$fn", 32)]
+
+    def test_a_duplicate_key_keeps_the_last_value_in_place_of_the_first(self):
+        # Matches the evaluator's own setKey: overwrite, not append.
+        assert _parse_object_call_args("a=42, b=1, a=99") == [("a", 99), ("b", 1)]
+
+    # -- rendering --------------------------------------------------------
+
+    def test_render_round_trips_a_parsed_call(self):
+        text = "object(a=42, b=true, c=undef, d=\"x\", e=[1, 2])"
+        entries = _parse_object_call_args(text[len("object("):-1])
+        assert _render_object_call(entries) == text
+
+    def test_render_of_nothing_is_an_empty_call(self):
+        assert _render_object_call([]) == "object()"
+
+    # -- locating the call in source --------------------------------------
+
+    def test_finds_the_enclosing_call_and_its_span(self):
+        src = "obj = object(a=42, b=53);"
+        start, end, entries = _find_object_call(src, src.index("a=42"))
+        assert src[start:end] == "object(a=42, b=53)"
+        assert entries == [("a", 42), ("b", 53)]
+
+    def test_reports_a_reference_call_as_viewable_but_not_editable(self):
+        src = 'b = object(a, [["d",18],["b"]]);'
+        start, end, entries = _find_object_call(src, src.index("[["))
+        assert src[start:end] == 'object(a, [["d",18],["b"]])'
+        assert entries is None
+
+    def test_no_enclosing_call_is_none(self):
+        assert _find_object_call("x = [1,2,3];", 6) is None
+        assert _find_object_call("cube(10);", 6) is None
+
+    def test_walks_out_past_an_inner_call(self):
+        src = "obj = object(a=max(1,2));"
+        found = _find_object_call(src, src.index("1,2"))
+        assert found is not None
+        assert src[found[0]:found[1]] == "object(a=max(1,2))"
+        # max(...) is not a literal, so not editable
+        assert found[2] is None
+
+    # -- display helpers --------------------------------------------------
+
+    def test_type_names_match_openscad(self):
+        assert _scad_type_name(None) == "undef"
+        assert _scad_type_name(True) == "bool"
+        assert _scad_type_name(42) == "number"
+        assert _scad_type_name(3.5) == "number"
+        assert _scad_type_name("s") == "string"
+        assert _scad_type_name([1, 2]) == "vector"
+
+    def test_bool_is_not_reported_as_a_number(self):
+        # bool is an int subclass in Python; order of checks matters.
+        assert _scad_type_name(True) == "bool"
+
+    def test_only_round_trippable_values_are_editable(self):
+        assert _is_scad_literal_value(42)
+        assert _is_scad_literal_value([1, [2, None], "x"])
+        assert not _is_scad_literal_value(object())
+
+    # -- regression: the empty-viewer bug ---------------------------------
+
+    def test_a_reference_call_is_not_offered_as_a_source_object_view(self):
+        """Reported: "View as Object" on a call that references a variable
+        opened a viewer with no entries at all.
+
+        The cause was offering the LEXICAL (source-text) object view for a
+        call whose contents cannot be resolved from text --
+        `object(settings, [["k"]])` depends on `settings`, so there is
+        nothing truthful to put in the table. It is still fully inspectable
+        at RUNTIME, where the debugger hands over a real resolved object.
+        """
+        from belfryscad.window.data_viewers import find_viewable_literals
+        src = 'derived = object(settings, [["height", 30], ["rounded"]]);'
+        found = find_viewable_literals(src, src.index("height"))
+        assert "object" not in found
+
+    def test_an_all_literal_call_is_still_offered(self):
+        from belfryscad.window.data_viewers import find_viewable_literals
+        src = "settings = object(width=40, height=25, rounded=true);"
+        found = find_viewable_literals(src, src.index("width"))
+        assert "object" in found
+        assert found["object"][2] == [("width", 40), ("height", 25), ("rounded", True)]
+
+    def test_opening_a_viewer_with_nothing_to_show_is_refused(self):
+        """Belt and braces for the same bug: even if a caller passes
+        nothing, no empty window appears."""
+        from belfryscad.window.data_viewers import _open_object_viewer
+        assert _open_object_viewer("x", None, None, entries=None) is None
