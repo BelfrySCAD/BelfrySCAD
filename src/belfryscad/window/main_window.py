@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
+import os
 import threading
 import time
 
@@ -12,6 +13,7 @@ from belfryscad import exporters
 from belfryscad.window.editor import CodeEditor
 from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
+from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
@@ -202,6 +204,10 @@ class FileTab(QWidget):
         # propose_new_script supplies one, and without this the tab it
         # created read as "Untitled" and its filename argument did nothing.
         self.suggested_name = None
+        # Final $export_name from the last successful render, sanitised.
+        # None until this tab has rendered once; the Export dialog then
+        # falls back to the file's own basename.
+        self.export_name = None
         self.is_modified = False
         self.root_scope = None
         # The temp file most recently parsed for this tab's root_scope --
@@ -261,11 +267,11 @@ class _RenderCallback(QObject):
             self._file_tab._last_parse_path = parse_path
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float, object, object, object)
+    @Slot(object, object, float, object, object, object, object, object)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,
-                    geometry=None):
+                    geometry=None, export_name=None):
         self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
-                                 profile_result=profile_result, geometry=geometry)
+                                 profile_result=profile_result, geometry=geometry, export_name=export_name)
 
     @Slot()
     def on_done(self):
@@ -280,7 +286,7 @@ class _RenderWorker(QObject):
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
-    finished = Signal(object, object, float, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry)
+    finished = Signal(object, object, float, object, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry, export_name)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
@@ -347,7 +353,11 @@ class _RenderWorker(QObject):
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self.logged.emit, manifold_cache=self._manifold_cache, profile=self._profile)
         try:
-            bodies, id_to_node = evaluator.evaluate(parse_path, self._viewport_params)
+            # Seeded from the ORIGINAL path, not parse_path -- an unsaved
+            # buffer renders through a temp file whose name would otherwise
+            # leak into the export dialog.
+            params = seed_params(self._viewport_params, self._file_path)
+            bodies, id_to_node = evaluator.evaluate(parse_path, params)
             # The same geometry, still on the C++ side. Export needs real
             # Manifolds, not the flattened arrays the renderer gets, so the
             # handle rides along rather than being rebuilt at save time.
@@ -386,8 +396,12 @@ class _RenderWorker(QObject):
             if k in evaluator.dyn_explicit:
                 v = evaluator.dyn[k]
                 final_vp[k] = v.tolist() if hasattr(v, "tolist") else v
+        # Read back unconditionally, unlike $vp* above: the seeded value IS
+        # the wanted default when the script leaves it alone, and it cannot
+        # go stale the way a camera value can.
+        export_name = resolve_export_name(evaluator.dyn.get("$export_name"), self._file_path)
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
-                            geometry)
+                            geometry, export_name)
 
 
 class _DetachedTabBar(QWidget):
@@ -1079,7 +1093,10 @@ class MainWindow(QMainWindow):
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_show_grid = self._add_checkable(view_menu, "Show Grid", True, self._toggle_grid)
+        # Off by default, matching SceneRenderer.show_grid -- see the note
+        # there: _add_checkable sets the checkbox before connecting the
+        # slot, so this initial value never reaches the renderer.
+        self._act_show_grid = self._add_checkable(view_menu, "Show Grid", False, self._toggle_grid)
         self._act_show_grid.setShortcut(QKeySequence("Ctrl+G"))
         self._act_show_grid.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
@@ -1791,8 +1808,18 @@ class MainWindow(QMainWindow):
         # now that it is written directly rather than through lib3mf, which
         # had no wheels for ARM platforms.)
         filters = ";;".join(f for f, _e in _EXPORT_FORMATS)
+        # Default name comes from the script's own $export_name (seeded with
+        # the source file's basename, and assignable by the script), already
+        # reduced to filename-safe characters. Offered in the source file's
+        # own directory when there is one, so an export lands beside the
+        # model rather than wherever the process happens to be.
+        tab = self._current_tab()
+        default = ""
+        if tab is not None:
+            name = tab.export_name or default_export_name(tab.file_path)
+            default = os.path.join(os.path.dirname(str(tab.file_path)), name) if tab.file_path else name
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Export", "", filters
+            self, "Export", default, filters
         )
         if not path:
             return
@@ -1984,9 +2011,13 @@ class MainWindow(QMainWindow):
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
                         final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None,
-                        geometry=None):
+                        geometry=None, export_name=None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
+        # The script's final $export_name, already sanitised, kept per tab
+        # so switching tabs offers the right default.
+        if export_name:
+            file_tab.export_name = export_name
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node

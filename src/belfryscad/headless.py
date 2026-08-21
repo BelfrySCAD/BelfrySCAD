@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from belfryscad import scad_temp
+from belfryscad.export_name import seed_params
 
 _VALID_EXPORT_FORMATS = {"asciistl", "binstl"}
 _EXPORT_EXTENSIONS = {".stl", ".obj", ".3mf", ".ply", ".wrl", ".x3d"}
@@ -80,7 +81,8 @@ class _HardWarning(RuntimeError):
     this correctly with no further handling needed here."""
 
 
-def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_warnings: bool = False):
+def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_warnings: bool = False,
+               source_path: str | None = None):
     """Parse + evaluate parse_path.
 
     Returns (bodies, elapsed_seconds, geometry) on success, or None after
@@ -105,7 +107,12 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
 
     evaluator = Evaluator(echo_fn=echo_fn)
     try:
-        bodies, _id_to_node = evaluator.evaluate(parse_path, viewport_params)
+        # $export_name is seeded here too, not just in the GUI: a script
+        # that reads it should not find it undefined depending on how it
+        # was run. Seeded from source_path when given, since parse_path may
+        # be a temp file built for -D/preset injection.
+        params = seed_params(viewport_params, source_path or parse_path)
+        bodies, _id_to_node = evaluator.evaluate(parse_path, params)
     except RecursionError:
         print("ERROR: AST too deeply nested (recursion limit exceeded during evaluation).", file=sys.stderr)
         return None
@@ -251,7 +258,8 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
     if parse_path is None:
         return 1
     try:
-        result = _evaluate(parse_path, {}, quiet=quiet, hard_warnings=hard_warnings)
+        result = _evaluate(parse_path, {}, quiet=quiet, hard_warnings=hard_warnings,
+                            source_path=source_path)
     finally:
         _cleanup(tmp_path)
     if result is None:
@@ -310,7 +318,8 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
     try:
         for i in range(steps):
             frame_path = dest_dir / f"{out.stem}{i:05d}{ext}"
-            result = _evaluate(parse_path, {"$t": i / steps}, quiet=quiet, hard_warnings=hard_warnings)
+            result = _evaluate(parse_path, {"$t": i / steps}, quiet=quiet, hard_warnings=hard_warnings,
+                                source_path=source_path)
             if result is None:
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)
                 ok = False
