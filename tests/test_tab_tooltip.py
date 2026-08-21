@@ -37,8 +37,14 @@ class TestTooltipText:
         assert tip("part.scad") == "part.scad"
 
     def test_a_path_object_is_stringified(self):
+        # Compared against str(Path(...)), not a hardcoded POSIX string:
+        # on Windows a Path stringifies with backslashes, and the tooltip
+        # is meant to show the path in its NATIVE form -- which is what a
+        # user would paste into their own shell.
         from pathlib import Path
-        assert tip(Path("/a/b/widget.scad")) == "/a/b/widget.scad"
+        p = Path("/a/b/widget.scad")
+        assert tip(p) == str(p)
+        assert tip(p) != repr(p)
 
     def test_an_unsaved_buffer_says_so(self):
         # Better than an empty tooltip, which reads as "no information"
