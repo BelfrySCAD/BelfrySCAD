@@ -230,6 +230,18 @@ class FileTab(QWidget):
         name += " (ro)" if self.editor.isReadOnly() else ""
         return name
 
+    def tooltip_text(self):
+        """Full path, for the tab's tooltip.
+
+        A tab label is only the basename, so two files of the same name in
+        different directories are indistinguishable without this. A buffer
+        never saved has no path to show, and says so rather than showing
+        nothing at all.
+        """
+        if self.file_path:
+            return str(self.file_path)
+        return f"{self.suggested_name or 'Untitled'} — not saved yet"
+
 
 class _RenderCallback(QObject):
     """Lives in the main thread; receives cross-thread signals from _RenderWorker.
@@ -477,6 +489,9 @@ class _DetachedTabBar(QWidget):
 
     def setTabText(self, index: int, text: str):
         self.tab_bar.setTabText(index, text)
+
+    def setTabToolTip(self, index: int, text: str):
+        self.tab_bar.setTabToolTip(index, text)
 
     def setTabsClosable(self, closable: bool):
         self.tab_bar.setTabsClosable(closable)
@@ -1181,10 +1196,21 @@ class MainWindow(QMainWindow):
             )
             self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
+        self._tabs.setTabToolTip(idx, tab.tooltip_text())
         self._tabs.setCurrentIndex(idx)
         # A new, empty document has nothing rendered, so the previous
         # model must not stay on screen looking like its output.
         self._clear_viewport()
+
+    def _sync_tab_label(self, idx: int, tab: "FileTab"):
+        """Set a tab's label and its tooltip together.
+
+        One call so the two cannot drift: the label is only the basename,
+        and the tooltip is what tells two same-named files in different
+        directories apart. Every place that renames a tab goes through here.
+        """
+        self._tabs.setTabText(idx, tab.display_name())
+        self._tabs.setTabToolTip(idx, tab.tooltip_text())
 
     def _current_tab(self) -> FileTab | None:
         return self._tabs.currentWidget()
@@ -1248,7 +1274,7 @@ class MainWindow(QMainWindow):
             return
         tab.editor.setReadOnly(enabled)
         idx = self._tabs.indexOf(tab)
-        self._tabs.setTabText(idx, tab.display_name())
+        self._sync_tab_label(idx, tab)
 
     def _confirm_unsaved(self, tab) -> bool:
         """True if it's OK to proceed past `tab`'s unsaved changes (there
@@ -1323,7 +1349,7 @@ class MainWindow(QMainWindow):
         tab.is_modified = True
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
-            self._tabs.setTabText(idx, tab.display_name())
+            self._sync_tab_label(idx, tab)
         if getattr(tab, '_suppress_text_undo', False):
             return
         current = tab.editor.toPlainText()
@@ -1420,6 +1446,7 @@ class MainWindow(QMainWindow):
             if old and not old.file_path and not old.is_modified and not old.editor.toPlainText():
                 self._tabs.removeTab(0)
         idx = self._tabs.addTab(tab, tab.display_name())
+        self._tabs.setTabToolTip(idx, tab.tooltip_text())
         self._tabs.setCurrentIndex(idx)
         return tab
 
@@ -1618,7 +1645,7 @@ class MainWindow(QMainWindow):
         tab.is_modified = False
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
-            self._tabs.setTabText(idx, tab.display_name())
+            self._sync_tab_label(idx, tab)
         self.log(f"Reloaded {Path(path).name} (changed on disk).")
         return True
 
@@ -1738,7 +1765,7 @@ class MainWindow(QMainWindow):
         tab.is_modified = False
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
-            self._tabs.setTabText(idx, tab.display_name())
+            self._sync_tab_label(idx, tab)
         if old_path and old_path != path:
             get_document_manager().unregister(old_path, tab.editor)
         get_document_manager().register(path, tab.editor)
@@ -3286,7 +3313,7 @@ class MainWindow(QMainWindow):
                 tab.editor.setPlainText(proposal.new_content)
                 idx = self._tabs.indexOf(tab)
                 if idx >= 0:
-                    self._tabs.setTabText(idx, tab.display_name())
+                    self._sync_tab_label(idx, tab)
                 tab.editor.source_edited_externally.emit()
 
     def _edit_customizer_parameter(self, tab, word: str):
