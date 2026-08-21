@@ -18,7 +18,7 @@ from PySide6.QtCore import (
 
 from belfryscad.window.ui_colors import (
     execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
-    fold_arrow_color, gutter_colors, on_appearance_change,
+    fold_arrow_color, guide_colors, gutter_colors, on_appearance_change,
 )
 
 
@@ -115,6 +115,99 @@ def _draw_vline_avoiding_cursor(painter: QPainter, x: int, y_top: float, y_botto
         painter.drawLine(x, cursor_rect.bottom(), x, y_bottom)
 
 
+_OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}"}
+_CLOSE_TO_OPEN = {v: k for k, v in _OPEN_TO_CLOSE.items()}
+
+
+def unmatched_open_brackets(text: str) -> int:
+    """How many `(`, `[` or `{` in `text` are still open at its end.
+
+    Drives the Return auto-indent, which indents by ONE level whenever this
+    is non-zero: a line that leaves a bracket open is a line the next one
+    belongs inside. The exact count is kept rather than a bool because it
+    costs nothing and says more when reading a failure.
+
+    A closer with nothing to match on THIS line is ignored rather than
+    counted negative, because it belongs to some earlier line. That is what
+    makes `} else {` indent (the `}` closes the previous block, the `{`
+    opens a new one) while `});` does not.
+
+    Brackets inside strings and comments do not count.
+
+    ponytail: line-local, so a `/*` opened on an earlier line is not known
+    about here and brackets inside it would still count. Tracking that
+    needs the highlighter's block state; not worth it until someone hits it.
+    """
+    stack: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n:
+            if text[i + 1] == "/":
+                break                      # line comment: nothing after counts
+            if text[i + 1] == "*":
+                end = text.find("*/", i + 2)
+                if end == -1:
+                    break                  # unterminated: rest of line is comment
+                i = end + 2
+                continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c in _OPEN_TO_CLOSE:
+            stack.append(c)
+        elif c in _CLOSE_TO_OPEN:
+            if stack and stack[-1] == _CLOSE_TO_OPEN[c]:
+                stack.pop()
+            # else: closes something from an earlier line -- ignore it
+        i += 1
+    return len(stack)
+
+
+def pair_brackets(brackets):
+    """Split `(key, pos, char)` brackets into matched pairs and unmatched.
+
+    Returns the list of unmatched `(key, pos)`, in no particular order.
+    `key` is opaque -- the document scan passes a line number.
+
+    Three ways a closer fails, and all three end up red:
+
+    - nothing open to close (a stray `}`)
+    - the wrong kind is on top AND its own partner is open below: the two
+      spans CROSS rather than nest, as in `( [ { ] ) }`. There is no honest
+      way to say which open bracket it "should" have closed, so everything
+      still open is flagged with it and the stack is cleared -- which is why
+      all six of that example are marked rather than `{`/`}` pairing up
+      around the wreckage. A well-formed section after the damage matches
+      normally again.
+    - it is never reached, i.e. an opener is still open at the end
+
+    Splitting this out of the document walk is what lets it be tested
+    without building a QSyntaxHighlighter.
+    """
+    stack, bad = [], []
+    for key, pos, ch in brackets:
+        if ch in _OPEN_TO_CLOSE:
+            stack.append((key, pos, ch))
+        elif stack and stack[-1][2] == _CLOSE_TO_OPEN.get(ch):
+            stack.pop()
+        elif not stack:
+            bad.append((key, pos))
+        else:
+            bad.append((key, pos))
+            bad.extend((k, p) for k, p, _ in stack)
+            stack.clear()
+    return bad + [(k, p) for k, p, _ in stack]
+
+
 class _IndentGuides(QWidget):
     """Transparent overlay that draws faint vertical lines at each indent level."""
 
@@ -126,6 +219,9 @@ class _IndentGuides(QWidget):
         self.setGeometry(editor.viewport().rect())
         self.raise_()
         editor.document().contentsChanged.connect(self.update)
+        # The pen colour is read fresh each paint, so a repaint is all a
+        # light/dark switch needs.
+        on_appearance_change(self, self.update)
 
     def update_geometry(self):
         self.setGeometry(self._editor.viewport().rect())
@@ -148,7 +244,7 @@ class _IndentGuides(QWidget):
         top = geom.top()
 
         painter = QPainter(self)
-        painter.setPen(QColor("#E0E0E0"))
+        painter.setPen(QColor(guide_colors()[0]))
         cursor_rect = editor.cursorRect()
 
         r_top = event.rect().top()
@@ -193,6 +289,7 @@ class _ColumnGuide(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(editor.viewport().rect())
         self.raise_()
+        on_appearance_change(self, self.update)
 
     def update_geometry(self):
         self.setGeometry(self._editor.viewport().rect())
@@ -212,7 +309,7 @@ class _ColumnGuide(QWidget):
         if not (event.rect().left() <= x <= event.rect().right() + 1):
             return
         painter = QPainter(self)
-        painter.setPen(QColor("#DDDDDD"))
+        painter.setPen(QColor(guide_colors()[1]))
         _draw_vline_avoiding_cursor(painter, x, event.rect().top(), event.rect().bottom(),
                                      self._editor.cursorRect())
         painter.end()
@@ -453,7 +550,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
     _CLOSERS = _CLOSERS
 
     def _rescan_unmatched(self):
-        """Find every opener the document never closes.
+        """Find every bracket the document never properly pairs.
 
         Whether an opener is unmatched is not a property of its own line --
         the closer can be thousands of lines below -- so this walks the
@@ -473,24 +570,21 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         if self._rescanning:  # our own rehighlightBlock() calls come back here
             return
         doc = self.document()
-        stack, in_comment, in_string = [], False, False
+        all_brackets, in_comment, in_string = [], False, False
         block = doc.firstBlock()
         while block.isValid():
             _, _, brackets, in_comment, in_string = _scan_line(
                 block.text(), in_comment, in_string)
             number = block.blockNumber()
             for pos, ch in brackets:
-                if ch in _OPENERS:
-                    stack.append((number, pos))
-                elif stack:
-                    # Kind is deliberately not checked: `( ]` is a mismatch,
-                    # not an unclosed bracket, and calling it one would put
-                    # the red on a bracket the user did close.
-                    stack.pop()
+                all_brackets.append((number, pos, ch))
             block = block.next()
 
+        # Openers never closed, closers that close nothing, and both sides
+        # of a crossing all come back together -- an unmatched bracket is an
+        # unmatched bracket whichever way it points.
         unmatched = {}
-        for number, pos in stack:
+        for number, pos in pair_brackets(all_brackets):
             unmatched.setdefault(number, set()).add(pos)
         stale = [n for n in set(unmatched) | set(self._unmatched)
                  if unmatched.get(n) != self._unmatched.get(n)]
@@ -546,7 +640,12 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 # Clamped: a stray closer would otherwise drive the depth
                 # negative and recolour everything after it.
                 depth = max(0, depth - 1)
-                self.setFormat(pos, 1, self._bracket_formats[depth % len(self._bracket_formats)])
+                # Same test as the opener branch. Without it the scan would
+                # correctly identify an unmatched closer and then paint it
+                # the ordinary depth colour anyway, which is exactly how a
+                # stray `}` stayed un-red.
+                self.setFormat(pos, 1, self._unmatched_format if pos in unmatched
+                               else self._bracket_formats[depth % len(self._bracket_formats)])
 
         self.setCurrentBlockState(
             (depth << 2) | (2 if in_string else 0) | (1 if in_comment else 0))
@@ -1271,9 +1370,20 @@ class CodeEditor(QPlainTextEdit):
             cursor = self.textCursor()
             block_text = cursor.block().text()
             indent = len(block_text) - len(block_text.lstrip())
-            stripped = block_text.rstrip()
-            first_word = stripped.lstrip().split()[0] if stripped.strip() else ""
-            if stripped.endswith(("{", "[", "(")) or first_word in ("function", "module"):
+            # ONE level if the line leaves any bracket open -- not one per
+            # bracket. `foo({` indents the same as `foo(`, which keeps a
+            # line that opens several at once from marching off to the
+            # right.
+            #
+            # Replaces the old "does the line END with an opener" test,
+            # which missed a line broken mid-call (`foo(a,`) and fired on
+            # complete statements that merely began with `function`/`module`.
+            #
+            # Measured up to the CURSOR, not the whole line: text after it
+            # moves down too, so it is the depth at the split that decides
+            # where the new line sits.
+            before = block_text[:cursor.positionInBlock()]
+            if unmatched_open_brackets(before):
                 indent += self._indent_size
             super().keyPressEvent(event)
             self.insertPlainText(" " * indent)
@@ -1285,10 +1395,21 @@ class CodeEditor(QPlainTextEdit):
                 pos_in_block = cursor.positionInBlock()
                 before_cursor = block_text[:pos_in_block]
                 n = self._indent_size
-                if before_cursor and not before_cursor.strip() and len(before_cursor) >= n:
+                # Unindent a whole level only from an indent STOP. A line
+                # indented by a number of spaces that is not a multiple of
+                # the indent size has extra spaces past the last stop, and
+                # backspacing on one of those should remove just that space
+                # -- previously it swallowed a full level, so a 6-space
+                # indent jumped to 2 rather than stepping back to 5.
+                if (before_cursor and not before_cursor.strip()
+                        and len(before_cursor) >= n and len(before_cursor) % n == 0):
                     for _ in range(n):
                         cursor.deletePreviousChar()
                     return
+                # Anything else falls through to the ordinary single-character
+                # delete, which is also what a tab-containing indent wants:
+                # len() counts a tab as one column, so its multiples mean
+                # nothing here.
         if event.key() == Qt.Key.Key_Down:
             cursor = self.textCursor()
             if cursor.block() == self.document().lastBlock():
@@ -1305,13 +1426,17 @@ class CodeEditor(QPlainTextEdit):
         if event.text() in ('}', ']', ')'):
             cursor = self.textCursor()
             block_text = cursor.block().text()
-            n = self._indent_size
-            # Only unindent if the line is pure whitespace so far
-            if block_text and not block_text.strip() and len(block_text) >= n:
-                cursor.movePosition(cursor.MoveOperation.StartOfBlock)
-                cursor.movePosition(cursor.MoveOperation.Right,
-                                    cursor.MoveMode.KeepAnchor, n)
-                cursor.removeSelectedText()
+            # Only unindent if the line is pure whitespace so far, and to the
+            # previous STOP rather than by a fixed amount -- same rule as
+            # Shift+Tab, so a closing brace lands on the grid.
+            if block_text and not block_text.strip():
+                width = len(block_text)
+                n_sp = width - self._prev_indent_stop(width)
+                if n_sp > 0:
+                    cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+                    cursor.movePosition(cursor.MoveOperation.Right,
+                                        cursor.MoveMode.KeepAnchor, n_sp)
+                    cursor.removeSelectedText()
         super().keyPressEvent(event)
         text = event.text()
         if text and (text.isalnum() or text == '_'):
@@ -1407,26 +1532,54 @@ class CodeEditor(QPlainTextEdit):
                 last -= 1
         return first, last
 
-    def _indent_lines(self):
-        cursor = self.textCursor()
-        spaces = " " * self._indent_size
-        doc = self.document()
-        first, last = self._selected_block_range(cursor)
-        cursor.beginEditBlock()
-        for bn in range(first, last + 1):
-            QTextCursor(doc.findBlockByNumber(bn)).insertText(spaces)
-        cursor.endEditBlock()
+    @staticmethod
+    def _leading_width(text: str) -> int:
+        return len(text) - len(text.lstrip())
 
-    def _unindent_lines(self):
-        cursor = self.textCursor()
+    def _next_indent_stop(self, width: int) -> int:
+        """The indent column at or after `width`, exclusive of `width` itself."""
         n = self._indent_size
+        return width + (n - width % n)
+
+    def _prev_indent_stop(self, width: int) -> int:
+        """The indent column strictly before `width`, floored at 0.
+
+        A width that is already ON a stop steps back a whole level; one that
+        is not falls back to the stop below it, shedding only the extra
+        spaces. So with size 4, 8 -> 4 but 6 -> 4 as well, not 2.
+        """
+        n = self._indent_size
+        if width <= 0:
+            return 0
+        return max(0, (width - 1) // n * n)
+
+    def _indent_lines(self):
+        # Indent to the next STOP, not by a fixed amount: a line sitting at
+        # column 6 with size 4 goes to 8, not 10. Otherwise a line that is
+        # off-grid stays off-grid forever, which is what made the extra
+        # spaces hard to get rid of in the first place.
+        cursor = self.textCursor()
         doc = self.document()
         first, last = self._selected_block_range(cursor)
         cursor.beginEditBlock()
         for bn in range(first, last + 1):
             block = doc.findBlockByNumber(bn)
-            text = block.text()
-            n_sp = min(n, len(text) - len(text.lstrip()))
+            width = self._leading_width(block.text())
+            pad = self._next_indent_stop(width) - width
+            QTextCursor(block).insertText(" " * pad)
+        cursor.endEditBlock()
+
+    def _unindent_lines(self):
+        # Mirror of _indent_lines: back to the previous stop, so an off-grid
+        # line snaps onto the grid rather than staying off it.
+        cursor = self.textCursor()
+        doc = self.document()
+        first, last = self._selected_block_range(cursor)
+        cursor.beginEditBlock()
+        for bn in range(first, last + 1):
+            block = doc.findBlockByNumber(bn)
+            width = self._leading_width(block.text())
+            n_sp = width - self._prev_indent_stop(width)
             if n_sp > 0:
                 bc = QTextCursor(block)
                 bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
