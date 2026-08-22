@@ -81,6 +81,20 @@ class _HardWarning(RuntimeError):
     this correctly with no further handling needed here."""
 
 
+def _print_error(msg) -> None:
+    """Print `msg` to stderr under exactly one `ERROR:` prefix.
+
+    Some messages arrive already prefixed and some do not: the evaluator's
+    own EvalError reads "ERROR: Assertion 'false' failed ...", while a
+    ParseError reads "Syntax error in ...". Prefixing unconditionally
+    produced "ERROR: ERROR: Assertion ..." for the first kind.
+    """
+    text = str(msg)
+    if not text.startswith("ERROR:"):
+        text = f"ERROR: {text}"
+    print(text, file=sys.stderr)
+
+
 def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_warnings: bool = False,
                source_path: str | None = None):
     """Parse + evaluate parse_path.
@@ -96,7 +110,7 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
     try:
         _oce_parse(parse_path)
     except ParseError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        _print_error(e)
         return None
 
     def echo_fn(m):
@@ -114,15 +128,15 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
         params = seed_params(viewport_params, source_path or parse_path)
         bodies, _id_to_node = evaluator.evaluate(parse_path, params)
     except RecursionError:
-        print("ERROR: AST too deeply nested (recursion limit exceeded during evaluation).", file=sys.stderr)
+        _print_error("AST too deeply nested (recursion limit exceeded during evaluation).")
         return None
     except EvalError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        _print_error(e)
         return None
 
     elapsed = time.perf_counter() - t0
     if not bodies:
-        print("ERROR: Current top level object is not a 3D object.", file=sys.stderr)
+        _print_error("Current top level object is not a 3D object.")
         return None
     return to_renderable_bodies(bodies), elapsed, evaluator.geometry
 
@@ -141,7 +155,7 @@ def _export(output_path: str, ext: str, geometry, export_format: str | None = No
                 output_path, geometry, ascii_stl=(ext == ".stl" and export_format == "asciistl")):
             print(f"WARNING: export: {problem}", file=sys.stderr)
     except OSError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        _print_error(e)
         return False
     return True
 
