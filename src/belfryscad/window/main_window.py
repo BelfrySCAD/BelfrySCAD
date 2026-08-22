@@ -230,6 +230,25 @@ class FileTab(QWidget):
         name += " (ro)" if self.editor.isReadOnly() else ""
         return name
 
+    def message_label(self):
+        """What to call this tab in an evaluator message.
+
+        Every render writes the live buffer to a temp file -- saved or not,
+        since the C++ parser is path-based -- so every position the
+        evaluator reports names a `belfryscad-XXXX.scad` nobody recognises.
+        This is what gets substituted back in.
+
+        Not `display_name()`: that carries a bare `*` for modified, which is
+        legible on a tab but cryptic mid-sentence. Spelled out here, and only
+        when there IS a saved version to differ from -- an untitled buffer
+        is unsaved by definition and does not need telling.
+        """
+        import os
+        if not self.file_path:
+            return self.suggested_name or "Untitled"
+        base = os.path.basename(str(self.file_path))
+        return f"{base} (unsaved)" if self.is_modified else base
+
     def tooltip_text(self):
         """Full path, for the tab's tooltip.
 
@@ -259,17 +278,17 @@ class _RenderCallback(QObject):
     @Slot(str)
     def on_logged(self, msg: str):
         if self._render_id == self._mw._render_id:
-            self._mw._console.append_output(msg)
+            self._mw._console.append_output(self._mw._relabel_paths(msg))
 
     @Slot(str)
     def on_tmp_path(self, path: str):
         if self._render_id == self._mw._render_id:
-            self._mw._path_labels[path] = self._file_tab.display_name()
+            self._mw._register_temp_path(path, self._file_tab)
 
     @Slot(str)
     def on_parse_errored(self, captured: str):
         if self._render_id == self._mw._render_id:
-            self._mw._console.append_output(captured.rstrip())
+            self._mw._console.append_output(self._mw._relabel_paths(captured.rstrip()))
             self._mw._parse_error_to_editor(self._file_tab, captured)
 
     @Slot(object, object, str)
@@ -2757,6 +2776,37 @@ class MainWindow(QMainWindow):
             return "\n".join(lines)
         except Exception as e:      # noqa: BLE001
             return f"Error: the profile could not be summarised ({e})."
+
+    def _register_temp_path(self, path: str, tab: "FileTab"):
+        """Remember that `path` is really `tab`, for message rewriting.
+
+        Both spellings are stored: macOS resolves /var to /private/var, and
+        a message can come back carrying either, so matching only the one we
+        handed out would silently miss half of them.
+        """
+        label = tab.message_label()
+        self._path_labels[path] = label
+        try:
+            self._path_labels[os.path.realpath(path)] = label
+        except OSError:
+            pass
+
+    def _relabel_paths(self, text: str) -> str:
+        """Replace temp-file paths in an evaluator message with tab names.
+
+        The evaluator names what it actually parsed, which is right of it --
+        but a `belfryscad-XXXX.scad` in an error message tells the reader
+        nothing. Paths of REAL files (an include, a library) are left alone;
+        only the temp files we created are in the map.
+
+        Longest path first, so a directory never eats a filename inside it.
+        """
+        if not text or not self._path_labels:
+            return text
+        for path in sorted(self._path_labels, key=len, reverse=True):
+            if path in text:
+                text = text.replace(path, self._path_labels[path])
+        return text
 
     def _display_profile_origin(self, origin) -> str:
         """A profile call site names the temp file the evaluator parsed;
