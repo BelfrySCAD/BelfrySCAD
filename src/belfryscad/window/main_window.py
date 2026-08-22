@@ -2288,21 +2288,44 @@ class MainWindow(QMainWindow):
     # Edit operations
     # ------------------------------------------------------------------
 
+    def _clipboard_target(self, method: str):
+        """The widget a clipboard action should act on.
+
+        Whatever currently has focus, when it can do that operation at all
+        -- otherwise the code editor.
+
+        These live on menu QActions carrying the standard Cmd+X/C/V/A
+        sequences, and a QAction shortcut is WindowShortcut by default: it
+        fires for the whole window and so *intercepts* the key before the
+        focused widget's own built-in handling ever sees it. Sending it
+        unconditionally to the editor is why selecting text in the console
+        or the AI pane and pressing Cmd+C appeared to do nothing, while
+        Copy from that widget's own context menu -- which never goes
+        through here -- worked.
+
+        The fallback still matters: with focus on the viewport, which has
+        no copy() at all, Cmd+C should still copy from the editor.
+        """
+        w = QApplication.focusWidget()
+        if w is not None and hasattr(w, method):
+            return w
+        return self._current_editor()
+
     def _edit_cut(self):
-        if e := self._current_editor():
-            e.cut()
+        if (w := self._clipboard_target("cut")) is not None:
+            w.cut()
 
     def _edit_copy(self):
-        if e := self._current_editor():
-            e.copy()
+        if (w := self._clipboard_target("copy")) is not None:
+            w.copy()
 
     def _edit_paste(self):
-        if e := self._current_editor():
-            e.paste()
+        if (w := self._clipboard_target("paste")) is not None:
+            w.paste()
 
     def _edit_select_all(self):
-        if e := self._current_editor():
-            e.selectAll()
+        if (w := self._clipboard_target("selectAll")) is not None:
+            w.selectAll()
 
     def _selection_expand(self):
         pass  # TODO: walk selection up AST
