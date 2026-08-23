@@ -74,6 +74,17 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `;`, so the braced form is required. Not part of upstream OpenSCAD. Full reference in
   openscad_cpp_evaluator's `CLAUDE.md`; user-facing docs on the wiki's
   Language-Other-Modules page.
+- **Language extension — `children(separate=true)`**: hands the forwarded children to the
+  enclosing `union()`/`difference()`/`intersection()` as **separate operands** instead of the
+  single grouped operand a statement normally contributes, so
+  `module frame() { difference() children(separate=true); }` subtracts children 1..n from
+  child 0. Also accepted positionally (`children([0:2], true)`) and alongside an index.
+  A no-op for 0 or 1 selected child, and for `hull()`/`minkowski()`, which read bodies rather
+  than operand groups and already saw the children separately. Upstream OpenSCAD can only do
+  this via the global `--enable=lazy-union`, which also reinterprets `for`/`if`/`let` and the
+  top-level union; this is per-call-site and changes nothing that does not ask for it.
+  Implemented entirely in openscad_cpp_evaluator (`CSGNode::separateOperand` +
+  `Evaluator::appendGroupSizes`); no parser or GUI change.
 - **Export**: 3MF (default), STL, OBJ, OFF, PLY, VRML, X3D — all written by openscad_cpp_evaluator's `export.cpp`, which owns the colour pipeline and mesh repair; `exporters.py` is just the interface. STEP under investigation (Manifold produces triangle meshes; STEP is B-rep, so any export would be a faceted solid of limited downstream value)
 - **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The evaluator's `splitBodiesForExport` cuts it into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component — and carries per-triangle colour where a CSG merge produced it. The GUI calls `exporters.export_model(path, evaluator.geometry)` and logs the warnings it returns. See `docs/rendering.md`'s Export section.
 - **Export workflow**: if no current render exists, Export triggers a render first
