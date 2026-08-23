@@ -80,7 +80,9 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `module frame() { difference() children(separate=true); }` subtracts children 1..n from
   child 0. Also accepted positionally (`children([0:2], true)`) and alongside an index.
   A no-op for 0 or 1 selected child, and for `hull()`/`minkowski()`, which read bodies rather
-  than operand groups and already saw the children separately. Upstream OpenSCAD can only do
+  than operand groups and already saw the children separately. Applies to the operator
+  immediately enclosing the call and **stops at a user-module boundary** — `module pass() {
+  children(separate=true); }` does not make `difference() pass() {...}` subtract. Upstream OpenSCAD can only do
   this via the global `--enable=lazy-union`, which also reinterprets `for`/`if`/`let` and the
   top-level union; this is per-call-site and changes nothing that does not ask for it.
   Implemented entirely in openscad_cpp_evaluator (`CSGNode::separateOperand` +
