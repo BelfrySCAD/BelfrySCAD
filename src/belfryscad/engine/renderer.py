@@ -132,6 +132,18 @@ uniform mat4 mvp;
 out vec3 v_color;
 void main() {
     gl_Position = mvp * vec4(in_position, 1.0);
+    // Pull the line toward the viewer so it wins the depth test against the
+    // surface it lies on, instead of pushing the SURFACE away with a
+    // polygon offset. The offset was slope-scaled, and at a silhouette a
+    // front face is nearly edge-on -- so it got shoved back past its own
+    // backface, and the backface's magenta inverted-normal cue showed
+    // through on a perfectly closed solid. A constant bias here has no
+    // slope term, so it cannot do that.
+    //
+    // Scaled by w so it is a constant offset in NDC at any distance. Big
+    // enough to beat depth-buffer quantisation on the coplanar line, small
+    // enough that a line never shows through the far side of a solid.
+    gl_Position.z -= 0.00001 * gl_Position.w;
     v_color = in_color;
 }
 """
@@ -1108,11 +1120,10 @@ class SceneRenderer:
             if bbox is not None:
                 scale_center, _ = bbox
 
-        # When showing edges, push solid surfaces slightly away from camera so that
-        # coplanar edge lines at true depth pass the depth test without z-fighting.
-        if self.show_edges:
-            self._ctx.polygon_offset = (2.0, 2.0)
-            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
+        # Edge lines bias themselves toward the viewer instead (see
+        # _EDGE_VERT). A polygon offset here would be slope-scaled, which is
+        # what used to shove a near-edge-on silhouette face back past its own
+        # backface and leak the magenta inverted-normal cue on a closed solid.
 
         # --- Pass 1: opaque bodies (normal, show_only) ---
         # Highlighted bodies are drawn only in the overlay pass below, never
@@ -1202,7 +1213,6 @@ class SceneRenderer:
             self._ctx.disable(mgl.BLEND)
 
         if self.show_edges:
-            self._ctx.disable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             if self._edge_prog is not None:
                 for buf, buf_model in zip(opaque_bufs, buf_models):
                     if buf.edge_vao is not None:
