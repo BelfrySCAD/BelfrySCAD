@@ -91,11 +91,15 @@ class TestUseStatement:
         # combo() can call get_inner() (lib2's own nested `use`) and reach inner_val.
         assert echoes[0] == "ECHO: 107"
         # inner.scad's declarations don't leak into main2.scad -> both
-        # references are unresolved (warn), then is_undef(undef) == true.
-        assert any("inner_val" in w for w in logs)
+        # references are unresolved, so is_undef(...) == true.
+        #
+        # No warning is asserted: is_undef() does not warn about the name it
+        # probes, matching the reference, which is silent for this exact
+        # script. (A plain unresolved read still warns -- see
+        # test_used_file_cannot_see_using_file_variables above.)
         assert echoes[1] == "ECHO: true"
-        assert any("get_inner" in w for w in logs)
         assert echoes[2] == "ECHO: true"
+        assert not any("inner_val" in w or "get_inner" in w for w in logs)
 
     def test_use_missing_file_is_silently_ignored(self, tmp_path):
         (tmp_path / "main.scad").write_text(

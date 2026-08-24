@@ -89,6 +89,22 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   quietly produces different geometry; no warning we can emit changes that.
   Implemented entirely in openscad_cpp_evaluator (`Evaluator::expandChildStatements` +
   `Op::CsgGroupChildren`); no parser or GUI change.
+- **Language extension — feature detection**: `$_SUPPORTED_FEATURE` is `true` wherever
+  `supported_feature()` can be called — a capability name, not a vendor one, so any evaluator
+  adding the function is meant to set it. Check it before calling — you cannot safely call what
+  you don't know exists — and write it `!is_undef($_SUPPORTED_FEATURE) && supported_feature(...)`,
+  which is **silent** in OpenSCAD: `is_undef()` reads an unknown variable there without a warning,
+  and `&&` short-circuits past the unknown call.
+  `$_BELFRYSCAD` holds the evaluator version as
+  `[major, minor, patch]`, and `supported_feature("name")` returns the level at which this build
+  implements a named feature (`render-expr`, `polyhedron-vnf`, `separate-children`,
+  `minkowski-diff`, `sphere-styles`, `export-name`, `simplify-op`, `expr-import`,
+  `object-function`, `roof-op` — one for every documented extension) or **0** for one it
+  does not — including names it has never heard of, so probing for a future feature is safe.
+  Both are `undef` in OpenSCAD, so the guard is portable. They exist because OpenSCAD silently
+  ignores unknown *arguments*: `children(separate=true)` runs there and renders the wrong shape
+  with no warning, so `assert(supported_feature(...))` is the only way a script can refuse.
+  Version comes from `pyproject.toml` via CMake, so it tracks releases with no code change.
 - **Export**: 3MF (default), STL, OBJ, OFF, PLY, VRML, X3D — all written by openscad_cpp_evaluator's `export.cpp`, which owns the colour pipeline and mesh repair; `exporters.py` is just the interface. STEP under investigation (Manifold produces triangle meshes; STEP is B-rep, so any export would be a faceted solid of limited downstream value)
 - **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The evaluator's `splitBodiesForExport` cuts it into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component — and carries per-triangle colour where a CSG merge produced it. The GUI calls `exporters.export_model(path, evaluator.geometry)` and logs the warnings it returns. See `docs/rendering.md`'s Export section.
 - **Export workflow**: if no current render exists, Export triggers a render first
