@@ -280,7 +280,17 @@ class OrientationCube(QWidget):
 
         bevel_col = QColor(120, 125, 135)
         hover_col = QColor(90, 150, 235)
-        edge_pen = QPen(QColor(45, 48, 55), 1.0)
+        # Outlines every region, so its weight sets how the whole cube reads.
+        # It was (45, 48, 55): 4.74:1 against a face, more than three times
+        # the 1.48:1 step between a face and a bevel that it is there to
+        # delineate -- so the cube read as a black wire cage with grey fill
+        # rather than as a shaded solid. At (95, 100, 110) it is 2.13:1 and
+        # 1.44:1, about as strong as the shading step it accompanies.
+        #
+        # Not lighter than this: the bevels are (120, 125, 135), and by
+        # (125, 130, 140) the outline is 1.07:1 against them and the
+        # chamfers stop being visible at all.
+        edge_pen = QPen(QColor(95, 100, 110), 1.0)
 
         self._drawn = []
         for _depth, idx, proj in self._visible():
