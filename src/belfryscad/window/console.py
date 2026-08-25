@@ -8,18 +8,31 @@ from belfryscad.window.ui_colors import (console_severity_colors, on_appearance_
                                           text_color)
 
 
-def _severity_of(line: str) -> str | None:
+def _severity_of(text: str) -> str | None:
     """"error" / "warning" for a message the evaluator has already labelled.
 
-    Matched on the prefix it actually emits rather than by searching for the
-    word anywhere, so a script echoing the string "warning" in its own output
-    does not get banded as one.
+    Scans EVERY line, not just the first, and reports the worst it finds.
+    A failed render arrives as one multi-line block whose first line is the
+    GUI's own summary -- "Eval error:  (5 ms)" -- with the ERROR: and TRACE:
+    lines beneath it, so keying off the first line alone banded nothing at
+    all, which is exactly what shipped in the first cut of this.
+
+    The whole block takes the worst severity because it is one message, and
+    because a collapsed block shows only its header: if the header were left
+    unbanded, folding an error away would hide the fact that it was one.
+
+    Matched on the prefixes the evaluator actually emits rather than by
+    searching for the word anywhere, so a script echoing "warning" in its
+    own output is not banded as one.
     """
-    if line.startswith("ERROR:"):
-        return "error"
-    if line.startswith("WARNING:"):
-        return "warning"
-    return None
+    worst = None
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        if stripped.startswith("ERROR:") or stripped.startswith("Eval error:"):
+            return "error"
+        if stripped.startswith("WARNING:"):
+            worst = "warning"
+    return worst
 
 
 def _plain_fmt() -> QTextCharFormat:
@@ -182,7 +195,7 @@ class ConsoleWidget(QTextBrowser):
         # Banded as one region: an ERROR and the TRACE lines under it are a
         # single message, and banding only the header would leave the trace
         # looking like unrelated output.
-        kind = _severity_of(summary)
+        kind = _severity_of(summary + "\n" + detail)
         if kind:
             self._band(header_bn, last_body_bn, kind)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
