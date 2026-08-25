@@ -53,7 +53,21 @@ _FACE_LABELS = {
 _AXIS_RGB = {
     (1, 0, 0): (0.85, 0.15, 0.15),
     (0, 1, 0): (0.15, 0.65, 0.15),
-    (0, 0, 1): (0.25, 0.35, 0.90),
+    # Nearer pure blue than the other two axes are to theirs, deliberately.
+    # The neutral face grey (150, 155, 165) is itself blue-leaning, so mixing
+    # blue into it moves the colour less far than red or green do -- the old
+    # (0.25, 0.35, 0.90) left Z sitting 59.6 from neutral where X sat 82.1
+    # and Y 74.1, visibly the faintest of the three.
+    #
+    # This lands at 92.4, past X rather than level with it. That overshoot is
+    # the point: the eye is least sensitive to blue (0.07 of luminance
+    # against green's 0.72), so matching the other axes by distance still
+    # reads weaker than they do. Rendered the alternatives to pick it.
+    #
+    # Done by changing THIS axis rather than raising _FACE_TINT_MIX, which is
+    # shared: a mix high enough to fix Z turns X and Y into the saturated
+    # stickers that constant's own note warns about.
+    (0, 0, 1): (0.05, 0.20, 1.00),
 }
 _NEUTRAL_FACE = (150, 155, 165)
 
