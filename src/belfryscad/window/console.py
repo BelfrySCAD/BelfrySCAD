@@ -1,10 +1,25 @@
 from html import escape
 
 from PySide6.QtWidgets import QTextBrowser
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtCore import QUrl, Qt
 
-from belfryscad.window.ui_colors import on_appearance_change, text_color
+from belfryscad.window.ui_colors import (console_severity_colors, on_appearance_change,
+                                          text_color)
+
+
+def _severity_of(line: str) -> str | None:
+    """"error" / "warning" for a message the evaluator has already labelled.
+
+    Matched on the prefix it actually emits rather than by searching for the
+    word anywhere, so a script echoing the string "warning" in its own output
+    does not get banded as one.
+    """
+    if line.startswith("ERROR:"):
+        return "error"
+    if line.startswith("WARNING:"):
+        return "warning"
+    return None
 
 
 def _plain_fmt() -> QTextCharFormat:
@@ -34,6 +49,12 @@ class ConsoleWidget(QTextBrowser):
     _COLLAPSED = "▶"
     _EXPANDED = "▼"
 
+    # block number -> "error" / "warning". Kept because _retheme has to
+    # recolour these differently from ordinary text after a light/dark
+    # switch, and because folding only hides blocks (setVisible) rather
+    # than deleting them, so a block's number is stable for the life of
+    # the document.
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # fold_id → (header_bn, first_body_bn, last_body_bn)
@@ -41,10 +62,41 @@ class ConsoleWidget(QTextBrowser):
         self._folded: set[int] = set()
         # fold_id → (name, value) for blocks appended via append_value()
         self._fold_values: dict[int, tuple[str, object]] = {}
+        self._severity: dict[int, str] = {}
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self._on_anchor_clicked)
         on_appearance_change(self, self._retheme)
+
+    def _band(self, first_bn: int, last_bn: int, kind: str):
+        """Paint blocks first_bn..last_bn as an error or warning band.
+
+        Note the matching reset at every insertBlock: a block format is
+        inherited by the next block inserted after it, so without that, one
+        banded line paints every line that follows it for the rest of the
+        session. Caught by rendering the widget and looking at it -- the
+        "Exported to ..." line after a traceback came out red.
+        """
+        bg, fg = console_severity_colors(kind)
+        doc = self.document()
+        for bn in range(first_bn, last_bn + 1):
+            block = doc.findBlockByNumber(bn)
+            if not block.isValid():
+                continue
+            self._severity[bn] = kind
+            cursor = QTextCursor(block)
+            # Background on the BLOCK, not the characters: a char-level
+            # background stops at the end of the text, giving a ragged tag
+            # rather than a band, and short lines would barely register.
+            bf = cursor.blockFormat()
+            bf.setBackground(QColor(bg))
+            cursor.setBlockFormat(bf)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                QTextCursor.MoveMode.KeepAnchor)
+            cf = QTextCharFormat()
+            cf.setForeground(QColor(fg))
+            cursor.mergeCharFormat(cf)
 
     def _retheme(self):
         """Recolour text already in the document after a light/dark switch.
@@ -59,6 +111,10 @@ class ConsoleWidget(QTextBrowser):
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(text_color()))
         cursor.mergeCharFormat(fmt)
+        # That blanket merge just flattened the severity foregrounds too, and
+        # the band backgrounds are the wrong theme's now -- repaint them.
+        for bn, kind in list(self._severity.items()):
+            self._band(bn, bn, kind)
 
     def append_output(self, text: str):
         """Append text. Multi-line output gets a fold toggle on the first line."""
@@ -92,8 +148,12 @@ class ConsoleWidget(QTextBrowser):
         cursor = QTextCursor(doc)
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if cursor.position() > 0:
-            cursor.insertBlock()
+            cursor.insertBlock(QTextBlockFormat())
         cursor.insertText(text, _plain_fmt())
+        kind = _severity_of(text)
+        if kind:
+            bn = doc.blockCount() - 1
+            self._band(bn, bn, kind)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _append_foldable(self, summary: str, detail: str):
@@ -102,7 +162,7 @@ class ConsoleWidget(QTextBrowser):
         cursor = QTextCursor(doc)
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if cursor.position() > 0:
-            cursor.insertBlock()
+            cursor.insertBlock(QTextBlockFormat())
         # Colour set inline rather than through the document stylesheet:
         # `a { color: inherit }` inherits the same black default the plain
         # text had, which is the bug this is avoiding.
@@ -115,10 +175,16 @@ class ConsoleWidget(QTextBrowser):
         for line in detail.split('\n'):
             cursor = QTextCursor(doc)
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertBlock()
+            cursor.insertBlock(QTextBlockFormat())
             cursor.insertText(line, _plain_fmt())
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
+        # Banded as one region: an ERROR and the TRACE lines under it are a
+        # single message, and banding only the header would leave the trace
+        # looking like unrelated output.
+        kind = _severity_of(summary)
+        if kind:
+            self._band(header_bn, last_body_bn, kind)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def mouseMoveEvent(self, event):
@@ -168,3 +234,4 @@ class ConsoleWidget(QTextBrowser):
         self._fold_headers.clear()
         self._folded.clear()
         self._fold_values.clear()
+        self._severity.clear()

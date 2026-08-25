@@ -128,6 +128,30 @@ def header_colors() -> tuple[str, str, str]:
     return ("#E8E8E8", "#C0C0C0", "#202020")
 
 
+def console_severity_colors(kind: str) -> tuple[str, str]:
+    """(background, foreground) for a console line banded by severity.
+
+    `kind` is "error" or "warning". Both foregrounds are explicit for the
+    same reason find_match_colors' are: text that follows the palette turns
+    near-white the moment the app goes dark, and near-white on a pale band
+    is unreadable.
+
+    The bands are theme-AWARE rather than one colour for both, because a
+    saturated band that reads on white glares on near-black and vice versa.
+
+    Chosen by measuring, not by eye. Text contrast lands between 8.7:1 and
+    16.1:1, all far past WCAG AA. The number that actually needed tuning is
+    the band's separation from the console's own background -- a band you
+    cannot see is not a warning. Light-mode yellow started at #FFF0B0 and
+    was only 1.14:1 against white, so it went to #FFE066 at 1.30:1, which
+    also matches the red band's 1.33:1 so neither severity looks louder
+    than the other by accident.
+    """
+    if kind == "error":
+        return ("#5A1F1F", "#FFD5D5") if is_dark() else ("#FFD6D6", "#000000")
+    return ("#4F4008", "#FFEDB0") if is_dark() else ("#FFE066", "#000000")
+
+
 def text_color() -> str:
     """The palette's normal foreground, as a hex string.
 
