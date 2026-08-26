@@ -662,19 +662,23 @@ class Viewport(QOpenGLWidget):
             self._busy_label.hide()
 
     def _position_busy_label(self):
-        """Upper-right corner, same margin as the perspective button's
-        upper-left placement -- shared by the debug-paused indicator and
-        the render/debug busy countdown overlay (_update_busy_overlay), so
-        neither ever covers the model itself (the previous centered
-        placement was directly in the way, especially noticeable on a slow
-        render where the model behind it is visible again for only a
-        fraction of a second per frame during animation playback). Also
-        re-called from resizeGL so the indicator stays inside the viewport
-        -- its position is computed from self.width(), which goes stale the
-        moment the viewport is resized while the label is showing; nothing
-        else re-triggers a reposition mid-render/mid-pause."""
+        """Top edge, horizontally centred -- shared by the debug-paused
+        indicator and the render/debug busy countdown overlay
+        (_update_busy_overlay).
+
+        It sat in the upper-RIGHT corner, which is where the orientation
+        cube now lives, so both overlays were drawn partly behind it. Top
+        centre is the nearest free strip: still clear of the model (the
+        placement that was genuinely in the way was the old dead-centre
+        one, not this), and clear of all three corner widgets -- the
+        perspective button upper-left, the cube upper-right.
+
+        Also re-called from resizeGL so the indicator stays inside the
+        viewport -- its position is computed from self.width(), which goes
+        stale the moment the viewport is resized while the label is
+        showing; nothing else re-triggers a reposition mid-render/mid-pause."""
         margin = 12
-        x = self.width() - self._busy_label.width() - margin
+        x = max(margin, (self.width() - self._busy_label.width()) // 2)
         y = margin
         self._busy_label.move(x, y)
 
