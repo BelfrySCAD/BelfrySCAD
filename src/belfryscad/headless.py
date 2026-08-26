@@ -11,7 +11,13 @@ from belfryscad import scad_temp
 from belfryscad.export_name import seed_params
 
 _VALID_EXPORT_FORMATS = {"asciistl", "binstl"}
-_EXPORT_EXTENSIONS = {".stl", ".obj", ".3mf", ".ply", ".wrl", ".x3d"}
+def _export_extensions() -> set:
+    """Mesh extensions `-o` accepts, asked of the evaluator rather than
+    restated. The hardcoded copy this replaces had gone stale -- it was
+    missing .off, so the CLI rejected a format the writer table could
+    write, and nothing failed to say so."""
+    from belfryscad.exporters import export_extensions
+    return set(export_extensions())
 _VALID_SUMMARY_KEYS = {"time", "geometry", "bounding-box", "area", "camera"}
 
 
@@ -261,9 +267,10 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
         return 1
 
     ext = Path(output_path).suffix.lower()
-    if ext not in _EXPORT_EXTENSIONS:
+    known = _export_extensions()
+    if ext not in known:
         print(f"belfryscad: unsupported output extension {ext!r} "
-              f"(expected {', '.join(sorted(_EXPORT_EXTENSIONS))})", file=sys.stderr)
+              f"(expected {', '.join(sorted(known))})", file=sys.stderr)
         return 1
     if not _validate_export_format(export_format, ext):
         return 1
@@ -313,9 +320,10 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
 
     out = Path(output_path)
     ext = out.suffix.lower()
-    if ext not in _EXPORT_EXTENSIONS:
+    known = _export_extensions()
+    if ext not in known:
         print(f"belfryscad: unsupported output extension {ext!r} "
-              f"(expected {', '.join(sorted(_EXPORT_EXTENSIONS))})", file=sys.stderr)
+              f"(expected {', '.join(sorted(known))})", file=sys.stderr)
         return 1
     if not _validate_export_format(export_format, ext):
         return 1

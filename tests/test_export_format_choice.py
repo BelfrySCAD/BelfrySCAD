@@ -28,19 +28,25 @@ def test_3mf_is_the_default_format():
 
 
 def test_every_writable_format_is_offered():
-    assert {e for _f, e in _EXPORT_FORMATS} == {
-        ".3mf", ".stl", ".obj", ".ply", ".wrl", ".x3d"}
+    """Asked of the evaluator, not restated. Both sides of this used to be
+    hand-written lists that agreed with each other and not with the writer
+    table, so the suite passed while .off could be written by neither the
+    dialog nor the CLI."""
+    from belfryscad.exporters import export_extensions
+    assert {e for _f, e in _EXPORT_FORMATS} == set(export_extensions())
 
 
 def test_the_dialog_and_the_cli_accept_the_same_formats():
     """A format the Export dialog offers but `-o` rejects (or the reverse)
     is the kind of gap nobody notices until it bites."""
-    from belfryscad.headless import _EXPORT_EXTENSIONS
-    assert {e for _f, e in _EXPORT_FORMATS} == _EXPORT_EXTENSIONS
+    from belfryscad.headless import _export_extensions
+    assert {e for _f, e in _EXPORT_FORMATS} == _export_extensions()
 
 
 # --- a typed suffix wins ----------------------------------------------
 @pytest.mark.parametrize("name,ext", [
+    ("/x/part.amf", ".amf"),
+    ("/x/part.off", ".off"),
     ("/x/part.wrl", ".wrl"),
     ("/x/part.x3d", ".x3d"),
     ("/x/part.ply", ".ply"),
