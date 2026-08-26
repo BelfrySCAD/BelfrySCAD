@@ -36,10 +36,19 @@ _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 # 3MF leads because it is the only one that carries colour, separate objects
 # and per-triangle colour at once, i.e. everything split_bodies_for_export
 # produces; STL keeps none of it.
+# Every format the evaluator can write, 3MF first because it is the default
+# and STL second because it is what most people reach for. The rest follow
+# the writer table's own order. This list must stay equal (as a set) to
+# openscad_cpp_evaluator's exportExtensions(): a format missing here cannot
+# be chosen OR typed, because _resolve_export_format only recognises
+# suffixes it contains -- typing "part.off" while OFF was absent produced
+# "part.off.3mf".
 _EXPORT_FORMATS = (
     ("3MF Files (*.3mf)", ".3mf"),
     ("STL Files (*.stl)", ".stl"),
     ("OBJ Files (*.obj)", ".obj"),
+    ("AMF Files (*.amf)", ".amf"),
+    ("OFF Files (*.off)", ".off"),
     ("PLY Files (*.ply)", ".ply"),
     ("VRML Files (*.wrl)", ".wrl"),
     ("X3D Files (*.x3d)", ".x3d"),
