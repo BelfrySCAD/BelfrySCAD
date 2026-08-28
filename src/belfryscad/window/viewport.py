@@ -1140,7 +1140,19 @@ class Viewport(QOpenGLWidget):
             value = event.value()
             if value <= -0.99:
                 return True
-            self._zoom_to_cursor(1.0 / (1.0 + value), event.position().toPoint())
+            # mapFromGlobal(globalPosition()), NOT position(): on macOS Qt
+            # fills a native gesture's local position relative to the
+            # WINDOW and never remaps it for the child widget that handles
+            # it, so position() is offset by the viewport's own origin
+            # inside the window. Measured on a real trackpad: a pointer
+            # genuinely at (287, 270) in a 642x609 viewport reported
+            # position() = (718.7, 328.4) -- past the right edge, which is
+            # exactly the "zooms at centre-right whatever I do" symptom.
+            # globalPosition() is correct, so map that one ourselves.
+            # QWheelEvent is unaffected; ordinary mouse events do get
+            # remapped, which is why wheel zoom always centred correctly.
+            self._zoom_to_cursor(1.0 / (1.0 + value),
+                                 self.mapFromGlobal(event.globalPosition().toPoint()))
             self._on_zoom_changed()
         elif gesture == Qt.NativeGestureType.RotateNativeGesture:
             if not self._orbit_enabled:
