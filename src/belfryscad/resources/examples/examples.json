@@ -26,6 +26,7 @@
     "intersection_for.scad",
     "import.scad",
     "surface.scad",
-    "children.scad"
+    "children.scad",
+    "gyroid.scad"
   ]
 }
