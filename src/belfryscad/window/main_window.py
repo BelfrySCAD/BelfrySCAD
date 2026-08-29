@@ -235,9 +235,28 @@ class FileTab(QWidget):
             name = os.path.basename(self.file_path)
         else:
             name = self.suggested_name or "Untitled"
-        name += "*" if self.is_modified else ""
+        name += "*" if self.has_unsaved_content() else ""
         name += " (ro)" if self.editor.isReadOnly() else ""
         return name
+
+    def has_unsaved_content(self):
+        """Whether this buffer holds text that is not on disk.
+
+        Not just `is_modified`: a buffer can hold content it never got
+        from a file and has not been edited since -- an example opened as
+        a copy, or a script the AI proposed. Those are exactly as unsaved
+        as an edited file, and showing them without the `*` claimed they
+        were safe.
+
+        A brand-new EMPTY Untitled buffer is excluded, since there is
+        nothing in it to lose; it earns its `*` the moment anything is
+        typed, via is_modified. document().isEmpty() rather than
+        toPlainText(), which would copy the whole document every time a
+        tab label is refreshed.
+        """
+        if self.is_modified:
+            return True
+        return not self.file_path and not self.editor.document().isEmpty()
 
     def message_label(self):
         """What to call this tab in an evaluator message.
