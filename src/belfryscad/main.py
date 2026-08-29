@@ -85,26 +85,50 @@ def _parse_args(argv):
     return ns
 
 
+def _documents_dir():
+    """The platform's real Documents folder, or None.
+
+    Qt's DocumentsLocation rather than a hand-built ~/Documents: on Windows
+    that resolves the actual FOLDERID_Documents known folder, which is
+    routinely redirected into OneDrive, and guessing the path would miss
+    it. Works before QApplication exists, which is where this runs.
+    """
+    from pathlib import Path
+    from PySide6.QtCore import QStandardPaths
+    loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    if not loc:
+        return None
+    d = Path(loc)
+    return d if d.is_dir() else None
+
+
 def _default_working_dir():
     """Where a GUI launch with no meaningful working directory should start.
 
     Measured, not assumed: an app launched from Finder has cwd "/"
     (confirmed with lsof against the running bundle), so "save it in the
-    working directory" would offer the filesystem root. Preference order,
-    first that exists:
+    working directory" would offer the filesystem root.
 
-        ~/Documents/BelfrySCAD   -- ours, if the user keeps one
-        ~/Documents/OpenSCAD     -- the convention they likely already have
-        ~/Documents              -- always there in practice, but checked
+    macOS and Windows -- first of these that exists:
 
-    Returns None if none exist, in which case the caller leaves cwd alone
-    rather than inventing a directory.
+        <Documents>/BelfrySCAD   -- ours, if the user keeps one
+        <Documents>/OpenSCAD     -- the convention they likely already have
+        <Documents>              -- see _documents_dir for how it is found
+
+    Linux: $HOME. There is no dependable Documents convention there (XDG
+    user dirs are optional and localised), so this does not invent one.
+
+    Returns None if nothing suitable exists, in which case the caller
+    leaves cwd alone rather than inventing a directory.
     """
     from pathlib import Path
-    home = Path.home()
-    for candidate in (home / "Documents" / "BelfrySCAD",
-                       home / "Documents" / "OpenSCAD",
-                       home / "Documents"):
+    if sys.platform.startswith("linux"):
+        home = Path.home()
+        return home if home.is_dir() else None
+    docs = _documents_dir()
+    if docs is None:
+        return None
+    for candidate in (docs / "BelfrySCAD", docs / "OpenSCAD", docs):
         if candidate.is_dir():
             return candidate
     return None
