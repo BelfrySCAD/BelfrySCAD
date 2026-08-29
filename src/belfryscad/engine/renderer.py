@@ -677,6 +677,18 @@ class SceneRenderer:
         self.drag_scale_axis: int = -1
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
+        # Light backfaces with the object colour instead of painting them
+        # the hardcoded magenta inverted-normal cue. OFF in the GUI, where
+        # that cue is the point: on a closed manifold you never see a
+        # backface, so magenta means something is genuinely wrong.
+        #
+        # Headless docs rendering turns it ON, because docsgen asks for
+        # OpenSCAD's PREVIEW mode, which lights open surfaces normally --
+        # and BOSL2 documents open surfaces on purpose
+        # (`vnf_halfspace(..., closed=false)`). Without this an intended
+        # open surface comes out magenta where OpenSCAD shows the object
+        # colour, measured as 6.5% of one such frame.
+        self.light_backfaces: bool = False
         self.show_axes: bool = True
         # The XY grid is drawn from _render_axes but toggles on its own:
         # it is the one overlay dense enough to be worth hiding while
@@ -1196,7 +1208,7 @@ class SceneRenderer:
             self._prog["model"].write(buf_model.T.tobytes())
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
-            self._prog["flat_preview"].value = buf.flat_preview
+            self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
             buf.vao.render()
 
         # --- Pass 1b: translucent normal/show_only/highlight bodies (color()'s
@@ -1230,7 +1242,7 @@ class SceneRenderer:
                 # and must not also multiply into the real alpha.
                 uniform_color = (*color[:3], 1.0) if buf.uses_vertex_color else color
                 self._prog["object_color"].value = uniform_color
-                self._prog["flat_preview"].value = buf.flat_preview
+                self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
@@ -1277,7 +1289,7 @@ class SceneRenderer:
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = _BACKGROUND_COLOR
-                self._prog["flat_preview"].value = buf.flat_preview
+                self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
@@ -1306,7 +1318,7 @@ class SceneRenderer:
                 # within a shade of the untouched colour and reads as no
                 # highlight at all.
                 self._prog["object_color"].value = _HIGHLIGHT_COLOR
-                self._prog["flat_preview"].value = buf.flat_preview
+                self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
