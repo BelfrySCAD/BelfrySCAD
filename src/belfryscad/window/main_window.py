@@ -2309,8 +2309,18 @@ class MainWindow(QMainWindow):
         # would prompt to save on close having changed nothing.
         tab._last_text = text
         tab.is_modified = False
+        # Replace a lone empty Untitled tab rather than leaving it behind,
+        # the same way opening a file does (_create_and_add_tab). Opening
+        # an example IS opening a document; only File > New, which is a
+        # request for a blank one, adds alongside.
+        if self._tabs.count() == 2:
+            old = self._tabs.widget(0)
+            if (old is not tab and not old.file_path and not old.is_modified
+                    and not old.editor.toPlainText()):
+                self._tabs.removeTab(0)
         idx = self._tabs.indexOf(tab)
         if idx != -1:
+            self._tabs.setCurrentIndex(idx)
             self._sync_tab_label(idx, tab)
         self._render(tab)
 
