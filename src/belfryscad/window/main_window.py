@@ -1259,6 +1259,7 @@ class MainWindow(QMainWindow):
         # A new, empty document has nothing rendered, so the previous
         # model must not stay on screen looking like its output.
         self._clear_viewport()
+        return tab
 
     def _sync_tab_label(self, idx: int, tab: "FileTab"):
         """Set a tab's label and its tooltip together.
@@ -1558,8 +1559,15 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if not tab:
             return False
+        # A bare suggested_name (an example copy, or an AI-proposed script)
+        # is resolved against the working directory: QFileDialog given a
+        # relative name picks its own starting directory, which is not
+        # necessarily the one the user thinks they are in.
+        start = tab.file_path or ""
+        if not start and tab.suggested_name:
+            start = str(Path(os.getcwd()) / tab.suggested_name)
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save File", tab.file_path or tab.suggested_name or "",
+            self, "Save File", start,
             "OpenSCAD Files (*.scad);;All Files (*)"
         )
         if not path:
@@ -2268,11 +2276,43 @@ class MainWindow(QMainWindow):
                 act = sub.addAction(path.stem.replace("_", " "))
                 act.setStatusTip(str(path))
                 act.triggered.connect(
-                    lambda checked=False, p=str(path): self.open_file_by_path(p))
+                    lambda checked=False, p=str(path): self._open_example(p))
             found = True
         if not found:
             act = menu.addAction("(No examples installed)")
             act.setEnabled(False)
+
+    def _open_example(self, path: str):
+        """Open an example as a COPY in a new untitled buffer.
+
+        Not open_file_by_path: that would open the file inside the
+        application bundle, which _create_and_add_tab marks read-only, so
+        the first thing anyone wanting to tinker had to do was Save As.
+        An example is a starting point, so it arrives already editable and
+        already detached from the installed original -- which also means a
+        stray Save can never write back into the app's own resources.
+
+        The buffer keeps the example's filename as its suggested name, so
+        Save/Save As offers `gyroid.scad` in the working directory rather
+        than an untitled blank (see _save_file_as).
+        """
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as e:
+            QMessageBox.critical(self, "Open Error", str(e))
+            return
+        tab = self._new_document()
+        tab.suggested_name = Path(path).name
+        tab.editor.setPlainText(text)
+        # setPlainText fires contentsChanged, so clear the flag after it:
+        # a pristine copy is not a modified one, and marking it modified
+        # would prompt to save on close having changed nothing.
+        tab._last_text = text
+        tab.is_modified = False
+        idx = self._tabs.indexOf(tab)
+        if idx != -1:
+            self._sync_tab_label(idx, tab)
+        self._render(tab)
 
     def _open_use_library(self):
         """Pick a library and the file to pull in from it.

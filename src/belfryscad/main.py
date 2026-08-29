@@ -85,12 +85,88 @@ def _parse_args(argv):
     return ns
 
 
+def _documents_dir():
+    """The platform's real Documents folder, or None.
+
+    Qt's DocumentsLocation rather than a hand-built ~/Documents: on Windows
+    that resolves the actual FOLDERID_Documents known folder, which is
+    routinely redirected into OneDrive, and guessing the path would miss
+    it. Works before QApplication exists, which is where this runs.
+    """
+    from pathlib import Path
+    from PySide6.QtCore import QStandardPaths
+    loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    if not loc:
+        return None
+    d = Path(loc)
+    return d if d.is_dir() else None
+
+
+def _default_working_dir():
+    """Where a GUI launch with no meaningful working directory should start.
+
+    Measured, not assumed: an app launched from Finder has cwd "/"
+    (confirmed with lsof against the running bundle), so "save it in the
+    working directory" would offer the filesystem root.
+
+    macOS and Windows -- first of these that exists:
+
+        <Documents>/BelfrySCAD   -- ours, if the user keeps one
+        <Documents>/OpenSCAD     -- the convention they likely already have
+        <Documents>              -- see _documents_dir for how it is found
+
+    Linux: $HOME. There is no dependable Documents convention there (XDG
+    user dirs are optional and localised), so this does not invent one.
+
+    Returns None if nothing suitable exists, in which case the caller
+    leaves cwd alone rather than inventing a directory.
+    """
+    from pathlib import Path
+    if sys.platform.startswith("linux"):
+        home = Path.home()
+        return home if home.is_dir() else None
+    docs = _documents_dir()
+    if docs is None:
+        return None
+    for candidate in (docs / "BelfrySCAD", docs / "OpenSCAD", docs):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _adopt_working_dir():
+    """chdir to _default_working_dir() when launched with no real cwd.
+
+    Gated on cwd being the filesystem ROOT, which is what a Finder (or
+    Launcher) start looks like and what a shell start never is -- running
+    `belfryscad` from a real directory keeps that directory, so relative
+    paths still mean what the user typed.
+
+    GUI only. The headless CLI must keep its true cwd or a relative
+    `-o out.stl` would land somewhere else entirely.
+    """
+    from pathlib import Path
+    cwd = Path.cwd()
+    if cwd != Path(cwd.anchor):
+        return None
+    target = _default_working_dir()
+    if target is None:
+        return None
+    try:
+        os.chdir(target)
+    except OSError:
+        return None
+    return target
+
+
 def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
     from belfryscad.window.main_window import MainWindow
+
+    _adopt_working_dir()
 
     class BelfrySCADApp(QApplication):
         file_open_requested = Signal(str)
