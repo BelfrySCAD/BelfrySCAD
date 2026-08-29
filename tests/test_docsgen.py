@@ -354,12 +354,29 @@ def test_mdimggen_reports_when_there_is_nothing_to_do(tmp_path, monkeypatch):
 def test_failure_exit_code_matches_upstreams(tmp_path, monkeypatch):
     """Upstream exits with sys.exit(-1), which the shell sees as 255. A
     caller testing for the specific code, not just non-zero, must not
-    notice the difference."""
+    notice the difference.
+
+    Driven by a documentation error rather than a missing file: on Windows
+    processFiles globs its arguments, and a name that matches nothing
+    becomes an empty list rather than a "does not exist" failure (upstream
+    behaves the same way).
+    """
     from belfryscad.docsgen import EXIT_FAILURE, main
-    monkeypatch.chdir(tmp_path)
     assert EXIT_FAILURE == 255
-    # A source file that does not exist is upstream's own sys.exit(-1) path.
-    assert main(["-m", "no_such_file.scad"]) == EXIT_FAILURE
+    (tmp_path / "bad.scad").write_text(DEMO.replace("// Synopsis:", "// Bogusness:"))
+    monkeypatch.chdir(tmp_path)
+    assert main(["-m", "-q", "bad.scad"]) == EXIT_FAILURE
+
+
+def test_image_urls_use_forward_slashes(tmp_path):
+    """Generated image links are URLs, so they must never contain a
+    backslash -- os.path.join would put one there on Windows and break
+    every image in the docs."""
+    src = tmp_path / "demo.scad"
+    src.write_text(DEMO)
+    preview = build_preview(DEMO, str(src), gen_images=False)
+    assert "images/demo/widget.png" in preview.markdown
+    assert "\\" not in preview.markdown
 
 
 # -- end-to-end preview (no images) ------------------------------------

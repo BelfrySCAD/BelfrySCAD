@@ -13,6 +13,7 @@ in two of its four CI workflows.
 from __future__ import print_function
 
 import os
+import posixpath
 import sys
 import glob
 import os.path
@@ -127,8 +128,11 @@ class MarkdownImageGen(object):
                                 else:
                                     fext = "png"
                                 fname = "{}_{}.{}".format(fileroot, imgnum, fext)
-                                img_rel_url = os.path.join(opts.image_root, fname)
-                                imgfile = os.path.join(opts.docs_dir, img_rel_url)
+                                # posixpath, not os.path -- this is a
+                                # markdown URL. See blocks.py's own note.
+                                img_rel_url = posixpath.join(
+                                    opts.image_root.replace(os.sep, "/"), fname)
+                                imgfile = os.path.join(opts.docs_dir, *img_rel_url.split("/"))
                                 image_manager.new_request(
                                     fileroot+".md", linenum,
                                     imgfile, script, extyp,

@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import os
 import os.path
+import posixpath
 import re
 import sys
 
@@ -965,8 +966,13 @@ class ImageBlock(GenericBlock):
 
         file_dir, file_name = os.path.split(fileblock.origin.file.strip())
         file_base = os.path.splitext(file_name)[0]
-        self.image_url_rel = os.path.join("images", file_base, proposed_name)
-        self.image_url = os.path.join(file_dir, self.image_url_rel)
+        # posixpath, not os.path: these are markdown/HTML URLs, and
+        # os.path.join emits backslashes on Windows -- which breaks every
+        # image link in the generated docs. Upstream has the same bug; this
+        # is a deliberate divergence, and it changes nothing on POSIX, where
+        # os.path.join already produces exactly this.
+        self.image_url_rel = posixpath.join("images", file_base, proposed_name)
+        self.image_url = posixpath.join(file_dir.replace(os.sep, "/"), self.image_url_rel)
         self.verbose = verbose
         self.enabled_features = enabled_features
 

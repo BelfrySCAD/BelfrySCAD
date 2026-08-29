@@ -68,6 +68,12 @@ worse than the dependency. Note that upstream requires the output directory
 to already exist and this does too — in practice it is a checked-out wiki
 repo.
 
+Two upstream behaviours worth knowing, both kept as-is: on Windows,
+`processFiles` globs its filename arguments, so a name matching nothing
+becomes an empty list rather than a "does not exist" error and the run
+exits 0; and a failure exits **255** (upstream's `sys.exit(-1)`), which
+`EXIT_FAILURE` matches deliberately.
+
 ## Example and Figure rendering
 
 `ImageRequest` parses the metadata in `// Example(...)` exactly as upstream
@@ -134,7 +140,18 @@ still shows a still image.
 
 ### Deliberate differences from upstream
 
-None of these change what a reader sees:
+One of these is a bug fix, and it only bites on Windows:
+
+* **Image URLs are built with `posixpath`, not `os.path`.** Upstream uses
+  `os.path.join` for the `rel_url` that goes straight into a markdown image
+  link (`blocks.py`'s `image_url_rel`, `mdimggen.py`'s `img_rel_url`), so a
+  docs build run on Windows emits `images\demo\widget.png` and every image
+  in the output is broken. On POSIX `os.path.join` already produces exactly
+  what `posixpath.join` does, so this changes nothing there — verified by
+  re-diffing both generators' output against the reference after the change.
+  Caught by this project's Windows CI, which upstream does not run.
+
+The rest change nothing a reader sees:
 
 * `ThrownTogether` and `Render` render the same as `preview` — the
   evaluator always does full CSG, so there is no cheaper mode to pick.
