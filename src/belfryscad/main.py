@@ -71,6 +71,14 @@ def _parse_args(argv):
                         help="Never ask about unsaved changes when closing a "
                              "tab or quitting (for testing; edits are "
                              "discarded without asking)")
+    parser.add_argument("--docsgen", action="store_true",
+                        help="Generate openscad_docsgen documentation. Takes "
+                             "over the rest of the command line; run "
+                             "`belfryscad --docsgen -h` for its own options")
+    parser.add_argument("--mdimggen", action="store_true",
+                        help="Render the openscad code blocks in markdown "
+                             "files to images. Takes over the rest of the "
+                             "command line; run `belfryscad --mdimggen -h`")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -270,6 +278,20 @@ def _print_info():
 def main():
     setproctitle.setproctitle("BelfrySCAD")
     sys.setrecursionlimit(10000)
+
+    # --docsgen swallows the whole remaining command line rather than going
+    # through _parse_args: it is a separate tool with its own option set,
+    # and several of its flags (-D, -p, -P, -d, -m, -q, -v) mean different
+    # things here. Everything after --docsgen belongs to it.
+    if "--docsgen" in sys.argv[1:]:
+        idx = sys.argv.index("--docsgen")
+        from belfryscad import docsgen
+        raise SystemExit(docsgen.main(sys.argv[idx + 1:]))
+    if "--mdimggen" in sys.argv[1:]:
+        idx = sys.argv.index("--mdimggen")
+        from belfryscad.docsgen import mdimggen
+        raise SystemExit(mdimggen.main(sys.argv[idx + 1:]))
+
     args = _parse_args(sys.argv[1:])
 
     if args.version:

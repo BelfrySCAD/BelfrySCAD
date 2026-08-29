@@ -98,6 +98,49 @@ def _apply_camera(camera, spec: str):
                           f"or 6 values (eye,center), got {len(parts)}")
 
 
+def viewport_params_from_camera(spec: str | None) -> dict:
+    """The `$vpt`/`$vpr`/`$vpd` a --camera spec makes visible to the script.
+
+    OpenSCAD defines these from the camera it was given, so a script can
+    read them; with no --camera at all it uses its own defaults, which
+    export_name.DEFAULT_VIEWPORT carries (hence {} here for that case).
+
+    Both spec forms were checked against OpenSCAD 2026.02.01:
+
+        --camera=1,2,3,10,20,30,250      -> vpt=[1,2,3] vpr=[10,20,30] vpd=250
+        --camera=100,100,100,0,0,0       -> vpt=[0,0,0] vpr=[54.7356,0,135]
+                                            vpd=173.205
+
+    The eye/center form is just _apply_camera_eye_center's own elevation/
+    azimuth math run backwards through _apply_camera_translate_rot_dist's
+    rules, so the two stay consistent by construction rather than by a
+    second hand-derived formula.
+    """
+    if not spec:
+        return {}
+    try:
+        parts = [float(x) for x in spec.split(",")]
+    except ValueError:
+        return {}
+    if len(parts) == 7:
+        tx, ty, tz, rx, ry, rz, dist = parts
+        return {"$vpt": [tx, ty, tz], "$vpr": [rx, ry, rz], "$vpd": dist}
+    if len(parts) == 6:
+        import numpy as np
+        eye = np.array(parts[:3], dtype=np.float64)
+        center = np.array(parts[3:], dtype=np.float64)
+        d = eye - center
+        distance = float(np.linalg.norm(d))
+        if distance < 1e-9:
+            return {}
+        elevation = math.degrees(math.asin(max(-1.0, min(1.0, d[2] / distance))))
+        azimuth = math.degrees(math.atan2(d[1], d[0]))
+        return {"$vpt": [float(x) for x in center],
+                "$vpr": [(90.0 - elevation) % 360.0, 0.0, (azimuth - 270.0) % 360.0],
+                "$vpd": distance}
+    return {}
+
+
 def _bounds(bodies):
     import numpy as np
     mins, maxs = [], []
@@ -171,6 +214,16 @@ def _make_offscreen_renderer(opts: _RenderOptions):
 
     renderer = SceneRenderer()
     renderer.initialize(ctx)
+    apply_view_options(renderer, opts)
+    return app, ctx, renderer, make_fbo(ctx, opts.w, opts.h)
+
+
+def apply_view_options(renderer, opts: _RenderOptions):
+    """Push one _RenderOptions' size/projection/view-flags/theme onto an
+    existing SceneRenderer. Split out of _make_offscreen_renderer so a
+    caller rendering many differently-configured images (docsgen examples,
+    each with its own size, edges/axes flags and colour scheme) can reuse a
+    single GL context and renderer instead of rebuilding both per image."""
     renderer.set_viewport(opts.w, opts.h)
     renderer.camera.orthographic = opts.ortho
     renderer.show_axes = "axes" in opts.view_opts
@@ -183,11 +236,12 @@ def _make_offscreen_renderer(opts: _RenderOptions):
         renderer.axes_color = opts.theme["axes"]
         renderer.unselected_vertex_color = opts.theme["unselected_vertex"]
 
-    fbo = ctx.framebuffer(
-        color_attachments=[ctx.texture((opts.w, opts.h), 4)],
-        depth_attachment=ctx.depth_renderbuffer((opts.w, opts.h)),
+
+def make_fbo(ctx, w: int, h: int):
+    return ctx.framebuffer(
+        color_attachments=[ctx.texture((w, h), 4)],
+        depth_attachment=ctx.depth_renderbuffer((w, h)),
     )
-    return app, ctx, renderer, fbo
 
 
 def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: str) -> bool:
@@ -203,8 +257,25 @@ def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: 
     that way during development, by rendering a real animation and finding
     the middle frames blank). An explicit --camera is harmless to
     re-apply every frame too (same fixed values each time)."""
-    import numpy as np
     from belfryscad.png_writer import write_png
+
+    rgba = paint_rgba(ctx, renderer, fbo, opts, bodies)
+    if rgba is None:
+        return False
+    try:
+        write_png(output_path, rgba, opts.w, opts.h)
+    except OSError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return False
+    return True
+
+
+def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies) -> bytes | None:
+    """The camera + paint + framebuffer-readback half of _paint_frame,
+    returning top-to-bottom RGBA bytes instead of writing a file. Split out
+    so an animated PNG can collect every frame's pixels in memory (see
+    png_writer.write_apng) without each frame going through a file."""
+    import numpy as np
 
     renderer.load_geometry(bodies)
 
@@ -213,7 +284,7 @@ def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: 
             _apply_camera(renderer.camera, opts.camera_spec)
         except ValueError as e:
             print(f"belfryscad: {e}", file=sys.stderr)
-            return False
+            return None
     if opts.autocenter or opts.viewall or not opts.camera_spec:
         bounds = _bounds(bodies)
         if bounds:
@@ -232,14 +303,7 @@ def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: 
 
     data = fbo.read(components=4, alignment=1)
     arr = np.frombuffer(data, dtype=np.uint8).reshape(opts.h, opts.w, 4)
-    flipped = arr[::-1, :, :]  # GL reads bottom-to-top; PNG wants top-to-bottom
-
-    try:
-        write_png(output_path, flipped.tobytes(), opts.w, opts.h)
-    except OSError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return False
-    return True
+    return arr[::-1, :, :].tobytes()  # GL reads bottom-to-top; PNG wants top-to-bottom
 
 
 def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
@@ -263,7 +327,8 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
     if parse_path is None:
         return 1
     try:
-        result = _evaluate(parse_path, {}, quiet=quiet, hard_warnings=hard_warnings)
+        result = _evaluate(parse_path, viewport_params_from_camera(opts.camera_spec),
+                            quiet=quiet, hard_warnings=hard_warnings)
     finally:
         _cleanup(tmp_path)
     if result is None:
@@ -324,7 +389,9 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
     try:
         for i in range(steps):
             frame_path = dest_dir / f"{out.stem}{i:05d}.png"
-            result = _evaluate(parse_path, {"$t": i / steps}, quiet=quiet, hard_warnings=hard_warnings)
+            frame_params = dict(viewport_params_from_camera(opts.camera_spec))
+            frame_params["$t"] = i / steps
+            result = _evaluate(parse_path, frame_params, quiet=quiet, hard_warnings=hard_warnings)
             if result is None:
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)
                 ok = False
