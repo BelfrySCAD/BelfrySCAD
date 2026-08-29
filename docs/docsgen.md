@@ -237,25 +237,46 @@ not pixel-identical, and are not meant to be: BelfrySCAD's renderer draws
 heavier axis ticks with larger, more numerous labels than OpenSCAD's thin
 dotted axes.
 
-### 21 examples fail here that OpenSCAD renders
+### Preview vs render: why some warnings are masked
 
-On that same 4-file run, `openscad-docsgen` had **0** failed renders and
-this had **21**. Every one is the evaluator disagreeing with OpenSCAD, not
-a docsgen problem: docsgen fails any example that emits a warning (upstream
-behaviour, reproduced here), and `openscad_cpp_evaluator` warns where
-OpenSCAD 2026.02.01 is silent. Confirmed by running a failing example
-through the real binary: zero warnings, exit 0.
+docsgen renders examples in OpenSCAD's **preview** mode. This evaluator has
+no preview mode — it always performs full CSG — and that difference, not any
+disagreement about geometry, was behind most of the examples that used to
+fail here.
 
-The largest group is `v was assigned on line N but was overwritten`. In
-`partitions.scad`, `v` is assigned at line 113 in the module body and again
-at line 142 inside an `else if` block; OpenSCAD scopes the inner
-assignment, the evaluator treats it as overwriting the same variable.
-Others seen: spurious `Mixing 2D and 3D objects`, `polyhedron: mesh is not
-closed`, and `Ignoring unknown variable '$vpr'`.
+Run the same script through OpenSCAD's own `--render=cgal` and it emits the
+very same warnings, word for word:
 
-Nothing here works around them. A docs build over a large library is a
-useful conformance test for the evaluator, and masking the warnings would
-throw that away.
+    WARNING: Mixing 2D and 3D objects is not supported
+    WARNING: Ignoring 3D child object for 2D operation
+
+On an open mesh it fails *harder* than this does — `ERROR: [manifold] Input
+mesh is not closed!` — where this still draws the surface. So these are
+preview-vs-render artifacts on correct, deliberate examples: BOSL2's
+`vnf_halfspace(..., closed=false)` and `vnf_tri_array()` produce open
+surfaces on purpose, and several gear examples overlay a 2D path on a 3D
+part. `imagemanager._MASKED_WARNINGS` masks exactly those, using upstream's
+own mechanism (it masks `"Viewall and autocenter disabled"` and the Nef
+fallback for the same reason). Anything not on that list still fails.
+
+Matching preview also means **lighting backfaces** rather than painting them
+the magenta inverted-normal cue — `SceneRenderer.light_backfaces`, on for
+headless rendering, off in the GUI where the cue is worth having. On one
+open-surface frame that cue covered 6.5% of the image where OpenSCAD showed
+the object colour.
+
+Together these take a 4-file BOSL2 build (393 renders) from **18 failures to
+1**.
+
+### The one real divergence left
+
+    rect([40,30], rounding=10, atype="perim") show_anchors();
+
+fails with BOSL2's own `Cannot find corner point to anchor` assertion.
+OpenSCAD renders it cleanly in both preview and render mode, so this is a
+genuine `openscad_cpp_evaluator` bug, not a docsgen one. It is a hard error
+rather than a warning, so it is not maskable and should not be: a docs build
+over a large library is a useful conformance test for the evaluator.
 
 ## Verifying
 

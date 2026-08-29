@@ -225,6 +225,10 @@ def apply_view_options(renderer, opts: _RenderOptions):
     each with its own size, edges/axes flags and colour scheme) can reuse a
     single GL context and renderer instead of rebuilding both per image."""
     renderer.set_viewport(opts.w, opts.h)
+    # Match OpenSCAD's preview, which is what a docs build asks for: an open
+    # surface is lit with the object colour, not flagged magenta. See
+    # SceneRenderer.light_backfaces.
+    renderer.light_backfaces = True
     renderer.camera.orthographic = opts.ortho
     renderer.show_axes = "axes" in opts.view_opts
     renderer.show_crosshairs = "crosshairs" in opts.view_opts

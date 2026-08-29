@@ -37,6 +37,33 @@ _DEFAULT_VPD = 444
 _DEFAULT_VPF = 22.5
 _DEFAULT_FRAMES = 36
 
+#: Warnings that must not fail a docs image, because OpenSCAD does not emit
+#: them for the render docsgen actually asks for.
+#:
+#: docsgen renders examples in PREVIEW mode. This evaluator has no preview
+#: mode -- it always performs full CSG -- and OpenSCAD emits these exact
+#: warnings in its own `--render` mode too, verified word-for-word against
+#: 2026.02.01. So they are a preview-vs-render artifact, not a defect in the
+#: example being documented, and failing on them would reject examples that
+#: are correct and deliberate: BOSL2's `vnf_halfspace(..., closed=false)`
+#: and `vnf_tri_array()` produce open surfaces on purpose, and several gear
+#: examples overlay a 2D path on a 3D part.
+#:
+#: This is upstream's own mechanism -- its imagemanager masks "Viewall and
+#: autocenter disabled" and "failed with error, falling back to Nef
+#: operation" for exactly the same reason. Anything NOT listed here still
+#: fails the build.
+_MASKED_WARNINGS = (
+    "mesh is not closed",
+    "Mixing 2D and 3D objects is not supported",
+    "Ignoring 2D child object for 3D operation",
+    "Ignoring 3D child object for 2D operation",
+)
+
+
+def _unmasked(warnings):
+    return [w for w in warnings if not any(m in w for m in _MASKED_WARNINGS)]
+
 
 class ImageRequest:
     _size_re = re.compile(r'Size *= *([0-9]+) *x *([0-9]+)')
@@ -262,11 +289,15 @@ class ImageManager:
                 params["$vpt"] = [float(x) for x in req.camera[0:3]]
                 params["$vpr"] = [float(x) for x in req.camera[3:6]]
                 params["$vpd"] = float(req.camera[6])
-            # hard_warnings mirrors upstream: an example that warns is a
-            # documentation bug, and only a script that steers its own
-            # camera is exempt (those legitimately warn about the override).
+            # Warnings are promoted to failures HERE, not inside run(), so
+            # the mask can be applied first. Upstream's rule otherwise: an
+            # example that warns is a documentation bug, and only a script
+            # steering its own camera is exempt (those legitimately warn
+            # about the override).
             last = runner.run(req.script_lines, src_dir, params,
-                              hard_warnings=no_vp)
+                              hard_warnings=False)
+            if no_vp:
+                last.errors.extend(_unmasked(last.warnings))
             if last.errors or last.bodies is None:
                 req.completed("FAIL", last)
                 return
