@@ -183,6 +183,25 @@ rm -rf build/belfryscad/macos/app.bak
 
 `create` re-downloads every wheel (PySide6 alone is ~440MB), so this is a few minutes — worth doing before cutting any real release or notarized build, not on every routine local rebuild. `CFBundleVersion` stays at `1`; that is briefcase's build-number default and is unrelated to the version string.
 
+## Documentation Generation
+
+BelfrySCAD replaces the `openscad-docsgen` command: `belfryscad --docsgen`
+takes the same options and produces the same markdown, but renders Examples
+and Figures through this project's own evaluator and offscreen renderer
+instead of launching the OpenSCAD binary once per image. The GUI's **Docs**
+pane (View ▸ Show Docs) runs the identical code over the live editor buffer,
+so a library author sees the formatted docs, the validation errors and the
+rendered example images without saving or leaving the app.
+
+`openscad_docsgen`'s parser, blocks, error log and output targets are
+vendored **unchanged** under `src/belfryscad/docsgen/` — only its two
+OpenSCAD-launching modules (`imagemanager.py`, `logmanager.py`) are
+reimplemented, keeping the upstream names so nothing else needed editing.
+Keeping the parser byte-identical is what makes the pane's verdict
+trustworthy: it is the same validation a real docs build performs. Full
+details, including the camera/`--viewall` semantics and the APNG animation
+support, in `docs/docsgen.md`.
+
 ## Further Documentation
 
 Detailed implementation notes live in `docs/`. AST Evaluator internals (scope processing, assignment order, built-ins reference, 2D/3D geometry handling, error format, `$variables` scoping, `include`/`use`, implementation quirks, and the Manifold provenance / AST ↔ geometry ID mapping API) now live in the separate `openscad_cpp_evaluator` package's own `CLAUDE.md`, not here.
@@ -190,4 +209,5 @@ Detailed implementation notes live in `docs/`. AST Evaluator internals (scope pr
 - **`docs/wysiwyg.md`** — Viewport camera controls, selection model, transform gizmos, value overlay, and source rewrite rules for drag-to-edit.
 - **`docs/debugger.md`** — `DebugSession` signals, call stack display, per-frame variable inspection, expression-level stepping, and `DebuggerPane` states.
 - **`docs/rendering.md`** — Threaded rendering (`_RenderWorker`/`_RenderCallback`), cancellation, and progress indicator.
+- **`docs/docsgen.md`** — `openscad_docsgen` documentation generation: the vendored parser, the evaluator-backed image/log backends that replace running the OpenSCAD binary, `belfryscad --docsgen`, and the GUI Docs pane.
 - **`docs/editor.md`** — Code editor features (Find/Replace, Indent Guides, Column Guide, Code Folding, Go to Definition), Undo/Redo, console output, keyboard shortcuts, preferences, GUI layout, menu structure, and data viewers (ListViewer, VNFViewer, PathViewer, GridViewer, ProfileViewer).

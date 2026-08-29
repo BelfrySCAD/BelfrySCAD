@@ -20,6 +20,7 @@ from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assig
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
+from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
@@ -846,6 +847,22 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._customizer_dock, self._ai_chat_dock)
         self._ai_chat_dock.hide()
 
+        # --- Docs dock (right, bottom — tabbed with Customizer/Animate/AI Chat) ---
+        self._docs_pane = DocsPane()
+        self._docs_pane.goto_line.connect(self._goto_source_line)
+        self._docs_pane.refresh_requested.connect(self._refresh_docs_pane)
+
+        self._docs_dock = QDockWidget("Docs", self)
+        self._docs_dock.setObjectName("DocsDock")
+        self._docs_dock.setWidget(self._docs_pane)
+        self._docs_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.tabifyDockWidget(self._customizer_dock, self._docs_dock)
+        self._docs_dock.hide()
+        # Building a preview runs every Example, so it happens when the pane
+        # is actually on screen -- never in the background for a hidden dock.
+        self._docs_dock.visibilityChanged.connect(
+            lambda visible: self._refresh_docs_pane() if visible else None)
+
         # --- Console dock (bottom) ---
         self._console = ConsoleWidget()
         self._console.setReadOnly(True)
@@ -1136,6 +1153,10 @@ class MainWindow(QMainWindow):
         self._act_show_ai_chat.setText("Show AI Chat")
         view_menu.addAction(self._act_show_ai_chat)
 
+        self._act_show_docs = self._docs_dock.toggleViewAction()
+        self._act_show_docs.setText("Show Docs")
+        view_menu.addAction(self._act_show_docs)
+
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
 
         view_menu.addSeparator()
@@ -1345,6 +1366,31 @@ class MainWindow(QMainWindow):
             self._customizer_pane.set_file_path(tab.file_path)
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
+            self._refresh_docs_pane()
+
+    def _refresh_docs_pane(self):
+        """Rebuild the Docs preview from the live editor buffer, if the pane
+        is showing. Not wired to text changes: a rebuild renders every
+        Example, which is far too much work for a keystroke."""
+        if not self._docs_dock.isVisible():
+            return
+        tab = self._current_tab()
+        if tab:
+            self._docs_pane.refresh(tab.editor.toPlainText(), tab.file_path or "")
+
+    def _goto_source_line(self, line: int):
+        """Put the cursor on 1-based `line` of the current editor."""
+        editor = self._current_editor()
+        if editor is None:
+            return
+        block = editor.document().findBlockByNumber(max(0, line - 1))
+        if not block.isValid():
+            return
+        cursor = editor.textCursor()
+        cursor.setPosition(block.position())
+        editor.setTextCursor(cursor)
+        editor.centerCursor()
+        editor.setFocus()
 
     def _toggle_read_only(self, enabled: bool):
         tab = self._current_tab()
@@ -4166,6 +4212,7 @@ class MainWindow(QMainWindow):
             self._ai_chat_pane.cancel_turn()
         except Exception:      # noqa: BLE001 -- never block a quit
             pass
+        self._docs_pane.shutdown()
         if self._render_cancel is not None:
             self._render_cancel.set()
         deadline = time.monotonic() + 5.0
