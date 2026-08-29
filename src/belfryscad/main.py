@@ -85,12 +85,64 @@ def _parse_args(argv):
     return ns
 
 
+def _default_working_dir():
+    """Where a GUI launch with no meaningful working directory should start.
+
+    Measured, not assumed: an app launched from Finder has cwd "/"
+    (confirmed with lsof against the running bundle), so "save it in the
+    working directory" would offer the filesystem root. Preference order,
+    first that exists:
+
+        ~/Documents/BelfrySCAD   -- ours, if the user keeps one
+        ~/Documents/OpenSCAD     -- the convention they likely already have
+        ~/Documents              -- always there in practice, but checked
+
+    Returns None if none exist, in which case the caller leaves cwd alone
+    rather than inventing a directory.
+    """
+    from pathlib import Path
+    home = Path.home()
+    for candidate in (home / "Documents" / "BelfrySCAD",
+                       home / "Documents" / "OpenSCAD",
+                       home / "Documents"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _adopt_working_dir():
+    """chdir to _default_working_dir() when launched with no real cwd.
+
+    Gated on cwd being the filesystem ROOT, which is what a Finder (or
+    Launcher) start looks like and what a shell start never is -- running
+    `belfryscad` from a real directory keeps that directory, so relative
+    paths still mean what the user typed.
+
+    GUI only. The headless CLI must keep its true cwd or a relative
+    `-o out.stl` would land somewhere else entirely.
+    """
+    from pathlib import Path
+    cwd = Path.cwd()
+    if cwd != Path(cwd.anchor):
+        return None
+    target = _default_working_dir()
+    if target is None:
+        return None
+    try:
+        os.chdir(target)
+    except OSError:
+        return None
+    return target
+
+
 def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
     from belfryscad.window.main_window import MainWindow
+
+    _adopt_working_dir()
 
     class BelfrySCADApp(QApplication):
         file_open_requested = Signal(str)
