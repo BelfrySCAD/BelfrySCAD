@@ -70,10 +70,32 @@ def sanitize_export_name(value) -> str:
     return "".join(c if c in _VALID else "_" for c in value)
 
 
+#: OpenSCAD's own starting viewport, which it defines for EVERY run --
+#: including a plain `-o out.stl` mesh export, verified against 2026.02.01.
+#: A script reading `$vpr` (BOSL2's debug_vnf() orients its labels by it)
+#: must not find it undefined here when it is defined there. `$vpd` is the
+#: default camera distance and stays 140 even under --viewall: OpenSCAD
+#: reports the camera it was GIVEN, not the one it fitted.
+DEFAULT_VIEWPORT = {
+    "$vpt": [0.0, 0.0, 0.0],
+    "$vpr": [55.0, 0.0, 25.0],
+    "$vpd": 140.0,
+    "$vpf": 22.5,
+}
+
+
 def seed_params(params: dict, file_path) -> dict:
-    """`params` with `$export_name` added, without mutating the original."""
+    """`params` with `$export_name` and the default `$vp*` viewport added,
+    without mutating the original.
+
+    setdefault throughout, so a caller that already knows better wins: the
+    GUI passes its live camera, and headless_render passes whatever
+    --camera resolved to.
+    """
     out = dict(params or {})
     out.setdefault("$export_name", default_export_name(file_path))
+    for name, value in DEFAULT_VIEWPORT.items():
+        out.setdefault(name, list(value) if isinstance(value, list) else value)
     return out
 
 

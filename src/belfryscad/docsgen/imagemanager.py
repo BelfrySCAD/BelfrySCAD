@@ -254,6 +254,14 @@ class ImageManager:
         last = None
         for i in range(frames):
             params = {"$t": i / frames} if req.animation_frames else {}
+            # A fixed-view example must see the camera it is rendered with,
+            # exactly as OpenSCAD's own --camera makes it visible. A
+            # script-driven view needs nothing here: those requests carry
+            # their own $vp* assignments prepended to the script.
+            if req.camera:
+                params["$vpt"] = [float(x) for x in req.camera[0:3]]
+                params["$vpr"] = [float(x) for x in req.camera[3:6]]
+                params["$vpd"] = float(req.camera[6])
             # hard_warnings mirrors upstream: an example that warns is a
             # documentation bug, and only a script that steers its own
             # camera is exempt (those legitimately warn about the override).

@@ -189,6 +189,57 @@ def test_write_apng_needs_at_least_one_frame(tmp_path):
         write_apng(str(tmp_path / "x.png"), [], 2, 2)
 
 
+# -- $vp* visibility ---------------------------------------------------
+#
+# OpenSCAD defines $vpt/$vpr/$vpd/$vpf for every run, and BOSL2 reads them
+# (debug_vnf() orients its labels by $vpr). Leaving them undef made those
+# examples warn, and docsgen's hard-warnings rule turned that into a failed
+# image. Values below were read off OpenSCAD 2026.02.01.
+
+def test_default_viewport_matches_openscads_own():
+    from belfryscad.export_name import DEFAULT_VIEWPORT
+    assert DEFAULT_VIEWPORT == {"$vpt": [0.0, 0.0, 0.0], "$vpr": [55.0, 0.0, 25.0],
+                                 "$vpd": 140.0, "$vpf": 22.5}
+
+
+def test_seed_params_adds_the_viewport_but_never_overrides_a_caller():
+    from belfryscad.export_name import seed_params
+    out = seed_params({"$vpr": [1.0, 2.0, 3.0]}, "/a/w.scad")
+    assert out["$vpr"] == [1.0, 2.0, 3.0]     # the GUI's live camera wins
+    assert out["$vpd"] == 140.0               # the rest still filled in
+
+
+def test_camera_7_value_form_is_passed_through_verbatim():
+    from belfryscad.headless_render import viewport_params_from_camera
+    assert viewport_params_from_camera("1,2,3,10,20,30,250") == {
+        "$vpt": [1.0, 2.0, 3.0], "$vpr": [10.0, 20.0, 30.0], "$vpd": 250.0}
+
+
+def test_camera_6_value_eye_center_form_is_converted():
+    from belfryscad.headless_render import viewport_params_from_camera
+    vp = viewport_params_from_camera("100,100,100,0,0,0")
+    assert vp["$vpt"] == [0.0, 0.0, 0.0]
+    assert vp["$vpd"] == pytest.approx(173.205, abs=1e-3)
+    assert vp["$vpr"][0] == pytest.approx(54.7356, abs=1e-3)
+    assert vp["$vpr"][1] == pytest.approx(0.0, abs=1e-9)
+    assert vp["$vpr"][2] == pytest.approx(135.0, abs=1e-3)
+
+
+def test_no_camera_means_no_override_so_the_defaults_apply():
+    from belfryscad.headless_render import viewport_params_from_camera
+    # OpenSCAD reports $vpd=140 with no --camera even under --viewall: the
+    # camera it was GIVEN, not the one it fitted.
+    assert viewport_params_from_camera(None) == {}
+    assert viewport_params_from_camera("") == {}
+    assert viewport_params_from_camera("garbage") == {}
+
+
+def test_fixed_view_example_sees_its_own_camera():
+    """A static Example's $vp* come from the camera docsgen renders it with."""
+    req = make_request("3D")
+    assert req.camera == [0, 0, 0, 55, 0, 25, 444]
+
+
 # -- markdown fix-ups for Qt ------------------------------------------
 
 def test_img_tags_become_markdown_images():
@@ -219,6 +270,96 @@ def test_breaks_and_code_tags():
 
 def test_include_syntax_in_a_code_block_is_not_mistaken_for_html():
     assert "<demo.scad>" in markdown_for_qt("    include <demo.scad>")
+
+
+# -- mdimggen (markdown image generator) -------------------------------
+#
+# The rendering step is stubbed out: it needs an OpenGL context, and Qt/GL
+# inside pytest takes the whole run down. Everything else -- the rc file,
+# the block scanning, the rewritten markdown -- is exercised for real.
+
+TUTORIAL_MD = """\
+# Heading
+
+Some prose.
+
+```openscad-3D
+cube(10);
+```
+
+More prose.
+
+```openscad-3D;ImgOnly
+sphere(5);
+```
+"""
+
+
+@pytest.fixture
+def no_render(monkeypatch):
+    from belfryscad.docsgen import imagemanager
+    monkeypatch.setattr(imagemanager.image_manager, "process_requests",
+                        lambda *a, **k: imagemanager.image_manager.purge_requests())
+
+
+def test_rc_defaults_reads_the_yaml_settings(tmp_path, monkeypatch):
+    from belfryscad.docsgen import mdimggen
+    (tmp_path / ".openscad_mdimggen_rc").write_text(
+        'docs_dir: "BOSL2.wiki"\n'
+        'image_root: "images/tutorials"\n'
+        'file_prefix: "Tutorial-"\n'
+        'source_files: "tutorials/*.md"\n'
+        'png_animations: true\n')
+    monkeypatch.chdir(tmp_path)
+    d = mdimggen._rc_defaults()
+    assert d["docs_dir"] == "BOSL2.wiki"
+    assert d["file_prefix"] == "Tutorial-"
+    assert d["source_files"] == "tutorials/*.md"
+
+
+def test_rc_defaults_is_empty_when_absent(tmp_path, monkeypatch):
+    from belfryscad.docsgen import mdimggen
+    monkeypatch.chdir(tmp_path)
+    assert mdimggen._rc_defaults() == {}
+
+
+def test_mdimggen_rewrites_blocks_and_links_the_images(tmp_path, monkeypatch, no_render):
+    from belfryscad.docsgen import mdimggen
+    (tmp_path / "tutorials").mkdir()
+    (tmp_path / "tutorials" / "Demo.md").write_text(TUTORIAL_MD)
+    # The output directory must already exist -- upstream's mdimggen has no
+    # makedirs for it either, and in practice it is a checked-out wiki repo.
+    (tmp_path / "wiki").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert mdimggen.main(["-D", "wiki", "-P", "Tutorial-", "-I", "images/tutorials",
+                          "tutorials/Demo.md"]) == 0
+
+    out = (tmp_path / "wiki" / "Tutorial-Demo.md").read_text()
+    assert "# Heading" in out and "Some prose." in out
+    # Each block becomes an image link, numbered in source order.
+    assert "![Figure 1](images/tutorials/Demo_1.png)" in out
+    assert "![Figure 2](images/tutorials/Demo_2.png)" in out
+    # A plain block keeps its script; an ImgOnly block drops it.
+    assert "cube(10);" in out
+    assert "sphere(5);" not in out
+
+
+def test_mdimggen_reports_when_there_is_nothing_to_do(tmp_path, monkeypatch):
+    from belfryscad.docsgen import EXIT_FAILURE, mdimggen
+    monkeypatch.chdir(tmp_path)
+    assert mdimggen.main([]) == EXIT_FAILURE
+
+
+def test_failure_exit_code_matches_upstreams(tmp_path, monkeypatch):
+    """Upstream exits with sys.exit(-1), which the shell sees as 255. A
+    caller testing for the specific code, not just non-zero, must not
+    notice the difference."""
+    from belfryscad.docsgen import EXIT_FAILURE, main
+    monkeypatch.chdir(tmp_path)
+    assert EXIT_FAILURE == 255
+    # A source file that does not exist is upstream's own sys.exit(-1) path.
+    assert main(["-m", "no_such_file.scad"]) == EXIT_FAILURE
 
 
 # -- end-to-end preview (no images) ------------------------------------

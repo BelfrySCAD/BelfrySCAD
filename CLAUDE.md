@@ -185,10 +185,11 @@ rm -rf build/belfryscad/macos/app.bak
 
 ## Documentation Generation
 
-BelfrySCAD replaces the `openscad-docsgen` command: `belfryscad --docsgen`
-takes the same options and produces the same markdown, but renders Examples
-and Figures through this project's own evaluator and offscreen renderer
-instead of launching the OpenSCAD binary once per image. The GUI's **Docs**
+BelfrySCAD replaces both `openscad-docsgen` (`belfryscad --docsgen`) and
+`openscad-mdimggen` (`belfryscad --mdimggen`): the same options, the same
+markdown, but Examples and Figures render through this project's own
+evaluator and offscreen renderer instead of launching the OpenSCAD binary
+once per image. The GUI's **Docs**
 pane (View ▸ Show Docs) runs the identical code over the live editor buffer,
 so a library author sees the formatted docs, the validation errors and the
 rendered example images without saving or leaving the app.

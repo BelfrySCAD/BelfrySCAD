@@ -75,6 +75,10 @@ def _parse_args(argv):
                         help="Generate openscad_docsgen documentation. Takes "
                              "over the rest of the command line; run "
                              "`belfryscad --docsgen -h` for its own options")
+    parser.add_argument("--mdimggen", action="store_true",
+                        help="Render the openscad code blocks in markdown "
+                             "files to images. Takes over the rest of the "
+                             "command line; run `belfryscad --mdimggen -h`")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -283,6 +287,10 @@ def main():
         idx = sys.argv.index("--docsgen")
         from belfryscad import docsgen
         raise SystemExit(docsgen.main(sys.argv[idx + 1:]))
+    if "--mdimggen" in sys.argv[1:]:
+        idx = sys.argv.index("--mdimggen")
+        from belfryscad.docsgen import mdimggen
+        raise SystemExit(mdimggen.main(sys.argv[idx + 1:]))
 
     args = _parse_args(sys.argv[1:])
 

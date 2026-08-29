@@ -116,7 +116,13 @@ class ScriptRunner:
                 return result
             evaluator = Evaluator(echo_fn=echo_fn)
             try:
-                bodies, _ids = evaluator.evaluate(path, dict(params or {}))
+                # seed_params, not the raw dict: OpenSCAD defines $vpt/$vpr/
+                # $vpd/$vpf for every run, and BOSL2 reads them (debug_vnf()
+                # orients its labels by $vpr). An example that found them
+                # undefined warned, and under docsgen's hard-warnings rule
+                # that failed the whole image.
+                from belfryscad.export_name import seed_params
+                bodies, _ids = evaluator.evaluate(path, seed_params(params, path))
             except RecursionError:
                 result.errors.append("ERROR: AST too deeply nested "
                                      "(recursion limit exceeded during evaluation).")

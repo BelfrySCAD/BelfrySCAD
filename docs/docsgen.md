@@ -4,10 +4,13 @@ BelfrySCAD generates OpenSCAD library documentation from `openscad_docsgen`
 comment blocks — the format BOSL2 is written in — and previews the same
 output live in the GUI while a library file is being edited.
 
-Two entry points, one implementation:
+Three entry points, one implementation:
 
 * **`belfryscad --docsgen [options] [srcfiles...]`** — a drop-in replacement
   for the `openscad-docsgen` command, with the same options.
+* **`belfryscad --mdimggen [options] [srcfiles...]`** — a drop-in replacement
+  for `openscad-mdimggen`, which renders the ```` ```openscad ```` blocks in
+  markdown files to images (BOSL2 builds its tutorials this way).
 * **View ▸ Show Docs** — the Docs pane, which renders the current editor
   buffer's documentation, lists everything the parser objects to, and shows
   every Example and Figure as a real rendered image.
@@ -55,6 +58,16 @@ process launch is gone entirely.
 plus errors. It is Qt-free, so `window/docs_pane.py` can call it from a
 worker thread.
 
+`mdimggen.py` is vendored too, and its `MarkdownImageGen` class is upstream's
+unchanged — it already drives `image_manager`/`log_manager`/`errorlog`/
+`filehashes`, so replacing those two modules was enough to redirect it as
+well. Only its entry point is ours. Its `.openscad_mdimggen_rc` is parsed as
+real YAML (PyYAML) rather than hand-scanned: `source_files` is documented as
+either a string or a block list, and quietly misreading a valid config is
+worse than the dependency. Note that upstream requires the output directory
+to already exist and this does too — in practice it is a checked-out wiki
+repo.
+
 ## Example and Figure rendering
 
 `ImageRequest` parses the metadata in `// Example(...)` exactly as upstream
@@ -72,6 +85,30 @@ Two camera cases fall out of that:
   `$vpt`/`$vpr`/`$vpd`/`$vpf` assignments are **prepended to the script**,
   and the settled values are read back out of `Evaluator.dyn` afterwards
   and turned into a camera spec (`runner.camera_spec_from_dyn`).
+
+### `$vpt`/`$vpr`/`$vpd`/`$vpf` are always defined
+
+OpenSCAD defines the viewport variables for **every** run — including a
+plain `-o out.stl` mesh export — and scripts read them: BOSL2's
+`debug_vnf()` orients its labels by `$vpr`. Leaving them `undef` made those
+examples warn, and the hard-warnings rule then failed the image.
+
+`export_name.DEFAULT_VIEWPORT` carries OpenSCAD's own starting values
+(`[0,0,0]`, `[55,0,25]`, `140`, `22.5`), seeded by `seed_params` — the one
+function the CLI, the GUI and the debugger all share — with `setdefault`, so
+a caller that knows better wins. `headless_render.viewport_params_from_camera`
+supplies what `--camera` resolved to, and `imagemanager` supplies the fixed
+camera a static Example is rendered with. All three forms were read off
+OpenSCAD 2026.02.01:
+
+| `--camera` | `$vpt` | `$vpr` | `$vpd` |
+| --- | --- | --- | --- |
+| *(none)* | `[0,0,0]` | `[55,0,25]` | `140` |
+| `1,2,3,10,20,30,250` | `[1,2,3]` | `[10,20,30]` | `250` |
+| `100,100,100,0,0,0` | `[0,0,0]` | `[54.7356,0,135]` | `173.205` |
+
+`$vpd` stays at the default `140` with no camera **even under `--viewall`**:
+OpenSCAD reports the camera it was given, not the one it fitted.
 
 ### `--viewall` is not disabled by `--camera`
 

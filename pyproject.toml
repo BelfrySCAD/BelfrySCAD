@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "0.89.0"
+version = "0.90.0"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -17,6 +17,9 @@ dependencies = [
     "openscad_cpp_evaluator>=0.51.3",
     "certifi",
     "keyring>=25.0",
+    # .openscad_mdimggen_rc is real YAML and this project does not own the
+    # format -- see docsgen/mdimggen.py's _rc_defaults.
+    "PyYAML>=6.0",
 ]
 
 [project.scripts]
@@ -42,7 +45,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "0.89.0"
+version = "0.90.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"

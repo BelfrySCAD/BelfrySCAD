@@ -24,6 +24,10 @@ from .logmanager import log_manager
 from .parser import DocsGenParser, DocsGenException
 from .target import default_target, target_classes
 
+#: What upstream's `sys.exit(-1)` becomes at the shell. Matched exactly so a
+#: caller testing for a specific code, not just non-zero, behaves the same.
+EXIT_FAILURE = 255
+
 
 class Options:
     """The settings DocsGenParser reads. Built from argparse for the CLI,
@@ -144,7 +148,7 @@ def processFiles(opts):
             print("{} is not readable.".format(infile))
             fail = True
     if fail:
-        sys.exit(-1)
+        return EXIT_FAILURE
 
     docsgen.parse_files(opts.files, False)
 
@@ -171,7 +175,7 @@ def processFiles(opts):
         errorlog.write_report()
     if errorlog.has_errors:
         print("WARNING: Errors encountered.", file=sys.stderr)
-        return 1
+        return EXIT_FAILURE
     return 0
 
 
@@ -232,13 +236,13 @@ def main(argv=None):
         return processFiles(opts)
     except DocsGenException as e:
         print(e)
-        return 1
+        return EXIT_FAILURE
     except OSError as e:
         print(e)
-        return 1
+        return EXIT_FAILURE
     except KeyboardInterrupt:
         print(" Aborting.", file=sys.stderr)
-        return 1
+        return EXIT_FAILURE
     finally:
         from .runner import runner
         runner.close()
