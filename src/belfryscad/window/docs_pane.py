@@ -523,13 +523,31 @@ class DocsPane(QWidget):
         self._view.setOpenExternalLinks(False)
         self._view.setOpenLinks(False)
 
+        # The message goes in its own scrollable pane rather than a column:
+        # a failed example dumps its whole script and a full evaluator
+        # trace, and one elided line of that told the reader nothing.
+        self._error_text = QTextBrowser()
+        self._error_text.setLineWrapMode(QTextBrowser.LineWrapMode.NoWrap)
+
         self._errors = QTreeWidget()
-        self._errors.setHeaderLabels(["Line", "Level", "Message"])
+        self._errors.setHeaderLabels(["Line", "Level"])
         self._errors.setRootIsDecorated(False)
         self._errors.setColumnWidth(0, 60)
-        self._errors.setColumnWidth(1, 70)
         self._errors.itemActivated.connect(self._on_error_activated)
         self._errors.itemClicked.connect(self._on_error_activated)
+        self._errors.currentItemChanged.connect(
+            lambda cur, _prev: self._show_error_detail(cur))
+
+        # List left, message right -- the usual master/detail reading
+        # order. The list is the narrow half.
+        self._error_pane = QSplitter(Qt.Orientation.Horizontal)
+        self._error_pane.addWidget(self._errors)
+        self._error_pane.addWidget(self._error_text)
+        self._error_pane.setStretchFactor(0, 1)
+        self._error_pane.setStretchFactor(1, 3)
+        # Hidden until something actually goes wrong -- a clean file should
+        # not carry an empty list around under its docs.
+        self._error_pane.setVisible(False)
 
         self._status = QLabel("No preview yet.")
         self._refresh_btn = QPushButton("Refresh")
@@ -553,7 +571,7 @@ class DocsPane(QWidget):
 
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self._view)
-        split.addWidget(self._errors)
+        split.addWidget(self._error_pane)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
 
@@ -862,16 +880,16 @@ class DocsPane(QWidget):
 
     def _show_errors(self, errors):
         self._errors.clear()
+        self._error_text.clear()
         rows = sorted(errors, key=lambda e: (_LEVEL_ORDER.get(e[3], 9), e[1]))
         for _file, line, msg, level in rows:
-            # A multi-line entry (a failed example dumps its whole script)
-            # gets its first line as the label and the rest as a tooltip.
-            head, _, rest = str(msg).partition("\n")
-            item = QTreeWidgetItem([str(line), str(level).capitalize(), head])
+            item = QTreeWidgetItem([str(line), str(level).capitalize()])
             item.setData(0, Qt.ItemDataRole.UserRole, int(line))
-            if rest:
-                item.setToolTip(2, str(msg))
+            item.setData(1, Qt.ItemDataRole.UserRole, str(msg))
             self._errors.addTopLevelItem(item)
+        self._error_pane.setVisible(bool(rows))
+        if rows:
+            self._errors.setCurrentItem(self._errors.topLevelItem(0))
 
         counts = {}
         for _f, _l, _m, level in errors:
@@ -888,6 +906,11 @@ class DocsPane(QWidget):
             self._status.setText(
                 f"{self._status.text()} &nbsp; {n} image{plural} not rendered — click one, or "
                 f'<a href="{_RENDER_ALL_HREF}">render all {n}</a>.')
+
+    def _show_error_detail(self, item):
+        """The selected entry's message, in full."""
+        self._error_text.setPlainText(
+            "" if item is None else str(item.data(1, Qt.ItemDataRole.UserRole) or ""))
 
     def _on_error_activated(self, item: QTreeWidgetItem, _column: int = 0):
         line = item.data(0, Qt.ItemDataRole.UserRole)
