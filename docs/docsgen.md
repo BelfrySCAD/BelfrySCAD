@@ -284,6 +284,25 @@ was needed, since `viewport_params` already seeds arbitrary `$`-names.
 This affects only docs generation. An ordinary render, in the GUI or
 through `-o`, is a real render and leaves `$preview` false.
 
+**Overlapping 2D shapes layer in source order.** Every 2D shape is drawn
+as the same wafer-thin slab, so two that overlap are exactly coplanar.
+Under the default `<` depth test the second one's fragments are rejected
+and whichever was drawn first wins -- which threw away every layer of a
+figure built by stacking 2D shapes. BOSL2's `cyl()` chamfer figure draws a
+grey silhouette, then a coloured chamfered overlay, then "A" labels and arc
+arrows on top; only the grey survived. The two straight arrows came through
+solely because they stick out past its edge.
+
+A flat slab is drawn with `<=` instead, so the later shape wins, which is
+both the reference's behaviour and the obvious reading of source order. The
+comparison goes back to `<` for every later pass, since equal-depth
+overwriting is only right for coplanar 2D.
+
+Checked against OpenSCAD across shapes3d: of the 57 images this changes,
+two move sharply closer to the reference (the chamfer figures, 22.7 and
+13.6 mean pixel difference down to 5.2 and 3.4), 55 are unchanged in
+distance, and none move further away.
+
 **Rendered images are antialiased.** A docs build's images sit next to
 OpenSCAD's on the same wiki page and OpenSCAD's are antialiased; ours drew
 every edge hard, so a plain cube came out as four flat colours with no

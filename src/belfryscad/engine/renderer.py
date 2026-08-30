@@ -1209,7 +1209,23 @@ class SceneRenderer:
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
             self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
+            # A 2D shape is drawn as a wafer-thin slab, and every 2D shape in
+            # a script gets the SAME slab -- so two that overlap are exactly
+            # coplanar. Under the default '<' depth test the second one's
+            # fragments are rejected and the first drawn wins, which threw
+            # away every layer of a figure built by stacking 2D shapes:
+            # BOSL2's cyl() chamfer figure lost its coloured overlay, its
+            # labels and its arc arrows, keeping only the grey silhouette
+            # underneath. '<=' lets the later shape win instead, which is
+            # both the reference's behaviour and the obvious reading of
+            # source order.
+            self._ctx.depth_func = "<=" if buf.flat_preview else "<"
             buf.vao.render()
+
+        # Back to the default for every later pass: the '<=' above is only
+        # right for coplanar 2D slabs, and leaving it set would let any
+        # equal-depth fragment overwrite in passes that do not want that.
+        self._ctx.depth_func = "<"
 
         # --- Pass 1b: translucent normal/show_only/highlight bodies (color()'s
         # alpha<1) -- blended, no depth write, back-to-front by centroid distance

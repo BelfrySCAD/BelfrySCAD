@@ -1208,3 +1208,28 @@ def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
     mgr, _ = _fake_manager(["a.png"])
     mgr.process_requests()          # no progress callback at all
 
+
+
+def test_overlapping_2d_shapes_layer_in_source_order(tmp_path):
+    """Every 2D shape in a script is drawn as the SAME wafer-thin slab, so
+    two that overlap are exactly coplanar. Under the default '<' depth test
+    the second one's fragments are rejected and whichever was drawn first
+    wins, which threw away every layer of a figure built by stacking 2D
+    shapes: BOSL2's cyl() chamfer figure lost its coloured overlay, its "A"
+    labels and its arc arrows, keeping only the grey silhouette beneath.
+    """
+    from PySide6.QtGui import QImage
+
+    _render_in_subprocess(tmp_path, [("layers.png", "2D,Big,NoAxes", [
+        'color("lightgray") square(20, center=true);',
+        'color("red") square(10, center=true);',
+    ])])
+
+    img = QImage(str(tmp_path / "layers.png"))
+    assert not img.isNull()
+    # The inner square is centred, so the middle pixel belongs to whichever
+    # shape won. It must be the one written last.
+    mid = img.pixelColor(img.width() // 2, img.height() // 2)
+    assert mid.red() > 2 * mid.green() and mid.red() > 2 * mid.blue(), (
+        f"the later 2D shape must be on top, got rgb"
+        f"({mid.red()},{mid.green()},{mid.blue()})")
