@@ -18,6 +18,8 @@ import os.path
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .unicode_math import render_math
+
 CACHE_DIR = Path.home() / ".cache" / "BelfrySCAD" / "docs-preview"
 
 
@@ -260,4 +262,5 @@ def markdown_for_qt(markdown: str) -> str:
         out = re.sub(pattern, replacement, out, flags=re.S)
     # Pandoc-style fence attributes confuse Qt's info-string handling.
     out = out.replace("``` {.C linenos=True}", "```")
+    out = render_math(out)
     return collapse_table_spaces(out.replace("&nbsp;", " "))
