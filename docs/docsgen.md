@@ -222,6 +222,33 @@ links — to Wikipedia, to sibling wiki pages — which must stay plain text; a
 scheme is the only thing separating an image stand-in from those. The pane
 strips the prefix and hands the real URL to `QDesktopServices`.
 
+**LaTeX math renders as Unicode.** GitHub's wiki sets `$inline$` and
+`$$display$$` with MathJax. Qt has no MathJax, no MathML and no way to
+typeset, so `unicode_math` converts the subset Unicode can express --
+superscripts, subscripts, roots, Greek, the common operators -- and
+**refuses everything else**, leaving the original LaTeX untouched. Refusing
+is the important half: a reader can decode `\frac{a}{b}`, but not a formula
+that silently lost its numerator.
+
+Unicode's script alphabets have holes -- no superscript `/`, no superscript
+alpha -- so a script it cannot set is written `d^(1/a)` rather than refused.
+Nothing is lost but the typesetting, which was never on offer; refusing
+there would put raw `$...$` on screen instead. Only a genuine gap in
+meaning (a matrix, an unbalanced brace, an unknown command) refuses.
+
+The harder half is not converting things that were never math. OpenSCAD
+spells its special variables `$fn`, `$fa`, `$fs`, so a BOSL2 line reading
+`$fa=1,$fs=.5` satisfies MathJax's delimiter rule exactly. Three filters
+bring 166 false matches across BOSL2 down to zero: code spans and fenced
+blocks are held aside, 4-space-indented blocks are skipped (docsgen writes
+Example scripts that way, not as fences), and a candidate whose content
+begins with a known `$`-variable name is refused outright. That last filter
+is why this pane is *more* correct than the published wiki, which renders
+"Uses $fn/$fa/$fs to control the number of facets" as math.
+
+Across all of BOSL2 this converts 139 lines, mis-converts none, and
+leaves nothing convertible behind.
+
 **Table whitespace collapses.** docsgen pads every cell out to a column and
 writes two spaces after a sentence, which is what makes the raw markdown
 readable. HTML throws all of that away; QTextDocument does not -- it is not
