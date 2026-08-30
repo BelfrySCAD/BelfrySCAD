@@ -189,7 +189,7 @@ class _RenderOptions:
 
 
 def _make_offscreen_renderer(opts: _RenderOptions):
-    """Creates the (app, ctx, renderer, fbo) needed to paint frames -- kept
+    """Creates the (app, ctx, renderer, draw_fbo, read_fbo) needed to paint frames -- kept
     alive by the caller for as long as more frames will be rendered (an
     animation reuses all four across every frame; a single render just
     uses them once). Returns None after printing an error."""
@@ -215,7 +215,8 @@ def _make_offscreen_renderer(opts: _RenderOptions):
     renderer = SceneRenderer()
     renderer.initialize(ctx)
     apply_view_options(renderer, opts)
-    return app, ctx, renderer, make_fbo(ctx, opts.w, opts.h)
+    draw_fbo, read_fbo = make_render_target(ctx, opts.w, opts.h)
+    return app, ctx, renderer, draw_fbo, read_fbo
 
 
 def apply_view_options(renderer, opts: _RenderOptions):
@@ -241,14 +242,52 @@ def apply_view_options(renderer, opts: _RenderOptions):
         renderer.unselected_vertex_color = opts.theme["unselected_vertex"]
 
 
-def make_fbo(ctx, w: int, h: int):
+#: Multisample count asked for on offscreen renders. OpenSCAD's own preview
+#: images are antialiased and a docs build's images sit next to them, so
+#: ours should be too -- ours came out with ~200 distinct colours against
+#: the reference's ~1100, which is exactly what hard edges look like.
+#: Negotiated down to whatever the context actually supports (macOS/Metal
+#: caps this at 4).
+MSAA_SAMPLES = 4
+
+
+def make_fbo(ctx, w: int, h: int, samples: int = 0):
+    if samples:
+        # Renderbuffers, not textures: a multisample texture needs a
+        # different sampler type in every shader, while a renderbuffer is
+        # write-only and resolves with one blit -- which is all this needs.
+        return ctx.framebuffer(
+            color_attachments=[ctx.renderbuffer((w, h), 4, samples=samples)],
+            depth_attachment=ctx.depth_renderbuffer((w, h), samples=samples),
+        )
     return ctx.framebuffer(
         color_attachments=[ctx.texture((w, h), 4)],
         depth_attachment=ctx.depth_renderbuffer((w, h)),
     )
 
 
-def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: str) -> bool:
+def make_render_target(ctx, w: int, h: int):
+    """(draw_fbo, read_fbo) for one image size.
+
+    Multisampled wherever the context allows it. A multisample renderbuffer
+    cannot be read back directly, so it is resolved into a plain
+    single-sample framebuffer first; the two are the same object when
+    multisampling is unavailable, and the resolve is then skipped.
+
+    MSAA rather than rendering large and shrinking: supersampling would
+    also thin every axis line and shrink every tick label, since those are
+    sized in pixels, and the point here is smoother edges, not a different
+    picture.
+    """
+    samples = min(MSAA_SAMPLES, getattr(ctx, "max_samples", 0) or 0)
+    if samples < 2:
+        fbo = make_fbo(ctx, w, h)
+        return fbo, fbo
+    return make_fbo(ctx, w, h, samples), make_fbo(ctx, w, h)
+
+
+def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: str,
+                  read_fbo=None) -> bool:
     """Loads bodies, positions the camera, paints, and writes output_path.
     Returns True on success.
 
@@ -263,7 +302,7 @@ def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: 
     re-apply every frame too (same fixed values each time)."""
     from belfryscad.png_writer import write_png
 
-    rgba = paint_rgba(ctx, renderer, fbo, opts, bodies)
+    rgba = paint_rgba(ctx, renderer, fbo, opts, bodies, read_fbo)
     if rgba is None:
         return False
     try:
@@ -274,7 +313,7 @@ def _paint_frame(ctx, renderer, fbo, opts: _RenderOptions, bodies, output_path: 
     return True
 
 
-def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies) -> bytes | None:
+def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies, read_fbo=None) -> bytes | None:
     """The camera + paint + framebuffer-readback half of _paint_frame,
     returning top-to-bottom RGBA bytes instead of writing a file. Split out
     so an animated PNG can collect every frame's pixels in memory (see
@@ -298,6 +337,16 @@ def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies) -> bytes | None
             elif opts.autocenter:
                 renderer.camera.target = ((bb_min + bb_max) / 2).astype(np.float32)
 
+    # Bind FIRST, then set the viewport. moderngl's ctx.viewport writes
+    # through to whichever framebuffer is bound right now, so setting it
+    # before use() aimed it at the PREVIOUS image's framebuffer: every one
+    # ended up holding the next image's size, and use() then restored that
+    # wrong value -- a 320x240 example rendered after a 640x480 one was
+    # drawn at double scale and cropped. (Assigning fbo.viewport on an
+    # unbound framebuffer does not stick either; binding is what makes the
+    # assignment land.) Only a run that mixes sizes shows this, which is
+    # every real docs build: Example, Example(Med), Example(Big).
+    fbo.use()
     ctx.viewport = (0, 0, opts.w, opts.h)
     ctx.wireframe = "wireframe" in opts.view_opts
     try:
@@ -305,7 +354,14 @@ def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies) -> bytes | None
     finally:
         ctx.wireframe = False
 
-    data = fbo.read(components=4, alignment=1)
+    # A multisample framebuffer has to be resolved before it can be read.
+    src = fbo
+    if read_fbo is not None and read_fbo is not fbo:
+        read_fbo.use()
+        ctx.viewport = (0, 0, opts.w, opts.h)
+        ctx.copy_framebuffer(read_fbo, fbo)
+        src = read_fbo
+    data = src.read(components=4, alignment=1)
     arr = np.frombuffer(data, dtype=np.uint8).reshape(opts.h, opts.w, 4)
     return arr[::-1, :, :].tobytes()  # GL reads bottom-to-top; PNG wants top-to-bottom
 
@@ -342,8 +398,8 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
     setup = _make_offscreen_renderer(opts)
     if setup is None:
         return 1
-    _app, ctx, renderer, fbo = setup
-    if not _paint_frame(ctx, renderer, fbo, opts, bodies, output_path):
+    _app, ctx, renderer, fbo, read_fbo = setup
+    if not _paint_frame(ctx, renderer, fbo, opts, bodies, output_path, read_fbo):
         return 1
 
     if summary is not None:
@@ -406,8 +462,8 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
                 setup = _make_offscreen_renderer(opts)
                 if setup is None:
                     return 1
-            _app, ctx, renderer, fbo = setup
-            if not _paint_frame(ctx, renderer, fbo, opts, bodies, str(frame_path)):
+            _app, ctx, renderer, fbo, read_fbo = setup
+            if not _paint_frame(ctx, renderer, fbo, opts, bodies, str(frame_path), read_fbo):
                 print(f"belfryscad: frame {i}: export failed", file=sys.stderr)
                 ok = False
                 continue

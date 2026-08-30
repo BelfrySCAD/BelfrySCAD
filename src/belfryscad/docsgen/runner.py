@@ -12,9 +12,78 @@ it works from the CLI and from the GUI's worker thread alike.
 """
 from __future__ import annotations
 
+import glob
 import os
 import tempfile
 from dataclasses import dataclass, field
+
+
+#: Temp-script prefix. Keeps docsgen's own `tmp_*.scad` IgnoreFiles rule
+#: working (BOSL2's rc has one), and carries the owning PID so an
+#: abandoned file can be told from one a concurrent run is still using.
+_TEMP_PREFIX = f"tmp_docsgen_{os.getpid()}_"
+
+#: Directories already swept this process; sweeping is worth doing once,
+#: not once per example.
+_swept_dirs = set()
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether `pid` is still running, portably.
+
+    os.kill(pid, 0) says so on POSIX but not on Windows, where CPython
+    implements os.kill through the process-handle API and raises OSError
+    both for a PID that is gone and for one it cannot open. Guessing wrong
+    in the "gone" direction would delete a live run's script, so Windows
+    asks the API directly instead.
+    """
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # someone else's process, but it exists
+    except OSError:
+        return True          # unknown: leave the file alone
+    return True
+
+
+def _sweep_abandoned_temp_files(directory: str):
+    """Delete temp scripts left behind by runs that were killed.
+
+    run() unlinks its own file in a `finally`, so the only way one survives
+    is the process dying outright -- a SIGKILL, or a crash in the
+    evaluator. Nothing can be done about that from inside the run that
+    died, so the next one cleans up after it.
+
+    The owning PID is in the filename, and a file is removed only if that
+    PID is gone, so two docsgen runs sharing a directory cannot delete each
+    other's live scripts.
+    """
+    if directory in _swept_dirs:
+        return
+    _swept_dirs.add(directory)
+    for path in glob.glob(os.path.join(directory, "tmp_docsgen_*_*.scad")):
+        name = os.path.basename(path)
+        try:
+            pid = int(name[len("tmp_docsgen_"):].split("_", 1)[0])
+        except ValueError:
+            continue                      # not one of ours after all
+        if pid == os.getpid() or _pid_alive(pid):
+            continue                      # ours, or still running
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 @dataclass
@@ -105,7 +174,8 @@ class ScriptRunner:
             else:
                 result.echos.append(msg)
 
-        fd, path = tempfile.mkstemp(suffix=".scad", prefix="tmp_docsgen_", dir=src_dir)
+        _sweep_abandoned_temp_files(src_dir)
+        fd, path = tempfile.mkstemp(suffix=".scad", prefix=_TEMP_PREFIX, dir=src_dir)
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(script_lines) + "\n")
@@ -160,7 +230,7 @@ class ScriptRunner:
 
         The framebuffer is cached per size, so a run of many same-sized
         examples allocates exactly one."""
-        from belfryscad.headless_render import apply_view_options, make_fbo, paint_rgba
+        from belfryscad.headless_render import apply_view_options, make_render_target, paint_rgba
 
         gl = self._ensure_gl(opts)
         if gl is None:
@@ -169,8 +239,9 @@ class ScriptRunner:
         apply_view_options(renderer, opts)
         key = (opts.w, opts.h)
         if key not in self._fbos:
-            self._fbos[key] = make_fbo(ctx, opts.w, opts.h)
-        return paint_rgba(ctx, renderer, self._fbos[key], opts, bodies)
+            self._fbos[key] = make_render_target(ctx, opts.w, opts.h)
+        draw_fbo, read_fbo = self._fbos[key]
+        return paint_rgba(ctx, renderer, draw_fbo, opts, bodies, read_fbo)
 
     def _ensure_gl(self, opts):
         if self._gl is None:
@@ -178,17 +249,18 @@ class ScriptRunner:
             setup = _make_offscreen_renderer(opts)
             if setup is None:
                 return None
-            app, ctx, renderer, fbo = setup
+            app, ctx, renderer, draw_fbo, read_fbo = setup
             self._gl = (app, ctx, renderer)
-            self._fbos[(opts.w, opts.h)] = fbo
+            self._fbos[(opts.w, opts.h)] = (draw_fbo, read_fbo)
         return self._gl
 
     def close(self):
-        for fbo in self._fbos.values():
-            try:
-                fbo.release()
-            except Exception:
-                pass
+        for pair in self._fbos.values():
+            for fbo in set(pair):      # the two are one object without MSAA
+                try:
+                    fbo.release()
+                except Exception:
+                    pass
         self._fbos.clear()
         self._gl = None
 

@@ -324,8 +324,32 @@ def _install_crash_log():
     sys.excepthook = hook
 
 
+#: The GUI's process name. Batch modes get their own suffixed name below,
+#: so `pkill -x BelfrySCAD` reaches the window and nothing else. Every name
+#: still starts with "BelfrySCAD", so `pgrep -f BelfrySCAD` still finds
+#: them all when that is what you want.
+PROC_NAME = "BelfrySCAD"
+
+
+def _proc_name(argv) -> str:
+    """What to call this process, by the job it is about to do.
+
+    All of these used to be plain "BelfrySCAD", which made a batch job
+    indistinguishable from the window in `ps`: a `pkill -f BelfrySCAD`
+    aimed at a stuck GUI would also kill a docs build halfway through,
+    leaving its temp script behind (see docsgen.runner's sweep).
+    """
+    if "--docsgen" in argv:
+        return PROC_NAME + "-docsgen"
+    if "--mdimggen" in argv:
+        return PROC_NAME + "-mdimggen"
+    if "-o" in argv or "--output" in argv or any(a.startswith("--output=") for a in argv):
+        return PROC_NAME + "-headless"
+    return PROC_NAME
+
+
 def main():
-    setproctitle.setproctitle("BelfrySCAD")
+    setproctitle.setproctitle(_proc_name(sys.argv[1:]))
     sys.setrecursionlimit(10000)
     _install_crash_log()
 

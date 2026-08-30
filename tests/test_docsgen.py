@@ -931,3 +931,280 @@ def test_a_preview_only_module_actually_produces_geometry(tmp_path):
     script = ["module gated() { if ($preview) cube(10); }", "gated();"]
     assert runner.run(script, str(tmp_path)).bodies, "preview run must build geometry"
     assert not runner.run(script, str(tmp_path), preview=False).bodies
+
+
+# -- abandoned temp scripts -------------------------------------------
+#
+# run() unlinks its own script in a `finally`, so the only way one survives
+# is the process dying outright. Nothing can be done from inside the run
+# that died, so the next one cleans up after it -- but only for PIDs that
+# are actually gone, or two docsgen runs sharing a directory would delete
+# each other's live scripts.
+
+def test_sweep_removes_scripts_left_by_dead_processes(tmp_path):
+    import os
+    from belfryscad.docsgen import runner as R
+
+    dead = tmp_path / "tmp_docsgen_999999_abc.scad"      # no such PID
+    mine = tmp_path / f"tmp_docsgen_{os.getpid()}_xyz.scad"
+    alive = tmp_path / f"tmp_docsgen_{os.getppid()}_live.scad"   # our parent
+    other = tmp_path / "unrelated.scad"
+    for f in (dead, mine, alive, other):
+        f.write_text("cube(1);\n")
+
+    R._swept_dirs.discard(str(tmp_path))
+    R._sweep_abandoned_temp_files(str(tmp_path))
+
+    assert not dead.exists(), "a script whose owner is gone must be removed"
+    assert mine.exists(), "never delete our own live script"
+    assert alive.exists(), "never delete a running run's script"
+    assert other.exists(), "only our own prefix is ours to delete"
+
+
+def test_sweep_runs_once_per_directory(tmp_path):
+    from belfryscad.docsgen import runner as R
+
+    R._swept_dirs.discard(str(tmp_path))
+    R._sweep_abandoned_temp_files(str(tmp_path))
+    stale = tmp_path / "tmp_docsgen_999999_abc.scad"
+    stale.write_text("cube(1);\n")
+    R._sweep_abandoned_temp_files(str(tmp_path))          # already swept
+    assert stale.exists(), "a second sweep of the same directory is a no-op"
+
+
+def test_run_leaves_no_script_behind(tmp_path):
+    from belfryscad.docsgen.runner import runner
+
+    runner.run(["cube(1);"], str(tmp_path))
+    runner.run(["this is not valid scad !!!"], str(tmp_path))
+    assert list(tmp_path.glob("tmp_docsgen_*")) == []
+
+
+def test_batch_modes_get_their_own_process_name():
+    """A batch job used to be indistinguishable from the window in ps, so a
+    `pkill -f BelfrySCAD` aimed at a stuck GUI also killed docs builds."""
+    from belfryscad.main import _proc_name, PROC_NAME
+
+    assert _proc_name([]) == PROC_NAME
+    assert _proc_name(["model.scad"]) == PROC_NAME
+    assert _proc_name(["--docsgen", "-m"]) == PROC_NAME + "-docsgen"
+    assert _proc_name(["--mdimggen"]) == PROC_NAME + "-mdimggen"
+    assert _proc_name(["-o", "out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    assert _proc_name(["--output=out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    # Every name still starts with the same word, so pgrep -f finds them all.
+    for argv in ([], ["--docsgen"], ["-o", "x.stl"]):
+        assert _proc_name(argv).startswith(PROC_NAME)
+
+
+# -- render progress ---------------------------------------------------
+
+def _fake_manager(names):
+    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+
+    mgr = ImageManager()
+    mgr.requests = [ImageRequest("f.scad", 1, n, ["cube(1);"], "3D") for n in names]
+    done = []
+    mgr.process_request = done.append
+    return mgr, done
+
+
+def test_progress_counts_only_the_images_actually_selected():
+    """`total` must be the real work, not the queue length -- clicking one
+    placeholder in a 129-image file renders one, and saying "1 of 129"
+    would be a lie."""
+    mgr, rendered = _fake_manager(["images/a.png", "images/b.png", "images/c.png"])
+    seen = []
+    mgr.process_requests(only=["images/b.png"], progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 1), (1, 1)]
+    assert [r.image_file for r in rendered] == ["images/b.png"]
+
+
+def test_progress_counts_every_image_when_rendering_all():
+    mgr, rendered = _fake_manager(["a.png", "b.png", "c.png"])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert len(rendered) == 3
+
+
+def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
+    mgr, _ = _fake_manager([])
+    seen = []
+    mgr.process_requests(progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(0, 0)], "a zero total is what tells the label to stay quiet"
+
+    mgr, _ = _fake_manager(["a.png"])
+    mgr.process_requests()          # no progress callback at all
+
+
+
+# -- offscreen rendering ----------------------------------------------
+#
+# Rendering runs in a SUBPROCESS, never in pytest's own. An offscreen GL
+# context is process-global state -- the framebuffer cache, the context
+# itself -- so two rendering tests in one interpreter interfere, and a
+# driver that dislikes the setup takes the whole suite down with it rather
+# than failing a test. A subprocess gets a clean context every time and
+# cannot crash the run.
+
+_RENDER_DRIVER = """
+import json, sys
+from belfryscad import headless_render as HR
+HR.MSAA_SAMPLES = int(sys.argv[2])
+from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+out_dir, _, *jobs = sys.argv[1:]
+mgr = ImageManager()
+for job in jobs:
+    name, meta, script = json.loads(job)
+    mgr.requests = [ImageRequest(out_dir + "/f.scad", 1, out_dir + "/" + name,
+                                 script, meta)]
+    mgr.process_requests()
+"""
+
+
+def _render_in_subprocess(tmp_path, jobs, samples=4):
+    """Render `jobs` [(filename, meta, script_lines), ...]; skip if this
+    machine has no offscreen GL. Returns the output directory."""
+    import json, subprocess, sys
+    import pytest
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    driver = tmp_path / "_driver.py"
+    driver.write_text(_RENDER_DRIVER)
+    r = subprocess.run(
+        [sys.executable, str(driver), str(tmp_path), str(samples)]
+        + [json.dumps(j) for j in jobs],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not all((tmp_path / j[0]).exists() for j in jobs):
+        pytest.skip(f"offscreen rendering unavailable here: "
+                    f"{(r.stderr or r.stdout).strip()[-200:]}")
+    return tmp_path
+
+
+def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
+    """moderngl's ctx.viewport writes through to whichever framebuffer is
+    bound at the time -- which, when this was set before fbo.use(), was the
+    PREVIOUS image's. Every fbo ended up holding the next image's size, and
+    fbo.use() restored that wrong value, so a 320x240 example rendered
+    after a 640x480 one was drawn at double scale and cropped.
+
+    Only a run that mixes sizes shows it, which is every real docs build:
+    Example is 320x240, Example(Med) 480x360, Example(Big) 640x480.
+    """
+    script = ["cube(20, center=true);"]
+    jobs = [("small_a.png", "3D", script),
+            ("big.png", "3D,Big", script),
+            ("small_b.png", "3D", script)]
+    # Both sample counts. Multisampling adds a resolve blit whose own
+    # binding changes which framebuffer a stray viewport write lands on, so
+    # it happens to mask this -- the bug was found with it off, and only
+    # covering the multisampled path would let it come straight back.
+    for samples in (1, 4):
+        _render_in_subprocess(tmp_path / f"s{samples}", jobs, samples=samples)
+        _assert_same_framing(tmp_path / f"s{samples}", samples)
+
+
+def _assert_same_framing(out_dir, samples):
+    from PySide6.QtGui import QImage
+
+    # Mean pixel difference, not byte equality: a different GL driver may
+    # shade a hair differently between two renders, and that is not what
+    # this is about. The bug drew the scene at double scale and cropped it,
+    # which moves the mean by a mile (82/255 when it was live).
+    a = QImage(str(out_dir / "small_a.png")).convertToFormat(QImage.Format.Format_RGB888)
+    b = QImage(str(out_dir / "small_b.png")).convertToFormat(QImage.Format.Format_RGB888)
+    assert (a.width(), a.height()) == (b.width(), b.height())
+    xs = range(0, a.width(), 3)
+    ys = range(0, a.height(), 3)
+    total = sum(abs(((a.pixel(x, y) >> sh) & 255) - ((b.pixel(x, y) >> sh) & 255))
+                for y in ys for x in xs for sh in (16, 8, 0))
+    mean_diff = total / (len(xs) * len(ys) * 3)
+    assert mean_diff < 2.0, (
+        f"same script, same size -> same framing, whatever was rendered in "
+        f"between (MSAA samples={samples}); "
+        f"mean pixel difference {mean_diff:.1f}/255")
+
+
+def test_rendered_images_are_antialiased(tmp_path):
+    """A docs build's images sit next to OpenSCAD's on the same wiki page,
+    and OpenSCAD's are antialiased. Ours rendered every edge hard: a plain
+    cube came out as four flat colours with no blended edge pixels at all.
+    """
+    from PySide6.QtGui import QImage
+
+    job = [("cube.png", "3D,NoAxes,NoScales", ["cube(20, center=true);"])]
+    hard = _render_in_subprocess(tmp_path / "off", job, samples=1) / "cube.png"
+    soft = _render_in_subprocess(tmp_path / "on", job, samples=4) / "cube.png"
+
+    def colours(path):
+        img = QImage(str(path))
+        assert not img.isNull(), path
+        return {img.pixel(x, y) for y in range(img.height()) for x in range(img.width())}
+
+    n_hard, n_soft = len(colours(hard)), len(colours(soft))
+    if n_soft == n_hard:
+        import pytest
+        pytest.skip("this GL context offers no multisampling")
+    assert n_soft > n_hard * 2, f"expected blended edges: {n_hard} -> {n_soft} colours"
+
+
+def test_batch_modes_get_their_own_process_name():
+    """A batch job used to be indistinguishable from the window in ps, so a
+    `pkill -f BelfrySCAD` aimed at a stuck GUI also killed docs builds."""
+    from belfryscad.main import _proc_name, PROC_NAME
+
+    assert _proc_name([]) == PROC_NAME
+    assert _proc_name(["model.scad"]) == PROC_NAME
+    assert _proc_name(["--docsgen", "-m"]) == PROC_NAME + "-docsgen"
+    assert _proc_name(["--mdimggen"]) == PROC_NAME + "-mdimggen"
+    assert _proc_name(["-o", "out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    assert _proc_name(["--output=out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    # Every name still starts with the same word, so pgrep -f finds them all.
+    for argv in ([], ["--docsgen"], ["-o", "x.stl"]):
+        assert _proc_name(argv).startswith(PROC_NAME)
+
+
+# -- render progress ---------------------------------------------------
+
+def _fake_manager(names):
+    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+
+    mgr = ImageManager()
+    mgr.requests = [ImageRequest("f.scad", 1, n, ["cube(1);"], "3D") for n in names]
+    done = []
+    mgr.process_request = done.append
+    return mgr, done
+
+
+def test_progress_counts_only_the_images_actually_selected():
+    """`total` must be the real work, not the queue length -- clicking one
+    placeholder in a 129-image file renders one, and saying "1 of 129"
+    would be a lie."""
+    mgr, rendered = _fake_manager(["images/a.png", "images/b.png", "images/c.png"])
+    seen = []
+    mgr.process_requests(only=["images/b.png"], progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 1), (1, 1)]
+    assert [r.image_file for r in rendered] == ["images/b.png"]
+
+
+def test_progress_counts_every_image_when_rendering_all():
+    mgr, rendered = _fake_manager(["a.png", "b.png", "c.png"])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert len(rendered) == 3
+
+
+def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
+    mgr, _ = _fake_manager([])
+    seen = []
+    mgr.process_requests(progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(0, 0)], "a zero total is what tells the label to stay quiet"
+
+    mgr, _ = _fake_manager(["a.png"])
+    mgr.process_requests()          # no progress callback at all
+

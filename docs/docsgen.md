@@ -284,6 +284,44 @@ was needed, since `viewport_params` already seeds arbitrary `$`-names.
 This affects only docs generation. An ordinary render, in the GUI or
 through `-o`, is a real render and leaves `$preview` false.
 
+**Rendered images are antialiased.** A docs build's images sit next to
+OpenSCAD's on the same wiki page and OpenSCAD's are antialiased; ours drew
+every edge hard, so a plain cube came out as four flat colours with no
+blended edge pixels at all. The offscreen target is now multisampled
+(`make_render_target`), negotiated down to what the context supports --
+macOS/Metal caps it at 4. A multisample renderbuffer cannot be read back
+directly, so it is resolved into a plain framebuffer with one blit first;
+without multisampling the two are the same object and the resolve is
+skipped. Measured free: 40 images take 5.65s either way.
+
+MSAA rather than rendering large and shrinking: supersampling would also
+thin every axis line and shrink every tick label, since those are sized in
+pixels, and the point is smoother edges, not a different picture.
+
+**A render must not be affected by a differently sized one before it.**
+moderngl's `ctx.viewport` writes through to whichever framebuffer is bound
+at the time -- which, when it was set before `fbo.use()`, was the PREVIOUS
+image's. Every framebuffer ended up holding the next image's size, and
+`fbo.use()` then restored that wrong value, so a 320x240 example rendered
+after a 640x480 one was drawn at double scale and cropped. Setting it on
+the target framebuffer instead fixes it. Only a run that mixes sizes shows
+this, which is every real docs build: `Example` is 320x240, `Example(Med)`
+480x360, `Example(Big)` 640x480. It corrected 19 of shapes3d's 244 images.
+
+**Batch modes have their own process name.** `--docsgen`, `--mdimggen` and
+headless `-o` run as `BelfrySCAD-docsgen`, `BelfrySCAD-mdimggen` and
+`BelfrySCAD-headless`; only the GUI is plain `BelfrySCAD`. They were all
+called the same thing, so `pkill -f BelfrySCAD` aimed at a stuck window
+also killed any docs build in flight. `pkill -x BelfrySCAD` now reaches the
+window alone, while `pgrep -f BelfrySCAD` still finds every one.
+
+A killed run cannot clean up after itself: `runner.run` unlinks its temp
+script in a `finally`, which a SIGKILL never reaches. So the script now
+carries its owner's PID in the name, and each run sweeps abandoned ones
+once per directory -- removing only those whose owning process is gone, so
+two docsgen runs sharing a directory cannot delete each other's live
+scripts.
+
 **Refresh discards the rendered images.** The image cache is keyed on the
 file's path, deliberately not its contents, which is what lets
 click-to-render accumulate across edits and sessions. The cost is that an
@@ -313,6 +351,15 @@ them, and the emitted link really is
 difference between 5104 and 5105 of BOSL2's 5109 intra-file links
 resolving; the last few point at headings that do not exist, and are
 broken on the published wiki too.
+
+**The status line counts the images up.** A "render all" over a big file
+is minutes of work, and the pane used to say "Building preview…" for the
+whole of it. `process_requests` now resolves its selection up front -- so
+the total is the real work, not the queue length -- and calls back before
+the first render and after each one. The signal crosses from the worker
+thread to the GUI as a queued connection, so the label updates between
+renders without the worker ever touching a widget. A zero total keeps the
+label plain, which is the ordinary refresh.
 
 **A queued placeholder says so.** Clicking one, or the status line's
 render-all, rewrites each affected placeholder to `Rendering Example 8` with
