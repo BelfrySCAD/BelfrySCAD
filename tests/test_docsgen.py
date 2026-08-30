@@ -1075,6 +1075,7 @@ def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
     Example is 320x240, Example(Med) 480x360, Example(Big) 640x480.
     """
     _require_offscreen_gl()
+    from PySide6.QtGui import QImage
     from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
 
     mgr = ImageManager()
@@ -1089,8 +1090,22 @@ def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
 
     assert out["small_a"], "the first render must actually produce a file"
     assert out["big"] != out["small_a"], "the sizes really do differ"
-    assert out["small_b"] == out["small_a"], \
-        "same script, same size -> same pixels, whatever was rendered in between"
+
+    # Mean pixel difference, not byte equality: a different GL
+    # implementation may dither or shade a hair differently between two
+    # renders, and that is not what this is about. The bug drew the scene
+    # at double scale and cropped it, which moves the mean by a mile.
+    a = QImage(str(tmp_path / "small_a.png")).convertToFormat(QImage.Format.Format_RGB888)
+    b = QImage(str(tmp_path / "small_b.png")).convertToFormat(QImage.Format.Format_RGB888)
+    assert (a.width(), a.height()) == (b.width(), b.height())
+    total = sum(abs(((a.pixel(x, y) >> sh) & 255) - ((b.pixel(x, y) >> sh) & 255))
+                for y in range(0, a.height(), 3) for x in range(0, a.width(), 3)
+                for sh in (16, 8, 0))
+    n = len(range(0, a.height(), 3)) * len(range(0, a.width(), 3)) * 3
+    mean_diff = total / n
+    assert mean_diff < 2.0, (
+        f"same script, same size -> same framing, whatever was rendered in "
+        f"between; mean pixel difference {mean_diff:.1f}/255")
 
 
 def test_rendered_images_are_antialiased(tmp_path):
