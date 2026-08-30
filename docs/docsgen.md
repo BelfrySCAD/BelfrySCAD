@@ -284,6 +284,18 @@ was needed, since `viewport_params` already seeds arbitrary `$`-names.
 This affects only docs generation. An ordinary render, in the GUI or
 through `-o`, is a real render and leaves `$preview` false.
 
+**The error pane appears only when something is wrong.** A clean file
+should not carry an empty list around under its docs, so the whole pane is
+hidden until a build reports something.
+
+The message is no longer a column in that list. A failed example dumps its
+whole script and the evaluator's trace, and one elided line of that told
+the reader nothing; the list now carries only Line and Level, and the
+selected entry's message appears in full in a scrollable pane beside it
+(list left, message right). The first entry is selected automatically, and
+because the rows sort errors ahead of warnings, that is the one most worth
+reading.
+
 **Overlapping 2D shapes layer in source order.** Every 2D shape is drawn
 as the same wafer-thin slab, so two that overlap are exactly coplanar.
 Under the default `<` depth test the second one's fragments are rejected

@@ -1233,3 +1233,70 @@ def test_overlapping_2d_shapes_layer_in_source_order(tmp_path):
     assert mid.red() > 2 * mid.green() and mid.red() > 2 * mid.blue(), (
         f"the later 2D shape must be on top, got rgb"
         f"({mid.red()},{mid.green()},{mid.blue()})")
+
+
+# -- the error pane ----------------------------------------------------
+
+_ERROR_PANE_DRIVER = """
+import json, sys
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.docs_pane import DocsPane
+
+pane = DocsPane()
+out = {}
+out["order"] = [pane._error_pane.widget(i).__class__.__name__ for i in range(2)]
+out["hidden_when_clean"] = pane._error_pane.isHidden()
+pane._show_errors([])
+out["still_hidden_after_empty"] = pane._error_pane.isHidden()
+
+long_msg = "Failed OpenSCAD script:\\n  line 1\\n  line 2\\n  ...trace..."
+pane._show_errors([("f.scad", 12, "Short one", "warning"),
+                   ("f.scad", 44, long_msg, "error")])
+out["shown_when_errors"] = not pane._error_pane.isHidden()
+out["headers"] = [pane._errors.headerItem().text(i)
+                  for i in range(pane._errors.columnCount())]
+out["rows"] = pane._errors.topLevelItemCount()
+out["first_selected"] = pane._errors.currentItem().text(0)
+out["detail_is_full_message"] = pane._error_text.toPlainText() == long_msg
+pane._errors.setCurrentItem(pane._errors.topLevelItem(1))
+out["detail_follows_selection"] = pane._error_text.toPlainText() == "Short one"
+
+pane._show_errors([])
+out["hidden_again"] = pane._error_pane.isHidden()
+out["detail_cleared"] = pane._error_text.toPlainText() == ""
+pane.shutdown()
+print(json.dumps(out))
+"""
+
+
+def test_error_pane_hides_when_clean_and_shows_full_messages(tmp_path):
+    """The list used to carry the message in a column, elided to one line --
+    useless for a failed example, which dumps its whole script and the
+    evaluator's trace. The message moved to its own scrollable pane, and
+    the whole thing stays hidden while there is nothing wrong.
+
+    Driven in a subprocess: a QWidget needs a QApplication, and building one
+    inside the test process is what the GL tests already avoid.
+    """
+    import json, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_errpane.py"
+    driver.write_text(_ERROR_PANE_DRIVER)
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["order"] == ["QTreeWidget", "QTextBrowser"], \
+        "list on the left, message on the right"
+    assert out["hidden_when_clean"], "a fresh pane shows no error list"
+    assert out["still_hidden_after_empty"], "a clean build shows no error list"
+    assert out["shown_when_errors"], "errors must bring the pane back"
+    assert out["headers"] == ["Line", "Level"], "the message is no longer a column"
+    assert out["rows"] == 2
+    assert out["first_selected"] == "44", "errors sort ahead of warnings"
+    assert out["detail_is_full_message"], "the detail pane shows every line"
+    assert out["detail_follows_selection"]
+    assert out["hidden_again"] and out["detail_cleared"]
