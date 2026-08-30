@@ -337,14 +337,17 @@ def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies, read_fbo=None) 
             elif opts.autocenter:
                 renderer.camera.target = ((bb_min + bb_max) / 2).astype(np.float32)
 
-    # On the FBO, not the context: moderngl's ctx.viewport writes through to
-    # whichever framebuffer is bound right now, which here is still the
-    # PREVIOUS image's. Setting it that way left every fbo holding the next
-    # image's size, and fbo.use() then restored that wrong value -- so a
-    # 320x240 example rendered after a 640x480 one was drawn at double scale
-    # and cropped. Only ever visible in a run that mixes sizes, which is
-    # every real docs build (Example, Example(Med), Example(Big)).
-    fbo.viewport = (0, 0, opts.w, opts.h)
+    # Bind FIRST, then set the viewport. moderngl's ctx.viewport writes
+    # through to whichever framebuffer is bound right now, so setting it
+    # before use() aimed it at the PREVIOUS image's framebuffer: every one
+    # ended up holding the next image's size, and use() then restored that
+    # wrong value -- a 320x240 example rendered after a 640x480 one was
+    # drawn at double scale and cropped. (Assigning fbo.viewport on an
+    # unbound framebuffer does not stick either; binding is what makes the
+    # assignment land.) Only a run that mixes sizes shows this, which is
+    # every real docs build: Example, Example(Med), Example(Big).
+    fbo.use()
+    ctx.viewport = (0, 0, opts.w, opts.h)
     ctx.wireframe = "wireframe" in opts.view_opts
     try:
         renderer.paint(fbo=fbo)
@@ -354,7 +357,8 @@ def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies, read_fbo=None) 
     # A multisample framebuffer has to be resolved before it can be read.
     src = fbo
     if read_fbo is not None and read_fbo is not fbo:
-        read_fbo.viewport = (0, 0, opts.w, opts.h)
+        read_fbo.use()
+        ctx.viewport = (0, 0, opts.w, opts.h)
         ctx.copy_framebuffer(read_fbo, fbo)
         src = read_fbo
     data = src.read(components=4, alignment=1)

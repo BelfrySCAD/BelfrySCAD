@@ -1040,28 +1040,47 @@ def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
 
 
 
-#: Cached across the module: creating an offscreen GL context is slow, and
-#: the answer never changes within a run.
-_OFFSCREEN_GL = None
+# -- offscreen rendering ----------------------------------------------
+#
+# Rendering runs in a SUBPROCESS, never in pytest's own. An offscreen GL
+# context is process-global state -- the framebuffer cache, the context
+# itself -- so two rendering tests in one interpreter interfere, and a
+# driver that dislikes the setup takes the whole suite down with it rather
+# than failing a test. A subprocess gets a clean context every time and
+# cannot crash the run.
+
+_RENDER_DRIVER = """
+import json, sys
+from belfryscad import headless_render as HR
+HR.MSAA_SAMPLES = int(sys.argv[2])
+from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+out_dir, _, *jobs = sys.argv[1:]
+mgr = ImageManager()
+for job in jobs:
+    name, meta, script = json.loads(job)
+    mgr.requests = [ImageRequest(out_dir + "/f.scad", 1, out_dir + "/" + name,
+                                 script, meta)]
+    mgr.process_requests()
+"""
 
 
-def _require_offscreen_gl():
-    """Skip unless this machine can actually render offscreen.
-
-    CI runners have no GPU or display, so an image test there produces no
-    file rather than a wrong one -- a skip is the honest result. A local
-    run still exercises them for real.
-    """
-    global _OFFSCREEN_GL
+def _render_in_subprocess(tmp_path, jobs, samples=4):
+    """Render `jobs` [(filename, meta, script_lines), ...]; skip if this
+    machine has no offscreen GL. Returns the output directory."""
+    import json, subprocess, sys
     import pytest
-    if _OFFSCREEN_GL is None:
-        from belfryscad.headless_render import _RenderOptions, _make_offscreen_renderer
-        opts = _RenderOptions.parse(imgsize="16,16", camera=None, autocenter=False,
-                                     viewall=False, projection=None, view=None,
-                                     colorscheme=None)
-        _OFFSCREEN_GL = bool(opts is not None and _make_offscreen_renderer(opts))
-    if not _OFFSCREEN_GL:
-        pytest.skip("no offscreen OpenGL context available")
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    driver = tmp_path / "_driver.py"
+    driver.write_text(_RENDER_DRIVER)
+    r = subprocess.run(
+        [sys.executable, str(driver), str(tmp_path), str(samples)]
+        + [json.dumps(j) for j in jobs],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not all((tmp_path / j[0]).exists() for j in jobs):
+        pytest.skip(f"offscreen rendering unavailable here: "
+                    f"{(r.stderr or r.stdout).strip()[-200:]}")
+    return tmp_path
 
 
 def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
@@ -1074,38 +1093,38 @@ def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
     Only a run that mixes sizes shows it, which is every real docs build:
     Example is 320x240, Example(Med) 480x360, Example(Big) 640x480.
     """
-    _require_offscreen_gl()
-    from PySide6.QtGui import QImage
-    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
-
-    mgr = ImageManager()
     script = ["cube(20, center=true);"]
-    out = {}
-    for tag, meta in (("small_a", "3D"), ("big", "3D,Big"), ("small_b", "3D")):
-        path = tmp_path / f"{tag}.png"
-        req = ImageRequest(str(tmp_path / "f.scad"), 1, str(path), script, meta)
-        mgr.requests = [req]
-        mgr.process_requests()
-        out[tag] = path.read_bytes()
+    jobs = [("small_a.png", "3D", script),
+            ("big.png", "3D,Big", script),
+            ("small_b.png", "3D", script)]
+    # Both sample counts. Multisampling adds a resolve blit whose own
+    # binding changes which framebuffer a stray viewport write lands on, so
+    # it happens to mask this -- the bug was found with it off, and only
+    # covering the multisampled path would let it come straight back.
+    for samples in (1, 4):
+        _render_in_subprocess(tmp_path / f"s{samples}", jobs, samples=samples)
+        _assert_same_framing(tmp_path / f"s{samples}", samples)
 
-    assert out["small_a"], "the first render must actually produce a file"
-    assert out["big"] != out["small_a"], "the sizes really do differ"
 
-    # Mean pixel difference, not byte equality: a different GL
-    # implementation may dither or shade a hair differently between two
-    # renders, and that is not what this is about. The bug drew the scene
-    # at double scale and cropped it, which moves the mean by a mile.
-    a = QImage(str(tmp_path / "small_a.png")).convertToFormat(QImage.Format.Format_RGB888)
-    b = QImage(str(tmp_path / "small_b.png")).convertToFormat(QImage.Format.Format_RGB888)
+def _assert_same_framing(out_dir, samples):
+    from PySide6.QtGui import QImage
+
+    # Mean pixel difference, not byte equality: a different GL driver may
+    # shade a hair differently between two renders, and that is not what
+    # this is about. The bug drew the scene at double scale and cropped it,
+    # which moves the mean by a mile (82/255 when it was live).
+    a = QImage(str(out_dir / "small_a.png")).convertToFormat(QImage.Format.Format_RGB888)
+    b = QImage(str(out_dir / "small_b.png")).convertToFormat(QImage.Format.Format_RGB888)
     assert (a.width(), a.height()) == (b.width(), b.height())
+    xs = range(0, a.width(), 3)
+    ys = range(0, a.height(), 3)
     total = sum(abs(((a.pixel(x, y) >> sh) & 255) - ((b.pixel(x, y) >> sh) & 255))
-                for y in range(0, a.height(), 3) for x in range(0, a.width(), 3)
-                for sh in (16, 8, 0))
-    n = len(range(0, a.height(), 3)) * len(range(0, a.width(), 3)) * 3
-    mean_diff = total / n
+                for y in ys for x in xs for sh in (16, 8, 0))
+    mean_diff = total / (len(xs) * len(ys) * 3)
     assert mean_diff < 2.0, (
         f"same script, same size -> same framing, whatever was rendered in "
-        f"between; mean pixel difference {mean_diff:.1f}/255")
+        f"between (MSAA samples={samples}); "
+        f"mean pixel difference {mean_diff:.1f}/255")
 
 
 def test_rendered_images_are_antialiased(tmp_path):
@@ -1113,40 +1132,79 @@ def test_rendered_images_are_antialiased(tmp_path):
     and OpenSCAD's are antialiased. Ours rendered every edge hard: a plain
     cube came out as four flat colours with no blended edge pixels at all.
     """
-    _require_offscreen_gl()
     from PySide6.QtGui import QImage
-    from belfryscad import headless_render as HR
-    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
 
-    from belfryscad.docsgen.runner import runner
-
-    def render(samples):
-        before = HR.MSAA_SAMPLES
-        HR.MSAA_SAMPLES = samples
-        # The framebuffer pair is cached per size for the life of the
-        # process and the sample count is chosen when it is built, so
-        # without this the second render silently reuses the first's.
-        runner.close()
-        try:
-            mgr = ImageManager()
-            out = tmp_path / f"ms{samples}.png"
-            mgr.requests = [ImageRequest(str(tmp_path / "f.scad"), 1, str(out),
-                                         ["cube(20, center=true);"], "3D,NoAxes,NoScales")]
-            mgr.process_requests()
-            return out.read_bytes()
-        finally:
-            HR.MSAA_SAMPLES = before
+    job = [("cube.png", "3D,NoAxes,NoScales", ["cube(20, center=true);"])]
+    hard = _render_in_subprocess(tmp_path / "off", job, samples=1) / "cube.png"
+    soft = _render_in_subprocess(tmp_path / "on", job, samples=4) / "cube.png"
 
     def colours(path):
         img = QImage(str(path))
         assert not img.isNull(), path
         return {img.pixel(x, y) for y in range(img.height()) for x in range(img.width())}
 
-    aliased, smooth = render(1), render(4)
-    assert aliased and smooth
-    assert aliased != smooth, "multisampling must change the pixels"
-    # What matters is that edges gained intermediate shades -- which is
-    # what antialiasing IS -- not the exact bytes.
-    n_hard = len(colours(tmp_path / "ms1.png"))
-    n_soft = len(colours(tmp_path / "ms4.png"))
+    n_hard, n_soft = len(colours(hard)), len(colours(soft))
+    if n_soft == n_hard:
+        import pytest
+        pytest.skip("this GL context offers no multisampling")
     assert n_soft > n_hard * 2, f"expected blended edges: {n_hard} -> {n_soft} colours"
+
+
+def test_batch_modes_get_their_own_process_name():
+    """A batch job used to be indistinguishable from the window in ps, so a
+    `pkill -f BelfrySCAD` aimed at a stuck GUI also killed docs builds."""
+    from belfryscad.main import _proc_name, PROC_NAME
+
+    assert _proc_name([]) == PROC_NAME
+    assert _proc_name(["model.scad"]) == PROC_NAME
+    assert _proc_name(["--docsgen", "-m"]) == PROC_NAME + "-docsgen"
+    assert _proc_name(["--mdimggen"]) == PROC_NAME + "-mdimggen"
+    assert _proc_name(["-o", "out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    assert _proc_name(["--output=out.stl", "m.scad"]) == PROC_NAME + "-headless"
+    # Every name still starts with the same word, so pgrep -f finds them all.
+    for argv in ([], ["--docsgen"], ["-o", "x.stl"]):
+        assert _proc_name(argv).startswith(PROC_NAME)
+
+
+# -- render progress ---------------------------------------------------
+
+def _fake_manager(names):
+    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+
+    mgr = ImageManager()
+    mgr.requests = [ImageRequest("f.scad", 1, n, ["cube(1);"], "3D") for n in names]
+    done = []
+    mgr.process_request = done.append
+    return mgr, done
+
+
+def test_progress_counts_only_the_images_actually_selected():
+    """`total` must be the real work, not the queue length -- clicking one
+    placeholder in a 129-image file renders one, and saying "1 of 129"
+    would be a lie."""
+    mgr, rendered = _fake_manager(["images/a.png", "images/b.png", "images/c.png"])
+    seen = []
+    mgr.process_requests(only=["images/b.png"], progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 1), (1, 1)]
+    assert [r.image_file for r in rendered] == ["images/b.png"]
+
+
+def test_progress_counts_every_image_when_rendering_all():
+    mgr, rendered = _fake_manager(["a.png", "b.png", "c.png"])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert len(rendered) == 3
+
+
+def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
+    mgr, _ = _fake_manager([])
+    seen = []
+    mgr.process_requests(progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(0, 0)], "a zero total is what tells the label to stay quiet"
+
+    mgr, _ = _fake_manager(["a.png"])
+    mgr.process_requests()          # no progress callback at all
+
