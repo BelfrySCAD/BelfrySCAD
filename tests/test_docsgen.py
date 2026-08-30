@@ -379,6 +379,282 @@ def test_image_urls_use_forward_slashes(tmp_path):
     assert "\\" not in preview.markdown
 
 
+# -- Docs pane code-block styling --------------------------------------
+#
+# The tint is derived from the palette rather than hardcoded so it stays a
+# subtle wash in a dark theme instead of a bright slab. Only the colour maths
+# is checked here; how it looks is verified by a throwaway script, since Qt
+# widgets inside pytest take the whole run down.
+
+class _StubPalette:
+    """Just enough QPalette for _code_tint -- no QApplication needed."""
+
+    def __init__(self, base, text):
+        from PySide6.QtGui import QColor
+        self._base, self._text = QColor(*base), QColor(*text)
+
+    def base(self):
+        return type("B", (), {"color": lambda _self, c=self._base: c})()
+
+    def text(self):
+        return type("T", (), {"color": lambda _self, c=self._text: c})()
+
+
+def test_code_tint_matches_githubs_bgcolor_muted_in_a_light_theme():
+    """GitHub's --bgColor-muted is #f6f8fa -- lightness 246. The tint is a
+    neutral blend of the palette so it survives theming, so it matches that
+    lightness rather than the exact hue (GitHub's has a faint blue cast)."""
+    from belfryscad.window.docs_pane import _code_tint
+    from PySide6.QtGui import QColor
+    tint = _code_tint(_StubPalette((255, 255, 255), (0, 0, 0)))
+    assert abs(tint.lightness() - QColor("#f6f8fa").lightness()) <= 2
+    assert tint.lightness() < 255            # darker than the white base
+
+
+def test_code_tint_lightens_a_dark_theme():
+    """The whole point of deriving it: on a dark base the tint must go UP,
+    not produce the near-white it would if it were hardcoded."""
+    from belfryscad.window.docs_pane import _code_tint
+    base = (30, 31, 34)
+    tint = _code_tint(_StubPalette(base, (220, 221, 222)))
+    from PySide6.QtGui import QColor
+    assert tint.lightness() > QColor(*base).lightness()
+    assert tint.lightness() < 128            # still a tint, not a slab
+
+
+def test_code_tint_stays_close_to_the_base():
+    from belfryscad.window.docs_pane import _code_tint
+    from PySide6.QtGui import QColor
+    for base, text in (((255, 255, 255), (0, 0, 0)), ((30, 31, 34), (220, 221, 222))):
+        tint = _code_tint(_StubPalette(base, text))
+        delta = abs(tint.lightness() - QColor(*base).lightness())
+        assert delta < 30, f"tint drifted {delta} from base {base}"
+
+
+def test_headings_get_a_rule_and_leading_space_at_levels_one_and_two():
+    """Level 1 and 2 only. BOSL2 files carry dozens of level-3 Module:/
+    Function: headings, and ruling every one turns the page into a ladder."""
+    from PySide6.QtGui import QTextDocument, QTextFormat
+    from belfryscad.window.docs_pane import _style_headings, _HEADING_TOP_MARGIN
+
+    doc = QTextDocument()
+    doc.setMarkdown("# One\n\ntext\n\n## Two\n\ntext\n\n### Three\n\ntext\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    _style_headings(doc)
+
+    seen = {}
+    block = doc.begin()
+    while block.isValid():
+        fmt = block.blockFormat()
+        if fmt.headingLevel():
+            seen[fmt.headingLevel()] = (
+                fmt.hasProperty(QTextFormat.Property.BlockTrailingHorizontalRulerWidth),
+                fmt.topMargin(),
+            )
+        block = block.next()
+
+    assert seen[1] == (True, _HEADING_TOP_MARGIN[1])
+    assert seen[2] == (True, _HEADING_TOP_MARGIN[2])
+    assert seen[3][0] is False, "level 3 must not be ruled"
+
+
+def test_heading_scale_matches_githubs():
+    """GitHub: h1 2em, h2 1.5em, h3 1.25em, font-weight 600. Qt sizes
+    headings with a legacy adjustment that leaves them all at body size."""
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import _style_headings, _HEADING_SCALE
+
+    doc = QTextDocument()
+    doc.setMarkdown("# One\n\n## Two\n\n### Three\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    base = doc.defaultFont().pointSizeF()
+    _style_headings(doc)
+
+    seen = {}
+    block = doc.begin()
+    while block.isValid():
+        lvl = block.blockFormat().headingLevel()
+        it = block.begin()
+        if lvl and not it.atEnd():
+            cf = it.fragment().charFormat()
+            seen[lvl] = (round(cf.fontPointSize() / base, 3), cf.fontWeight())
+        block = block.next()
+    assert seen[1] == (_HEADING_SCALE[1], 600) and _HEADING_SCALE[1] == 2.0
+    assert seen[2] == (_HEADING_SCALE[2], 600) and _HEADING_SCALE[2] == 1.5
+    assert seen[3] == (_HEADING_SCALE[3], 600) and _HEADING_SCALE[3] == 1.25
+
+
+def test_rule_grey_matches_githubs_border_color():
+    """GitHub: border-bottom 1px solid --borderColor-muted, #d1d9e0 at 70%
+    over white, about #dde2e7 -- a hairline, not Qt's default text-coloured
+    bar."""
+    from belfryscad.window.docs_pane import _blend, _RULE_FADE
+    from PySide6.QtGui import QColor
+    grey = _blend(QColor(0, 0, 0), QColor(255, 255, 255), _RULE_FADE)
+    assert abs(grey.lightness() - QColor("#dde2e7").lightness()) <= 10
+
+
+def test_rule_grey_is_between_the_text_and_background():
+    from belfryscad.window.docs_pane import _blend, _RULE_FADE
+    from PySide6.QtGui import QColor
+    for text, base in (((0, 0, 0), (255, 255, 255)), ((220, 221, 222), (30, 31, 34))):
+        grey = _blend(QColor(*text), QColor(*base), _RULE_FADE)
+        lo, hi = sorted((QColor(*text).lightness(), QColor(*base).lightness()))
+        assert lo < grey.lightness() < hi, f"{grey.name()} not between {text} and {base}"
+
+
+def test_tables_stripe_alternate_body_rows_leaving_the_header_clear():
+    from PySide6.QtGui import QTextDocument, QTextTable
+    from belfryscad.window.docs_pane import _stripe_tables, _code_tint
+
+    doc = QTextDocument()
+    rows = "\n".join(f"| r{i} | v{i} |" for i in range(1, 7))
+    doc.setMarkdown(f"| a | b |\n|---|---|\n{rows}\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    pal = _StubPalette((255, 255, 255), (0, 0, 0))
+    _stripe_tables(doc, pal)
+
+    table = next(f for f in doc.rootFrame().childFrames() if isinstance(f, QTextTable))
+    tint = _code_tint(pal)
+    tinted = [r for r in range(table.rows())
+              if table.cellAt(r, 0).format().background().color() == tint]
+    assert 0 not in tinted, "header row must stay clear"
+    assert 1 not in tinted, "first body row stays clear, striping starts below it"
+    assert tinted == [r for r in range(2, table.rows(), 2)]
+
+
+# -- Docs pane image placeholders --------------------------------------
+
+def test_unrendered_images_become_click_to_render_placeholders():
+    from belfryscad.window.docs_pane import placeholder_markdown
+    md, pending = placeholder_markdown("![Example 1](images/d/a.png)", "/nonexistent")
+    assert "bfsrender:images/d/a.png" in md
+    assert "![" not in md, "must not leave an image Qt would draw as a broken icon"
+    assert pending == ["images/d/a.png"]
+
+
+def test_already_rendered_images_are_left_alone(tmp_path):
+    from belfryscad.window.docs_pane import placeholder_markdown
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "a.png").write_bytes(b"x")
+    md, pending = placeholder_markdown("![Example 1](images/a.png)", str(tmp_path))
+    assert md == "![Example 1](images/a.png)"
+    assert pending == []
+
+
+def test_remote_images_become_links_not_render_placeholders():
+    """BOSL2's isosurface.scad embeds animated GIFs straight from
+    raw.githubusercontent.com. QTextBrowser does no network fetching, so
+    those rendered as broken icons -- and offering to 'render' them would be
+    a lie, since there is no Example behind them."""
+    from belfryscad.window.docs_pane import placeholder_markdown, _REMOTE_SCHEME
+    url = "https://raw.githubusercontent.com/BelfrySCAD/BOSL2/master/images/metaball_demo.gif"
+    md, pending = placeholder_markdown(f"![demo]({url})", "/nonexistent")
+    assert f"{_REMOTE_SCHEME}:{url}" in md and "remote image" in md
+    assert "bfsrender:" not in md, "a remote image is not renderable here"
+    assert pending == [], "must not be counted as a pending render"
+
+
+def test_prose_links_are_left_alone_and_unboxed():
+    """The docs are full of ordinary links -- to wikipedia, to other wiki
+    pages. Only image stand-ins get their own scheme, which is what keeps
+    the boxing from spilling onto normal paragraphs."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import (placeholder_markdown, _style_placeholders,
+                                              _REMOTE_SCHEME)
+
+    prose = "see [a trefoil knot](https://en.wikipedia.org/wiki/Trefoil_knot) for more"
+    md, _ = placeholder_markdown(prose, "/nonexistent")
+    assert md == prose, "a prose link must not be rewritten"
+
+    doc = QTextDocument()
+    doc.setMarkdown(md + f"\n\n[x](https://e.com/i.gif)\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    _style_placeholders(doc, _StubPalette((255, 255, 255), (0, 0, 0)))
+    boxed = []
+    block = doc.begin()
+    while block.isValid():
+        if block.blockFormat().background().style() != Qt.BrushStyle.NoBrush:
+            boxed.append(block.text().strip())
+        block = block.next()
+    assert boxed == [], f"prose links must not be boxed, got {boxed}"
+
+
+def test_placeholder_falls_back_to_the_filename_when_alt_is_empty():
+    from belfryscad.window.docs_pane import placeholder_markdown
+    md, _ = placeholder_markdown("![](images/d/widget_2.png)", "/nonexistent")
+    assert "widget_2.png" in md
+
+
+def test_placeholder_and_image_are_each_one_block():
+    """The scroll anchor survives a rebuild because block NUMBERING does
+    not change when a placeholder becomes an image -- both are a single
+    paragraph. If that ever stopped being true, holding scroll position
+    would silently start jumping."""
+    from PySide6.QtGui import QTextDocument
+
+    def blocks(md):
+        doc = QTextDocument()
+        doc.setMarkdown(md, QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+        return doc.blockCount()
+
+    body = "para one\n\n%s\n\npara two\n"
+    assert blocks(body % "![Example 1](images/a.png)") == \
+           blocks(body % "[\u25b6 Render Example 1](bfsrender:images/a.png)")
+
+
+def test_placeholders_are_boxed_and_distinct_from_code_blocks():
+    """The placeholder is a control and the code block is content, so they
+    must not read as the same surface. Both are drawn with a background
+    rather than a border: Qt has no block border, and wrapping placeholders
+    in tables would change the block structure the scroll anchoring needs to
+    stay stable."""
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import (_style_placeholders, _code_tint,
+                                              _PLACEHOLDER_TINT_MIX, _blend,
+                                              _RENDER_SCHEME)
+
+    pal = _StubPalette((255, 255, 255), (0, 0, 0))
+    doc = QTextDocument()
+    doc.setMarkdown(f"text\n\n[Render it]({_RENDER_SCHEME}:images/a.png)\n\nmore\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    _style_placeholders(doc, pal)
+
+    # Brush STYLE, not colour: an unset background still reports an opaque
+    # default colour, so testing the colour marks every block as boxed.
+    from PySide6.QtCore import Qt
+    boxed = []
+    block = doc.begin()
+    while block.isValid():
+        if block.blockFormat().background().style() != Qt.BrushStyle.NoBrush:
+            boxed.append(block.text().strip())
+        block = block.next()
+    assert boxed == ["Render it"], f"boxed the wrong blocks: {boxed}"
+
+    placeholder = _blend(pal.base().color(), pal.text().color(), _PLACEHOLDER_TINT_MIX)
+    assert placeholder.lightness() < _code_tint(pal).lightness(), \
+        "placeholder box must be distinguishable from a code block"
+
+
+def test_remote_image_stand_ins_are_boxed_too():
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import _style_placeholders, _REMOTE_SCHEME
+
+    doc = QTextDocument()
+    doc.setMarkdown(f"text\n\n[\U0001f517 demo (remote image)]({_REMOTE_SCHEME}:https://e.com/a.gif)\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    _style_placeholders(doc, _StubPalette((255, 255, 255), (0, 0, 0)))
+    boxed = []
+    block = doc.begin()
+    while block.isValid():
+        if block.blockFormat().background().style() != Qt.BrushStyle.NoBrush:
+            boxed.append(block.text().strip())
+        block = block.next()
+    assert len(boxed) == 1 and "remote image" in boxed[0]
+
+
 # -- end-to-end preview (no images) ------------------------------------
 
 def test_preview_renders_the_documentation_and_finds_no_errors(tmp_path):
@@ -452,3 +728,101 @@ def test_preview_writes_images_under_the_cache_not_beside_the_source(tmp_path):
     preview = build_preview(DEMO, str(src), gen_images=False)
     assert str(tmp_path) not in preview.base_dir
     assert "docs-preview" in preview.base_dir
+
+
+def test_clicked_placeholder_becomes_a_rendering_label_with_cycling_dots():
+    """A render takes seconds and "render all" takes minutes, so the
+    placeholder has to say it is working."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import (placeholder_markdown, _style_placeholders,
+                                              mark_rendering, write_rendering_text,
+                                              _ELLIPSIS)
+
+    md, pending = placeholder_markdown(
+        "![Example 8](img/e8.png)\n\n![Example 9](img/e9.png)\n", "/nonexistent")
+    doc = QTextDocument()
+    doc.setMarkdown(md, QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    _style_placeholders(doc, _StubPalette((255, 255, 255), (0, 0, 0)))
+
+    def blocks():
+        out, b = [], doc.begin()
+        while b.isValid():
+            if b.text().strip():
+                it, href = b.begin(), ""
+                while not it.atEnd():
+                    href = href or it.fragment().charFormat().anchorHref()
+                    it += 1
+                boxed = b.blockFormat().background().style() != Qt.BrushStyle.NoBrush
+                out.append((b.text(), href, boxed))
+            b = b.next()
+        return out
+
+    targets = mark_rendering(doc, ["img/e8.png"])
+    assert len(targets) == 1, "only the queued image is marked"
+    write_rendering_text(doc, targets, 0)
+
+    marked, untouched = blocks()
+    assert marked[0] == "Rendering Example 8", marked
+    assert marked[1] == "", "the marked block must stop being a link"
+    assert marked[2], "it must keep its box"
+    assert untouched[1].startswith("bfsrender:"), "the other placeholder is left clickable"
+
+    for dots in range(1, 5):
+        write_rendering_text(doc, targets, dots)
+        assert blocks()[0][0] == "Rendering Example 8" + _ELLIPSIS[dots % len(_ELLIPSIS)]
+
+    assert len(mark_rendering(doc, None)) == 1, \
+        "render-all marks every placeholder still outstanding"
+
+
+def test_lists_indent_two_em_like_github_not_qts_flat_40px():
+    from PySide6.QtGui import QFontInfo, QTextDocument
+    from belfryscad.window.docs_pane import _set_list_indent, _LIST_INDENT_EM
+
+    doc = QTextDocument()
+    doc.setMarkdown("- alpha\n  - nested\n", QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    assert doc.indentWidth() == 40.0, "Qt's default, for the comparison to mean anything"
+
+    _set_list_indent(doc)
+    em = QFontInfo(doc.defaultFont()).pixelSize()
+    assert doc.indentWidth() == _LIST_INDENT_EM * em
+    assert doc.indentWidth() < 40.0, "the whole point is that lists come in"
+
+
+def test_table_spaces_collapse_but_code_spans_and_prose_do_not():
+    """QTextDocument keeps every space it is given, so docsgen's column
+    padding and two-space sentence gaps showed up literally."""
+    from belfryscad.docsgen.preview import collapse_table_spaces
+
+    md = (
+        "`arg`      | What it does\n"
+        "---------- | ------------\n"
+        "`size`     | The size.  Default: 1\n"
+        "\n"
+        "prose  keeps  its  spaces\n"
+        "\n"
+        "| `a  b` | keeps  code |\n"
+        "| --- | --- |\n"
+        "| x | y  z |\n"
+    )
+    out = collapse_table_spaces(md).splitlines()
+    assert out[0] == "`arg` | What it does"
+    assert out[2] == "`size` | The size. Default: 1"
+    assert out[4] == "prose  keeps  its  spaces", "only tables are touched"
+    assert out[6] == "| `a  b` | keeps code |", "a code span keeps its spacing"
+    assert out[8] == "| x | y z |"
+
+
+def test_a_pipe_in_prose_is_not_mistaken_for_a_table():
+    from belfryscad.docsgen.preview import collapse_table_spaces
+
+    md = "- tube(h|l, od=, id=, ...)  [ATTACHMENTS];\n\nuse `r1`|`d1`.  Two  spaces.\n"
+    assert collapse_table_spaces(md) == md
+
+
+def test_fenced_code_is_never_collapsed():
+    from belfryscad.docsgen.preview import collapse_table_spaces
+
+    md = "```\na  |  b\n--- | ---\nkeep  me\n```\n"
+    assert collapse_table_spaces(md) == md

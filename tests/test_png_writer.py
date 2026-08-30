@@ -47,3 +47,29 @@ class TestWritePng:
     def test_wrong_byte_count_raises(self, tmp_path):
         with pytest.raises(ValueError):
             write_png(str(tmp_path / "out.png"), b"\x00" * 10, 4, 4)
+
+
+def test_apng_round_trips_back_into_one_still_png_per_frame(tmp_path):
+    """The docs pane animates by swapping frames, so what write_apng packs
+    read_apng_frames must be able to take apart again."""
+    from belfryscad.png_writer import read_apng_frames, write_apng
+
+    w = h = 2
+    frames = [bytes([i * 40, 0, 0, 255] * (w * h)) for i in range(5)]
+    path = str(tmp_path / "a.png")
+    write_apng(path, frames, w, h, delay_ms=120)
+
+    out, delay = read_apng_frames(path)
+    assert len(out) == 5 and delay == 120
+    assert all(b.startswith(b"\x89PNG\r\n\x1a\n") and b.endswith(b"IEND\xae\x42\x60\x82")
+               for b in out), "each frame must be a complete standalone PNG"
+    assert len(set(out)) == 5, "frames must not all decode to the same bytes"
+
+
+def test_a_still_png_reports_no_animation(tmp_path):
+    from belfryscad.png_writer import read_apng_frames, write_png
+
+    path = str(tmp_path / "s.png")
+    write_png(path, bytes([1, 2, 3, 255] * 4), 2, 2)
+    assert read_apng_frames(path) == ([], 0)
+    assert read_apng_frames(str(tmp_path / "missing.png")) == ([], 0)

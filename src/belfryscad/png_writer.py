@@ -91,3 +91,58 @@ def write_apng(path: str, frames, width: int, height: int, delay_ms: int = 250, 
             f.write(_chunk(b"fdAT", struct.pack(">I", seq) + _compress_scanlines(fr, width, height)))
             seq += 1
         f.write(_chunk(b"IEND", b""))
+
+
+def read_apng_frames(path: str):
+    """Split an animated PNG into one standalone still PNG per frame.
+
+    The inverse of write_apng, and it exists because Qt's image reader
+    stops at the first frame: QTextDocument has no animation of any kind,
+    so the docs pane animates by swapping the whole image resource for the
+    next frame (see window/docs_pane.py). Handing it a complete little PNG
+    per frame keeps that swap a plain QImage load.
+
+    Returns (frames, delay_ms). A still PNG -- or anything unreadable --
+    returns ([], 0) rather than raising, since the caller's fallback is
+    simply to leave the image alone.
+    """
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return [], 0
+    if not data.startswith(_SIGNATURE):
+        return [], 0
+
+    ihdr = b""
+    delay_ms = 0
+    frames = []          # list of lists of compressed data parts
+    pos = len(_SIGNATURE)
+    while pos + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        tag = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        pos += 12 + length          # 4 len + 4 tag + body + 4 crc
+        if tag == b"IHDR":
+            ihdr = body
+        elif tag == b"fcTL":
+            # seq, w, h, x, y, delay_num, delay_den, dispose, blend
+            num, den = struct.unpack(">HH", body[20:24])
+            if not delay_ms and num:
+                delay_ms = int(round(num * 1000 / (den or 100)))
+            frames.append([])
+        elif tag == b"IDAT" and frames:
+            # An IDAT before any fcTL is a still cover image, not a frame.
+            frames[-1].append(body)
+        elif tag == b"fdAT" and frames:
+            frames[-1].append(body[4:])     # drop the sequence number
+        elif tag == b"IEND":
+            break
+
+    if len(frames) < 2 or not ihdr:
+        return [], 0
+    out = [
+        _SIGNATURE + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", b"".join(parts)) + _chunk(b"IEND", b"")
+        for parts in frames if parts
+    ]
+    return (out, delay_ms or 100) if len(out) > 1 else ([], 0)

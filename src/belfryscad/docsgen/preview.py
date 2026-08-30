@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import os.path
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,9 +58,16 @@ def _cache_dir(src_file: str) -> str:
     return str(CACHE_DIR / f"{Path(src_file).stem}-{digest}")
 
 
-def build_preview(source_text: str, src_file: str, gen_images: bool = True) -> DocsPreview:
+def build_preview(source_text: str, src_file: str, gen_images: bool = True,
+                   images=None) -> DocsPreview:
     """Parse `source_text` as if it were `src_file`, and return its rendered
-    docs plus every error and warning found along the way."""
+    docs plus every error and warning found along the way.
+
+    `images` selects which Examples to render: None renders every one,
+    an empty collection renders none, and a collection of image paths
+    renders just those. Images already on disk from an earlier build are
+    reused either way, so rendering one at a time accumulates.
+    """
     from . import default_options
     from .errorlog import errorlog
     from .imagemanager import image_manager
@@ -114,8 +122,8 @@ def build_preview(source_text: str, src_file: str, gen_images: bool = True) -> D
         target = parser.opts.target
         fblock = parser.file_blocks[0]
         lines = target.postprocess(fblock.get_file_lines(parser, target))
-        if gen_images:
-            image_manager.process_requests(test_only=False)
+        if gen_images and images != []:
+            image_manager.process_requests(test_only=False, only=images)
         else:
             image_manager.purge_requests()
 
@@ -202,6 +210,47 @@ _HTML_FIXUPS = (
 )
 
 
+#: A pipe-table's separator row: dashes, colons, pipes and spaces, nothing
+#: else. What tells a table apart from an ordinary line that has a `|` in it.
+_TABLE_SEPARATOR = re.compile(r"^[-:| ]*\|[-:| ]*$")
+
+
+def _collapse_spaces_outside_code(line: str) -> str:
+    """Runs of spaces down to one, leaving code spans exactly as they are."""
+    return "".join(
+        part if part.startswith("`") else re.sub(r" {2,}", " ", part)
+        for part in re.split(r"(`+[^`]*`+)", line)
+    )
+
+
+def collapse_table_spaces(markdown: str) -> str:
+    """Squeeze runs of spaces inside tables to one, outside `code spans`.
+
+    docsgen writes two spaces after a sentence and pads every cell out to a
+    column, which is what makes the raw markdown readable. HTML collapses
+    all of that; QTextDocument does not -- it is not an HTML layout and
+    keeps every space it is given -- so the pane showed "the cube.  Default"
+    and GitHub showed "the cube. Default".
+
+    Only tables, because that is where the padding is, and only outside
+    backticks, where spacing is the author's and has to survive.
+    """
+    lines = markdown.split("\n")
+    out = list(lines)
+    i, fenced = 0, False
+    while i < len(lines):
+        if lines[i].lstrip().startswith("```"):
+            fenced = not fenced
+        elif (not fenced and "|" in lines[i]
+              and i + 1 < len(lines) and _TABLE_SEPARATOR.match(lines[i + 1])):
+            while i < len(lines) and lines[i].strip():
+                out[i] = _collapse_spaces_outside_code(lines[i])
+                i += 1
+            continue
+        i += 1
+    return "\n".join(out)
+
+
 def markdown_for_qt(markdown: str) -> str:
     """The same markdown, rewritten so QTextDocument.setMarkdown renders it
     fully. Only display markup changes -- no content is added or removed."""
@@ -211,4 +260,4 @@ def markdown_for_qt(markdown: str) -> str:
         out = re.sub(pattern, replacement, out, flags=re.S)
     # Pandoc-style fence attributes confuse Qt's info-string handling.
     out = out.replace("``` {.C linenos=True}", "```")
-    return out.replace("&nbsp;", " ")
+    return collapse_table_spaces(out.replace("&nbsp;", " "))
