@@ -173,8 +173,127 @@ that line. **Refresh** rebuilds, and **Render examples** can be unchecked
 for a fast text-only validation pass.
 
 It rebuilds when the pane becomes visible, when the tab changes, and on
-demand — deliberately **not** on text changes, since a rebuild runs every
-Example in the file.
+demand — deliberately **not** on text changes.
+
+**Images render on demand, not up front.** A plain refresh renders none of
+them: the document appears immediately with a click-to-render placeholder in
+place of each Example, and the status line says how many are outstanding.
+Clicking one renders just that image; the status line's **render all N**
+link does the lot. That is a link rather than a button because it belongs
+with the sentence reporting how many are outstanding, and it has nothing to
+offer once they are all rendered — the whole clause disappears then, where a
+button would sit there greyed out.
+Rendering every Example in a large BOSL2 file is minutes of work, so making
+that the default made the pane feel broken.
+
+Rendering an image rebuilds the whole document, which would snap the reader
+back to the top, so the pane re-anchors afterwards. It records the first
+block on screen and its offset, then puts that block back where it was --
+anchoring on the BLOCK rather than the scrollbar value is what makes this
+work, since swapping a one-line placeholder for a 240px image changes every
+pixel offset below it but not the block numbering (`![alt](x)` and
+`[Render x](...)` are each a single paragraph). A plain refresh for a new
+file deliberately does not re-anchor and starts at the top.
+
+State is simply which files exist in the cache directory, so renders
+accumulate across refreshes and across sessions — there is no separate
+bookkeeping to get out of step. `placeholder_markdown` decides per image:
+already on disk, leave it as an image; renderable but absent, swap in a
+`bfsrender:` link the pane intercepts in `anchorClicked`.
+
+`_style_placeholders` boxes each one, finding them by link target rather
+than by the visible wording. The box is a background tint and padding, not a
+border: Qt gives blocks no border (only frames and table cells have one),
+and wrapping each placeholder in a one-cell table would change the
+document's block structure, which the scroll anchoring depends on staying
+put. Its tint is deliberately stronger than a code block's — one is a
+control, the other is content.
+
+**Remote images become links.** BOSL2's `isosurface.scad` embeds animated
+GIFs straight from `raw.githubusercontent.com`. QTextBrowser does no network
+fetching, so those rendered as broken icons — and offering to "render" one
+would be a lie, since there is no Example behind it. They become a labelled
+link that opens in a browser, and are not counted as pending renders.
+
+They are boxed like a render placeholder, and for that they need a scheme of
+their own (`bfsremote:`) rather than the plain `https:` they point at. The
+boxing is driven by link target, and the docs are full of ordinary prose
+links — to Wikipedia, to sibling wiki pages — which must stay plain text; a
+scheme is the only thing separating an image stand-in from those. The pane
+strips the prefix and hands the real URL to `QDesktopServices`.
+
+**Table whitespace collapses.** docsgen pads every cell out to a column and
+writes two spaces after a sentence, which is what makes the raw markdown
+readable. HTML throws all of that away; QTextDocument does not -- it is not
+an HTML layout and keeps every space it is handed -- so an argument table
+rendered as `the cube.  Default` where the wiki shows one space.
+`collapse_table_spaces` squeezes runs of spaces in table rows only, and only
+outside `code spans`, where the author's spacing has to survive. A table is
+recognised by its separator row, so the many Usage lines and prose that
+contain a literal `|` are left alone.
+
+**Lists indent 2em, not Qt's 40px.** Qt indents each list level by a flat
+`QTextDocument.indentWidth()`, defaulting to 40px whatever the font — half
+again as deep as GitHub's `padding-left: 2em`, and unmoved by a font-size
+change. Setting the document property is enough for every level, since Qt
+multiplies it by the nesting depth itself.
+
+**A queued placeholder says so.** Clicking one, or the status line's
+render-all, rewrites each affected placeholder to `Rendering Example 8` with
+a trailing ellipsis that grows a dot a second. Only the text and its link
+are replaced — the block format is untouched, so the box stays, and dropping
+the link is what stops a second click queueing the same image twice. The
+render itself runs on the worker thread, so the clock keeps ticking; without
+it a "render all" is minutes of a page with nothing moving on it.
+
+**Animated examples really animate.** A `Spin`/`Anim` example is written as
+an APNG, and Qt animates nothing: its image reader returns frame 0 and
+QTextDocument has no notion of a moving image. `png_writer.read_apng_frames`
+splits the file back into one standalone still PNG per frame — cheap,
+because `write_apng` stores every frame full-size with dispose=NONE, so a
+frame needs only its own data wrapped in a fresh IHDR/IDAT/IEND.
+
+A single timer then drives every animation on the page, swapping the image
+**resource** the document already points at rather than editing the
+document. That matters twice over: no relayout per frame, and therefore no
+disturbed scroll position. Each image keeps its own delay and advances when
+that much has accumulated, so one clock serves any mix of speeds. Frames are
+decoded on first use and then kept — a 36-frame example is ~170KB on disk
+but ~11MB decoded, so decoding up front would stall the first tick and
+charge full price for an animation nobody scrolls to.
+
+**Level-1 and level-2 headings get a rule under them and space above.**
+Qt gives headings no margins of their own, so they otherwise sit flush
+against the preceding paragraph. The rule is Qt's own
+`BlockTrailingHorizontalRulerWidth` — the very property its markdown reader
+sets on a `---` block — applied to the heading block itself, so it is drawn
+by the same code path rather than faked with a border or an inserted empty
+block. Level 3 and deeper are deliberately left alone: a BOSL2 file carries
+dozens of `Module:`/`Function:` headings and ruling each one turns the page
+into a ladder.
+
+The rule is drawn **grey**, not Qt's default hard black. Qt colours a
+BlockTrailingHorizontalRulerWidth from the palette's `WindowText` role, NOT
+`Text` — established by setting each role in turn and seeing which one moved
+the rule. A QTextBrowser draws its document text with `Text`, so overriding
+`WindowText` (`_apply_rule_color`) recolours every rule and leaves the prose
+untouched.
+
+**Alternating table body rows are tinted.** Done per cell in `_stripe_tables`,
+because Qt's CSS subset has no `:nth-child`. Row 0 is the header and keeps
+its own look; striping starts at the second body row.
+
+**Code blocks get a tinted, indented box.** Qt's markdown reader renders
+them as bare monospace text, so `_style_code_blocks` walks the finished
+document and applies a block format, finding code blocks by Qt's own
+`BlockCodeLanguage` property (set for indented and fenced blocks alike,
+never for prose) rather than guessing from the font. Each line of a block is
+its own `QTextBlock`, so the tint goes on per line with zero spacing between
+them and they abut into one continuous box; only the first and last line of
+a run carry the box's padding. The tint itself is the pane's base colour
+nudged 6% toward its text colour (`_code_tint`), derived from the palette so
+it stays a subtle wash in a dark theme rather than a bright slab —
+`#f0f0f0` on white, `#292a2d` on `#1e1f22`.
 
 All work happens on one dedicated worker thread. That is not only about
 responsiveness: docsgen's parser, its error log and the offscreen renderer
@@ -196,6 +315,22 @@ Three things the preview has to do differently from a CLI run:
   for all 58 BOSL2 files, since no images or scripts are involved, and it
   only happens inside a real docsgen project (one with an
   `.openscad_docsgen_rc` at or above the file).
+
+### No stylesheet: why the styling is code, not CSS
+
+`QTextDocument::setDefaultStyleSheet` has **no effect** on a document built
+with `setMarkdown` — Qt only applies it when parsing HTML. Measured, not
+assumed: with a stylesheet set, `h1 { color }` and `td { background-color }`
+change nothing through `setMarkdown`, and both take effect if the same
+markdown is round-tripped through `toHtml()`/`setHtml()`.
+
+That round trip is a real option if a fuller theme is ever wanted, with two
+caveats: Qt's CSS subset is small (a `code` selector was ignored in the same
+test, and there is no `:nth-child`, so table striping would still be
+per-cell), and re-parsing our own HTML risks changing rendering in ways the
+direct markdown path does not. Until that trade is worth making, the styling
+lives in `_style_headings`/`_style_code_blocks`/`_stripe_tables`, which
+operate on the document Qt actually built.
 
 ### Markdown for Qt
 

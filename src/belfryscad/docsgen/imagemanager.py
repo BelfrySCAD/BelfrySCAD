@@ -259,9 +259,19 @@ class ImageManager:
         self.requests.append(req)
         return req
 
-    def process_requests(self, test_only=False):
+    def process_requests(self, test_only=False, only=None):
+        """Render the queued requests. `only` is an optional collection of
+        image paths (matched against the tail of each request's image_file);
+        anything not listed is dropped unrendered.
+
+        That is what lets the GUI show a document immediately with a
+        placeholder per example and render them one click at a time --
+        rendering every Example in a big BOSL2 file up front costs minutes.
+        """
         self.test_only = test_only
         for req in self.requests:
+            if only is not None and not any(str(req.image_file).endswith(str(o)) for o in only):
+                continue
             self.process_request(req)
         self.requests = []
 

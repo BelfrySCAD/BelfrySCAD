@@ -275,9 +275,59 @@ def _print_info():
             print(f"{pkg} not installed")
 
 
+#: Where an unexplained exit leaves its explanation. Next to the docs
+#: preview cache, which already lives here.
+CRASH_LOG = "~/.cache/BelfrySCAD/crash.log"
+
+#: Kept alive for the process's lifetime -- faulthandler writes to this file
+#: descriptor from a signal handler, so it must not be closed or collected.
+_crash_stream = None
+
+
+def _install_crash_log():
+    """Record why the app died, wherever it was launched from.
+
+    A GUI has nowhere to print a traceback: launched from Finder there is
+    no terminal, and an unhandled exception inside a Qt slot takes the
+    process down with it. Without this a crash leaves nothing behind at
+    all -- no macOS crash report either, since the process exits rather
+    than faulting -- and the only evidence is the user saying it vanished.
+
+    Appends, so a crash that only happens every so often is still there
+    after the next few clean runs.
+    """
+    global _crash_stream
+    import datetime
+    import faulthandler
+    import traceback
+
+    path = os.path.expanduser(CRASH_LOG)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        _crash_stream = open(path, "a", buffering=1)
+    except OSError:
+        return          # never let logging be the thing that stops a launch
+    _crash_stream.write(
+        f"\n=== {datetime.datetime.now().isoformat(timespec='seconds')} "
+        f"BelfrySCAD {_belfryscad_version()} pid {os.getpid()} "
+        f"argv={sys.argv[1:]} ===\n")
+    # Native faults (SIGSEGV/SIGABRT from Qt, Manifold or the evaluator)
+    # print a C-level stack; Python-level ones need the hook below.
+    faulthandler.enable(_crash_stream)
+
+    prior = sys.excepthook
+
+    def hook(exc_type, exc, tb):
+        traceback.print_exception(exc_type, exc, tb, file=_crash_stream)
+        prior(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def main():
     setproctitle.setproctitle("BelfrySCAD")
     sys.setrecursionlimit(10000)
+    _install_crash_log()
 
     # --docsgen swallows the whole remaining command line rather than going
     # through _parse_args: it is a separate tool with its own option set,
