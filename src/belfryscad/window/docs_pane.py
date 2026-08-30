@@ -233,6 +233,39 @@ def _set_list_indent(doc):
     doc.setIndentWidth(_LIST_INDENT_EM * QFontInfo(doc.defaultFont()).pixelSize())
 
 
+def heading_slug(text: str) -> str:
+    """GitHub's own heading-to-anchor rule, which is what docsgen's links
+    assume: lower-case, drop punctuation, spaces become hyphens.
+
+    Runs of spaces are deliberately NOT collapsed. "Section: Adaptive
+    Children Using `$` Variables" loses the backticks and the `$` but keeps
+    both spaces around them, and the link docsgen emits really does read
+    `#section-adaptive-children-using--variables`.
+    """
+    import re
+    s = text.strip().lower()
+    s = re.sub(r"[^\w\s-]", "", s)
+    return s.replace(" ", "-")
+
+
+def anchor_targets(doc) -> dict:
+    """slug -> block number, for every heading in the document.
+
+    Repeats get GitHub's `-1`, `-2` suffixes, since a file can document two
+    sections with the same name.
+    """
+    targets, seen = {}, {}
+    block = doc.begin()
+    while block.isValid():
+        if block.blockFormat().headingLevel():
+            base = heading_slug(block.text())
+            seen[base] = seen.get(base, 0) + 1
+            slug = base if seen[base] == 1 else f"{base}-{seen[base] - 1}"
+            targets[slug] = block.blockNumber()
+        block = block.next()
+    return targets
+
+
 def _style_headings(doc):
     """Give level-1 and level-2 headings breathing room above and a rule
     below, the way a rendered wiki page presents them.
@@ -495,7 +528,11 @@ class DocsPane(QWidget):
 
         self._status = QLabel("No preview yet.")
         self._refresh_btn = QPushButton("Refresh")
-        self._refresh_btn.clicked.connect(self.refresh_requested)
+        # Through the pane rather than straight to the signal: only an
+        # explicit Refresh throws the rendered images away. The same
+        # refresh() runs when the dock is shown or a file opens, and those
+        # must not cost the user every image they have already rendered.
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
         # "Render all" is a link in the status line rather than a button:
         # it belongs with the sentence that says how many images are
         # outstanding, and it only applies when some are.
@@ -537,6 +574,11 @@ class DocsPane(QWidget):
         #: Where to put the view back after a rebuild -- see _capture_scroll.
         self._scroll_anchor = None
 
+        #: Set by the Refresh button alone; consumed by the next refresh().
+        self._invalidate_next = False
+        #: slug -> block number for the current document, built on demand.
+        self._anchors = None
+
         #: Placeholders currently reading "Rendering ...", as
         #: (block number, text without dots, char format).
         self._rendering = []
@@ -559,6 +601,13 @@ class DocsPane(QWidget):
         """A placeholder click renders just that one image; every other link
         is left alone (the docs are full of real cross-references)."""
         text = url.toString()
+        # A same-file link: `[cuboid](#module-cuboid)`, of which a BOSL2
+        # file has hundreds. Qt's markdown reader gives headings no anchor
+        # names of their own, so scrollToAnchor has nothing to find and the
+        # slug has to be matched against the headings directly.
+        if url.fragment() and not url.path():
+            self._scroll_to_anchor(url.fragment())
+            return
         if url.scheme() == _REMOTE_SCHEME:
             # The real URL rides in the path; hand it to the browser, since
             # this pane cannot fetch over the network.
@@ -635,10 +684,19 @@ class DocsPane(QWidget):
         if not src_file:
             self._status.setText("Save the file first — the preview needs its name and folder.")
             return
+        if self._invalidate_next:
+            from belfryscad.docsgen.preview import invalidate_cache
+            dropped = invalidate_cache(src_file)
+            self._status.setText(f"Discarded {dropped} rendered image{'' if dropped == 1 else 's'}…")
+        self._invalidate_next = False
         # A plain refresh renders nothing: the document appears at once with
         # a placeholder per example, and images are rendered on demand.
         self._last_source = (source_text, src_file)
         self._queue(source_text, src_file, [])
+
+    def _on_refresh_clicked(self):
+        self._invalidate_next = True
+        self.refresh_requested.emit()
 
     def _start_pending(self):
         args, self._pending = self._pending, None
@@ -652,6 +710,7 @@ class DocsPane(QWidget):
         from belfryscad.docsgen.preview import markdown_for_qt
         self._busy = False
         self._clear_rendering()
+        self._anchors = None      # rebuilt on the next anchor click
 
         # Relative image links resolve against the directory the generated
         # .md file would have sat in.
@@ -695,6 +754,23 @@ class DocsPane(QWidget):
         self._show_errors([])
         self._status.setText("Preview failed.")
         self._start_pending()
+
+    def _scroll_to_anchor(self, name: str):
+        """Put the heading `name` refers to at the top of the view."""
+        if self._anchors is None:
+            self._anchors = anchor_targets(self._view.document())
+        number = self._anchors.get(name)
+        if number is None:
+            # BOSL2 has a couple of links to headings that do not exist;
+            # they are broken on the published wiki too. Staying put is
+            # better than scrolling somewhere arbitrary.
+            self._status.setText(f"No heading here matches “{name}”.")
+            return
+        block = self._view.document().findBlockByNumber(number)
+        if not block.isValid():
+            return
+        rect = self._view.document().documentLayout().blockBoundingRect(block)
+        self._view.verticalScrollBar().setValue(int(round(rect.top())))
 
     # -- "Rendering ..." feedback ---------------------------------------
 

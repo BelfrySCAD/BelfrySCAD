@@ -1,3 +1,4 @@
+import pathlib
 """The docsgen port: example metadata parsing, APNG output, markdown
 fix-ups, and an end-to-end preview.
 
@@ -826,3 +827,107 @@ def test_fenced_code_is_never_collapsed():
 
     md = "```\na  |  b\n--- | ---\nkeep  me\n```\n"
     assert collapse_table_spaces(md) == md
+
+
+# -- same-file anchor links -------------------------------------------
+
+def test_heading_slug_matches_the_links_docsgen_emits():
+    from belfryscad.window.docs_pane import heading_slug
+
+    assert heading_slug("Module: cuboid()") == "module-cuboid"
+    assert heading_slug("Function/Module: cube()") == "functionmodule-cube"
+    assert heading_slug("Function: opp_hyp_to_ang()") == "function-opp_hyp_to_ang"
+    assert heading_slug("Section: Cuboids, Prismoids and Pyramids") \
+        == "section-cuboids-prismoids-and-pyramids"
+    # Runs of spaces are NOT collapsed: stripping the backticks and the `$`
+    # leaves two spaces, and docsgen's link really does have two hyphens.
+    assert heading_slug("Section: Adaptive Children Using `$` Variables") \
+        == "section-adaptive-children-using--variables"
+
+
+def test_repeated_headings_get_githubs_numeric_suffixes():
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import anchor_targets
+
+    doc = QTextDocument()
+    doc.setMarkdown("# Foo\n\n## Foo\n\n### Bar\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    t = anchor_targets(doc)
+    assert set(t) == {"foo", "foo-1", "bar"}
+    assert t["foo"] < t["foo-1"], "block numbers follow document order"
+
+
+def test_only_headings_become_anchor_targets():
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import anchor_targets
+
+    doc = QTextDocument()
+    doc.setMarkdown("# Real\n\nnot a heading\n",
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
+    assert set(anchor_targets(doc)) == {"real"}
+
+
+# -- Refresh discards rendered images ---------------------------------
+
+def test_invalidate_cache_removes_the_rendered_images(tmp_path, monkeypatch):
+    from belfryscad.docsgen import preview
+
+    monkeypatch.setattr(preview, "CACHE_DIR", tmp_path / "cache")
+    src = tmp_path / "thing.scad"
+    src.write_text("// LibFile: thing.scad\n")
+
+    cache = pathlib.Path(preview._cache_dir(str(src))) / "images" / "thing"
+    cache.mkdir(parents=True)
+    for n in ("a.png", "b.png"):
+        (cache / n).write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assert preview.invalidate_cache(str(src)) == 2
+    assert not pathlib.Path(preview._cache_dir(str(src))).exists()
+    # Idempotent: a second Refresh on an already-clean file is not an error.
+    assert preview.invalidate_cache(str(src)) == 0
+
+
+# -- $preview matches the mode the reference renders in ----------------
+#
+# openscad_docsgen drives OpenSCAD with `--preview ""` for Examples and
+# Figures, `--preview throwntogether` for ThrownTogether, plain echo export
+# for Log blocks -- all of which set $preview -- and `--render ""` only for
+# an example marked Render, which clears it. Verified against OpenSCAD
+# 2026.02.01. BOSL2's ruler() is `if ($preview)` all the way down, so every
+# ruler() example rendered as bare axes until this was seeded.
+
+def test_image_requests_are_preview_unless_marked_render():
+    from belfryscad.docsgen.imagemanager import ImageRequest
+
+    def req(meta):
+        return ImageRequest("f.scad", 1, "out.png", ["cube(1);"], meta)
+
+    assert req("3D").preview
+    assert req("3D,Big").preview
+    assert req("ThrownTogether").preview, "still a preview mode in the reference"
+    assert not req("Render").preview
+    assert not req("3D,Render,Big").preview
+
+
+def test_runner_seeds_preview_true_by_default(tmp_path):
+    from belfryscad.docsgen.runner import runner
+
+    r = runner.run(["echo(P=$preview);", "cube(1);"], str(tmp_path))
+    assert r.echos and "P = true" in r.echos[0], r.echos
+
+
+def test_runner_seeds_preview_false_when_asked(tmp_path):
+    from belfryscad.docsgen.runner import runner
+
+    r = runner.run(["echo(P=$preview);", "cube(1);"], str(tmp_path), preview=False)
+    assert r.echos and "P = false" in r.echos[0], r.echos
+
+
+def test_a_preview_only_module_actually_produces_geometry(tmp_path):
+    """The shape of the reported bug, without needing BOSL2: a module
+    gated on $preview drew nothing at all."""
+    from belfryscad.docsgen.runner import runner
+
+    script = ["module gated() { if ($preview) cube(10); }", "gated();"]
+    assert runner.run(script, str(tmp_path)).bodies, "preview run must build geometry"
+    assert not runner.run(script, str(tmp_path), preview=False).bodies

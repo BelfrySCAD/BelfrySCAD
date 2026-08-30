@@ -60,6 +60,22 @@ def _cache_dir(src_file: str) -> str:
     return str(CACHE_DIR / f"{Path(src_file).stem}-{digest}")
 
 
+def invalidate_cache(src_file: str) -> int:
+    """Throw away every rendered image for `src_file`; returns how many.
+
+    The cache key is the file's path, deliberately not its contents, so an
+    image survives editing the script around it -- that is what makes
+    click-to-render accumulate. The cost is that an Example whose code HAS
+    changed keeps showing the old picture, and nothing else ever clears it.
+    Refresh is the way out.
+    """
+    import shutil
+    directory = Path(_cache_dir(src_file))
+    count = len(list(directory.rglob("*.png"))) if directory.is_dir() else 0
+    shutil.rmtree(directory, ignore_errors=True)
+    return count
+
+
 def build_preview(source_text: str, src_file: str, gen_images: bool = True,
                    images=None) -> DocsPreview:
     """Parse `source_text` as if it were `src_file`, and return its rendered
