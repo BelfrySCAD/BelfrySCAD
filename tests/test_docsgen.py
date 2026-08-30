@@ -947,7 +947,7 @@ def test_sweep_removes_scripts_left_by_dead_processes(tmp_path):
 
     dead = tmp_path / "tmp_docsgen_999999_abc.scad"      # no such PID
     mine = tmp_path / f"tmp_docsgen_{os.getpid()}_xyz.scad"
-    alive = tmp_path / "tmp_docsgen_1_live.scad"          # launchd; always running
+    alive = tmp_path / f"tmp_docsgen_{os.getppid()}_live.scad"   # our parent
     other = tmp_path / "unrelated.scad"
     for f in (dead, mine, alive, other):
         f.write_text("cube(1);\n")
@@ -1039,6 +1039,31 @@ def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
     mgr.process_requests()          # no progress callback at all
 
 
+
+#: Cached across the module: creating an offscreen GL context is slow, and
+#: the answer never changes within a run.
+_OFFSCREEN_GL = None
+
+
+def _require_offscreen_gl():
+    """Skip unless this machine can actually render offscreen.
+
+    CI runners have no GPU or display, so an image test there produces no
+    file rather than a wrong one -- a skip is the honest result. A local
+    run still exercises them for real.
+    """
+    global _OFFSCREEN_GL
+    import pytest
+    if _OFFSCREEN_GL is None:
+        from belfryscad.headless_render import _RenderOptions, _make_offscreen_renderer
+        opts = _RenderOptions.parse(imgsize="16,16", camera=None, autocenter=False,
+                                     viewall=False, projection=None, view=None,
+                                     colorscheme=None)
+        _OFFSCREEN_GL = bool(opts is not None and _make_offscreen_renderer(opts))
+    if not _OFFSCREEN_GL:
+        pytest.skip("no offscreen OpenGL context available")
+
+
 def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
     """moderngl's ctx.viewport writes through to whichever framebuffer is
     bound at the time -- which, when this was set before fbo.use(), was the
@@ -1049,6 +1074,7 @@ def test_a_render_is_unaffected_by_a_differently_sized_one_before_it(tmp_path):
     Only a run that mixes sizes shows it, which is every real docs build:
     Example is 320x240, Example(Med) 480x360, Example(Big) 640x480.
     """
+    _require_offscreen_gl()
     from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
 
     mgr = ImageManager()
@@ -1072,6 +1098,7 @@ def test_rendered_images_are_antialiased(tmp_path):
     and OpenSCAD's are antialiased. Ours rendered every edge hard: a plain
     cube came out as four flat colours with no blended edge pixels at all.
     """
+    _require_offscreen_gl()
     from PySide6.QtGui import QImage
     from belfryscad import headless_render as HR
     from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest

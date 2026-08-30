@@ -28,6 +28,35 @@ _TEMP_PREFIX = f"tmp_docsgen_{os.getpid()}_"
 _swept_dirs = set()
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether `pid` is still running, portably.
+
+    os.kill(pid, 0) says so on POSIX but not on Windows, where CPython
+    implements os.kill through the process-handle API and raises OSError
+    both for a PID that is gone and for one it cannot open. Guessing wrong
+    in the "gone" direction would delete a live run's script, so Windows
+    asks the API directly instead.
+    """
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # someone else's process, but it exists
+    except OSError:
+        return True          # unknown: leave the file alone
+    return True
+
+
 def _sweep_abandoned_temp_files(directory: str):
     """Delete temp scripts left behind by runs that were killed.
 
@@ -49,15 +78,8 @@ def _sweep_abandoned_temp_files(directory: str):
             pid = int(name[len("tmp_docsgen_"):].split("_", 1)[0])
         except ValueError:
             continue                      # not one of ours after all
-        if pid == os.getpid():
-            continue
-        try:
-            os.kill(pid, 0)               # still running -- leave it alone
-            continue
-        except ProcessLookupError:
-            pass
-        except OSError:
-            continue                      # someone else's process; not ours to judge
+        if pid == os.getpid() or _pid_alive(pid):
+            continue                      # ours, or still running
         try:
             os.unlink(path)
         except OSError:
