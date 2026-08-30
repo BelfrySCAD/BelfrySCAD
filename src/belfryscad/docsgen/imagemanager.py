@@ -98,6 +98,11 @@ class ImageRequest:
         self.camera = None
         self.animation_frames = None
         self.frame_ms = 250
+        # openscad_docsgen runs the reference with `--preview ""` by
+        # default and `--preview throwntogether` for ThrownTogether -- both
+        # set $preview -- and only `--render ""` for Render, which clears
+        # it. Verified against OpenSCAD 2026.02.01 for all three.
+        self.preview = "Render" not in image_meta
         self.show_edges = "Edges" in image_meta
         self.show_axes = "NoAxes" not in image_meta
         self.show_scales = "NoScales" not in image_meta
@@ -304,7 +309,7 @@ class ImageManager:
             # example that warns is a documentation bug, and only a script
             # steering its own camera is exempt (those legitimately warn
             # about the override).
-            last = runner.run(req.script_lines, src_dir, params,
+            last = runner.run(req.script_lines, src_dir, params, preview=req.preview,
                               hard_warnings=False)
             if no_vp:
                 last.errors.extend(_unmasked(last.warnings))

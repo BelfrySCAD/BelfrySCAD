@@ -265,6 +265,55 @@ again as deep as GitHub's `padding-left: 2em`, and unmoved by a font-size
 change. Setting the document property is enough for every level, since Qt
 multiplies it by the nesting depth itself.
 
+**`$preview` follows the mode the reference renders in.** openscad_docsgen
+drives OpenSCAD with `--preview ""` for Examples and Figures,
+`--preview throwntogether` for `ThrownTogether`, and plain echo export for
+Log blocks -- all three set `$preview` -- and only `--render ""` for an
+example marked `Render`, which clears it. (Both flags take an optional
+argument, which is why the reference passes an empty string: a bare
+`--preview` swallows the filename and OpenSCAD prints its help instead.)
+
+BelfrySCAD has no preview mode of its own and the evaluator defaults
+`$preview` to false, so every example that branches on it took the wrong
+arm. BOSL2's `ruler()` is `if ($preview)` all the way down: all seven
+`ruler()` examples rendered as bare axes, and -- because they all produced
+the same empty scene -- as *byte-identical* PNGs, which is what finally gave
+it away. The runner now seeds `$preview` per request; no evaluator change
+was needed, since `viewport_params` already seeds arbitrary `$`-names.
+
+This affects only docs generation. An ordinary render, in the GUI or
+through `-o`, is a real render and leaves `$preview` false.
+
+**Refresh discards the rendered images.** The image cache is keyed on the
+file's path, deliberately not its contents, which is what lets
+click-to-render accumulate across edits and sessions. The cost is that an
+Example whose code *has* changed keeps showing the old picture, and nothing
+else ever clears it. The Refresh button is the way out: it deletes the
+file's cache directory, so every image reverts to a placeholder and the
+next click renders afresh.
+
+Only that button does it. `refresh()` also runs when the Docs dock is shown
+and when a file opens, and those must not cost the user every image they
+have already rendered -- so the button sets a one-shot flag that the next
+`refresh()` consumes, rather than the invalidation living in `refresh()`
+itself.
+
+**Same-file links scroll to their heading.** A BOSL2 file's docs carry
+hundreds of `[cuboid](#module-cuboid)` links. Qt's markdown reader gives
+headings no anchor names of their own, so `scrollToAnchor` has nothing to
+find; `anchor_targets` walks the finished document instead and maps each
+heading's slug to its block number, which the click then scrolls to.
+
+`heading_slug` reproduces GitHub's rule, because that is what docsgen's
+links assume: lower-case, drop punctuation, spaces become hyphens. Runs of
+spaces are **not** collapsed -- "Section: Adaptive Children Using `$`
+Variables" loses the backticks and the `$` but keeps both spaces around
+them, and the emitted link really is
+`#section-adaptive-children-using--variables`. Getting that wrong was the
+difference between 5104 and 5105 of BOSL2's 5109 intra-file links
+resolving; the last few point at headings that do not exist, and are
+broken on the published wiki too.
+
 **A queued placeholder says so.** Clicking one, or the status line's
 render-all, rewrites each affected placeholder to `Rendering Example 8` with
 a trailing ellipsis that grows a dot a second. Only the text and its link

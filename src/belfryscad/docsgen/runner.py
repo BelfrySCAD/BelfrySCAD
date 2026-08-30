@@ -84,7 +84,7 @@ class ScriptRunner:
     # -- evaluation ----------------------------------------------------
 
     def run(self, script_lines, src_dir: str, params: dict | None = None,
-            hard_warnings: bool = False) -> ScriptResult:
+            hard_warnings: bool = False, preview: bool = True) -> ScriptResult:
         """Evaluate `script_lines`. The script is written to a temp file in
         `src_dir` so that its own relative `include <...>` paths resolve
         the same way they would for the file being documented -- the same
@@ -122,7 +122,16 @@ class ScriptRunner:
                 # undefined warned, and under docsgen's hard-warnings rule
                 # that failed the whole image.
                 from belfryscad.export_name import seed_params
-                bodies, _ids = evaluator.evaluate(path, seed_params(params, path))
+                # $preview matches the mode openscad_docsgen runs the
+                # reference in -- true for Examples, Figures and Log blocks,
+                # false only for an example marked `Render`. BOSL2's
+                # ruler() is `if ($preview)` all the way down, so getting
+                # this wrong renders nothing at all and says nothing about
+                # why. BelfrySCAD has no preview mode of its own; this is
+                # about matching what the published docs show.
+                seeded = dict(params or {})
+                seeded["$preview"] = bool(preview)
+                bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path))
             except RecursionError:
                 result.errors.append("ERROR: AST too deeply nested "
                                      "(recursion limit exceeded during evaluation).")
