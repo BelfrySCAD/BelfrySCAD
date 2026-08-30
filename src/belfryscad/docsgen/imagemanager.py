@@ -264,7 +264,7 @@ class ImageManager:
         self.requests.append(req)
         return req
 
-    def process_requests(self, test_only=False, only=None):
+    def process_requests(self, test_only=False, only=None, progress=None):
         """Render the queued requests. `only` is an optional collection of
         image paths (matched against the tail of each request's image_file);
         anything not listed is dropped unrendered.
@@ -272,12 +272,23 @@ class ImageManager:
         That is what lets the GUI show a document immediately with a
         placeholder per example and render them one click at a time --
         rendering every Example in a big BOSL2 file up front costs minutes.
+
+        `progress` is called as progress(done, total) before the first
+        render and after each one. The selection is resolved up front so
+        that `total` is the real count of work, not the queue length.
         """
         self.test_only = test_only
-        for req in self.requests:
-            if only is not None and not any(str(req.image_file).endswith(str(o)) for o in only):
-                continue
+        selected = [
+            req for req in self.requests
+            if only is None or any(str(req.image_file).endswith(str(o)) for o in only)
+        ]
+        total = len(selected)
+        if progress:
+            progress(0, total)
+        for done, req in enumerate(selected, 1):
             self.process_request(req)
+            if progress:
+                progress(done, total)
         self.requests = []
 
     def process_request(self, req):

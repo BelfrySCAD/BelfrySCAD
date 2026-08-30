@@ -77,7 +77,7 @@ def invalidate_cache(src_file: str) -> int:
 
 
 def build_preview(source_text: str, src_file: str, gen_images: bool = True,
-                   images=None) -> DocsPreview:
+                   images=None, progress=None) -> DocsPreview:
     """Parse `source_text` as if it were `src_file`, and return its rendered
     docs plus every error and warning found along the way.
 
@@ -141,7 +141,7 @@ def build_preview(source_text: str, src_file: str, gen_images: bool = True,
         fblock = parser.file_blocks[0]
         lines = target.postprocess(fblock.get_file_lines(parser, target))
         if gen_images and images != []:
-            image_manager.process_requests(test_only=False, only=images)
+            image_manager.process_requests(test_only=False, only=images, progress=progress)
         else:
             image_manager.purge_requests()
 

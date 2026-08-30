@@ -487,6 +487,7 @@ class _DocsWorker(QObject):
     """Lives on the pane's worker thread; owns every docsgen call."""
     ready = Signal(object)      # belfryscad.docsgen.preview.DocsPreview
     failed = Signal(str)
+    progress = Signal(int, int)  # images rendered so far, images to render
 
     request = Signal(str, str, object)   # source_text, src_file, image selection
 
@@ -499,8 +500,12 @@ class _DocsWorker(QObject):
         specific image paths."""
         from belfryscad.docsgen.preview import build_preview
         try:
+            # Emitted from this thread, received on the GUI thread: the
+            # connection is queued, so the label updates between renders
+            # without the worker ever touching a widget.
             self.ready.emit(build_preview(source_text, src_file,
-                                           gen_images=images != [], images=images))
+                                           gen_images=images != [], images=images,
+                                           progress=self.progress.emit))
         except Exception as e:      # a broken preview must never take the app down
             self.failed.emit(f"{type(e).__name__}: {e}")
 
@@ -562,6 +567,7 @@ class DocsPane(QWidget):
         self._worker.moveToThread(self._thread)
         self._worker.ready.connect(self._on_ready)
         self._worker.failed.connect(self._on_failed)
+        self._worker.progress.connect(self._on_progress)
         self._thread.start()
 
         self._busy = False
@@ -697,6 +703,17 @@ class DocsPane(QWidget):
     def _on_refresh_clicked(self):
         self._invalidate_next = True
         self.refresh_requested.emit()
+
+    def _on_progress(self, done: int, total: int):
+        """Count up as each image lands.
+
+        A "render all" over a big BOSL2 file is minutes of work; without a
+        count the pane just says "Building preview…" the whole way and
+        gives no sense of whether it is nearly done. Silent when there are
+        no images to render, which is the ordinary refresh.
+        """
+        if total:
+            self._status.setText(f"Building preview… ({done} of {total})")
 
     def _start_pending(self):
         args, self._pending = self._pending, None
