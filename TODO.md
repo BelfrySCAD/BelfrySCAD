@@ -1,7 +1,7 @@
 # TODO
 
 - NURBS viewer/editor support
-- Heightfield array viewer/editor
+- VNF tile texture viewer/editor
 - Cheaper GPU upload for many-small-bodies scenes. `Viewport.load_geometry`/
   `SceneRenderer.load_geometry` still re-upload every body from scratch each
   render, even though `ManifoldCache` skips unchanged Manifold work one layer

@@ -540,7 +540,7 @@ self._toggle_perspective(perspective)
 
 ## Data Viewers
 
-Implemented in `src/belfryscad/window/data_viewers.py`. Eight viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`, or lexically from any numeric literal in the editor via `build_lexical_view_menu()`/`build_editor_menu()` (see "Lexical 'View as...'/'Edit as...'" above) — `PathViewer`/`GridViewer`/`MatrixViewer`/`AffineMatrixViewer`/`VNFViewer`/`RegionViewer`/`ObjectViewer` additionally support an `editable=True` constructor mode for the latter.
+Implemented in `src/belfryscad/window/data_viewers.py`. Nine viewer dialogs for inspecting evaluated data, opened from the debugger's variable context menu via `build_viewer_menu()`, or lexically from any numeric literal in the editor via `build_lexical_view_menu()`/`build_editor_menu()` (see "Lexical 'View as...'/'Edit as...'" above) — `PathViewer`/`GridViewer`/`MatrixViewer`/`AffineMatrixViewer`/`VNFViewer`/`RegionViewer`/`ObjectViewer`/`HeightfieldViewer` additionally support an `editable=True` constructor mode for the latter.
 
 ### `ObjectViewer` and geometry objects
 
@@ -552,6 +552,134 @@ Implemented in `src/belfryscad/window/data_viewers.py`. Eight viewer dialogs for
 - A duplicate key **overwrites in place, keeping its position** — `object(a=42, b=1, a=99)` is `{ a = 99; b = 1; }`, checked against the reference binary. Remove-and-append would be *delete* semantics, and the difference is observable because `ValueObject` is insertion-ordered and `oscEqual` is order-sensitive.
 
 **Editing is offered only for all-literal calls.** `_parse_object_call_args` returns `None` for anything else, and both `find_editable_literals` and `find_viewable_literals` gate on that. `object(other, [["b"]])` depends on `other`, whose contents are unknowable from source text, so rewriting the call would silently destroy the reference. Offering the *lexical* object view for such a call was a shipped bug: the viewer opened with no rows at all. `_open_object_viewer` now also refuses to open with nothing to show, so an empty window cannot appear by another route. Such objects remain fully inspectable at runtime, where the debugger supplies resolved values.
+
+**`HeightfieldViewer` edits a rectangular 2D array of scalar heights** —
+BOSL2's `heightfield()` data argument — as a table of numbers beside a 3D
+surface of the same values. It fills a real gap between its neighbours:
+`_is_grid` wants rows of *points*, one nesting level deeper, and `_is_matrix`
+wants a *square* 2x2..5x5, so a 30x40 array of heights matched neither and
+had no editor at all.
+
+The surface reuses `_GridViewport` rather than growing another viewport: a
+heightfield *is* a grid of points once the coordinates the array only implies
+are filled in (x = column, y = row, z = the height), so the mesh, the markers,
+the framing and vertex picking all come for free.
+
+Editing is constrained to height. A heightfield stores one number per cell
+and x/y *are* that cell's position in the array, so `_GridViewport` gains a
+`z_only` flag rather than being denied `editable=True`: a Cmd+drag moves the
+vertex up and down and leaves its place alone, and the arrow keys nudge with
+Up/Down only — Left/Right fall through to the viewport's own key handling,
+since sideways is not a height change. A drag never locks the Z axis either
+(`_view_locked_axis` would, looking from above), or the drag plane would be
+horizontal and height could not move at all; it locks whichever *horizontal*
+axis faces the camera most squarely, leaving a plane that always contains Z.
+Heights are equally editable in the table; clicking a vertex selects its
+cell, and selecting a cell highlights its vertex.
+
+Heights show to **two decimals**, since a heightfield is normally a 0..1
+field where more than that is noise on screen. Display only: the stored
+value keeps every digit it had while the dialog is open, and only a cell
+actually typed into changes. Saving rounds to the same two decimals (see
+the writeback below), so what the table shows is what the file gets.
+
+The table takes an **extended selection**, and the viewport nudges whatever
+is selected, so a group of points raises and lowers together. A live move
+(drag or nudge) mutates the value **in place** rather than going through
+`_commit_value`: a group nudge calls the handler once per point, and
+`_commit_value` would push an undo step for each — the
+`vertex_drag_started`/`vertex_drag_finished` bracket pushes exactly one for
+the whole gesture. Selection syncs both ways, guarded by a flag so the
+table→viewport→table round trip cannot recurse; a viewport click honours
+the same replace/add/toggle modifiers the table does.
+
+**Right-clicking a row or column header** offers Duplicate and Delete for
+that line. Delete asks first, naming the line and how many heights go with
+it: it throws away a whole row or column of hand-placed values, and its menu
+item sits one pixel from Duplicate. Undo is there, but not before the
+surface has already changed under the user. Duplicate asks nothing — it is
+additive. The question lives in `_confirm_delete_line` rather than
+`_delete_line`, so the operation itself stays callable without a dialog in
+the way. Delete is disabled at two rows or two columns: below that the
+value stops being a heightfield at all (see `_is_heightfield`), and the
+dialog would be editing something it could not save back. Because these
+change the array's shape, `_apply_value` rebuilds the table when the
+dimensions differ rather than re-labelling cells — undoing a Duplicate Row
+leaves fewer rows than the table has, and writing into cells that no longer
+exist is how that crashes.
+
+Even with tiling off, one **wrapped row and column** are drawn past the
+end. An N x M field tiles into N x M cells of surface, but N x M points only
+span (N-1) x (M-1) of them — so an untiled tile was drawn a row and a column
+short of what it actually covers, and the edge where it meets its own next
+copy was precisely the part not shown. Those extra points take their heights
+from the far side, and get no markers: they are copies, not cells.
+
+**Show tiling** draws the field 3x3 with the editable copy in the middle,
+so the seam between one tile and the next is visible — the thing a texture
+tile actually has to get right, and the thing an isolated tile cannot show.
+The period is the array's own size, so column 0 of the next tile sits
+immediately after the last column of this one. Only the middle copy gets
+grab handles: `_GridViewport.marker_indices` restricts markers to a subset,
+because a marker on a point that cannot be grabbed is an invitation to try.
+`_cell_of_flat` returns None for a vertex in a neighbouring copy, and every
+path that acts on a vertex — click, drag, nudge — goes through it.
+
+**Normalize…** rescales every height into a given range (0..1 by default),
+linearly, so the field keeps its shape — a heightfield is usually consumed
+as 0..1 and one built by hand rarely arrives that way. `lo > hi` is allowed
+and flips the field. A field that is already flat has no range to map from,
+so every cell takes the low end rather than dividing by zero.
+
+**Saving writes multi-line source**, one row per line with the columns
+right-aligned to a common width. `_format_value` — what every other
+editable viewer uses — puts everything on one line, which is fine for a 4x4
+matrix and unreadable for a 30x40 field: the whole point of the array is
+that its shape on the page matches the surface, and a single line throws
+that away. Heights are written at two decimals: a heightfield is a field of
+proportions rather than measurements, so a saved `0.33` says everything
+`0.333333` does and the column of them stays readable. This is the one
+writeback that does not use `_format_value`'s `%g`, and unlike the table's
+two-decimal *display* it rounds the value that reaches the file.
+
+The table's columns share the width evenly (`QHeaderView.Stretch`) rather
+than each sizing to its own contents — every cell holds one number of about
+the same length, so content-sizing only produced a ragged right edge. With a
+floor, though: `setMinimumSectionSize` keeps a column wide enough for a
+number, because Stretch alone divides whatever width there is by the column
+count and a wide field in a narrow pane shrank every value to `4.…` — evenly
+sized and unreadable. Below that floor the table scrolls. The **Style** and
+**Z scale** controls sit on their own row beneath the size/min/max label,
+which side by side had left the label no room to say anything.
+
+A **Style** dropdown picks how each quad splits into triangles, offering
+BOSL2's own documented `vnf_vertex_array` set — `default`, `alt`, `flip1`,
+`flip2`, `min_edge`, `min_area`, `quincunx`, `convex`, `concave` — which is
+what `heightfield()` and the texture machinery build with. `_quad_triangles`
+ports the rules from `vnf.scad`; BOSL2's corners map to this grid's as
+i1=p00, i2=p10, i3=p11, i4=p01, so its two splits are the p00–p11 diagonal
+(`default`) and the p01–p10 one (`alt`), and every data-dependent style is a
+rule for choosing between exactly those two. `quincunx` is the one that adds
+a vertex: the quad's centre, joined to all four corners. `random` is
+deliberately not offered — a preview that re-triangulates on every redraw is
+not a preview — and `max_edge`/`quad` exist in BOSL2's source but not in its
+documented list.
+
+A **Z scale** box exaggerates the preview only. A height map's values are
+often a small fraction of its width, which renders as a flat sheet; the
+stored heights never change, which the tooltip says outright. It reads as a
+percentage (15% … 400% as presets) and is editable, because the useful
+exaggeration for a given field is rarely one of the presets. Typed input is
+lenient about the `%` and surrounding space — an entry is as likely to be
+`150` as `150%` — but anything that is not a positive number puts the last
+good value back rather than being guessed at, since zero or negative would
+flatten or mirror the preview. It reads on `activated` and
+`editingFinished` rather than `currentTextChanged`, which fires per
+keystroke and would rebuild the surface at 2% and 20% on the way to 200%.
+
+Shapes are offered independently (see "Lexical View as.../Edit as..." above),
+so a 3x3 array of numbers legitimately offers Heightfield, Matrix *and* Path
+together — each is a true reading of the same literal.
 
 **Geometry objects reach the mesh viewers.** A `render()` expression yields an object carrying the mesh as separate `vertices`/`faces` keys, so `_is_vnf` — which only matches a bare 2-list — fires for `obj.vnf` but never for `obj`. `_geometry_object_vnf` unwraps it; `_geometry_object_region` handles the 2D case, which is *not* a straight unwrap since `paths` holds indices into `vertices` and must be resolved to real points first. Dispatch is on `dim`: 3 → `VNFViewer`, 2 → `RegionViewer` (plus `PathViewer` when there is exactly one contour). Deliberately not folded into `_is_vnf`, which also spots VNF literals in source text where an object is not a candidate. An eighth, `ProfileViewer`, follows the same `QDialog`/`QTableWidget` skeleton but is launched differently — see below.
 

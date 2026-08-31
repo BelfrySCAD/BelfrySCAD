@@ -99,6 +99,150 @@ def _is_grid(v) -> bool:
                     and all(_is_numeric_point(p) for p in row) for row in v))
 
 
+#: How BOSL2's `vnf_vertex_array` may split each quad into triangles --
+#: its own documented list, which is what a texture or a heightfield is
+#: built with. "max_edge" and "quad" exist in BOSL2's source but are not in
+#: that list, and "random" is deliberately absent here: a preview that
+#: re-triangulates differently on every redraw is not a preview.
+QUAD_STYLES = ["default", "alt", "flip1", "flip2", "min_edge", "min_area",
+               "quincunx", "convex", "concave"]
+
+
+def _quad_triangles(style: str, p00, p01, p10, p11, parity: int) -> list:
+    """The triangles one grid quad becomes, as point triples.
+
+    Ported from BOSL2's `vnf_vertex_array` (vnf.scad). Its corner names map
+    to this grid's as i1=p00, i2=p10, i3=p11, i4=p01, so its two splits are
+    the p00-p11 diagonal ("default") and the p01-p10 one ("alt"); every
+    data-dependent style is a rule for choosing between exactly those two.
+    `parity` is (row + col), which is all flip1/flip2 need.
+    """
+    diag_00_11 = [(p00, p11, p10), (p00, p01, p11)]
+    diag_01_10 = [(p00, p01, p10), (p10, p01, p11)]
+
+    if style == "alt":
+        return diag_01_10
+    if style == "flip1":
+        return diag_01_10 if parity % 2 == 0 else diag_00_11
+    if style == "flip2":
+        return diag_01_10 if parity % 2 == 1 else diag_00_11
+    if style in ("min_edge", "min_area", "convex", "concave"):
+        if style == "min_edge":
+            take_alt = np.linalg.norm(p01 - p10) < np.linalg.norm(p00 - p11)
+        elif style == "min_area":
+            area_alt = (np.linalg.norm(np.cross(p10 - p00, p01 - p00))
+                        + np.linalg.norm(np.cross(p01 - p11, p10 - p11)))
+            area_def = (np.linalg.norm(np.cross(p00 - p01, p11 - p01))
+                        + np.linalg.norm(np.cross(p11 - p10, p00 - p10)))
+            take_alt = area_alt < area_def
+        else:
+            # Normal of three corners; the fourth is above or below it.
+            n = np.cross(p10 - p00, p11 - p00)
+            if not np.any(n):
+                return [(p00, p01, p11)]        # degenerate: one triangle
+            above = float(n @ p01) > float(n @ p00)
+            take_alt = above if style == "convex" else not above
+        return diag_01_10 if take_alt else diag_00_11
+    if style == "quincunx":
+        # The only style that adds a vertex: the quad's centre, joined to
+        # all four corners.
+        mid = (p00 + p01 + p10 + p11) / 4.0
+        return [(p00, mid, p10), (p10, mid, p11), (p11, mid, p01), (p01, mid, p00)]
+    return diag_00_11                            # "default"
+
+
+def _format_heightfield(value: list, indent: str = "    ") -> str:
+    """A heightfield as multi-line OpenSCAD source, one row per line.
+
+    `_format_value` puts everything on one line, which is fine for a 4x4
+    matrix and unreadable for a 30x40 field -- the whole point of the array
+    is that its shape on the page matches the surface, and a single line
+    throws that away. Columns are right-aligned to a common width for the
+    same reason.
+
+    Two decimals, fixed: a heightfield is a field of proportions rather
+    than measurements, so a saved `0.33` says everything `0.333333` does
+    and the column of them stays readable. This is the one writeback that
+    does NOT use `_format_value`'s `%g` -- and it does round the saved
+    value, not just its display.
+    """
+    cells = [[f"{float(h):.2f}" for h in row] for row in value]
+    width = max((len(t) for row in cells for t in row), default=1)
+    rows = [indent + "[" + ", ".join(t.rjust(width) for t in row) + "]"
+            for row in cells]
+    return "[\n" + ",\n".join(rows) + "\n]"
+
+
+def _normalize_heights(value: list, lo: float, hi: float) -> list:
+    """`value` rescaled linearly so its lowest height becomes `lo` and its
+    highest `hi`, which leaves the field's shape untouched.
+
+    A field that is already flat has no range to map from, so every cell
+    becomes `lo` -- the alternative is dividing by zero, and there is no
+    reading of "spread this constant across a range" that says otherwise.
+    """
+    flat = [h for row in value for h in row]
+    lowest, highest = min(flat), max(flat)
+    span = highest - lowest
+    if span == 0:
+        return [[lo for _ in row] for row in value]
+    scale = (hi - lo) / span
+    return [[round(lo + (h - lowest) * scale, 6) for h in row] for row in value]
+
+
+def _ask_range(parent, cur_lo: float, cur_hi: float):
+    """Prompt for a low/high pair, or (None, None) if cancelled. Defaults to
+    0..1, the range a heightfield is normally consumed in, with the field's
+    own current range shown so the user can see what is being replaced."""
+    from PySide6.QtWidgets import QDialogButtonBox, QDoubleSpinBox, QFormLayout
+
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Normalize Heights")
+    form = QFormLayout(dlg)
+    form.addRow(QLabel(f"Current range: {cur_lo:g} to {cur_hi:g}"))
+
+    def spin(val):
+        box = QDoubleSpinBox()
+        box.setRange(-1e6, 1e6)
+        box.setDecimals(4)
+        box.setValue(val)
+        return box
+
+    lo_box, hi_box = spin(0.0), spin(1.0)
+    form.addRow("Lowest:", lo_box)
+    form.addRow("Highest:", hi_box)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                               | QDialogButtonBox.StandardButton.Cancel)
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+    form.addRow(buttons)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None, None
+    return lo_box.value(), hi_box.value()
+
+
+def _is_heightfield(v) -> bool:
+    """A heightfield is a rectangular 2D list of plain numbers -- what
+    BOSL2's `heightfield()` takes as `data`, one scalar height per grid
+    cell.
+
+    Deliberately distinct from both neighbours: `_is_grid` wants rows of
+    *points*, one nesting level deeper, and `_is_matrix` wants a SQUARE
+    2x2..5x5. A heightfield is neither, so nothing offered it an editor
+    before. Rows must all be the same length -- a ragged one is not a
+    height map, and the surface it would build has no meaning.
+    """
+    if not (_is_list(v) and len(v) >= 2):
+        return False
+    if not all(_is_list(row) and len(row) >= 2
+               and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                       for x in row)
+               for row in v):
+        return False
+    return len({len(row) for row in v}) == 1
+
+
 def _is_region(v) -> bool:
     """A region is a list of >= 1 closed 2D polygon paths, each with >= 3
     points, representing non-overlapping perimeters under even-odd fill
@@ -5317,6 +5461,17 @@ class _GridViewport(Viewport):
 
     def __init__(self, grid_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False, pan_speed=2.0)
+        #: How each quad splits into triangles -- see `_quad_triangles`.
+        self.quad_style = "default"
+        #: When set, only these vertex indices get a marker. A heightfield
+        #: showing its tiling draws the neighbouring copies for context but
+        #: only the middle one is editable, and a marker on a point that
+        #: cannot be grabbed is an invitation to try.
+        self.marker_indices = None
+        #: Constrain editing to height alone: a heightfield stores one
+        #: number per cell, and x/y ARE the cell's position in the array,
+        #: so a moved x or y is not something it can express.
+        self.z_only = False
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.depth_test_points = True
@@ -5495,8 +5650,9 @@ class _GridViewport(Viewport):
                         i10 = base_b + c
                         i11 = base_b + (c + 1) % shared
                         p00, p01, p10, p11 = pts[i00], pts[i01], pts[i10], pts[i11]
-                        _add_tri(p00, p01, p11)
-                        _add_tri(p00, p11, p10)
+                        for t0, t1, t2 in _quad_triangles(self.quad_style,
+                                                           p00, p01, p10, p11, r + c):
+                            _add_tri(t0, t1, t2)
                 fan = _grid_fan_spec(len_a, len_b, col_wrap)
                 if fan is not None:
                     anchor_in_a, anchor_col, longer_len, ks = fan
@@ -5557,8 +5713,9 @@ class _GridViewport(Viewport):
         selected = set(self._selected_indices)
 
         marker_tris = []
+        allowed = self.marker_indices
         for i, pt in enumerate(pts):
-            if i in selected:
+            if i in selected or (allowed is not None and i not in allowed):
                 continue
             r = _marker_radius_for_point(self, pt)
             marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
@@ -5710,6 +5867,15 @@ class _GridViewport(Viewport):
                 if self._is_2d:
                     self._drag_lock_axis = 2
                     self._drag_plane_point = np.zeros(3, dtype=np.float32)
+                elif self.z_only:
+                    # Never lock Z, or the drag plane would be horizontal
+                    # and height could not move at all. Lock whichever
+                    # horizontal axis faces the camera most squarely, so
+                    # the plane that is left always contains Z.
+                    cam = self._renderer.camera
+                    fwd = cam.target - cam.eye_position()
+                    self._drag_lock_axis = 0 if abs(fwd[0]) >= abs(fwd[1]) else 1
+                    self._drag_plane_point = self._all_pts[vi].copy()
                 else:
                     self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                     self._drag_plane_point = self._all_pts[vi].copy()
@@ -5730,6 +5896,10 @@ class _GridViewport(Viewport):
             ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
             hit = _ray_plane_axis_locked(ray_o, ray_d, self._drag_plane_point, self._drag_lock_axis)
             if hit is not None:
+                if self.z_only:
+                    # Height follows the cursor; the cell keeps its place.
+                    start_pt = self._all_pts[self._drag_vertex_idx]
+                    hit = np.array([start_pt[0], start_pt[1], hit[2]], dtype=np.float32)
                 self.vertex_moved.emit(self._drag_vertex_idx,
                                         round(float(hit[0]), 3), round(float(hit[1]), 3), round(float(hit[2]), 3))
             return
@@ -5814,7 +5984,14 @@ class _GridViewport(Viewport):
         if self._editable and self._selected_indices:
             lock_axis = 2 if self._is_2d else _view_locked_axis(self._renderer.camera)
             magnitude = _key_nudge_magnitude(event.modifiers())
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
+            if self.z_only:
+                # Up/down raise and lower. Left/right would mean moving a
+                # cell sideways, which a heightfield cannot represent, so
+                # they fall through to the viewport's own key handling.
+                step = {Qt.Key.Key_Up: magnitude, Qt.Key.Key_Down: -magnitude}.get(event.key())
+                delta = None if step is None else np.array([0.0, 0.0, step], dtype=np.float32)
+            else:
+                delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 self.vertex_drag_started.emit()
                 for vi in self._selected_indices:
@@ -5831,6 +6008,503 @@ class _GridViewport(Viewport):
 # ---------------------------------------------------------------------------
 # Region Viewer
 # ---------------------------------------------------------------------------
+
+class HeightfieldViewer(QDialog, _UndoableViewerMixin):
+    """A rectangular 2D list of scalar heights, as an editable table beside
+    a 3D surface of the same data.
+
+    The surface reuses `_GridViewport` rather than growing another one: a
+    heightfield IS a grid of points once the implicit coordinates are
+    filled in (x = column, y = row, z = the height), so the mesh, the
+    markers, the framing and the picking all come for free.
+
+    The viewport is never handed `editable=True`, even in editing mode.
+    Its editing gesture drags a vertex in three dimensions, and two of
+    those are the cell's position in the array -- a heightfield has no way
+    to express a moved x or y. Heights are edited in the table, where the
+    one number per cell that CAN change is the only thing on offer.
+    """
+
+    committed = Signal(str)
+
+    #: Heights are usually a 0..1 field, where more than two decimals is
+    #: noise on screen. Display only -- the stored value keeps every digit
+    #: it had, and only a cell the user actually types into changes.
+    _DECIMALS = 2
+
+    #: Display-only exaggeration for the preview, as a percentage. A height
+    #: map's values are often a small fraction of its width, which renders
+    #: as a flat sheet; this scales the surface without touching the data.
+    #: Presets only -- the box is editable, so any percentage can be typed.
+    _Z_PRESETS = [15, 25, 33, 50, 75, 100, 150, 200, 300, 400]
+
+    def __init__(self, title: str, value: list, parent=None, editable: bool = False):
+        super().__init__(parent)
+        label = "Heightfield Editor" if editable else "Heightfield Viewer"
+        self.setWindowTitle(f"{label}: {title}" if title else label)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.resize(1040, 520)
+
+        self._editable = editable
+        self._value = value
+        self._zscale = 1.0
+        #: Guards the table <-> viewport selection round trip.
+        self._syncing = False
+        #: Show the tile's neighbours as it would repeat -- see _as_grid.
+        self._tiled = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+
+        self._vp = _GridViewport(self._as_grid(), False, self, editable=editable)
+        self._vp.z_only = True
+        _sync_viewport_to_main_window(self._vp)
+        self._vp.vertex_clicked.connect(self._on_vertex_clicked)
+        if editable:
+            self._vp.vertex_moved.connect(self._on_vertex_moved)
+            self._vp.vertex_drag_started.connect(self._begin_live_edit)
+            self._vp.vertex_drag_finished.connect(
+                lambda: self._end_live_edit("Change Height"))
+        splitter.addWidget(self._vp)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._table = QTableWidget()
+        self._table.setFont(QFont("Menlo", 11))
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            if editable else QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._build_table()
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        if editable:
+            for header, is_row in ((self._table.verticalHeader(), True),
+                                    (self._table.horizontalHeader(), False)):
+                header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                header.customContextMenuRequested.connect(
+                    lambda pos, h=header, rw=is_row: self._header_menu(h, rw, pos))
+        if editable:
+            self._table.itemChanged.connect(self._on_item_changed)
+        right_layout.addWidget(self._table)
+
+        self._size_label = QLabel()
+        right_layout.addWidget(self._size_label)
+
+        # Their own row under the label: side by side, the two dropdowns and
+        # their captions left the label no room to say anything.
+        zrow = QHBoxLayout()
+        zrow.setContentsMargins(0, 0, 0, 0)
+        zrow.addWidget(QLabel("Style:"))
+        self._style_combo = QComboBox()
+        self._style_combo.addItems(QUAD_STYLES)
+        self._style_combo.setToolTip(
+            "How each quad is split into triangles -- BOSL2's own\n"
+            "vnf_vertex_array styles, which is what heightfield() uses.")
+        self._style_combo.currentTextChanged.connect(self._on_style_changed)
+        _size_combo_to_widest_item(self._style_combo)
+        zrow.addWidget(self._style_combo)
+        zrow.addStretch()
+        self._tile_cb = QCheckBox("Show tiling")
+        self._tile_cb.setToolTip(
+            "Draw the tile's neighbours as the texture would repeat, so the\n"
+            "seam between one copy and the next is visible. Only the middle\n"
+            "copy is editable.")
+        self._tile_cb.toggled.connect(self._on_tiling_toggled)
+        zrow.addWidget(self._tile_cb)
+        # A stretch either side, so the checkbox sits midway between the
+        # Style and Z scale controls rather than crowding one of them.
+        zrow.addStretch()
+        zrow.addWidget(QLabel("Z scale:"))
+        self._zcombo = QComboBox()
+        self._zcombo.setEditable(True)
+        self._zcombo.addItems([f"{pct}%" for pct in self._Z_PRESETS])
+        self._zcombo.setCurrentText("100%")
+        self._zcombo.setToolTip("Vertical exaggeration of the preview only; "
+                                 "the stored heights never change.\n"
+                                 "Any percentage can be typed, not just these.")
+        # `activated` for a pick and `editingFinished` for something typed,
+        # rather than currentTextChanged: that fires on every keystroke, so
+        # typing "200" would rebuild the surface at 2% and then 20% on the
+        # way. _size_combo_to_widest_item before the box is populated with
+        # anything longer than its presets.
+        self._zcombo.activated.connect(lambda _i: self._apply_zscale_text())
+        self._zcombo.lineEdit().editingFinished.connect(self._apply_zscale_text)
+        _size_combo_to_widest_item(self._zcombo)
+        zrow.addWidget(self._zcombo)
+        right_layout.addLayout(zrow)
+
+        splitter.addWidget(right)
+        # An even split: the table's columns have a width they cannot go
+        # below without eliding, so starving this half just means scrolling
+        # past most of the field.
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+
+        # The mesh cannot be built until there is a GL context to build it
+        # in; the constructor's grid argument only records the data.
+        self._vp.schedule_load(self._do_initial_load)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 20, 0)
+        if editable:
+            self._setup_undo(value)
+            normalize = QPushButton("Normalize…")
+            normalize.setToolTip("Rescale every height into a given range, "
+                                  "keeping the shape of the field.")
+            normalize.clicked.connect(self._on_normalize)
+            btn_row.addWidget(normalize)
+            btn_row.addLayout(self._make_reset_button_row())
+        btn_row.addStretch()
+        if editable:
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(self.reject)
+            btn_row.addWidget(cancel)
+            save = QPushButton("Save")
+            save.clicked.connect(self._on_save)
+            btn_row.addWidget(save)
+        else:
+            dismiss = QPushButton("Dismiss")
+            dismiss.clicked.connect(self.close)
+            btn_row.addWidget(dismiss)
+        layout.addLayout(btn_row)
+
+        self._update_size_label()
+
+    # -- data <-> surface ----------------------------------------------
+
+    def _as_grid(self) -> list:
+        """The heights as a grid of points, filling in the coordinates the
+        array only implies: x = column, y = row.
+
+        With tiling on, the field is laid out 3x3 with the editable copy in
+        the middle, so the seam between one tile and the next is visible --
+        which is the thing a texture tile actually has to get right, and
+        the thing an isolated tile cannot show. The period is the array's
+        own size, so column 0 of the next tile sits immediately after the
+        last column of this one.
+        """
+        z = self._zscale
+        rows, cols = len(self._value), len(self._value[0])
+        if self._tiled:
+            reps = (-1, 0, 1)
+            return [[[float(tc * cols + c), float(tr * rows + r), float(h) * z]
+                     for tc in reps for c, h in enumerate(row)]
+                    for tr in reps for r, row in enumerate(self._value)]
+        # One row and column past the end, wrapped from the start. An
+        # N x M field tiles into N x M cells of surface, but N x M points
+        # only span (N-1) x (M-1) of them -- so an untiled tile was drawn
+        # a row and a column short of what it actually covers, and the
+        # edge where it meets its own next copy was the part not shown.
+        return [[[float(c), float(r), float(self._value[r % rows][c % cols]) * z]
+                 for c in range(cols + 1)]
+                for r in range(rows + 1)]
+
+    def _flat_index(self, row: int, col: int) -> int:
+        """The viewport's index for cell (row, col) of the editable tile."""
+        rows, cols = len(self._value), len(self._value[0])
+        if not self._tiled:
+            return row * (cols + 1) + col      # the grid is one wider
+        return (rows + row) * (3 * cols) + (cols + col)
+
+    def _cell_of_flat(self, flat: int):
+        """(row, col) within the EDITABLE tile, or None for a vertex in one
+        of the surrounding copies -- those are there to be looked at, not
+        edited, and every path that acts on a vertex has to say so."""
+        rows, cols = len(self._value), len(self._value[0])
+        if not self._tiled:
+            r, c = divmod(flat, cols + 1)
+            return (r, c) if 0 <= r < rows and 0 <= c < cols else None
+        r, c = divmod(flat, 3 * cols)
+        r -= rows
+        c -= cols
+        return (r, c) if 0 <= r < rows and 0 <= c < cols else None
+
+    # -- table ----------------------------------------------------------
+
+    def _fmt(self, v) -> str:
+        return f"{float(v):.{self._DECIMALS}f}"
+
+    def _build_table(self):
+        rows, cols = len(self._value), len(self._value[0])
+        self._table.blockSignals(True)
+        self._table.setRowCount(rows)
+        self._table.setColumnCount(cols)
+        self._table.setHorizontalHeaderLabels([str(c) for c in range(cols)])
+        self._table.setVerticalHeaderLabels([str(r) for r in range(rows)])
+        _style_table_headers(self._table)
+        for r in range(rows):
+            for c in range(cols):
+                item = QTableWidgetItem(self._fmt(self._value[r][c]))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight
+                                       | Qt.AlignmentFlag.AlignVCenter)
+                if not self._editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(r, c, item)
+        # Even columns filling the width, rather than each sized to its own
+        # contents: every cell holds one number of roughly the same length,
+        # so content-sizing only produced a ragged right edge and left the
+        # table not filling its half of the splitter.
+        #
+        # With a floor, though. Stretch alone divides whatever width there
+        # is by the column count, and a wide field in a narrow pane shrank
+        # the columns until every value was elided to "4.…" -- evenly sized
+        # and unreadable. Below the floor the table scrolls instead.
+        header = self._table.horizontalHeader()
+        header.setMinimumSectionSize(
+            self._table.fontMetrics().horizontalAdvance("-000.000") + 12)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.blockSignals(False)
+
+    def _update_size_label(self):
+        rows, cols = len(self._value), len(self._value[0])
+        flat = [h for row in self._value for h in row]
+        self._size_label.setText(
+            f"{rows} x {cols} — min {self._fmt(min(flat))}, max {self._fmt(max(flat))}")
+
+    # -- signals ---------------------------------------------------------
+
+    def _do_initial_load(self):
+        self._vp.marker_indices = {
+            self._flat_index(r, c)
+            for r in range(len(self._value))
+            for c in range(len(self._value[0]))}
+        self._vp.load_grid(self._as_grid())      # never tiled at startup
+
+    def _reload_surface(self):
+        """Rebuild the surface after the data or the Z scale changed.
+
+        makeCurrent/doneCurrent around it because this runs from a table
+        edit or a combo box, not from the viewport's own paint path -- a GL
+        call made while another widget's context is current corrupts that
+        widget instead.
+        """
+        if self._vp._ctx is None:
+            return
+        # Only the editable copy gets grab handles; the neighbours are
+        # there to show the seam, not to be dragged.
+        self._vp.marker_indices = {
+            self._flat_index(r, c)
+            for r in range(len(self._value))
+            for c in range(len(self._value[0]))}
+        self._vp.makeCurrent()
+        self._vp.load_grid(self._as_grid())
+        self._vp.doneCurrent()
+        self._vp.update()
+
+    def _on_style_changed(self, name: str):
+        self._vp.quad_style = name
+        self._reload_surface()
+
+    def _on_vertex_moved(self, flat: int, _x: float, _y: float, z: float):
+        """A dragged or nudged vertex writes back its height alone. The
+        viewport is in z_only mode, so x and y arrive unchanged anyway --
+        ignoring them here says why they can be ignored."""
+        cell = self._cell_of_flat(flat)
+        if cell is None:
+            return          # a neighbouring tile's copy: not editable
+        r, c = cell
+        # In place, deliberately: a nudge of a whole selection calls this
+        # once per point, and _commit_value would push an undo step for
+        # each. The drag_started/drag_finished bracket around the gesture
+        # pushes exactly one for all of them (see _end_live_edit).
+        self._value[r][c] = round(z / self._zscale, 6) if self._zscale else z
+        self._table.blockSignals(True)
+        self._table.item(r, c).setText(self._fmt(self._value[r][c]))
+        self._table.blockSignals(False)
+        self._reload_surface()
+        self._update_size_label()
+
+    def _on_tiling_toggled(self, on: bool):
+        self._tiled = on
+        self._reload_surface()
+        self._on_selection_changed()      # indices shift when tiling changes
+
+    def _header_menu(self, header, is_row: bool, pos):
+        """Duplicate/Delete on a row or column header.
+
+        Delete is disabled at 2 rows or 2 columns: below that the value is
+        no longer a heightfield (see `_is_heightfield`), and the dialog
+        would be editing something it could not save back.
+        """
+        idx = header.logicalIndexAt(pos)
+        if idx < 0:
+            return
+        what = "Row" if is_row else "Column"
+        count = len(self._value) if is_row else len(self._value[0])
+
+        menu = QMenu(self)
+        menu.addAction(f"Duplicate {what} {idx}",
+                       lambda: self._duplicate_line(idx, is_row))
+        delete = menu.addAction(f"Delete {what} {idx}",
+                                 lambda: self._confirm_delete_line(idx, is_row))
+        if count <= 2:
+            delete.setEnabled(False)
+            delete.setToolTip(f"A heightfield needs at least two {what.lower()}s.")
+        menu.exec(header.mapToGlobal(pos))
+
+    def _duplicate_line(self, idx: int, is_row: bool):
+        value = copy.deepcopy(self._value)
+        if is_row:
+            value.insert(idx + 1, list(value[idx]))
+        else:
+            for row in value:
+                row.insert(idx + 1, row[idx])
+        self._commit_value(value, f"Duplicate {'Row' if is_row else 'Column'}")
+
+    def _confirm_delete_line(self, idx: int, is_row: bool):
+        """Ask first. Deleting a line throws away a whole row or column of
+        hand-placed heights, and the menu item sits one pixel from
+        Duplicate -- undo is there, but not before the surface has already
+        changed under the user.
+
+        The question is separate from `_delete_line` so the operation
+        itself stays callable without a dialog in the way.
+        """
+        what = "row" if is_row else "column"
+        count = len(self._value[0]) if is_row else len(self._value)
+        answer = QMessageBox.question(
+            self, f"Delete {what.capitalize()}",
+            f"Delete {what} {idx}? Its {count} height"
+            f"{'' if count == 1 else 's'} will be removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            self._delete_line(idx, is_row)
+
+    def _delete_line(self, idx: int, is_row: bool):
+        value = copy.deepcopy(self._value)
+        if is_row:
+            if len(value) <= 2:
+                return
+            del value[idx]
+        else:
+            if len(value[0]) <= 2:
+                return
+            for row in value:
+                del row[idx]
+        self._commit_value(value, f"Delete {'Row' if is_row else 'Column'}")
+
+    def _apply_zscale_text(self):
+        """Read the box as a percentage, or put back the last good value.
+
+        Lenient about the "%" and surrounding space, since a typed entry is
+        as likely to be "150" as "150%". Anything that is not a positive
+        number is refused outright rather than guessed at -- a zero or
+        negative scale would flatten or mirror the preview, and neither is
+        something the box can be asked for by accident.
+        """
+        text = self._zcombo.currentText().strip().rstrip("%").strip()
+        try:
+            pct = float(text)
+        except ValueError:
+            pct = 0.0
+        if pct <= 0:
+            self._zcombo.setCurrentText(self._fmt_pct(self._zscale))
+            return
+        self._zscale = pct / 100.0
+        self._zcombo.setCurrentText(self._fmt_pct(self._zscale))
+        self._reload_surface()
+
+    @staticmethod
+    def _fmt_pct(scale: float) -> str:
+        pct = scale * 100.0
+        return f"{pct:g}%"
+
+    def _on_selection_changed(self):
+        """Every selected cell lights up its vertex -- and the viewport
+        nudges whatever is selected, so this is also what makes a group of
+        points move together."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            self._vp.set_selected([self._flat_index(i.row(), i.column())
+                                   for i in self._table.selectedItems()])
+        finally:
+            self._syncing = False
+
+    def _on_vertex_clicked(self, flat: int, mode: str):
+        """A click in the viewport selects the matching cell, honouring the
+        same replace/add/toggle modifiers the table itself uses."""
+        if self._syncing:
+            return
+        cell = None if flat < 0 else self._cell_of_flat(flat)
+        self._syncing = True
+        try:
+            if cell is None:
+                if mode == "replace" and flat < 0:
+                    self._table.clearSelection()
+                return
+            index = self._table.model().index(cell[0], cell[1])
+            flag = (QItemSelectionModel.SelectionFlag.Toggle if mode == "toggle"
+                    else QItemSelectionModel.SelectionFlag.Select)
+            if mode == "replace":
+                self._table.clearSelection()
+            self._table.selectionModel().select(index, flag)
+            self._table.setCurrentIndex(index)
+        finally:
+            self._syncing = False
+        self._on_selection_changed_from_viewport()
+
+    def _on_selection_changed_from_viewport(self):
+        self._vp.set_selected([self._flat_index(i.row(), i.column())
+                               for i in self._table.selectedItems()])
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        parsed = _parse_number(item.text())
+        if parsed is None:
+            self._table.blockSignals(True)
+            item.setText(self._fmt(self._value[item.row()][item.column()]))
+            self._table.blockSignals(False)
+            return
+        new_value = copy.deepcopy(self._value)
+        new_value[item.row()][item.column()] = parsed
+        self._commit_value(new_value, "Edit Height")
+
+    # -- undo mixin ------------------------------------------------------
+
+    def _get_value(self):
+        return self._value
+
+    def _apply_value(self, value):
+        # Rebuild rather than re-label when the shape changed: undoing a
+        # Duplicate Row leaves fewer rows than there are table rows, and
+        # writing into cells that no longer exist is how that crashes.
+        resized = (len(value) != len(self._value)
+                   or len(value[0]) != len(self._value[0]))
+        self._value = value
+        if resized:
+            self._build_table()
+        else:
+            self._table.blockSignals(True)
+            for r, row in enumerate(value):
+                for c, h in enumerate(row):
+                    self._table.item(r, c).setText(self._fmt(h))
+            self._table.blockSignals(False)
+        self._reload_surface()
+        self._update_size_label()
+
+    def _on_normalize(self):
+        """Rescale every height into a range, keeping the field's shape.
+
+        A heightfield is usually consumed as a 0..1 field, and one built by
+        hand or lifted from data rarely arrives that way.
+        """
+        flat = [h for row in self._value for h in row]
+        lo, hi = _ask_range(self, min(flat), max(flat))
+        if lo is None:
+            return
+        self._commit_value(_normalize_heights(self._value, lo, hi), "Normalize")
+
+    def _on_save(self):
+        self.committed.emit(_format_heightfield(self._value))
+        self.accept()
+
 
 class RegionViewer(QDialog, _UndoableViewerMixin):
     """2D viewer for a "region" -- a list of closed polygon paths under
@@ -6920,6 +7594,8 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["path"] = (start, end, value)
         if "grid" not in found and _is_grid(value):
             found["grid"] = (start, end, value)
+        if "heightfield" not in found and _is_heightfield(value):
+            found["heightfield"] = (start, end, value)
         if "matrix" not in found and _is_matrix(value):
             found["matrix"] = (start, end, value)
         if "affine" not in found and _is_affine_matrix(value):
@@ -6960,6 +7636,8 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["grid"] = (start, end, value)
         if "path" not in found and _is_path(value):
             found["path"] = (start, end, value)
+        if "heightfield" not in found and _is_heightfield(value):
+            found["heightfield"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
     # Only when the call is all-literal. `object(other, [["k"]])` depends on
@@ -6994,6 +7672,11 @@ def _open_path_viewer(title: str, value, parent=None):
 
 def _open_grid_viewer(title: str, value, parent=None):
     dlg = GridViewer(title, value, parent)
+    dlg.show()
+
+
+def _open_heightfield_viewer(title: str, value, parent=None):
+    dlg = HeightfieldViewer(title, value, parent)
     dlg.show()
 
 
@@ -7095,6 +7778,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
         start, end, value = literals["grid"]
         menu.addAction("View as Grid...", lambda start=start, end=end, value=value:
                        _open_grid_viewer(_preview(start, end), value, parent))
+    if "heightfield" in literals:
+        start, end, value = literals["heightfield"]
+        menu.addAction("View as Heightfield...", lambda start=start, end=end, value=value:
+                       _open_heightfield_viewer(_preview(start, end), value, parent))
     if "path" in literals:
         start, end, value = literals["path"]
         menu.addAction("View as Path...", lambda start=start, end=end, value=value:
@@ -7131,6 +7818,13 @@ def _open_path_editor(title: str, value: list, on_commit, parent=None):
 
 def _open_grid_editor(title: str, value: list, on_commit, parent=None):
     dlg = GridViewer(title, value, parent, editable=True)
+    dlg.committed.connect(on_commit)
+    _lock_parent_editor_while_open(dlg, parent)
+    dlg.show()
+
+
+def _open_heightfield_editor(title: str, value: list, on_commit, parent=None):
+    dlg = HeightfieldViewer(title, value, parent, editable=True)
     dlg.committed.connect(on_commit)
     _lock_parent_editor_while_open(dlg, parent)
     dlg.show()
@@ -7193,6 +7887,11 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as Grid...", lambda start=start, end=end, value=value:
                        _open_grid_editor(_preview(start, end), value,
                                          lambda t, s=start, e=end: on_commit(t, s, e), parent))
+    if "heightfield" in literals:
+        start, end, value = literals["heightfield"]
+        menu.addAction("Edit as Heightfield...", lambda start=start, end=end, value=value:
+                       _open_heightfield_editor(_preview(start, end), value,
+                                                 lambda t, s=start, e=end: on_commit(t, s, e), parent))
     if "matrix" in literals:
         start, end, value = literals["matrix"]
         menu.addAction("Edit as Matrix...", lambda start=start, end=end, value=value:

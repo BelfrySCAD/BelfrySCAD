@@ -1565,3 +1565,603 @@ class TestObjectCallParsing:
         nothing, no empty window appears."""
         from belfryscad.window.data_viewers import _open_object_viewer
         assert _open_object_viewer("x", None, None, entries=None) is None
+
+
+# ---------------------------------------------------------------------------
+# Heightfield (HeightfieldViewer's shape detection)
+# ---------------------------------------------------------------------------
+#
+# A heightfield is a rectangular 2D list of plain numbers -- BOSL2's
+# `heightfield()` data argument. It sits in the gap between its two
+# neighbours: `_is_grid` wants rows of POINTS (one nesting level deeper) and
+# `_is_matrix` wants a SQUARE 2x2..5x5, so nothing offered one an editor.
+
+def test_is_heightfield_accepts_any_rectangular_scalar_array():
+    from belfryscad.window.data_viewers import _is_heightfield
+
+    assert _is_heightfield([[1, 2], [3, 4]])
+    assert _is_heightfield([[1, 2, 3], [4, 5, 6]])
+    assert _is_heightfield([[0.5, -1.25], [2, 3], [4, 5]])      # non-square
+    assert _is_heightfield([[0] * 40 for _ in range(30)])       # far past matrix's 5x5
+
+
+def test_is_heightfield_rejects_what_it_is_not():
+    from belfryscad.window.data_viewers import _is_heightfield
+
+    assert not _is_heightfield([[1, 2], [3]]), "ragged: not a height map"
+    assert not _is_heightfield([[1, 2, 3]]), "a single row is a path, not a field"
+    assert not _is_heightfield([[1], [2]]), "single-column ditto"
+    assert not _is_heightfield([[[0, 0], [1, 0]], [[0, 1], [1, 1]]]), "that is a grid"
+    assert not _is_heightfield([1, 2, 3])
+    assert not _is_heightfield([["a", "b"], ["c", "d"]])
+    assert not _is_heightfield([[True, False], [False, True]]), "bools are not heights"
+    assert not _is_heightfield([])
+
+
+def test_heightfield_does_not_displace_the_shapes_it_overlaps():
+    """Shapes are offered independently, so a literal that reads as more
+    than one shows every applicable entry. A 3x3 scalar array really is
+    both a heightfield and a matrix, and each row really is a point."""
+    from belfryscad.window.data_viewers import (find_editable_literals,
+                                                 find_viewable_literals)
+
+    src = "data = [[0,1,2],[3,4,5],[6,7,8]];"
+    offset = src.index("[[") + 2
+    assert "heightfield" in find_editable_literals(src, offset)
+    assert "matrix" in find_editable_literals(src, offset), "still a 3x3 matrix"
+    assert "path" in find_editable_literals(src, offset), "rows are 3-vectors"
+    assert "heightfield" in find_viewable_literals(src, offset)
+
+
+def test_a_wide_heightfield_is_offered_where_matrix_cannot_be():
+    from belfryscad.window.data_viewers import find_editable_literals
+
+    src = "data = [[0,1,2,3,4,5],[6,7,8,9,10,11]];"
+    found = find_editable_literals(src, src.index("[[") + 2)
+    assert "heightfield" in found
+    assert "matrix" not in found, "6 wide and not square"
+
+
+_HEIGHTFIELD_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer
+
+hf = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+dlg = HeightfieldViewer("t", hf, None, editable=True)
+# Realised, so the viewport gets its GL context: selection (and therefore
+# the nudge, which acts on the selection) needs one.
+dlg.show()
+app.processEvents()
+out = {"rows": dlg._table.rowCount(), "cols": dlg._table.columnCount()}
+
+# x = column, y = row, z = the height -- the coordinates the array implies
+out["surface_point_r1c2"] = dlg._as_grid()[1][2]
+
+dlg._table.item(0, 1).setText("7.5")
+out["after_edit"] = dlg._value[0][1]
+dlg._undo_stack.undo()
+out["after_undo"] = dlg._value[0][1]
+
+dlg._zcombo.setCurrentText("500%")
+dlg._apply_zscale_text()
+out["scaled_z"] = dlg._as_grid()[1][2][2]
+out["stored_height_after_scale"] = dlg._value[1][2]
+
+# Ask the dialog for the index rather than hardcoding one: the grid is
+# wider than the field (a wrapped edge row/column is drawn too).
+dlg._on_vertex_clicked(dlg._flat_index(1, 1), "replace")
+out["clicked_cell"] = [dlg._table.currentRow(), dlg._table.currentColumn()]
+
+# Back to 100% first: the scale check above left it at 500%, and a drag's
+# height is divided by whatever exaggeration is showing.
+dlg._zcombo.setCurrentText("100%")
+dlg._apply_zscale_text()
+
+# Editing is height-only: the viewport is editable, but constrained.
+out["viewport_editable"] = dlg._vp._editable
+out["z_only"] = dlg._vp.z_only
+dlg._vp.vertex_moved.emit(dlg._flat_index(1, 1), 99.0, 88.0, 42.0)
+out["after_drag_row1"] = dlg._value[1]
+
+# Arrow keys: up/down move, left/right are not ours to handle.
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeyEvent
+dlg._vp.set_selected([0])
+nudged = []
+dlg._vp.vertex_moved.connect(lambda i, x, y, z: nudged.append(z))
+for key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+    before = len(nudged)
+    dlg._vp.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key,
+                                     Qt.KeyboardModifier.NoModifier))
+    out[f"nudge_{int(key)}"] = len(nudged) > before
+
+out["styles"] = dlg._style_combo.count()
+
+# Heights show to two decimals; the stored value keeps its digits.
+dlg._apply_value([[0.0, 0.123456, 0.25], [0.5, 0.75, 1.0]])
+out["cell_text"] = [dlg._table.item(0, c).text() for c in range(3)]
+out["stored"] = list(dlg._value[0])   # a copy: the nudge below mutates in place
+
+# A group of cells nudges together, as ONE undo step.
+from PySide6.QtWidgets import QAbstractItemView
+out["extended_selection"] = (dlg._table.selectionMode()
+                             == QAbstractItemView.SelectionMode.ExtendedSelection)
+dlg._table.clearSelection()
+for r, c in ((0, 0), (1, 2)):
+    dlg._table.item(r, c).setSelected(True)
+app.processEvents()
+out["viewport_selected"] = len(dlg._vp._selected_indices)
+before = [row[:] for row in dlg._value]
+steps = dlg._undo_stack.count()
+dlg._vp.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Up,
+                                 Qt.KeyboardModifier.NoModifier))
+out["group_moved"] = sorted([r, c] for r in range(2) for c in range(3)
+                             if dlg._value[r][c] != before[r][c])
+out["undo_steps_for_group"] = dlg._undo_stack.count() - steps
+
+# Row/column surgery from the header context menus.
+dlg._apply_value([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]])
+dlg._duplicate_line(1, is_row=True)
+out["dup_row_shape"] = [len(dlg._value), len(dlg._value[0])]
+out["dup_row_copied"] = dlg._value[1] == dlg._value[2]
+out["dup_row_table"] = [dlg._table.rowCount(), dlg._table.columnCount()]
+dlg._duplicate_line(0, is_row=False)
+out["dup_col_shape"] = [len(dlg._value), len(dlg._value[0])]
+out["dup_col_table"] = [dlg._table.rowCount(), dlg._table.columnCount()]
+dlg._delete_line(0, is_row=False)
+dlg._delete_line(1, is_row=True)
+out["after_deletes"] = [list(r) for r in dlg._value]
+
+# A heightfield needs two of each; deleting past that is refused.
+dlg._apply_value([[1.0, 2.0], [3.0, 4.0]])
+dlg._delete_line(0, is_row=True)
+dlg._delete_line(0, is_row=False)
+out["minimum_kept"] = [len(dlg._value), len(dlg._value[0])]
+
+# Tiling: 3x3 of the field, and only the middle copy is addressable.
+dlg._apply_value([[0.0, 1.0], [2.0, 3.0]])
+grid = dlg._as_grid()
+out["untiled_points"] = sum(len(r) for r in grid)
+out["untiled_shape"] = [len(grid), len(grid[0])]
+# The extra edge repeats the far side, so the surface shows the cell
+# where the tile meets its own next copy.
+out["wrapped_corner"] = grid[2][2][2]
+out["wrapped_edge_col"] = grid[0][2][2]
+out["wrapped_edge_row"] = grid[2][0][2]
+out["untiled_markers"] = len(dlg._vp.marker_indices or [])
+dlg._tile_cb.setChecked(True)
+out["tiled_points"] = sum(len(r) for r in dlg._as_grid())
+out["roundtrip"] = [dlg._cell_of_flat(dlg._flat_index(r, c)) == [r, c] or
+                    dlg._cell_of_flat(dlg._flat_index(r, c)) == (r, c)
+                    for r in range(2) for c in range(2)]
+out["neighbour_is_not_a_cell"] = dlg._cell_of_flat(0) is None
+out["markers_limited"] = (dlg._vp.marker_indices is not None
+                          and len(dlg._vp.marker_indices) == 4)
+dlg._tile_cb.setChecked(False)
+out["markers_after_untiling"] = len(dlg._vp.marker_indices or [])
+
+# A value carrying more precision than the table shows, so saving can be
+# checked against the display.
+dlg._apply_value([[0.0, 0.123456], [0.5, 1.0]])
+out["cell_text_before_save"] = dlg._table.item(0, 1).text()
+
+saved = []
+dlg.committed.connect(saved.append)
+out["final_value"] = [list(r) for r in dlg._value]
+dlg._on_save()
+out["saved"] = saved[0]
+print(json.dumps(out))
+"""
+
+
+def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
+    """Driven in a subprocess: this file keeps Qt widgets out of pytest's
+    own process, and the viewer needs a QApplication and a GL context."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_hf.py"
+    driver.write_text(_HEIGHTFIELD_DRIVER)
+    # Start from a clean QT_QPA_PLATFORM. headless_render sets it to
+    # "offscreen" with os.environ.setdefault, which outlives the call and is
+    # inherited by everything spawned afterwards -- so whether this test saw
+    # a real window depended on whether a rendering test had run first.
+    # Under "offscreen" the viewport gets no usable GL context, selection
+    # does nothing, and the nudge it drives silently no-ops.
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt/GL available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert (out["rows"], out["cols"]) == (2, 3)
+    assert out["surface_point_r1c2"] == [2.0, 1.0, 5.0], "x=col, y=row, z=height"
+    assert out["after_edit"] == 7.5
+    assert out["after_undo"] == 1.0
+    # The Z scale exaggerates the preview and nothing else.
+    assert out["scaled_z"] == 25.0
+    assert out["stored_height_after_scale"] == 5.0
+    assert out["clicked_cell"] == [1, 1], "a clicked vertex selects its cell"
+
+    # Heights are draggable; the cell's place in the array is not. x and y
+    # ARE that place, so a heightfield has no way to express them moving.
+    assert out["viewport_editable"] and out["z_only"]
+    assert out["after_drag_row1"] == [3.0, 42.0, 5.0], \
+        "the drag's x=99/y=88 must be ignored, its z kept"
+
+    from PySide6.QtCore import Qt
+    assert out[f"nudge_{int(Qt.Key.Key_Up)}"], "up raises"
+    assert out[f"nudge_{int(Qt.Key.Key_Down)}"], "down lowers"
+    assert not out[f"nudge_{int(Qt.Key.Key_Left)}"], "sideways is not a height change"
+    assert not out[f"nudge_{int(Qt.Key.Key_Right)}"]
+
+    assert out["styles"] == 9, "every BOSL2 vertex-array style is offered"
+
+    assert out["cell_text"] == ["0.00", "0.12", "0.25"], "two decimals on screen"
+    assert out["stored"] == [0.0, 0.123456, 0.25], "the value itself is untouched"
+
+    assert out["extended_selection"]
+    assert out["viewport_selected"] == 2, "both selected cells light up"
+    assert out["group_moved"] == [[0, 0], [1, 2]], "the whole selection moves"
+    assert out["undo_steps_for_group"] == 1, \
+        "one gesture is one undo step, however many points it moved"
+    assert out["dup_row_shape"] == [4, 3] and out["dup_row_copied"]
+    assert out["dup_row_table"] == [4, 3], "the table follows the new shape"
+    assert out["dup_col_shape"] == [4, 4] and out["dup_col_table"] == [4, 4]
+    assert out["after_deletes"] == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]], \
+        "duplicate then delete returns the field it started as"
+    assert out["minimum_kept"] == [2, 2], \
+        "below 2x2 it would no longer be a heightfield at all"
+
+    # Tiling draws the field 3x3 so the seam between copies is visible.
+    # An N x M field tiles into N x M cells of surface, but N x M points
+    # only span (N-1) x (M-1) of them -- so one wrapped row and column are
+    # drawn too, and the edge where the tile meets its own copy is shown.
+    assert out["untiled_shape"] == [3, 3], "a 2x2 field draws a 3x3 grid"
+    assert out["untiled_points"] == 9
+    assert out["wrapped_corner"] == 0.0, "wraps back to value[0][0]"
+    assert out["wrapped_edge_col"] == 0.0
+    assert out["wrapped_edge_row"] == 0.0
+    assert out["untiled_markers"] == 4, "only the real cells are grabbable"
+    assert out["tiled_points"] == 36, "nine copies of a 2x2 field"
+    assert all(out["roundtrip"]), "every cell still maps to its own vertex"
+    assert out["neighbour_is_not_a_cell"], "a neighbouring copy is not editable"
+    assert out["markers_limited"], "only the middle copy gets grab handles"
+    # Still restricted with tiling off: the wrapped edge row and column
+    # are copies of the far side, not cells of their own.
+    assert out["markers_after_untiling"] == 4
+
+    # Save writes out whatever the dialog is holding at the time -- every
+    # edit above, not a snapshot from somewhere earlier.
+    from belfryscad.window.data_viewers import _format_heightfield
+    assert out["saved"] == _format_heightfield(out["final_value"])
+    assert out["saved"].count("\n") == 3, "one line per row, plus the brackets"
+    assert out["cell_text_before_save"] == "0.12", "the table rounds for display"
+    assert "0.12" in out["saved"] and "0.123456" not in out["saved"], \
+        "and saving writes two decimals too"
+
+
+# ---------------------------------------------------------------------------
+# Quad triangulation styles (BOSL2's vnf_vertex_array styles)
+# ---------------------------------------------------------------------------
+
+def _quad_pts(z11=0.0):
+    import numpy as np
+    return (np.array([0.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]), np.array([1.0, 1.0, z11]))
+
+
+def _uses_alt_diagonal(tris) -> bool:
+    """True when the split runs p01-p10 rather than p00-p11: those two are
+    the only diagonals a quad has, so one triangle containing BOTH p00 and
+    p11 means the default split."""
+    import numpy as np
+    p00, _p01, _p10, p11 = _quad_pts()
+    for t in tris:
+        if (any(np.array_equal(v[:2], p00[:2]) for v in t)
+                and any(np.array_equal(v[:2], p11[:2]) for v in t)):
+            return False
+    return True
+
+
+def test_quad_styles_are_bosl2s_documented_set():
+    from belfryscad.window.data_viewers import QUAD_STYLES
+
+    assert QUAD_STYLES == ["default", "alt", "flip1", "flip2", "min_edge",
+                           "min_area", "quincunx", "convex", "concave"]
+    # "random" would re-triangulate on every redraw; "quad"/"max_edge" are
+    # in BOSL2's source but not in its documented list.
+    for absent in ("random", "quad", "max_edge"):
+        assert absent not in QUAD_STYLES
+
+
+def test_default_and_alt_take_opposite_diagonals():
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    p00, p01, p10, p11 = _quad_pts()
+    assert not _uses_alt_diagonal(_quad_triangles("default", p00, p01, p10, p11, 0))
+    assert _uses_alt_diagonal(_quad_triangles("alt", p00, p01, p10, p11, 0))
+
+
+def test_flip_styles_alternate_on_parity_and_oppose_each_other():
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    p = _quad_pts()
+    for parity in (0, 1, 2, 3):
+        f1 = _uses_alt_diagonal(_quad_triangles("flip1", *p, parity))
+        f2 = _uses_alt_diagonal(_quad_triangles("flip2", *p, parity))
+        assert f1 != f2, "flip1 and flip2 are each other's inverse"
+        assert f1 == (parity % 2 == 0)
+
+
+def test_quincunx_adds_a_centre_vertex_and_four_triangles():
+    import numpy as np
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    p00, p01, p10, p11 = _quad_pts(4.0)
+    tris = _quad_triangles("quincunx", p00, p01, p10, p11, 0)
+    assert len(tris) == 4, "one triangle per edge, all meeting in the middle"
+    centre = (p00 + p01 + p10 + p11) / 4.0
+    for t in tris:
+        assert any(np.allclose(v, centre) for v in t)
+
+
+def test_convex_and_concave_choose_opposite_diagonals():
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    # A corner lifted out of plane: the quad is genuinely non-planar, so
+    # "which way does it fold" has an answer.
+    p = _quad_pts(4.0)
+    assert (_uses_alt_diagonal(_quad_triangles("convex", *p, 0))
+            != _uses_alt_diagonal(_quad_triangles("concave", *p, 0)))
+
+
+def test_a_degenerate_quad_collapses_to_one_triangle():
+    import numpy as np
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    # All four corners collinear: there is no normal to test against.
+    a = np.array([0.0, 0.0, 0.0])
+    tris = _quad_triangles("convex", a, a, a, a, 0)
+    assert len(tris) == 1
+
+
+def test_min_edge_picks_the_shorter_diagonal():
+    import numpy as np
+    from belfryscad.window.data_viewers import _quad_triangles
+
+    # Stretch p00-p11 by raising p11: p01-p10 becomes the shorter diagonal.
+    p00, p01, p10, p11 = _quad_pts(10.0)
+    assert np.linalg.norm(p01 - p10) < np.linalg.norm(p00 - p11)
+    assert _uses_alt_diagonal(_quad_triangles("min_edge", p00, p01, p10, p11, 0))
+
+
+# ---------------------------------------------------------------------------
+# Normalizing a heightfield into a range
+# ---------------------------------------------------------------------------
+
+def test_normalize_maps_the_field_onto_the_requested_range():
+    from belfryscad.window.data_viewers import _normalize_heights
+
+    out = _normalize_heights([[0, 5], [10, 10]], 0.0, 1.0)
+    assert out == [[0.0, 0.5], [1.0, 1.0]]
+    flat = [h for row in out for h in row]
+    assert min(flat) == 0.0 and max(flat) == 1.0
+
+
+def test_normalize_keeps_the_shape_of_the_field():
+    """Rescaling is linear, so every height keeps its position relative to
+    the others -- that is the whole point of normalizing rather than
+    clamping."""
+    from belfryscad.window.data_viewers import _normalize_heights
+
+    src = [[-4.0, 0.0], [4.0, 2.0]]
+    out = _normalize_heights(src, 0.0, 1.0)
+    assert out == [[0.0, 0.5], [1.0, 0.75]]
+
+    # Same field, a different target range: the ratios are unchanged.
+    wide = _normalize_heights(src, -10.0, 10.0)
+    assert wide == [[-10.0, 0.0], [10.0, 5.0]]
+
+
+def test_normalize_handles_negatives_and_an_inverted_target():
+    import pytest
+    from belfryscad.window.data_viewers import _normalize_heights
+
+    # Values are rounded to 6 decimals so a saved literal stays readable.
+    out = _normalize_heights([[-8, -6], [-4, -2]], 0.0, 1.0)
+    assert out[0] == pytest.approx([0.0, 1 / 3], abs=1e-6)
+    assert out[1] == pytest.approx([2 / 3, 1.0], abs=1e-6)
+    # lo > hi flips the field, which is a legitimate thing to ask for.
+    assert _normalize_heights([[0, 10]], 1.0, 0.0) == [[1.0, 0.0]]
+
+
+def test_normalize_a_flat_field_does_not_divide_by_zero():
+    from belfryscad.window.data_viewers import _normalize_heights
+
+    # No range to map from; every cell takes the low end.
+    assert _normalize_heights([[3, 3], [3, 3]], 0.0, 1.0) == [[0.0, 0.0], [0.0, 0.0]]
+
+
+_ZSCALE_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer
+
+dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
+dlg.show(); app.processEvents()
+out = {"presets": [dlg._zcombo.itemText(i) for i in range(dlg._zcombo.count())],
+       "editable": dlg._zcombo.isEditable(),
+       "default_text": dlg._zcombo.currentText(),
+       "default_scale": dlg._zscale}
+
+def typed(text):
+    dlg._zcombo.setCurrentText(text)
+    dlg._apply_zscale_text()
+    return [dlg._zscale, dlg._zcombo.currentText()]
+
+out["accepted"] = {t: typed(t) for t in ("200%", "150", " 33 % ", "12.5%")}
+out["scale_before_bad"] = dlg._zscale
+out["refused"] = {t: typed(t) for t in ("abc", "0%", "-50%", "")}
+print(json.dumps(out))
+"""
+
+
+def test_z_scale_is_a_percentage_and_takes_an_arbitrary_one(tmp_path):
+    """Presets cover the usual exaggerations; the box is editable because
+    the useful value for a given field is rarely one of them."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_z.py"
+    driver.write_text(_ZSCALE_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["presets"] == ["15%", "25%", "33%", "50%", "75%",
+                              "100%", "150%", "200%", "300%", "400%"]
+    assert out["editable"]
+    assert out["default_text"] == "100%" and out["default_scale"] == 1.0
+
+    # Lenient about the sign and the spaces: a typed entry is as likely to
+    # be "150" as "150%".
+    assert out["accepted"]["200%"] == [2.0, "200%"]
+    assert out["accepted"]["150"] == [1.5, "150%"]
+    assert out["accepted"][" 33 % "] == [0.33, "33%"]
+    assert out["accepted"]["12.5%"] == [0.125, "12.5%"]
+
+    # Anything that is not a positive number is refused outright, not
+    # guessed at: zero or negative would flatten or mirror the preview.
+    for bad, (scale, shown) in out["refused"].items():
+        assert scale == out["scale_before_bad"], f"{bad!r} must change nothing"
+        assert shown == "12.5%", f"{bad!r} must put the last good value back"
+
+
+def test_heightfield_writeback_is_multi_line_and_column_aligned():
+    """A heightfield's shape on the page is the point of it. `_format_value`
+    puts everything on one line, which is fine for a 4x4 matrix and
+    unreadable for a 30x40 field."""
+    from belfryscad.window.data_viewers import _format_heightfield
+
+    assert _format_heightfield([[0, 1, 2], [3, 4, 5]]) == (
+        "[\n"
+        "    [0.00, 1.00, 2.00],\n"
+        "    [3.00, 4.00, 5.00]\n"
+        "]"
+    )
+
+    # Right-aligned to a common width, so the columns line up the way the
+    # surface does.
+    out = _format_heightfield([[0.0, 0.5], [-0.25, 10.0]])
+    assert out == (
+        "[\n"
+        "    [ 0.00,  0.50],\n"
+        "    [-0.25, 10.00]\n"
+        "]"
+    )
+    # Same length once the separating comma is discounted -- every row but
+    # the last carries one.
+    body = [ln.rstrip(",") for ln in out.splitlines() if ln.startswith("    ")]
+    assert len({len(ln) for ln in body}) == 1, "the columns line up"
+
+
+def test_heightfield_writeback_rounds_to_two_decimals():
+    """A heightfield is a field of proportions rather than measurements, so
+    a saved 0.33 says everything 0.333333 does. Unlike the table's own
+    two-decimal DISPLAY, this rounds the value that reaches the file."""
+    from belfryscad.window.data_viewers import _format_heightfield
+
+    out = _format_heightfield([[0.123456, 1.0], [2.0, 0.005]])
+    assert "0.123456" not in out
+    assert "0.12" in out and "1.00" in out
+    assert "0.01" in out, "and it rounds rather than truncating"
+
+
+_DELETE_CONFIRM_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QTimer
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer
+
+def answer(button_text, fn):
+    # QMessageBox.exec blocks and cannot be monkeypatched, so press the
+    # button on the live dialog from a timer.
+    seen = {}
+    def press():
+        box = QApplication.activeModalWidget()
+        if box is None:
+            QTimer.singleShot(20, press); return
+        seen["text"] = box.text()
+        for b in box.buttons():
+            if b.text().replace("&", "") == button_text:
+                b.click(); return
+        box.close()
+    QTimer.singleShot(20, press)
+    fn()
+    return seen.get("text")
+
+dlg = HeightfieldViewer("t", [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
+                        None, editable=True)
+dlg.show(); app.processEvents()
+out = {}
+out["row_prompt"] = answer("No", lambda: dlg._confirm_delete_line(1, True))
+out["shape_after_no"] = [len(dlg._value), len(dlg._value[0])]
+answer("Yes", lambda: dlg._confirm_delete_line(1, True))
+out["shape_after_yes"] = [len(dlg._value), len(dlg._value[0])]
+out["col_prompt"] = answer("No", lambda: dlg._confirm_delete_line(0, False))
+out["shape_after_col_no"] = [len(dlg._value), len(dlg._value[0])]
+answer("Yes", lambda: dlg._confirm_delete_line(0, False))
+out["shape_after_col_yes"] = [len(dlg._value), len(dlg._value[0])]
+
+# Duplicate asks nothing: it adds, and undo is enough for that.
+dlg._duplicate_line(0, True)
+out["shape_after_duplicate"] = [len(dlg._value), len(dlg._value[0])]
+print(json.dumps(out))
+"""
+
+
+def test_deleting_a_row_or_column_asks_first(tmp_path):
+    """Deleting throws away a whole line of hand-placed heights, and the
+    menu item sits one pixel from Duplicate. Undo is there, but not before
+    the surface has already changed under the user."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_del.py"
+    driver.write_text(_DELETE_CONFIRM_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["row_prompt"] == "Delete row 1? Its 3 heights will be removed."
+    assert out["shape_after_no"] == [3, 3], "answering No changes nothing"
+    assert out["shape_after_yes"] == [2, 3]
+
+    assert out["col_prompt"] == "Delete column 0? Its 2 heights will be removed.", \
+        "a column's count is its rows, not its columns"
+    assert out["shape_after_col_no"] == [2, 3]
+    assert out["shape_after_col_yes"] == [2, 2]
+
+    # Duplicate is additive, so it just happens.
+    assert out["shape_after_duplicate"] == [3, 2]
