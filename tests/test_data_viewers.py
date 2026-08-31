@@ -1781,7 +1781,10 @@ def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
 
     assert (out["rows"], out["cols"]) == (2, 3)
-    assert out["surface_point_r1c2"] == [2.0, 1.0, 5.0], "x=col, y=row, z=height"
+    # x = column, z = height, and y counts DOWN from the top: the field is
+    # 2 rows, so row 1 is the last one and sits at y = 0.
+    assert out["surface_point_r1c2"] == [2.0, 0.0, 5.0], \
+        "row 0 is the top of the field, as a texture's first row is"
     assert out["after_edit"] == 7.5
     assert out["after_undo"] == 1.0
     # The Z scale exaggerates the preview and nothing else.
@@ -2235,3 +2238,803 @@ def test_heightfield_nudge_steps_do_not_depend_on_the_z_scale(tmp_path):
             f"at Z scale {pct}: {out[pct]}"
 
     assert out["down"] == 0.45, "down lowers by the same step"
+
+
+# ---------------------------------------------------------------------------
+# Building a heightfield from an image
+# ---------------------------------------------------------------------------
+
+def test_apply_levels_maps_luminance_onto_heights():
+    from belfryscad.window.data_viewers import _apply_levels
+
+    grid = [[0.0, 0.25, 0.5], [0.75, 1.0, 0.5]]
+    assert _apply_levels(grid, 0.0, 1.0, 0.0, 1.0) == grid, "identity"
+    assert _apply_levels(grid, 0.0, 1.0, 0.0, 10.0) == \
+        [[0.0, 2.5, 5.0], [7.5, 10.0, 5.0]], "output range"
+
+
+def test_levels_stretch_the_interesting_part_of_the_range():
+    """A photo rarely spans the full range; without levels its detail is
+    squeezed into the middle of the field."""
+    from belfryscad.window.data_viewers import _apply_levels
+
+    grid = [[0.0, 0.25, 0.5, 0.75, 1.0]]
+    # Everything at or below 0.25 floors, at or above 0.75 ceilings, and
+    # the middle stretches across the whole output.
+    assert _apply_levels(grid, 0.25, 0.75, 0.0, 1.0) == [[0.0, 0.0, 0.5, 1.0, 1.0]]
+
+
+def test_levels_can_invert():
+    from belfryscad.window.data_viewers import _apply_levels
+
+    assert _apply_levels([[0.0, 1.0]], 0.0, 1.0, 0.0, 1.0, invert=True) == [[1.0, 0.0]]
+
+
+def test_degenerate_levels_become_a_step_rather_than_dividing_by_zero():
+    from belfryscad.window.data_viewers import _apply_levels
+
+    grid = [[0.4, 0.5, 0.6]]
+    # black == white: everything below is low, at or above is high.
+    assert _apply_levels(grid, 0.5, 0.5, 0.0, 1.0) == [[0.0, 1.0, 1.0]]
+
+
+_IMAGE_IMPORT_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtGui import QImage, qRgb
+app = QApplication([])
+from belfryscad.window.data_viewers import (HeightfieldViewer,
+                                             HeightfieldImportDialog,
+                                             _image_luminance_grid)
+
+# A left-to-right gradient: what comes out has to increase along each row
+# and be identical down every column.
+img = QImage(200, 100, QImage.Format.Format_RGB32)
+for y in range(100):
+    for x in range(200):
+        g = int(255 * x / 199)
+        img.setPixel(x, y, qRgb(g, g, g))
+
+out = {}
+grid = _image_luminance_grid(img, 4, 5)
+out["sampled_shape"] = [len(grid), len(grid[0])]
+out["rows_identical"] = all(r == grid[0] for r in grid)
+out["increases_left_to_right"] = all(a < b for a, b in zip(grid[0], grid[0][1:]))
+
+dlg = HeightfieldImportDialog(img, None, rows=4, cols=5)
+dlg.show(); app.processEvents()
+out["default_field"] = dlg.heightfield()[0]
+dlg._invert.setChecked(True); app.processEvents()
+out["inverted_field"] = dlg.heightfield()[0]
+dlg._invert.setChecked(False)
+dlg._rows.setValue(3); dlg._cols.setValue(3); app.processEvents()
+g = dlg.heightfield()
+out["resampled_shape"] = [len(g), len(g[0])]
+
+# In the viewer: an import is one undoable edit, and the table follows.
+view = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
+view.show(); app.processEvents()
+out["buttons"] = [b.text() for b in view.findChildren(QPushButton) if b.text()]
+out["show_points_default"] = view._vp._show_unselected
+view._verts_cb.setChecked(False); app.processEvents()
+out["show_points_off"] = view._vp._show_unselected
+view._verts_cb.setChecked(True); app.processEvents()
+out["show_points_back"] = view._vp._show_unselected
+
+steps = view._undo_stack.count()
+view._commit_value(g, "Import Image"); app.processEvents()
+out["after_import_shape"] = [len(view._value), len(view._value[0])]
+out["after_import_table"] = [view._table.rowCount(), view._table.columnCount()]
+out["undo_steps"] = view._undo_stack.count() - steps
+view._undo_stack.undo(); app.processEvents()
+out["after_undo_shape"] = [len(view._value), len(view._value[0])]
+
+ro = HeightfieldViewer("r", [[0.0, 1.0], [2.0, 3.0]], None, editable=False)
+out["readonly_buttons"] = [b.text() for b in ro.findChildren(QPushButton) if b.text()]
+print(json.dumps(out))
+"""
+
+
+def test_importing_an_image_builds_a_field_and_is_undoable(tmp_path):
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_img.py"
+    driver.write_text(_IMAGE_IMPORT_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    # Sampling: area-averaged down to the requested grid, and the gradient
+    # survives it.
+    assert out["sampled_shape"] == [4, 5]
+    assert out["rows_identical"], "a horizontal gradient has identical rows"
+    assert out["increases_left_to_right"]
+
+    assert out["inverted_field"] == [round(1.0 - v, 6) for v in out["default_field"]]
+    assert out["resampled_shape"] == [3, 3]
+
+    assert "Import Image…" in out["buttons"]
+    assert out["show_points_default"] and out["show_points_back"]
+    assert not out["show_points_off"], "the checkbox reaches the viewport"
+
+    assert out["after_import_shape"] == [3, 3]
+    assert out["after_import_table"] == [3, 3], "the table follows the new shape"
+    assert out["undo_steps"] == 1, "an import is one undo step, not one per cell"
+    assert out["after_undo_shape"] == [2, 2]
+
+    assert out["readonly_buttons"] == ["Dismiss"], \
+        "a read-only viewer imports nothing"
+
+
+_CROP_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, qRgb
+from PySide6.QtCore import QPoint, QRect
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldImportDialog
+
+# Left half black, right half white: a crop is unmistakable in the values.
+img = QImage(200, 100, QImage.Format.Format_RGB32)
+for y in range(100):
+    for x in range(200):
+        g = 0 if x < 100 else 255
+        img.setPixel(x, y, qRgb(g, g, g))
+
+dlg = HeightfieldImportDialog(img, None, rows=2, cols=4)
+dlg.show(); app.processEvents()
+out = {"uncropped": dlg.heightfield()[0]}
+
+dlg._crop_label.set_crop(QRect(0, 0, 100, 100)); app.processEvents()
+out["left_half"] = dlg.heightfield()[0]
+out["label_cropped"] = dlg._source_label.text()
+
+dlg._crop_label.set_crop(QRect(100, 0, 100, 100)); app.processEvents()
+out["right_half"] = dlg.heightfield()[0]
+
+dlg._crop_label.set_crop(None); app.processEvents()
+out["cleared"] = dlg.heightfield()[0]
+
+# Uniform scaling: the source is 200x100, so 2:1.
+dlg._rows.setValue(10); app.processEvents()
+out["free"] = [dlg._rows.value(), dlg._cols.value()]
+dlg._uniform.setChecked(True); app.processEvents()
+out["uniform_on"] = [dlg._rows.value(), dlg._cols.value()]
+dlg._rows.setValue(20); app.processEvents()
+out["after_rows"] = [dlg._rows.value(), dlg._cols.value()]
+dlg._cols.setValue(30); app.processEvents()
+out["after_cols"] = [dlg._rows.value(), dlg._cols.value()]
+dlg._crop_label.set_crop(QRect(0, 0, 100, 100)); app.processEvents()
+out["after_square_crop"] = [dlg._rows.value(), dlg._cols.value()]
+g = dlg.heightfield()
+out["field_shape"] = [len(g), len(g[0])]
+
+# A click without a drag means "all of it".
+dlg._crop_label.set_crop(QRect(10, 10, 20, 20))
+lbl = dlg._crop_label
+lbl._drag_from = QPoint(50, 50); lbl._drag_to = QPoint(52, 51)
+class _E:
+    def position(self): return QPoint(52, 51)
+    def toPoint(self): return QPoint(52, 51)
+_E.position = lambda self: self
+lbl.mouseReleaseEvent(_E())
+out["click_clears_crop"] = lbl.crop_rect() is None
+print(json.dumps(out))
+"""
+
+
+def test_import_dialog_crops_and_scales_uniformly(tmp_path):
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_crop.py"
+    driver.write_text(_CROP_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    # Cropping changes what is sampled, not just what is shown.
+    assert out["uncropped"] == [0.0, 0.0, 1.0, 1.0], "dark left, light right"
+    assert out["left_half"] == [0.0, 0.0, 0.0, 0.0], "the dark half alone"
+    assert out["right_half"] == [1.0, 1.0, 1.0, 1.0], "the light half alone"
+    assert out["cleared"] == out["uncropped"], "clearing restores the whole image"
+    assert "crop 100 x 100 at 0,0" in out["label_cropped"]
+
+    # Uniform holds the grid to the crop's proportions, led by whichever
+    # box was last edited.
+    assert out["free"] == [10, 4], "off, the two are independent"
+    assert out["uniform_on"] == [10, 20], "2:1 source -> twice as many columns"
+    assert out["after_rows"] == [20, 40]
+    assert out["after_cols"] == [15, 30], "editing columns drives rows"
+    assert out["after_square_crop"] == [15, 15], "a square crop makes it 1:1"
+    assert out["field_shape"] == [15, 15]
+
+    assert out["click_clears_crop"], "a click without a drag selects everything"
+
+
+_PICKER_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, qRgb
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldImportDialog
+
+# Left half at 0.2 luminance, right half at 0.8 -- neither is 0 or 1, so a
+# picked level is distinguishable from the defaults.
+img = QImage(200, 100, QImage.Format.Format_RGB32)
+for y in range(100):
+    for x in range(200):
+        g = 51 if x < 100 else 204
+        img.setPixel(x, y, qRgb(g, g, g))
+
+dlg = HeightfieldImportDialog(img, None, rows=2, cols=4)
+dlg.show(); app.processEvents()
+out = {"has_icon": not dlg._pick_black.icon().isNull(),
+       "icon_from_svg": getattr(dlg._pick_black, "_themed_icon_path", "").endswith(
+           "eyedropper.svg"),
+       "checkable": [dlg._pick_black.isCheckable(), dlg._pick_white.isCheckable()],
+       "dark_sample": round(dlg._crop_label.luminance_at(50, 50), 3),
+       "light_sample": round(dlg._crop_label.luminance_at(150, 50), 3),
+       "levels_before": [dlg._black.value(), dlg._white.value()]}
+
+dlg._pick_black.setChecked(True); app.processEvents()
+out["armed_panel_picking"] = dlg._crop_label._picking
+dlg._crop_label.luminance_picked.emit(dlg._crop_label.luminance_at(50, 50))
+app.processEvents()
+out["black_after"] = dlg._black.value()
+out["disarmed"] = [dlg._pick_black.isChecked(), dlg._crop_label._picking]
+
+dlg._pick_white.setChecked(True); app.processEvents()
+dlg._crop_label.luminance_picked.emit(dlg._crop_label.luminance_at(150, 50))
+app.processEvents()
+out["white_after"] = dlg._white.value()
+out["field"] = dlg.heightfield()[0]
+
+# Arming one disarms the other.
+dlg._pick_black.setChecked(True); dlg._pick_white.setChecked(True)
+app.processEvents()
+out["only_one_armed"] = [dlg._pick_black.isChecked(), dlg._pick_white.isChecked()]
+
+# While picking, a click must not start a crop.
+dlg._crop_label.set_picking(True)
+out["crop_before"] = dlg._crop_label.crop_rect() is None
+print(json.dumps(out))
+"""
+
+
+def test_levels_can_be_picked_off_the_image(tmp_path):
+    """Guessing a photograph's black and white points by typing numbers is
+    far harder than pointing at them."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_pick.py"
+    driver.write_text(_PICKER_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["has_icon"]
+    assert out["icon_from_svg"], (
+        "the button icon comes from resources/icons/eyedropper.svg like every "
+        "other icon, through apply_themed_icon so it survives a light/dark switch")
+    assert out["checkable"] == [True, True], "picking is a mode, so the button lights"
+
+    assert out["dark_sample"] == 0.2 and out["light_sample"] == 0.8
+    assert out["levels_before"] == [0.0, 1.0]
+
+    assert out["armed_panel_picking"], "arming puts the source panel in pick mode"
+    assert out["black_after"] == 0.2, "the sample lands in the armed level"
+    assert out["disarmed"] == [False, False], \
+        "picking disarms itself -- staying armed would make the next click " \
+        "silently overwrite the level just set"
+    assert out["white_after"] == 0.8
+
+    # With levels at the image's own two tones, the field spans 0..1.
+    assert out["field"] == [0.0, 0.0, 1.0, 1.0]
+
+    assert out["only_one_armed"] == [False, True], \
+        "two armed pickers would leave no telling which a click was for"
+
+
+# ---------------------------------------------------------------------------
+# Bulk marker construction
+# ---------------------------------------------------------------------------
+#
+# Markers rebuild on every zoom, to stay a constant size on screen. Built
+# one triangle at a time that cost 6.5 SECONDS for a 100x100 heightfield --
+# on every zoom. `_lit_marker_field` does the same work as array
+# operations: the offsets are shared (every marker is the same shape) and a
+# normal is unchanged by uniform positive scaling, so each triangle's
+# normal is computed once for the shape rather than once per marker.
+
+def _dodec():
+    from belfryscad.window.data_viewers import _dodecahedron_faces
+    return _dodecahedron_faces(1.0, False)
+
+
+def test_bulk_markers_match_the_per_point_build_exactly():
+    """The fast path must be a pure speed-up, not a different picture."""
+    import numpy as np
+    from belfryscad.window.data_viewers import (_lit_marker_field,
+                                                 _lit_marker_triangles)
+
+    faces = _dodec()
+    colour = np.array([0.0, 0.9, 0.9], dtype=np.float32)
+    pts = [np.array([1.0, 2.0, 3.0], dtype=np.float32),
+           np.array([-4.0, 0.5, 2.0], dtype=np.float32),
+           np.array([0.0, 0.0, 0.0], dtype=np.float32)]
+    radii = [0.3, 0.7, 0.05]
+
+    one_by_one = np.array(
+        [row for pt, r in zip(pts, radii)
+         for row in _lit_marker_triangles(pt, r, faces, colour)], dtype=np.float32)
+    bulk = _lit_marker_field(pts, radii, faces, colour)
+
+    assert bulk.shape == one_by_one.shape
+    assert np.allclose(bulk, one_by_one, atol=1e-6), \
+        "same rows, same order -- upload_points reads them positionally"
+
+
+def test_bulk_markers_take_a_colour_per_point():
+    """AffineMatrixViewer marks its first corner differently from the rest."""
+    import numpy as np
+    from belfryscad.window.data_viewers import (_lit_marker_field,
+                                                 _lit_marker_triangles)
+
+    faces = _dodec()
+    colours = np.array([[0.85, 0.15, 0.15], [0.9, 0.45, 0.1]], dtype=np.float32)
+    pts = [np.array([1.0, 0.0, 0.0], dtype=np.float32),
+           np.array([0.0, 1.0, 0.0], dtype=np.float32)]
+    radii = [0.2, 0.4]
+
+    one_by_one = np.array(
+        [row for pt, r, c in zip(pts, radii, colours)
+         for row in _lit_marker_triangles(pt, r, faces, c)], dtype=np.float32)
+    assert np.allclose(_lit_marker_field(pts, radii, faces, colours),
+                       one_by_one, atol=1e-6)
+
+
+def test_no_markers_is_an_empty_array_not_a_crash():
+    from belfryscad.window.data_viewers import _lit_marker_field
+
+    assert _lit_marker_field([], [], _dodec(), (0.0, 0.9, 0.9)).shape == (0, 9)
+
+
+_RADII_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewers import (HeightfieldViewer,
+                                             _marker_radius_for_point,
+                                             _marker_radii_for_points)
+
+dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
+dlg.show(); app.processEvents()
+vp = dlg._vp
+pts = [[0.0, 0.0, 0.0], [3.0, 1.0, 2.0], [-2.0, 5.0, 1.0]]
+
+out = {}
+for ortho in (True, False):
+    vp._renderer.camera.orthographic = ortho
+    one = [round(float(_marker_radius_for_point(vp, np.asarray(p, dtype=np.float32))), 6)
+           for p in pts]
+    bulk = [round(float(v), 6) for v in _marker_radii_for_points(vp, pts)]
+    out["ortho" if ortho else "perspective"] = [one, bulk]
+print(json.dumps(out))
+"""
+
+
+def test_bulk_radii_match_the_per_point_calculation(tmp_path):
+    """Orthographic size does not vary with a point's depth; perspective
+    size does. Both have to survive being vectorised."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_radii.py"
+    driver.write_text(_RADII_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    for mode, (one_by_one, bulk) in out.items():
+        assert one_by_one == pytest.approx(bulk, abs=1e-5), mode
+    ortho = out["ortho"][0]
+    assert ortho[0] == pytest.approx(ortho[1], abs=1e-5), \
+        "orthographic markers are the same size whatever their depth"
+    persp = out["perspective"][0]
+    assert persp[0] != pytest.approx(persp[1], abs=1e-5), \
+        "perspective markers scale with their own eye-distance"
+
+
+_KEYBOARD_ZOOM_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer
+
+dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
+dlg.show(); app.processEvents()
+vp = dlg._vp
+
+rebuilds = []
+original = vp._build_point_markers
+vp._build_point_markers = lambda: (rebuilds.append(1), original())[1]
+
+out = {"distance_before": round(float(vp._renderer.camera.distance), 4)}
+for _ in range(5):
+    vp.zoom(1)              # Zoom In, as Cmd+] does
+app.processEvents()
+out["distance_after_in"] = round(float(vp._renderer.camera.distance), 4)
+out["rebuilds_after_in"] = len(rebuilds)
+
+rebuilds.clear()
+for _ in range(5):
+    vp.zoom(-1)             # Zoom Out, as Cmd+[ does
+app.processEvents()
+out["distance_after_out"] = round(float(vp._renderer.camera.distance), 4)
+out["rebuilds_after_out"] = len(rebuilds)
+print(json.dumps(out))
+"""
+
+
+def test_keyboard_zoom_rebuilds_the_vertex_markers(tmp_path):
+    """Markers are sized in screen space, so anything that changes apparent
+    scale has to rebuild them. `zoom()` -- the View menu's Zoom In/Out and
+    their Cmd+]/Cmd+[ shortcuts -- changed `cam.distance`, which is exactly
+    what marker size derives from, and never called the hook. The wheel and
+    pinch paths always had.
+    """
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_kbzoom.py"
+    driver.write_text(_KEYBOARD_ZOOM_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["distance_after_in"] < out["distance_before"], "Zoom In moves closer"
+    assert out["rebuilds_after_in"] == 5, "one marker rebuild per zoom step"
+    assert out["distance_after_out"] > out["distance_after_in"], "Zoom Out backs off"
+    assert out["rebuilds_after_out"] == 5
+
+
+_CURSOR_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, qRgb
+app = QApplication([])
+from belfryscad.window.data_viewers import (HeightfieldImportDialog,
+                                             _eyedropper_cursor,
+                                             _lower_left_tip, _ICONS_DIR)
+
+cur = _eyedropper_cursor(32)
+out = {"hotspot": [cur.hotSpot().x(), cur.hotSpot().y()],
+       "pixmap": [cur.pixmap().width(), cur.pixmap().height()],
+       "dpr": cur.pixmap().devicePixelRatio()}
+
+# Re-derive the tip straight from the SVG: the hotspot has to be the
+# artwork's own lowest-left point, whatever the artwork now is.
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QPainter
+from PySide6.QtSvg import QSvgRenderer
+ref = QImage(64, 64, QImage.Format.Format_ARGB32)
+ref.fill(Qt.GlobalColor.transparent)
+pr = QPainter(ref)
+QSvgRenderer(str(_ICONS_DIR / "eyedropper.svg")).render(pr, QRectF(0, 0, 64, 64))
+pr.end()
+tx, ty = _lower_left_tip(ref)
+out["expected_hotspot"] = [round(tx / 2), round(ty / 2)]
+
+# The artwork carries its own contrast -- a light fill inside a darker
+# outline -- so it reads over a light or a dark image alike.
+img = cur.pixmap().toImage().convertToFormat(QImage.Format.Format_ARGB32)
+dark = light = 0
+for y in range(img.height()):
+    for x in range(img.width()):
+        c = img.pixelColor(x, y)
+        if c.alpha() < 200:
+            continue
+        if c.value() < 160:
+            dark += 1
+        elif c.value() > 200:
+            light += 1
+out["dark_px"] = dark
+out["light_px"] = light
+
+img2 = QImage(20, 20, QImage.Format.Format_RGB32)
+img2.fill(qRgb(128, 128, 128))
+dlg = HeightfieldImportDialog(img2, None, rows=2, cols=2)
+dlg.show(); app.processEvents()
+out["idle_shape"] = dlg._crop_label.cursor().shape().value
+dlg._crop_label.set_picking(True)
+out["picking_shape"] = dlg._crop_label.cursor().shape().value
+out["picking_hotspot"] = [dlg._crop_label.cursor().hotSpot().x(),
+                          dlg._crop_label.cursor().hotSpot().y()]
+dlg._crop_label.set_picking(False)
+out["back_to_idle"] = dlg._crop_label.cursor().shape().value
+print(json.dumps(out))
+"""
+
+
+def test_the_picker_cursor_is_an_eyedropper_anchored_at_its_tip(tmp_path):
+    """A pointing hand points at nothing in particular. The cursor is the
+    only thing showing WHERE the sample comes from, so it is the eyedropper
+    itself with its hotspot on the tip."""
+    import json, os, subprocess, sys
+    import pytest
+    from PySide6.QtCore import Qt
+
+    driver = tmp_path / "_cursor.py"
+    driver.write_text(_CURSOR_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["hotspot"] == out["expected_hotspot"], \
+        "anchored at the artwork's own lowest-left tip, so editing the icon " \
+        "moves the hotspot with it"
+    assert out["pixmap"] == [64, 64] and out["dpr"] == 2.0, \
+        "rendered at 2x for Retina; the hotspot stays in logical pixels"
+
+    # Light fill inside a darker outline: the cursor sits over the user's
+    # image, where a single-tone shape disappears against half of them.
+    assert out["dark_px"] > 50, "a visible outline"
+    assert out["light_px"] > 50, "and a contrasting fill"
+
+    assert out["idle_shape"] == Qt.CursorShape.CrossCursor.value, \
+        "cropping keeps the crosshair"
+    assert out["picking_shape"] == Qt.CursorShape.BitmapCursor.value, \
+        "picking swaps in the drawn eyedropper"
+    assert out["picking_hotspot"] == out["expected_hotspot"]
+    assert out["back_to_idle"] == Qt.CursorShape.CrossCursor.value
+
+
+_SKELETON_DRIVER = """
+import json
+import math
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer, GridViewer
+
+hf = [[round(0.5 + 0.5 * math.sin(c / 2.0) * math.cos(r / 2.0), 3)
+       for c in range(6)] for r in range(5)]
+view = HeightfieldViewer("t", hf, None, editable=True)
+view.show(); app.processEvents()
+
+grid = GridViewer("g", [[[0, 0, 0], [1, 0, 0]], [[0, 1, 1], [1, 1, 1]]], None)
+grid.show(); app.processEvents()
+
+print(json.dumps({
+    "heightfield_skeleton": view._vp.show_skeleton,
+    "grid_skeleton": grid._vp.show_skeleton,
+    "heightfield_line_buffers": len(view._vp._renderer._line_buffers),
+    "grid_line_buffers": len(grid._vp._renderer._line_buffers),
+}))
+"""
+
+
+def test_a_heightfield_draws_no_skeleton_over_its_surface(tmp_path):
+    """A control-point grid IS its lattice, so GridViewer draws one. A
+    heightfield's subject is the surface: the skeleton only repeats what
+    Show Edges draws from the real triangulation, and lying coplanar with
+    the surface it speckled through as a coloured grid over what should be
+    a clean shape."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_skel.py"
+    driver.write_text(_SKELETON_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["heightfield_skeleton"] is False
+    assert out["grid_skeleton"] is True, "a control-point grid keeps its lattice"
+    assert out["heightfield_line_buffers"] == 0, "nothing uploaded, not merely hidden"
+    assert out["grid_line_buffers"] > 0
+
+
+_ROW_ORDER_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, qRgb
+app = QApplication([])
+from belfryscad.window.data_viewers import (HeightfieldViewer,
+                                             HeightfieldImportDialog)
+
+dlg = HeightfieldViewer("t", [[1.0] * 3, [0.5] * 3, [0.0] * 3], None, editable=True)
+dlg.resize(500, 400); dlg.show(); app.processEvents()
+vp = dlg._vp
+cam = vp._renderer.camera
+W, H = vp.width(), vp.height()
+
+def screen_y(world):
+    p = cam.projection_matrix(W / H) @ cam.view_matrix() @ np.array(
+        [*world, 1.0], dtype=np.float32)
+    return float((1.0 - (p[:3] / p[3])[1]) * 0.5 * H)
+
+grid = dlg._as_grid()
+out = {"row0_screen_y": screen_y(grid[0][0]),
+       "last_screen_y": screen_y(grid[2][0]),
+       "roundtrip": all(dlg._cell_of_flat(dlg._flat_index(r, c)) == (r, c)
+                        for r in range(3) for c in range(3))}
+dlg._tile_cb.setChecked(True); app.processEvents()
+out["tiled_roundtrip"] = all(dlg._cell_of_flat(dlg._flat_index(r, c)) == (r, c)
+                             for r in range(3) for c in range(3))
+
+# An imported image: bright at the TOP of the picture.
+img = QImage(60, 60, QImage.Format.Format_RGB32)
+for y in range(60):
+    g = 255 if y < 30 else 0
+    for x in range(60):
+        img.setPixel(x, y, qRgb(g, g, g))
+imported = HeightfieldImportDialog(img, None, rows=4, cols=4).heightfield()
+out["imported_first_row"] = imported[0][0]
+out["imported_last_row"] = imported[-1][0]
+
+view = HeightfieldViewer("i", imported, None, editable=True)
+view.resize(500, 400); view.show(); app.processEvents()
+vp2 = view._vp; cam = vp2._renderer.camera; W, H = vp2.width(), vp2.height()
+g2 = view._as_grid()
+out["bright_screen_y"] = screen_y(g2[0][0])
+out["dark_screen_y"] = screen_y(g2[-2][0])
+print(json.dumps(out))
+"""
+
+
+def test_row_zero_is_the_top_of_the_field(tmp_path):
+    """A heightfield texture's first row is the top of the image, the way
+    every raster format orders its rows. Mapping the row index straight
+    onto y put row 0 at the near edge and drew every field upside-down
+    against its own source image."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_roworder.py"
+    driver.write_text(_ROW_ORDER_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    # Smaller screen-y is higher up the widget.
+    assert out["row0_screen_y"] < out["last_screen_y"], \
+        "value-row 0 renders at the top of the view"
+
+    # Flipping y must not disturb which vertex belongs to which cell.
+    assert out["roundtrip"] and out["tiled_roundtrip"]
+
+    # End to end: a picture that is bright on top stays bright on top.
+    assert out["imported_first_row"] == 1.0
+    assert out["imported_last_row"] == 0.0
+    assert out["bright_screen_y"] < out["dark_screen_y"], \
+        "the image's top half renders at the top of the surface"
+
+
+_TYPED_SIZE_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, qRgb
+from PySide6.QtTest import QTest
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldImportDialog
+
+img = QImage(200, 100, QImage.Format.Format_RGB32)      # 2:1
+for y in range(100):
+    for x in range(200):
+        img.setPixel(x, y, qRgb(x % 256, x % 256, x % 256))
+
+dlg = HeightfieldImportDialog(img, None, rows=10, cols=20)
+dlg.show(); app.processEvents()
+dlg._uniform.setChecked(True); app.processEvents()
+
+def state():
+    g = dlg.heightfield()
+    return {"boxes": [dlg._rows.value(), dlg._cols.value()],
+            "grid": [len(g), len(g[0])]}
+
+out = {"start": state()}
+dlg._cols.stepBy(1); app.processEvents()
+out["arrow"] = state()
+
+le = dlg._cols.lineEdit(); le.selectAll()
+QTest.keyClicks(le, "40"); app.processEvents()
+out["typed_cols"] = state()
+
+le = dlg._rows.lineEdit(); le.selectAll()
+QTest.keyClicks(le, "15"); app.processEvents()
+out["typed_rows"] = state()
+
+dlg._uniform.setChecked(False); app.processEvents()
+le = dlg._cols.lineEdit(); le.selectAll()
+QTest.keyClicks(le, "7"); app.processEvents()
+out["uniform_off"] = state()
+print(json.dumps(out))
+"""
+
+
+def test_typing_a_sample_size_keeps_the_aspect_and_the_grid_in_step(tmp_path):
+    """Typing has to behave exactly as the arrows do.
+
+    The refresh ran BEFORE the aspect match, so the preview was built from
+    the pair as typed while the boxes showed the matched pair -- and the
+    guard that stops the two boxes correcting each other forever also
+    swallowed the refresh that would have caught up. Committing with Return
+    fixed it, which is what made this look like "typing does not work".
+    """
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_typed.py"
+    driver.write_text(_TYPED_SIZE_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    # Whatever the route, the rendered field must be the size the boxes claim.
+    for name, st in out.items():
+        assert st["boxes"] == st["grid"], f"{name}: boxes {st['boxes']} but grid {st['grid']}"
+
+    assert out["typed_cols"]["boxes"] == [20, 40], "typing 40 columns matches 20 rows"
+    assert out["typed_rows"]["boxes"] == [15, 30], "and typing rows drives columns"
+    assert out["uniform_off"]["boxes"] == [15, 7], "unchecked, the two are free again"
