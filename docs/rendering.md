@@ -5,6 +5,24 @@ Parse + evaluate runs in a background `QThread`. Two helper classes in `main_win
 - **`_RenderWorker(QObject)`** — moved to the worker thread via `moveToThread`; does the parse/evaluate work; emits `logged`, `parse_errored`, `finished`, `done`
 - **`_RenderCallback(QObject)`** — stays in the main thread; `@Slot` methods receive worker signals; Qt auto-detects the cross-thread boundary (`QueuedConnection`), so callbacks run on the main thread
 
+## Camera framing
+
+Only a tab newly loaded from a file re-fits the camera to the result
+(`_render(reframe=True)`, from `open_file_by_path` and from opening an
+example). Every other render leaves the camera exactly where the user put
+it. Re-fitting after each one fought them: an edit-and-re-render threw away
+the angle and zoom they had just set up, and on a model that grows or
+shrinks as a parameter changes, the view jumped every time.
+
+The request is recorded as the render's **id**, not a plain flag, because
+renders overlap — an animation frame can start before the previous one has
+landed — and only the render that asked for it should move the camera.
+
+`frame_scene` is still called on every render, with `reframe=False`: it
+caches the bounds even when it does not move the camera, and **View All**
+frames from that cache. Without the call the command would have nothing to
+work from after the first render.
+
 **Do not connect worker signals to Python lambdas** — lambdas have no thread affinity, so Qt can't determine which event loop to post to. Always route through a `QObject` slot with known thread affinity.
 
 **Source input**: `_render()` reads the editor's current text (`toPlainText()`), not the saved file. The worker writes this to a temp file in the same directory as the original (so relative `include`/`use` paths resolve) and passes that to the parser.

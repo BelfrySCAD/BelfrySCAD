@@ -570,19 +570,32 @@ and x/y *are* that cell's position in the array, so `_GridViewport` gains a
 `z_only` flag rather than being denied `editable=True`: a Cmd+drag moves the
 vertex up and down and leaves its place alone, and the arrow keys nudge with
 Up/Down only — Left/Right fall through to the viewport's own key handling,
-since sideways is not a height change. A drag never locks the Z axis either
+since sideways is not a height change.
+
+A nudge steps the **stored** height by 0.5, 0.05 or 0.005 (Shift, nothing,
+Cmd), whatever exaggeration the preview is showing — sized for a 0..1
+field, so the coarse step crosses it in a couple of presses and the fine
+one still shows in the table's three decimals. The shared
+`_key_nudge_magnitude` returns 10/1/0.1, sized for geometry, where a
+1-unit step leaps past a 0..1 field entirely; `_HEIGHT_NUDGE_STEPS` maps
+those onto heightfield-sized ones and `z_nudge_scale` cancels the
+exaggeration the writeback divides back out. `_emit_moved` also skips its
+usual three-decimal rounding in `z_only` mode: that rounds a *world*
+coordinate, so a small step was quantised at 25% and vanished outright at
+smaller scales. The dialog rounds the stored value instead, which is the number
+that actually needs to be tidy. A drag never locks the Z axis either
 (`_view_locked_axis` would, looking from above), or the drag plane would be
 horizontal and height could not move at all; it locks whichever *horizontal*
 axis faces the camera most squarely, leaving a plane that always contains Z.
 Heights are equally editable in the table; clicking a vertex selects its
 cell, and selecting a cell highlights its vertex.
 
-Heights show to **two decimals**, since a heightfield is normally a 0..1
-field where more than that is noise on screen. Display only: the stored
-value keeps every digit it had while the dialog is open, and only a cell
-actually typed into changes. Saving rounds to three decimals (see the
-writeback below) — one more than the table shows, so nothing the display
-rounded is lost on the way out.
+Heights show to **three decimals**, since a heightfield is normally a 0..1
+field. Three is what the finest nudge steps by, so a cell always shows the
+change a keypress made — at two it looked like nothing had happened — and
+it matches the writeback, so what the table shows is what the file gets.
+Display only: the stored value keeps every digit it had while the dialog is
+open, and only a cell actually typed into changes.
 
 The table takes an **extended selection**, and the viewport nudges whatever
 is selected, so a group of points raises and lowers together. A live move
@@ -637,11 +650,10 @@ right-aligned to a common width. `_format_value` — what every other
 editable viewer uses — puts everything on one line, which is fine for a 4x4
 matrix and unreadable for a 30x40 field: the whole point of the array is
 that its shape on the page matches the surface, and a single line throws
-that away. Heights are written at three decimals: a heightfield is a field
-of proportions rather than measurements, and a column of them stays
-readable at a common width. That is one digit more than the table shows, so
-a height nudged to something the display rounds is not silently flattened
-on the way to the file. This is the one writeback that does not use
+that away. Heights are written at three decimals, the same as the table
+shows: a heightfield is a field of proportions rather than measurements, a
+column of them stays readable at a common width, and three is what the
+finest nudge steps by. This is the one writeback that does not use
 `_format_value`'s `%g`, and unlike the table's *display* it rounds the
 value that reaches the file.
 

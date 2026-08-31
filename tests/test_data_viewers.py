@@ -1803,7 +1803,7 @@ def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
 
     assert out["styles"] == 9, "every BOSL2 vertex-array style is offered"
 
-    assert out["cell_text"] == ["0.00", "0.12", "0.25"], "two decimals on screen"
+    assert out["cell_text"] == ["0.000", "0.123", "0.250"], "three decimals on screen"
     assert out["stored"] == [0.0, 0.123456, 0.25], "the value itself is untouched"
 
     assert out["extended_selection"]
@@ -1842,7 +1842,7 @@ def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
     from belfryscad.window.data_viewers import _format_heightfield
     assert out["saved"] == _format_heightfield(out["final_value"])
     assert out["saved"].count("\n") == 3, "one line per row, plus the brackets"
-    assert out["cell_text_before_save"] == "0.12", "the table rounds for display"
+    assert out["cell_text_before_save"] == "0.123", "the table rounds for display"
     assert "0.123" in out["saved"] and "0.123456" not in out["saved"], \
         "saving writes three decimals"
 
@@ -2165,3 +2165,73 @@ def test_deleting_a_row_or_column_asks_first(tmp_path):
 
     # Duplicate is additive, so it just happens.
     assert out["shape_after_duplicate"] == [3, 2]
+
+
+_NUDGE_STEP_DRIVER = """
+import json, sys
+from PySide6.QtGui import QSurfaceFormat, QKeyEvent
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+app = QApplication([])
+from belfryscad.window.data_viewers import HeightfieldViewer
+
+MODS = {"coarse": Qt.KeyboardModifier.ShiftModifier,
+        "normal": Qt.KeyboardModifier.NoModifier,
+        "fine": Qt.KeyboardModifier.ControlModifier}
+
+out = {}
+for pct in ("100%", "500%", "25%", "15%", "12.5%"):
+    dlg = HeightfieldViewer("t", [[0.5, 0.5], [0.5, 0.5]], None, editable=True)
+    dlg.show(); app.processEvents()
+    dlg._zcombo.setCurrentText(pct); dlg._apply_zscale_text(); app.processEvents()
+    steps = {}
+    for name, mod in MODS.items():
+        dlg._apply_value([[0.5, 0.5], [0.5, 0.5]])
+        dlg._table.clearSelection(); dlg._table.item(0, 0).setSelected(True)
+        app.processEvents()
+        dlg._vp.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Up, mod))
+        app.processEvents()
+        steps[name] = round(dlg._value[0][0] - 0.5, 9)
+    out[pct] = steps
+
+# Down lowers by the same amount.
+dlg = HeightfieldViewer("t", [[0.5, 0.5], [0.5, 0.5]], None, editable=True)
+dlg.show(); app.processEvents()
+dlg._table.item(0, 0).setSelected(True); app.processEvents()
+dlg._vp.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Down,
+                                 Qt.KeyboardModifier.NoModifier))
+app.processEvents()
+out["down"] = round(dlg._value[0][0], 9)
+print(json.dumps(out))
+"""
+
+
+def test_heightfield_nudge_steps_do_not_depend_on_the_z_scale(tmp_path):
+    """0.5 / 0.05 / 0.005 of the stored height, whatever exaggeration the
+    preview is showing.
+
+    Two things conspired against this. The shared `_key_nudge_magnitude`
+    returns 10/1/0.1, sized for geometry -- a 1-unit step leaps past a
+    0..1 field entirely. And the viewport rounded the world position it
+    emitted to three decimals, which at 25% quantised the fine step and
+    made it vanish outright at smaller scales.
+    """
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_nudge.py"
+    driver.write_text(_NUDGE_STEP_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    for pct in ("100%", "500%", "25%", "15%", "12.5%"):
+        assert out[pct] == {"coarse": 0.5, "normal": 0.05, "fine": 0.005}, \
+            f"at Z scale {pct}: {out[pct]}"
+
+    assert out["down"] == 0.45, "down lowers by the same step"
