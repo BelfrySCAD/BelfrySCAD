@@ -90,3 +90,127 @@ class TestFormatScad:
     def test_for_loop_body_indented(self):
         out = format_scad("for(i=[0:3]){cube(i);}")
         assert out == "for(i=[0:3]) {\n    cube(i);\n}\n"
+
+
+# ---------------------------------------------------------------------------
+# A modifier's child goes on its own indented line
+# ---------------------------------------------------------------------------
+
+def test_a_modifier_and_its_child_are_separate_lines():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("translate([i,0,0])cube(1);") == (
+        "translate([i, 0, 0])\n"
+        "    cube(1);\n"
+    )
+
+
+def test_a_chain_indents_once_per_link():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad('color("red")rotate([0,0,45])cube(1);') == (
+        'color("red")\n'
+        "    rotate([0, 0, 45])\n"
+        "        cube(1);\n"
+    )
+
+
+def test_a_block_stays_on_the_modifier_line():
+    """K&R, as before -- a `{` is not a child to be indented under."""
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("translate([0,0,1]){cube(1);}") == (
+        "translate([0, 0, 1]) {\n"
+        "    cube(1);\n"
+        "}\n"
+    )
+
+
+def test_a_declarations_parameters_are_not_a_child():
+    """`module foo(a, b)`'s parens hold parameters, so what follows is the
+    body rather than something to indent under a modifier."""
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("module foo(a,b){cube(1);}").startswith("module foo(a, b) {")
+    assert format_scad("function f(x) = x*2;") == "function f(x) = x*2;\n"
+
+
+def test_chain_indent_resets_at_the_next_statement():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("translate([1,0,0])cube(1);sphere(2);") == (
+        "translate([1, 0, 0])\n"
+        "    cube(1);\n"
+        "sphere(2);\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Over-long lists are reflowed
+# ---------------------------------------------------------------------------
+
+def test_a_long_argument_list_wraps():
+    from belfryscad.window.scad_format import format_scad, WRAP_WIDTH
+
+    out = format_scad("cyl(l=40, d=40, chamfer=7, chamfang=30, from_end=false, "
+                       "anchor=CENTER, spin=0, orient=UP);")
+    assert out.startswith("cyl(\n")
+    assert out.rstrip().endswith("\n);")
+    assert all(len(line) <= WRAP_WIDTH for line in out.splitlines())
+    assert "orient=UP" in out, "every argument survives"
+
+
+def test_a_long_vector_wraps_and_fills():
+    """Greedily filled, not one element per line: a long vector reads as a
+    block of data, and one per line turns a 60-point path into three
+    screens of scrolling."""
+    from belfryscad.window.scad_format import format_scad, WRAP_WIDTH
+
+    out = format_scad("pts = [[0,0],[1,0],[1,1],[0,1],[0.5,1.5],[2,2],[3,3],"
+                       "[4,4],[5,5],[6,6],[7,7],[8,8]];")
+    body = [ln for ln in out.splitlines() if ln.startswith("    ")]
+    assert len(body) == 2, f"filled, not one per line: {body}"
+    assert all(len(line) <= WRAP_WIDTH for line in out.splitlines())
+    assert out.count("[") == 13, "twelve points plus the outer bracket"
+
+
+def test_a_list_that_already_fits_is_left_alone():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("cyl(l=40, d=4);") == "cyl(l=40, d=4);\n"
+
+
+def test_a_hand_wrapped_list_is_left_alone():
+    """A newline between two items is a choice the user made."""
+    from belfryscad.window.scad_format import format_scad
+
+    src = "pts = [\n    [0, 0],\n    [1, 1]\n];\n"
+    assert "[0, 0],\n" in format_scad(src)
+
+
+# ---------------------------------------------------------------------------
+
+def test_reformatting_is_idempotent():
+    """Reformatting formatted source returns it unchanged. Without this the
+    chain break was lost on a second pass -- a statement is joined onto one
+    line before the break is applied, so an already-broken chain arrives
+    with a newline where the first pass saw none."""
+    from belfryscad.window.scad_format import format_scad
+
+    for src in (
+        "translate([i,0,0])cube(1);",
+        "translate([0,0,1])cyl(l=40, d=40, chamfer=7, chamfang=30, from_end=false, anchor=CENTER);",
+        "cyl(l=40, d=40, chamfer=7, chamfang=30, from_end=false, anchor=CENTER, spin=0, orient=UP);",
+        "pts = [[0,0],[1,0],[1,1],[0,1],[0.5,1.5],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8]];",
+        "for(i=[0:3])translate([i,0,0])cube(1);",
+        "if(a){cube(1);}else{sphere(1);}",
+        "cube(1);  // why",
+    ):
+        once = format_scad(src)
+        assert format_scad(once) == once, f"not idempotent: {src!r}"
+
+
+def test_wrapping_never_moves_a_trailing_comment():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("cube(1);  // why") == "cube(1);  // why\n"

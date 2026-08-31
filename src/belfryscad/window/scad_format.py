@@ -3,7 +3,17 @@
 
 Scope is deliberately limited to *structural* formatting -- statement/block
 indentation, brace placement (K&R-style, `} else {` merged onto one line),
-one statement per line, and collapsing runs of blank lines to at most one.
+one statement per line, a modifier's child on its own indented line, and
+collapsing runs of blank lines to at most one. An over-long argument list or
+vector is then reflowed across lines (`_wrap_long_lists`); one that already
+fits, or that the user wrapped by hand, is left as written.
+
+The parser ships its own pretty-printer (`oscad::toOpenscad`, exposed to
+Python as `format_source`), which is more thorough than this. It is not used
+here deliberately: it drops the braces from a single-child block, writes
+`l = 40` where this keeps `l=40`, and pulls a trailing `// comment` inside
+the call it follows. Those are the user's formatting choices to keep, so
+this pass stays token-based and touches only what it is asked to.
 Structural formatting is done on a token stream. Separator spacing inside
 argument lists and vector literals is then normalised from the AST
 (`_space_separators`), which is possible because
@@ -59,6 +69,15 @@ def can_format(text: str) -> bool:
         return False
 
 
+def _is_declaration(line: str) -> bool:
+    """Whether `line` is a module/function declaration.
+
+    Its parentheses hold a parameter list, so what follows is the body, not
+    a child to be indented under a modifier.
+    """
+    return re.match(r"\s*(module|function)\b", line) is not None
+
+
 def format_scad(text: str, indent_size: int = 4) -> str:
     """Reformat `text` (assumed to already pass can_format) -- see module
     docstring for exactly what is and isn't normalized."""
@@ -67,11 +86,15 @@ def format_scad(text: str, indent_size: int = 4) -> str:
     cur = ""
     indent = 0
     paren_depth = 0
+    # Extra indent for a modifier's child, e.g. the `cube(1)` in
+    # `translate(...) cube(1);`. Separate from `indent`, which only braces
+    # move, and reset by the `;` that ends the statement.
+    chain = 0
     i = 0
     n = len(tokens)
 
     def indent_str() -> str:
-        return " " * (indent * indent_size)
+        return " " * ((indent + chain) * indent_size)
 
     # Tracks whether a newline has appeared (at paren_depth 0) since the
     # last line was actually emitted -- distinguishes a line comment that
@@ -139,6 +162,25 @@ def format_scad(text: str, indent_size: int = 4) -> str:
             cur += txt
             paren_depth = max(0, paren_depth - 1)
             i += 1
+            # A modifier's child goes on its own line, indented under it:
+            # `translate(...) cube(1);` reads as one thing acting on
+            # another, and running them together hides that. Only when the
+            # next thing really is a child -- `{` opens a block (handled
+            # below, K&R), `;` ends the statement, and `=` means this was a
+            # function declaration's parameter list, not a call.
+            if paren_depth == 0 and txt == ")":
+                j = i
+                # Skip newlines too, not just spaces. A statement is joined
+                # onto one line before this runs, so an already-broken
+                # chain arrives with a newline here -- refusing to break on
+                # one meant reformatting twice gave two different results.
+                while j < n and tokens[j][0] == "ws":
+                    j += 1
+                if (j < n and tokens[j][0] in ("word", "num", "string")
+                        and tokens[j][1] != "else"
+                        and not _is_declaration(cur)):
+                    flush()
+                    chain += 1
             continue
 
         if kind == "sym" and txt == "{" and paren_depth == 0:
@@ -166,6 +208,7 @@ def format_scad(text: str, indent_size: int = 4) -> str:
         if kind == "sym" and txt == ";" and paren_depth == 0:
             cur = cur.rstrip() + ";"
             flush()
+            chain = 0
             i += 1
             continue
 
@@ -188,7 +231,11 @@ def format_scad(text: str, indent_size: int = 4) -> str:
     # user's selection, so a bad rewrite silently corrupts their code.
     # Any doubt at all and the token-formatted text is returned unchanged.
     spaced = _space_separators(formatted)
-    return spaced if _same_shape(formatted, spaced) else formatted
+    if not _same_shape(formatted, spaced):
+        spaced = formatted
+    # Reflow last, so it sees the normalised `, ` spacing and measures the
+    # lines it will actually produce.
+    return _wrap_long_lists(spaced, WRAP_WIDTH, indent_size)
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +349,110 @@ def _space_separators(text: str) -> str:
     # costs one extra parse and makes the function safe by construction
     # whatever else turns out to be off. Callers get the input back
     # unchanged rather than a plausible-looking corruption.
+    return out if _same_shape(text, out) else text
+
+
+#: Longest line the reflow pass leaves alone. A list that already fits is
+#: never touched, so short calls keep the shape the user gave them.
+WRAP_WIDTH = 80
+
+
+def _line_indent(text: str, offset: int) -> str:
+    """The leading whitespace of the line `offset` falls on."""
+    start = text.rfind("\n", 0, offset) + 1
+    line = text[start:].split("\n")[0]
+    return line[:len(line) - len(line.lstrip())]
+
+
+def _line_len(text: str, offset: int) -> int:
+    start = text.rfind("\n", 0, offset) + 1
+    end = text.find("\n", start)
+    return (len(text) if end < 0 else end) - start
+
+
+def _wrap_one_long_list(text: str, width: int, indent_size: int):
+    """Reflow the outermost over-long comma list, or None if none is.
+
+    One per call, with the caller re-parsing in between: wrapping an outer
+    list moves everything inside it, and re-deriving spans is easier to be
+    sure of than keeping several rewrites' offsets consistent. A nested
+    list then wraps on a later round, by which point its own indentation is
+    already right.
+    """
+    from openscad_cpp_evaluator import ParseError, parse_ast_string
+
+    try:
+        nodes = parse_ast_string(text, True)
+    except ParseError:
+        return None
+    flat: list = []
+    _walk(nodes, flat)
+
+    best = None
+    for node in flat:
+        key = _SEPARATED_LISTS.get(node["kind"])
+        if not key:
+            continue
+        items = node.get(key) or []
+        if len(items) < 2:
+            continue
+        pos = node.get("position") or {}
+        start, end = pos.get("start_offset"), pos.get("end_offset")
+        if start is None or end is None or _line_len(text, start) <= width:
+            continue
+        # The same span hazard `_space_separators` documents: a string
+        # literal's span can end mid-string, dragging every offset around
+        # it out of place. An unbalanced quote count is the tell.
+        if any(text[i["position"]["start_offset"]:i["position"]["end_offset"]].count('"') % 2
+               for i in items):
+            continue
+        if any("\n" in text[a["position"]["end_offset"]:b["position"]["start_offset"]]
+               for a, b in zip(items, items[1:])):
+            continue      # already wrapped by hand -- that was a choice
+        if best is None or start < best[0]:
+            best = (start, end, items)
+
+    if best is None:
+        return None
+
+    start, end, items = best
+    outer = _line_indent(text, start)
+    inner = outer + " " * indent_size
+    prefix = text[start:items[0]["position"]["start_offset"]].rstrip()
+    suffix = text[items[-1]["position"]["end_offset"]:end].lstrip()
+    pieces = [text[i["position"]["start_offset"]:i["position"]["end_offset"]]
+              for i in items]
+
+    # Greedy fill rather than one item per line: a long vector of numbers
+    # reads as a block of data, and one element per line turns a 60-point
+    # path into three screens of scrolling.
+    lines: list[str] = []
+    cur = inner
+    for k, piece in enumerate(pieces):
+        chunk = piece + ("," if k < len(pieces) - 1 else "")
+        if cur != inner and len(cur) + 1 + len(chunk) > width:
+            lines.append(cur)
+            cur = inner + chunk
+        else:
+            cur = cur + chunk if cur == inner else cur + " " + chunk
+    lines.append(cur)
+    return text[:start] + prefix + "\n" + "\n".join(lines) + "\n" + outer + suffix + text[end:]
+
+
+def _wrap_long_lists(text: str, width: int = WRAP_WIDTH, indent_size: int = 4) -> str:
+    """Reflow every over-long argument list and vector literal.
+
+    Verified the way `_space_separators` is: a rewrite that changes the
+    parse tree is discarded and the last good text returned. The round cap
+    is a backstop against a rewrite that never settles, not something a
+    real selection is expected to reach.
+    """
+    out = text
+    for _ in range(200):
+        nxt = _wrap_one_long_list(out, width, indent_size)
+        if nxt is None or nxt == out or not _same_shape(out, nxt):
+            break
+        out = nxt
     return out if _same_shape(text, out) else text
 
 
