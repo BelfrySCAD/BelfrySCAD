@@ -580,8 +580,9 @@ cell, and selecting a cell highlights its vertex.
 Heights show to **two decimals**, since a heightfield is normally a 0..1
 field where more than that is noise on screen. Display only: the stored
 value keeps every digit it had while the dialog is open, and only a cell
-actually typed into changes. Saving rounds to the same two decimals (see
-the writeback below), so what the table shows is what the file gets.
+actually typed into changes. Saving rounds to three decimals (see the
+writeback below) — one more than the table shows, so nothing the display
+rounded is lost on the way out.
 
 The table takes an **extended selection**, and the viewport nudges whatever
 is selected, so a group of points raises and lowers together. A live move
@@ -636,11 +637,13 @@ right-aligned to a common width. `_format_value` — what every other
 editable viewer uses — puts everything on one line, which is fine for a 4x4
 matrix and unreadable for a 30x40 field: the whole point of the array is
 that its shape on the page matches the surface, and a single line throws
-that away. Heights are written at two decimals: a heightfield is a field of
-proportions rather than measurements, so a saved `0.33` says everything
-`0.333333` does and the column of them stays readable. This is the one
-writeback that does not use `_format_value`'s `%g`, and unlike the table's
-two-decimal *display* it rounds the value that reaches the file.
+that away. Heights are written at three decimals: a heightfield is a field
+of proportions rather than measurements, and a column of them stays
+readable at a common width. That is one digit more than the table shows, so
+a height nudged to something the display rounds is not silently flattened
+on the way to the file. This is the one writeback that does not use
+`_format_value`'s `%g`, and unlike the table's *display* it rounds the
+value that reaches the file.
 
 The table's columns share the width evenly (`QHeaderView.Stretch`) rather
 than each sizing to its own contents — every cell holds one number of about

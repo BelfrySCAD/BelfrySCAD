@@ -1843,8 +1843,8 @@ def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
     assert out["saved"] == _format_heightfield(out["final_value"])
     assert out["saved"].count("\n") == 3, "one line per row, plus the brackets"
     assert out["cell_text_before_save"] == "0.12", "the table rounds for display"
-    assert "0.12" in out["saved"] and "0.123456" not in out["saved"], \
-        "and saving writes two decimals too"
+    assert "0.123" in out["saved"] and "0.123456" not in out["saved"], \
+        "saving writes three decimals"
 
 
 # ---------------------------------------------------------------------------
@@ -2059,8 +2059,8 @@ def test_heightfield_writeback_is_multi_line_and_column_aligned():
 
     assert _format_heightfield([[0, 1, 2], [3, 4, 5]]) == (
         "[\n"
-        "    [0.00, 1.00, 2.00],\n"
-        "    [3.00, 4.00, 5.00]\n"
+        "    [0.000, 1.000, 2.000],\n"
+        "    [3.000, 4.000, 5.000]\n"
         "]"
     )
 
@@ -2069,8 +2069,8 @@ def test_heightfield_writeback_is_multi_line_and_column_aligned():
     out = _format_heightfield([[0.0, 0.5], [-0.25, 10.0]])
     assert out == (
         "[\n"
-        "    [ 0.00,  0.50],\n"
-        "    [-0.25, 10.00]\n"
+        "    [ 0.000,  0.500],\n"
+        "    [-0.250, 10.000]\n"
         "]"
     )
     # Same length once the separating comma is discounted -- every row but
@@ -2079,16 +2079,16 @@ def test_heightfield_writeback_is_multi_line_and_column_aligned():
     assert len({len(ln) for ln in body}) == 1, "the columns line up"
 
 
-def test_heightfield_writeback_rounds_to_two_decimals():
-    """A heightfield is a field of proportions rather than measurements, so
-    a saved 0.33 says everything 0.333333 does. Unlike the table's own
-    two-decimal DISPLAY, this rounds the value that reaches the file."""
+def test_heightfield_writeback_rounds_to_three_decimals():
+    """One more digit than the table shows, so a height nudged to something
+    the display rounds is not silently flattened on the way to the file.
+    Unlike the table's own DISPLAY, this rounds the saved value."""
     from belfryscad.window.data_viewers import _format_heightfield
 
-    out = _format_heightfield([[0.123456, 1.0], [2.0, 0.005]])
+    out = _format_heightfield([[0.123456, 1.0], [2.0, 0.0005]])
     assert "0.123456" not in out
-    assert "0.12" in out and "1.00" in out
-    assert "0.01" in out, "and it rounds rather than truncating"
+    assert "0.123" in out and "1.000" in out
+    assert "0.001" in out, "and it rounds rather than truncating"
 
 
 _DELETE_CONFIRM_DRIVER = """

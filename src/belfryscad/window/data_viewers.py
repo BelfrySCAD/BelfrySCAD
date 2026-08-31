@@ -160,13 +160,14 @@ def _format_heightfield(value: list, indent: str = "    ") -> str:
     throws that away. Columns are right-aligned to a common width for the
     same reason.
 
-    Two decimals, fixed: a heightfield is a field of proportions rather
-    than measurements, so a saved `0.33` says everything `0.333333` does
-    and the column of them stays readable. This is the one writeback that
-    does NOT use `_format_value`'s `%g` -- and it does round the saved
-    value, not just its display.
+    Three decimals, fixed: a heightfield is a field of proportions rather
+    than measurements, and a column of them stays readable at a common
+    width. One more digit than the table shows, so a value nudged to
+    something the display rounds is not silently flattened on the way to
+    the file. This is the one writeback that does NOT use `_format_value`'s
+    `%g` -- and it does round the saved value, not just its display.
     """
-    cells = [[f"{float(h):.2f}" for h in row] for row in value]
+    cells = [[f"{float(h):.3f}" for h in row] for row in value]
     width = max((len(t) for row in cells for t in row), default=1)
     rows = [indent + "[" + ", ".join(t.rjust(width) for t in row) + "]"
             for row in cells]
