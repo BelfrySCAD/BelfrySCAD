@@ -881,9 +881,17 @@ class Viewport(QOpenGLWidget):
         cam.frame_bounds(bb_min, bb_max)
 
     def zoom(self, direction: int):
+        """Zoom by one step -- the View menu's Zoom In/Out and their
+        Cmd+]/Cmd+[ shortcuts."""
         cam = self._renderer.camera
         factor = 1.03 if direction < 0 else 0.97
         cam.distance = max(0.1, cam.distance * factor)
+        # This changes apparent scale exactly as the wheel does, so
+        # screen-space markers need the same rebuild. Without it the
+        # keyboard shortcuts zoomed the scene and left every vertex
+        # indicator at its old world size, so they grew and shrank with
+        # the model instead of staying put.
+        self._on_zoom_changed()
         if self._measurements:
             self._refresh_measure_labels()
         self.camera_changed.emit()

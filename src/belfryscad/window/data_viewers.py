@@ -18,11 +18,13 @@ import csv
 import copy
 import math
 import re
+from pathlib import Path
 import numpy as np
 import manifold3d as m3d
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QDialogButtonBox, QDoubleSpinBox, QSpinBox, QFormLayout,
     QHeaderView, QAbstractItemView, QCheckBox, QMenu, QLabel, QPushButton,
     QSplitter, QTabWidget, QWidget, QComboBox, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox,
@@ -31,7 +33,11 @@ from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.ui_colors import header_colors, on_appearance_change
+from belfryscad.window.ui_colors import (header_colors, on_appearance_change,
+                                          apply_themed_icon)
+
+#: Same directory the toolbar and debugger icons come from.
+_ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
 
 def _fmt_short(v) -> str:
@@ -172,6 +178,61 @@ def _format_heightfield(value: list, indent: str = "    ") -> str:
     rows = [indent + "[" + ", ".join(t.rjust(width) for t in row) + "]"
             for row in cells]
     return "[\n" + ",\n".join(rows) + "\n]"
+
+
+def _image_luminance_grid(image, rows: int, cols: int) -> list:
+    """`image` sampled down to a `rows` x `cols` grid of 0..1 luminance.
+
+    Qt does both hard parts: Format_Grayscale8 applies a proper luma
+    weighting rather than averaging the channels (which would read a
+    saturated blue as bright as a saturated green), and a smooth scale
+    AREA-AVERAGES on the way down. Point-sampling a photo instead would
+    alias badly -- a 3000px image sampled at 50 columns would take one
+    pixel in sixty and miss whatever lies between.
+
+    Row 0 is the image's TOP row, which is also the first row of the
+    heightfield -- the texture convention -- and `_as_grid` places that at
+    the far edge of the surface, so the field reads the same way up as the
+    picture it came from.
+    """
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QImage
+
+    small = image.convertToFormat(QImage.Format.Format_Grayscale8).scaled(
+        cols, rows, _Qt.AspectRatioMode.IgnoreAspectRatio,
+        _Qt.TransformationMode.SmoothTransformation)
+    return [[small.pixelColor(c, r).value() / 255.0 for c in range(cols)]
+            for r in range(rows)]
+
+
+def _apply_levels(grid: list, black: float, white: float,
+                   lo: float, hi: float, invert: bool = False) -> list:
+    """Map `grid`'s 0..1 luminance onto heights in `lo`..`hi`.
+
+    `black`/`white` are the input levels: at or below `black` becomes the
+    low end, at or above `white` the high end, and everything between
+    stretches linearly across. That is what makes an image usable as a
+    heightfield -- a photo rarely spans the full range, and without levels
+    the interesting part is squeezed into the middle.
+
+    `white <= black` would divide by zero; the span collapses to a step at
+    that value instead, which is the sensible reading of "everything below
+    is low, everything above is high".
+    """
+    span = white - black
+    out = []
+    for row in grid:
+        new = []
+        for v in row:
+            if span <= 0:
+                t = 0.0 if v < black else 1.0
+            else:
+                t = min(1.0, max(0.0, (v - black) / span))
+            if invert:
+                t = 1.0 - t
+            new.append(round(lo + t * (hi - lo), 6))
+        out.append(new)
+    return out
 
 
 def _normalize_heights(value: list, lo: float, hi: float) -> list:
@@ -806,6 +867,69 @@ def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> 
         rows.append(np.concatenate([p1, n, color]))
         rows.append(np.concatenate([p2, n, color]))
     return rows
+
+
+def _marker_radii_for_points(vp: "Viewport", points) -> np.ndarray:
+    """`_marker_radius_for_point` for many points at once.
+
+    Same arithmetic, done as array operations. Orthographic depth does not
+    vary per point at all (that is the definition of it), so that case is a
+    single value broadcast; perspective needs each point's own eye-distance.
+    """
+    cam = vp._renderer.camera
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if cam.orthographic:
+        depth = np.full(len(pts), float(cam.distance), dtype=np.float32)
+    else:
+        eye = np.asarray(cam.eye_position(), dtype=np.float32)
+        depth = np.linalg.norm(pts - eye, axis=1)
+    vh = vp.height()
+    if vh > 0:
+        world_per_px = 2.0 * depth * math.tan(math.radians(cam.fov / 2)) / vh
+    else:
+        world_per_px = depth * 0.003
+    return (world_per_px * 6).astype(np.float32)
+
+
+def _lit_marker_field(points, radii, unit_faces: list, colors) -> np.ndarray:
+    """Every marker in one array, built without a Python loop over points.
+
+    `_lit_marker_triangles` is fine for the handful of selected markers,
+    but the unselected ones are the whole field: an image-derived
+    heightfield is routinely tens of thousands of points, and building
+    those a triangle at a time cost SECONDS -- 6.3s for 10,000 markers,
+    which is the entire interaction budget spent before anything is drawn.
+
+    The saving comes from what every marker has in common. They are the
+    same unit shape, so the offsets are shared; and a normal is unchanged
+    by uniform positive scaling, so each triangle's normal is computed once
+    for the shape rather than once per marker. Only the positions actually
+    differ, and those are one broadcast add.
+
+    `colors` is either one RGB row for all of them or one per point.
+    Returns the same `[x,y,z, nx,ny,nz, r,g,b]` rows `upload_points` wants,
+    in the same order `_lit_marker_triangles` would have produced.
+    """
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(pts) == 0:
+        return np.zeros((0, 9), dtype=np.float32)
+
+    unit = np.asarray(unit_faces, dtype=np.float32).reshape(-1, 3, 3)
+    normals = np.cross(unit[:, 1] - unit[:, 0], unit[:, 2] - unit[:, 0])
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.divide(normals, lengths, out=np.zeros_like(normals),
+                        where=lengths > 0)
+    offsets = unit.reshape(-1, 3)                       # (V, 3)
+    normals = np.repeat(normals, 3, axis=0)             # (V, 3)
+
+    radii = np.asarray(radii, dtype=np.float32).reshape(-1, 1, 1)
+    out = np.empty((len(pts), len(offsets), 9), dtype=np.float32)
+    out[:, :, 0:3] = pts[:, None, :] + offsets[None, :, :] * radii
+    out[:, :, 3:6] = normals
+    out[:, :, 6:9] = np.asarray(colors, dtype=np.float32).reshape(len(pts), 1, 3) \
+        if np.ndim(colors) == 2 and len(np.asarray(colors)) == len(pts) else \
+        np.asarray(colors, dtype=np.float32)
+    return out.reshape(-1, 9)
 
 
 def _tube_triangles(p0, p1, r0: float, r1: float, color: np.ndarray,
@@ -2347,13 +2471,13 @@ class _AffineViewport(Viewport):
         unit_faces = _dodecahedron_faces(1.0, self._is_2d)
         first_color = np.array([0.85, 0.15, 0.15], dtype=np.float32)
         rest_color = np.array([0.9, 0.45, 0.1], dtype=np.float32)
-        marker_tris = []
-        for i, pt in enumerate(self._corners):
-            color = first_color if i == 0 else rest_color
-            r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, color))
-        if marker_tris:
-            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+        pts = np.asarray(self._corners, dtype=np.float32)
+        colors = np.tile(rest_color, (len(pts), 1))
+        colors[0] = first_color
+        rows = _lit_marker_field(pts, _marker_radii_for_points(self, pts),
+                                 unit_faces, colors)
+        if len(rows):
+            self._renderer.upload_points(rows)
 
 
 class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
@@ -2971,14 +3095,12 @@ class _VNFViewport(Viewport):
         unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._vert_indices)
         unit_faces = _dodecahedron_faces(1.0, False)
-        marker_tris = []
-        for i, pt in enumerate(self._verts_3d):
-            if i in selected:
-                continue
-            r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
-        if marker_tris:
-            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+        keep = [i for i in range(len(self._verts_3d)) if i not in selected]
+        if keep:
+            pts = np.asarray(self._verts_3d, dtype=np.float32)[keep]
+            self._renderer.upload_points(_lit_marker_field(
+                pts, _marker_radii_for_points(self, pts), unit_faces,
+                unselected_color))
 
     def _release_vert_markers(self):
         for attr in ("_vert_marker_vao_r", "_vert_marker_vao_w"):
@@ -5478,6 +5600,13 @@ class _GridViewport(Viewport):
         #: only the middle one is editable, and a marker on a point that
         #: cannot be grabbed is an invitation to try.
         self.marker_indices = None
+        #: Draw the row/column/diagonal skeleton over the surface. It is
+        #: the whole subject of a control-point grid, but on a heightfield
+        #: it only repeats what the edges view already shows -- and with
+        #: edges off it has no depth offset to lift it clear, so it
+        #: z-fights the surface it lies on and speckles through as a
+        #: coloured grid over what should be a clean shape.
+        self.show_skeleton = True
         #: World-Z per unit of stored height, so a z_only nudge can be a
         #: step in the value the user is editing rather than in the
         #: exaggerated preview. Kept in step with the Z scale by the
@@ -5647,7 +5776,7 @@ class _GridViewport(Viewport):
                         spoke = longer_base + (k + 1) % longer_len
                         line_verts.append(np.concatenate([pts[anchor_idx], diag_color]))
                         line_verts.append(np.concatenate([pts[spoke], diag_color]))
-        if line_verts:
+        if line_verts and self.show_skeleton:
             self._renderer.upload_lines(np.array(line_verts, dtype=np.float32))
 
         # Quad faces (faces mode only); polygon offset fill (from show_edges=True)
@@ -5745,16 +5874,14 @@ class _GridViewport(Viewport):
         unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._selected_indices)
 
-        marker_tris = []
         allowed = self.marker_indices
-        for i, pt in enumerate(pts):
-            if i in selected or (allowed is not None and i not in allowed):
-                continue
-            r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
-
-        if marker_tris:
-            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+        keep = [i for i in range(len(pts))
+                if i not in selected and (allowed is None or i in allowed)]
+        if keep:
+            shown = np.asarray(pts, dtype=np.float32)[keep]
+            self._renderer.upload_points(_lit_marker_field(
+                shown, _marker_radii_for_points(self, shown), unit_faces,
+                unselected_color))
 
     def set_selected_row(self, row_idx: int):
         self._selected_row = row_idx
@@ -6048,6 +6175,499 @@ class _GridViewport(Viewport):
 # Region Viewer
 # ---------------------------------------------------------------------------
 
+def _lower_left_tip(image) -> tuple:
+    """The (x, y) of the lowest-left opaque pixel in `image`.
+
+    For an eyedropper that is the point that does the picking, which is
+    where a cursor has to be anchored. Measured from the rendered artwork
+    rather than written down, so editing the icon moves the hotspot with
+    it instead of leaving it pointing at where the tip used to be.
+
+    "Lowest-left" is the largest (y - x): the furthest along the
+    down-and-left diagonal the eyedropper is drawn on.
+    """
+    width, height = image.width(), image.height()
+    best = None
+    best_score = None
+    for y in range(height):
+        for x in range(width):
+            if image.pixelColor(x, y).alpha() <= 40:
+                continue
+            score = y - x
+            if best_score is None or score > best_score:
+                best_score, best = score, (x, y)
+    return best or (0, height - 1)
+
+
+def _eyedropper_cursor(size: int = 32):
+    """The `eyedropper.svg` icon as a cursor, anchored at its tip.
+
+    The same artwork as the button, rather than a second drawn copy: it is
+    already white-filled with a grey outline, so it reads over a light or a
+    dark image without needing a special high-contrast variant.
+
+    Rendered at twice `size` and marked as such, so it stays sharp on a
+    Retina display; the hotspot is in logical pixels either way.
+    """
+    from PySide6.QtGui import QCursor, QImage, QPainter, QPixmap
+    from PySide6.QtSvg import QSvgRenderer
+    from PySide6.QtCore import QRectF
+
+    path = _ICONS_DIR / "eyedropper.svg"
+    if not path.exists():
+        return QCursor(Qt.CursorShape.CrossCursor)
+
+    ratio = 2
+    px = size * ratio
+    image = QImage(px, px, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    QSvgRenderer(str(path)).render(painter, QRectF(0, 0, px, px))
+    painter.end()
+
+    tip_x, tip_y = _lower_left_tip(image)
+    pm = QPixmap.fromImage(image)
+    pm.setDevicePixelRatio(ratio)
+    # The hotspot is in logical pixels, so scale the measurement back down.
+    return QCursor(pm, int(round(tip_x / ratio)), int(round(tip_y / ratio)))
+
+
+class _CropLabel(QLabel):
+    """The source image with a draggable crop rectangle over it.
+
+    Drag to select a region; a click without a drag clears it back to the
+    whole image. The rectangle is kept in IMAGE coordinates, not widget
+    ones, so it survives the label being resized and means the same thing
+    whatever the preview is scaled to.
+    """
+
+    crop_changed = Signal()
+    #: 0..1 luminance sampled from a click while a picker is armed.
+    luminance_picked = Signal(float)
+
+    #: A drag shorter than this is a click, and clears the crop. Without a
+    #: floor, a click with a pixel of shake selects a 2px region and the
+    #: preview goes blank with no obvious cause.
+    _MIN_DRAG_PX = 5
+
+    def __init__(self, image, parent=None):
+        super().__init__(parent)
+        self._image = image
+        self._crop = None          # QRect in image coords, or None for all
+        self._drag_from = None
+        self._drag_to = None
+        #: While set, a click samples brightness instead of cropping.
+        self._picking = False
+        #: Grayscale copy, made once: a picker samples it repeatedly, and
+        #: converting per click would re-walk the whole image each time.
+        self._grey = None
+        self.setMinimumSize(220, 180)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setToolTip("Drag to crop; click to use the whole image.")
+
+    # -- geometry ------------------------------------------------------
+
+    def _draw_rect(self):
+        """Where the image is actually painted, in widget coordinates."""
+        from PySide6.QtCore import QRect
+        w, h = self.width(), self.height()
+        iw, ih = self._image.width(), self._image.height()
+        if iw <= 0 or ih <= 0:
+            return QRect(0, 0, w, h)
+        scale = min(w / iw, h / ih)
+        dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        return QRect((w - dw) // 2, (h - dh) // 2, dw, dh)
+
+    def _to_image(self, pos):
+        """A widget point as image coordinates, clamped to the image."""
+        r = self._draw_rect()
+        if r.width() <= 0 or r.height() <= 0:
+            return 0, 0
+        fx = (pos.x() - r.x()) / r.width()
+        fy = (pos.y() - r.y()) / r.height()
+        x = int(round(min(1.0, max(0.0, fx)) * self._image.width()))
+        y = int(round(min(1.0, max(0.0, fy)) * self._image.height()))
+        return (min(x, self._image.width() - 1),
+                min(y, self._image.height() - 1))
+
+    def crop_rect(self):
+        """The selected region in image coordinates, or None for all of it."""
+        return self._crop
+
+    def cropped_image(self):
+        return self._image if self._crop is None else self._image.copy(self._crop)
+
+    def set_crop(self, rect):
+        self._crop = rect
+        self.update()
+        self.crop_changed.emit()
+
+    # -- picking -------------------------------------------------------
+
+    def set_picking(self, on: bool):
+        """Arm or disarm brightness picking. While armed a click samples
+        rather than starting a crop."""
+        self._picking = on
+        # The eyedropper itself, anchored at its tip, rather than a generic
+        # pointing hand: the cursor is the only thing showing WHERE the
+        # sample will be taken from, and a hand points at nothing in
+        # particular.
+        self.setCursor(_eyedropper_cursor() if on else Qt.CursorShape.CrossCursor)
+
+    def luminance_at(self, x: int, y: int) -> float:
+        """0..1 brightness around (x, y), averaged over a 3x3 neighbourhood.
+
+        A single pixel is a poor sample of a photograph -- sensor noise and
+        JPEG artefacts move one pixel far more than the tone the user is
+        actually pointing at.
+        """
+        from PySide6.QtGui import QImage
+
+        if self._grey is None:
+            self._grey = self._image.convertToFormat(
+                QImage.Format.Format_Grayscale8)
+        w, h = self._grey.width(), self._grey.height()
+        total = count = 0
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                px, py = x + dx, y + dy
+                if 0 <= px < w and 0 <= py < h:
+                    total += self._grey.pixelColor(px, py).value()
+                    count += 1
+        return (total / count / 255.0) if count else 0.0
+
+    # -- interaction ---------------------------------------------------
+
+    def mousePressEvent(self, event):
+        if self._picking:
+            x, y = self._to_image(event.position().toPoint())
+            self.luminance_picked.emit(self.luminance_at(x, y))
+            return
+        self._drag_from = event.position().toPoint()
+        self._drag_to = self._drag_from
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._picking:
+            return
+        if self._drag_from is not None:
+            self._drag_to = event.position().toPoint()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import QRect
+        if self._picking or self._drag_from is None:
+            return
+        start, end = self._drag_from, event.position().toPoint()
+        self._drag_from = self._drag_to = None
+        if (abs(end.x() - start.x()) < self._MIN_DRAG_PX
+                and abs(end.y() - start.y()) < self._MIN_DRAG_PX):
+            self.set_crop(None)          # a click means "all of it"
+            return
+        x0, y0 = self._to_image(start)
+        x1, y1 = self._to_image(end)
+        rect = QRect(min(x0, x1), min(y0, y1),
+                     abs(x1 - x0) or 1, abs(y1 - y0) or 1)
+        self.set_crop(rect)
+
+    # -- painting ------------------------------------------------------
+
+    def paintEvent(self, event):
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+
+        painter = QPainter(self)
+        area = self._draw_rect()
+        painter.drawPixmap(area, QPixmap.fromImage(self._image))
+
+        # The live drag wins over the committed crop, so the rectangle
+        # tracks the cursor rather than only appearing on release.
+        if self._drag_from is not None and self._drag_to is not None:
+            box = QRect(self._drag_from, self._drag_to).normalized()
+        elif self._crop is not None:
+            iw, ih = self._image.width(), self._image.height()
+            box = QRect(
+                area.x() + round(self._crop.x() / iw * area.width()),
+                area.y() + round(self._crop.y() / ih * area.height()),
+                max(1, round(self._crop.width() / iw * area.width())),
+                max(1, round(self._crop.height() / ih * area.height())))
+        else:
+            painter.end()
+            return
+
+        # Dim everything outside the selection rather than outlining it
+        # alone: on a busy image a thin rectangle is easy to lose.
+        shade = QColor(0, 0, 0, 110)
+        for part in (QRect(area.x(), area.y(), area.width(), box.y() - area.y()),
+                      QRect(area.x(), box.bottom() + 1, area.width(),
+                            area.bottom() - box.bottom()),
+                      QRect(area.x(), box.y(), box.x() - area.x(), box.height()),
+                      QRect(box.right() + 1, box.y(),
+                            area.right() - box.right(), box.height())):
+            if part.width() > 0 and part.height() > 0:
+                painter.fillRect(part.intersected(area), shade)
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.drawRect(box.intersected(area))
+        painter.end()
+
+
+class HeightfieldImportDialog(QDialog):
+    """Turn an image into a heightfield: sampling, levels and output range,
+    over a live preview of the result.
+
+    The preview shows what the FIELD will be, not what the file looks like
+    -- sampled to the chosen grid and with the levels applied -- because
+    that is the thing being decided. Seeing the original instead would hide
+    exactly the choices this dialog exists to make.
+    """
+
+    #: Preview size. Big enough to judge the result, small enough that
+    #: re-sampling on every slider tick stays instant.
+    _PREVIEW_PX = 260
+
+    def __init__(self, image, parent=None, rows: int = 32, cols: int = 32):
+        super().__init__(parent)
+        self.setWindowTitle("Import Heightfield from Image")
+        self._image = image
+        self._grid: list | None = None
+        #: Guards the rows <-> columns round trip under "Uniform", which
+        #: would otherwise each keep correcting the other. Set before any
+        #: widget exists, since building one can fire its own handler.
+        self._matching = False
+
+        layout = QVBoxLayout(self)
+
+        # Source on the left to crop on, result on the right. Cropping
+        # needs the picture; judging levels and sampling needs the field.
+        panes = QHBoxLayout()
+        self._crop_label = _CropLabel(image)
+        self._crop_label.setStyleSheet("QLabel { border: 1px solid palette(mid); }")
+        self._crop_label.crop_changed.connect(self._on_crop_changed)
+        panes.addWidget(self._crop_label, 1)
+
+        self._preview = QLabel()
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setMinimumSize(self._PREVIEW_PX, self._PREVIEW_PX)
+        self._preview.setStyleSheet("QLabel { border: 1px solid palette(mid); }")
+        panes.addWidget(self._preview, 1)
+        layout.addLayout(panes, 1)
+
+        self._source_label = QLabel()
+        layout.addWidget(self._source_label)
+
+        form = QFormLayout()
+
+        def spin(lo, hi, val, step=1, decimals=0, on_change=None):
+            box = QDoubleSpinBox() if decimals else QSpinBox()
+            box.setRange(lo, hi)
+            if decimals:
+                box.setDecimals(decimals)
+                box.setSingleStep(step)
+            box.setValue(val)
+            box.valueChanged.connect(on_change or self._refresh)
+            return box
+
+        # Sampling. An image is normally far larger than a useful field --
+        # a 3000x2000 photo would be six million heights.
+        # Rows and columns go through one handler that matches the aspect
+        # BEFORE refreshing. Refreshing first and matching after left the
+        # preview built from the pair as typed while the boxes showed the
+        # matched pair -- the guard that stops the two boxes correcting
+        # each other forever also swallowed the refresh that would have
+        # caught up. Only committing the field with Return fixed it, which
+        # is what made this look like "typing does not work".
+        self._rows = spin(2, 512, rows,
+                          on_change=lambda _v: self._on_sample_size(True))
+        self._cols = spin(2, 512, cols,
+                          on_change=lambda _v: self._on_sample_size(False))
+        self._uniform = QCheckBox("Uniform")
+        self._uniform.setToolTip(
+            "Keep the sample grid in the crop's proportions, so a cell is\n"
+            "square and the field is not stretched.")
+        self._uniform.toggled.connect(self._on_uniform_toggled)
+        size_row = QHBoxLayout()
+        size_row.addWidget(self._rows)
+        size_row.addWidget(QLabel("rows x"))
+        size_row.addWidget(self._cols)
+        size_row.addWidget(QLabel("columns"))
+        size_row.addWidget(self._uniform)
+        size_row.addStretch()
+        form.addRow("Sample to:", size_row)
+
+        # Input levels, each with an eyedropper that reads its value off
+        # the image -- guessing a photo's black and white points by typing
+        # numbers is far harder than pointing at them.
+        self._black = spin(0.0, 1.0, 0.0, 0.05, 3)
+        self._white = spin(0.0, 1.0, 1.0, 0.05, 3)
+        self._pick_black = self._picker_button("darkest")
+        self._pick_white = self._picker_button("lightest")
+        lv = QHBoxLayout()
+        lv.addWidget(QLabel("black"))
+        lv.addWidget(self._black)
+        lv.addWidget(self._pick_black)
+        lv.addSpacing(12)
+        lv.addWidget(QLabel("white"))
+        lv.addWidget(self._white)
+        lv.addWidget(self._pick_white)
+        lv.addStretch()
+        form.addRow("Levels:", lv)
+        self._crop_label.luminance_picked.connect(self._on_picked)
+
+        # Output range.
+        self._lo = spin(-1e4, 1e4, 0.0, 0.1, 3)
+        self._hi = spin(-1e4, 1e4, 1.0, 0.1, 3)
+        rr = QHBoxLayout()
+        rr.addWidget(QLabel("low"))
+        rr.addWidget(self._lo)
+        rr.addWidget(QLabel("high"))
+        rr.addWidget(self._hi)
+        rr.addStretch()
+        form.addRow("Heights:", rr)
+
+        self._invert = QCheckBox("Invert (dark is high)")
+        self._invert.toggled.connect(self._refresh)
+        form.addRow("", self._invert)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._refresh()
+
+    # -- picking levels off the image ------------------------------------
+
+    def _picker_button(self, which: str) -> QPushButton:
+        """A checkable eyedropper. Checkable because picking is a mode: the
+        button stays lit while the next click on the image will sample,
+        which is the only thing telling the user why their click is not
+        cropping."""
+        btn = QPushButton()
+        # apply_themed_icon rather than a one-off QIcon: it re-applies on
+        # every appearance change, where a snapshot taken here would keep
+        # the old ink after a light/dark switch.
+        icon_path = _ICONS_DIR / "eyedropper.svg"
+        if icon_path.exists():
+            apply_themed_icon(btn, icon_path)
+        btn.setCheckable(True)
+        btn.setFixedWidth(30)
+        btn.setToolTip(f"Click the {which} part of the image to set this level.")
+        btn.toggled.connect(self._on_picker_toggled)
+        return btn
+
+    def _on_picker_toggled(self, on: bool):
+        # Only one at a time: with both armed there would be no telling
+        # which a click was meant for.
+        if on:
+            other = (self._pick_white if self.sender() is self._pick_black
+                     else self._pick_black)
+            if other.isChecked():
+                other.setChecked(False)
+        self._crop_label.set_picking(
+            self._pick_black.isChecked() or self._pick_white.isChecked())
+
+    def _on_picked(self, value: float):
+        """A sampled brightness lands in whichever level is armed.
+
+        The picker disarms itself afterwards. Staying armed would make the
+        next click on the image silently overwrite the level just set,
+        rather than crop as expected.
+        """
+        target = self._black if self._pick_black.isChecked() else self._white
+        if not (self._pick_black.isChecked() or self._pick_white.isChecked()):
+            return
+        target.setValue(round(value, 3))
+        self._pick_black.setChecked(False)
+        self._pick_white.setChecked(False)
+
+    # -- sampling shape --------------------------------------------------
+
+    def _on_sample_size(self, from_rows: bool):
+        """Rows or columns changed: match the aspect, then rebuild once."""
+        if self._matching:
+            return          # the other box being corrected; its own call follows
+        self._match_aspect(from_rows=from_rows)
+        self._refresh()
+
+    def _on_crop_changed(self):
+        if self._uniform.isChecked():
+            self._match_aspect(from_rows=True)
+        self._refresh()
+
+    def _on_uniform_toggled(self, on: bool):
+        if on:
+            self._match_aspect(from_rows=True)
+        self._refresh()
+
+    def _match_aspect(self, from_rows: bool):
+        """Hold the sample grid to the crop's proportions.
+
+        Driven from whichever box the user just changed, so either can lead
+        -- with a flag to stop the two correcting each other forever.
+        """
+        if not self._uniform.isChecked() or self._matching:
+            return
+        img = self._crop_label.cropped_image()
+        if img.width() <= 0 or img.height() <= 0:
+            return
+        self._matching = True
+        try:
+            if from_rows:
+                want = max(2, min(512, round(self._rows.value()
+                                              * img.width() / img.height())))
+                self._cols.setValue(want)
+            else:
+                want = max(2, min(512, round(self._cols.value()
+                                              * img.height() / img.width())))
+                self._rows.setValue(want)
+        finally:
+            self._matching = False
+
+    def _refresh(self):
+        if self._matching:
+            return          # mid-correction; the second edit will refresh
+        img = self._crop_label.cropped_image()
+        self._grid = _apply_levels(
+            _image_luminance_grid(img, self._rows.value(), self._cols.value()),
+            self._black.value(), self._white.value(),
+            self._lo.value(), self._hi.value(), self._invert.isChecked())
+        crop = self._crop_label.crop_rect()
+        where = "whole image" if crop is None else \
+            f"crop {crop.width()} x {crop.height()} at {crop.x()},{crop.y()}"
+        self._source_label.setText(
+            f"Source: {self._image.width()} x {self._image.height()} pixels — {where}")
+        self._preview.setPixmap(self._preview_pixmap())
+
+    def _preview_pixmap(self):
+        """The sampled field as a grey image, scaled up with no smoothing
+        so each height reads as one visible cell -- the sampling grid is
+        one of the things being chosen here."""
+        from PySide6.QtGui import QImage, QPixmap, qRgb
+
+        rows, cols = len(self._grid), len(self._grid[0])
+        flat = [v for row in self._grid for v in row]
+        lo, hi = min(flat), max(flat)
+        span = (hi - lo) or 1.0
+        img = QImage(cols, rows, QImage.Format.Format_RGB32)
+        for r, row in enumerate(self._grid):
+            for c, v in enumerate(row):
+                g = int(round(255 * (v - lo) / span))
+                img.setPixel(c, r, qRgb(g, g, g))
+        return QPixmap.fromImage(img).scaled(
+            self._PREVIEW_PX, self._PREVIEW_PX,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation)
+
+    def heightfield(self) -> list:
+        """The field as configured. Only meaningful after `exec()` returned
+        Accepted."""
+        return self._grid
+
+
 class HeightfieldViewer(QDialog, _UndoableViewerMixin):
     """A rectangular 2D list of scalar heights, as an editable table beside
     a 3D surface of the same data.
@@ -6100,6 +6720,11 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
 
         self._vp = _GridViewport(self._as_grid(), False, self, editable=editable)
         self._vp.z_only = True
+        # The surface is the subject here, not a lattice of control points.
+        # The skeleton only repeats what Show Edges draws from the real
+        # triangulation, and lying coplanar with the surface it speckles
+        # through as a coloured grid over what should be a clean shape.
+        self._vp.show_skeleton = False
         self._vp.z_nudge_scale = self._zscale
         _sync_viewport_to_main_window(self._vp)
         self._vp.vertex_clicked.connect(self._on_vertex_clicked)
@@ -6150,6 +6775,19 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         _size_combo_to_widest_item(self._style_combo)
         zrow.addWidget(self._style_combo)
         zrow.addStretch()
+        # An image-derived field is routinely 50x50 or more, where a marker
+        # on every point buries the surface it sits on. Selected points keep
+        # their markers regardless, so turning this off does not lose track
+        # of what is being edited.
+        self._verts_cb = QCheckBox("Show points")
+        self._verts_cb.setChecked(True)
+        self._verts_cb.setToolTip(
+            "Marker on every point. Worth turning off for a large field;\n"
+            "selected points stay marked either way.")
+        self._verts_cb.toggled.connect(self._vp.set_show_unselected)
+        zrow.addWidget(self._verts_cb)
+        zrow.addStretch()
+
         self._tile_cb = QCheckBox("Show tiling")
         self._tile_cb.setToolTip(
             "Draw the tile's neighbours as the texture would repeat, so the\n"
@@ -6195,6 +6833,10 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         btn_row.setContentsMargins(0, 0, 20, 0)
         if editable:
             self._setup_undo(value)
+            import_btn = QPushButton("Import Image…")
+            import_btn.setToolTip("Build the field from an image's brightness.")
+            import_btn.clicked.connect(self._on_import_image)
+            btn_row.addWidget(import_btn)
             normalize = QPushButton("Normalize…")
             normalize.setToolTip("Rescale every height into a given range, "
                                   "keeping the shape of the field.")
@@ -6221,7 +6863,14 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
 
     def _as_grid(self) -> list:
         """The heights as a grid of points, filling in the coordinates the
-        array only implies: x = column, y = row.
+        array only implies: x = column, y = row -- but counted DOWN from
+        the top.
+
+        A heightfield texture's first row is the top of the image, the way
+        every raster format orders its rows, so row 0 has to be the far
+        edge of the surface rather than the near one. Mapping the row index
+        straight onto y put it at the near edge and drew every field
+        upside-down against its own source image.
 
         With tiling on, the field is laid out 3x3 with the editable copy in
         the middle, so the seam between one tile and the next is visible --
@@ -6234,7 +6883,8 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         rows, cols = len(self._value), len(self._value[0])
         if self._tiled:
             reps = (-1, 0, 1)
-            return [[[float(tc * cols + c), float(tr * rows + r), float(h) * z]
+            return [[[float(tc * cols + c), float(tr * rows + (rows - 1 - r)),
+                      float(h) * z]
                      for tc in reps for c, h in enumerate(row)]
                     for tr in reps for r, row in enumerate(self._value)]
         # One row and column past the end, wrapped from the start. An
@@ -6242,7 +6892,10 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         # only span (N-1) x (M-1) of them -- so an untiled tile was drawn
         # a row and a column short of what it actually covers, and the
         # edge where it meets its own next copy was the part not shown.
-        return [[[float(c), float(r), float(self._value[r % rows][c % cols]) * z]
+        # The extra row falls BELOW the last one once y counts down, which
+        # is where the next tile's row 0 genuinely continues.
+        return [[[float(c), float(rows - 1 - r),
+                  float(self._value[r % rows][c % cols]) * z]
                  for c in range(cols + 1)]
                 for r in range(rows + 1)]
 
@@ -6531,6 +7184,35 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
             self._table.blockSignals(False)
         self._reload_surface()
         self._update_size_label()
+
+    def _on_import_image(self):
+        """Replace the field with one built from an image's brightness.
+
+        Undoable like any other edit, so an import that turns out wrong is
+        one Cmd+Z away rather than something to be careful about.
+        """
+        from PySide6.QtGui import QImage, QImageReader
+
+        formats = " ".join(f"*.{bytes(f).decode()}"
+                           for f in QImageReader.supportedImageFormats())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Heightfield from Image", "",
+            f"Images ({formats});;All files (*)")
+        if not path:
+            return
+        image = QImage(path)
+        if image.isNull():
+            QMessageBox.warning(self, "Import Image",
+                                 f"Could not read an image from:\n{path}")
+            return
+
+        dlg = HeightfieldImportDialog(image, self,
+                                       rows=len(self._value), cols=len(self._value[0]))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        grid = dlg.heightfield()
+        if grid:
+            self._commit_value(grid, "Import Image")
 
     def _on_normalize(self):
         """Rescale every height into a range, keeping the field's shape.
@@ -7067,15 +7749,12 @@ class _RegionViewport(Viewport):
         unselected_color = np.array(self._renderer.unselected_vertex_color[:3], dtype=np.float32)
         selected = set(self._selected_indices)
 
-        marker_tris = []
-        for i, pt in enumerate(pts):
-            if i in selected:
-                continue
-            r = _marker_radius_for_point(self, pt)
-            marker_tris.extend(_lit_marker_triangles(pt, r, unit_faces, unselected_color))
-
-        if marker_tris:
-            self._renderer.upload_points(np.array(marker_tris, dtype=np.float32))
+        keep = [i for i in range(len(pts)) if i not in selected]
+        if keep:
+            shown = np.asarray(pts, dtype=np.float32)[keep]
+            self._renderer.upload_points(_lit_marker_field(
+                shown, _marker_radii_for_points(self, shown), unit_faces,
+                unselected_color))
 
     def set_selected_path(self, path_idx: int):
         self._selected_path = path_idx

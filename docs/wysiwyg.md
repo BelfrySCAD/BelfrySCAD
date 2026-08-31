@@ -32,6 +32,13 @@ Detailed design for viewport interaction, selection, and gizmo-driven AST edits.
 | Trackpad pinch | Zoom, centered on the cursor (`ZoomNativeGesture`) |
 | Trackpad two-finger twist | Roll (`RotateNativeGesture`; value is clockwise-positive on macOS, contrary to Qt's docs) |
 | Trackpad two-finger double-tap | View All (`SmartZoomNativeGesture`) |
+
+Every path that changes apparent scale calls `_on_zoom_changed()`, which is
+what rebuilds screen-space vertex markers so they stay a constant size.
+That includes the View menu's Zoom In/Out and their Cmd+]/Cmd+[ shortcuts
+(`Viewport.zoom`), which write `cam.distance` directly — the very value
+marker size derives from. Trackpad *pan* deliberately does not: it slides
+the target without changing scale, and it fires a great many events.
 | Click an orientation-cube patch | Swing to that view |
 | Drag the orientation cube | Orbit (Turntable) |
 

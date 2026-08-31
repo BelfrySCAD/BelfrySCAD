@@ -562,8 +562,16 @@ had no editor at all.
 
 The surface reuses `_GridViewport` rather than growing another viewport: a
 heightfield *is* a grid of points once the coordinates the array only implies
-are filled in (x = column, y = row, z = the height), so the mesh, the markers,
-the framing and vertex picking all come for free.
+are filled in (x = column, z = the height, and y counting *down* from the
+top), so the mesh, the markers, the framing and vertex picking all come for
+free.
+
+Row 0 is the **top** of the field, matching the texture convention and the
+row order of every raster format — so an imported picture reads the same way
+up as its source. Mapping the row index straight onto y instead put row 0 at
+the near edge and drew every field upside-down. Only the y *value* is
+flipped, not the order of the nested lists, so which vertex belongs to which
+cell is unchanged.
 
 Editing is constrained to height. A heightfield stores one number per cell
 and x/y *are* that cell's position in the array, so `_GridViewport` gains a
@@ -638,6 +646,114 @@ grab handles: `_GridViewport.marker_indices` restricts markers to a subset,
 because a marker on a point that cannot be grabbed is an invitation to try.
 `_cell_of_flat` returns None for a vertex in a neighbouring copy, and every
 path that acts on a vertex — click, drag, nudge — goes through it.
+
+**Import Image…** builds the field from an image's brightness, through
+`HeightfieldImportDialog`. Qt reads some two dozen formats and does both
+hard parts itself: `Format_Grayscale8` applies a proper luma weighting
+rather than averaging the channels (which would read a saturated blue as
+bright as a saturated green), and a smooth scale **area-averages** on the
+way down — point-sampling a 3000px photo at 50 columns would take one pixel
+in sixty and alias badly.
+
+The dialog offers **sampling** (an image is normally far larger than a
+useful field), **input levels**, each with an
+**eyedropper** that reads its value straight off the image (a photo rarely
+spans the full range, so without levels its detail is squeezed into the
+middle — and guessing its black and white points by typing numbers is far
+harder than pointing at them), an **output height
+range**, and **invert**. `black >= white` would divide by zero; the span
+collapses to a step at that value instead, which is the sensible reading of
+"everything below is low, everything above is high".
+
+It shows two panels: the source on the left to **crop** on, and the result
+on the right. Cropping needs the picture; judging levels and sampling needs
+the field. Drag on the source to select a region, click to go back to the
+whole image — a drag under five pixels is a click, since without a floor a
+shaky click selects a 2px region and the preview goes blank with no obvious
+cause. The rectangle is held in *image* coordinates, so it means the same
+thing however the panel is scaled, and everything outside it is dimmed
+rather than merely outlined, which on a busy picture is easy to lose.
+
+The result panel is scaled up without smoothing so each height reads as one
+visible cell — the sampling grid is one of the things being chosen. It
+shows the result rather than the original because the result is what is
+being decided.
+
+The eyedroppers are **checkable**, because picking is a mode: the button
+stays lit while the next click on the source will sample rather than crop,
+which is the only thing telling the user why their click is not cropping.
+Arming one disarms the other — with both lit there would be no telling
+which a click was meant for — and picking disarms itself afterwards, since
+staying armed would make the next click silently overwrite the level just
+set. A sample averages a 3x3 neighbourhood: one pixel is a poor sample of a
+photograph, where sensor noise and JPEG artefacts move it far more than the
+tone being pointed at. While a picker is armed the cursor becomes the eyedropper itself,
+anchored at its tip: it is the only thing showing *where* the sample will
+be taken from, and a pointing hand points at nothing in particular. That
+cursor is always dark-on-white rather than palette-coloured, with an
+outline stroked behind it — it sits over the user's image, not over the
+dialog, so the theme says nothing useful about what it needs to contrast
+with, and a single-colour shape disappears against half of all photographs.
+
+Both the button icon and the cursor come from
+`resources/icons/eyedropper.svg` — one piece of artwork, so editing it in
+Inkscape changes both. The button loads it through `apply_themed_icon` like
+every other icon, so it recolours on a light/dark switch rather than
+keeping whatever ink it was given when the dialog opened. The cursor
+renders the same file at 2x for Retina and needs no high-contrast variant:
+the artwork is a light fill inside a darker outline, which reads over a
+light or a dark image alike.
+
+Its hotspot is **measured from the rendered artwork** — the lowest-left
+opaque pixel, which for an eyedropper is the point that does the picking —
+rather than written down. A hard-coded offset would keep pointing at where
+the tip used to be the first time the icon was redrawn.
+
+**Uniform** holds the sample grid to the crop's proportions, so a cell is
+square and the field is not stretched. Either box can lead — editing rows
+recomputes columns and vice versa — with a flag stopping the two from
+correcting each other forever, and changing the crop re-derives from its
+new aspect.
+
+Both boxes go through one handler that matches the aspect **before**
+rebuilding. Refreshing first and matching after left the preview built from
+the pair as typed while the boxes showed the matched pair: the flag that
+stops the round trip also swallowed the refresh that would have caught up.
+Committing with Return fixed it by accident, which is what made it look
+like typing did not work while the arrows did. An import lands as a single undoable edit, so one that
+turns out wrong is one Cmd+Z away.
+
+**No skeleton lines over the surface.** `_GridViewport` draws a
+row/column/diagonal skeleton, which for a control-point grid *is* the
+subject — GridViewer keeps it. A heightfield is intrinsically different:
+its subject is the surface, the skeleton only repeats what Show Edges
+draws from the real triangulation, and lying coplanar with the surface it
+has no depth bias to lift it clear, so it speckled through as a coloured
+grid over what should be a clean shape. `show_skeleton = False` suppresses
+it at upload, so nothing is drawn rather than merely hidden.
+
+**Marker geometry is built in bulk.** Markers rebuild on every zoom, to
+stay a constant size on screen, and building them one triangle at a time in
+Python cost **6.5 seconds for a 100x100 field** — on every zoom.
+`_lit_marker_field` does the same work as array operations and takes 37ms
+for the same 10,000 points, a 175x saving measured in the real viewport
+rather than in isolation. The saving comes from what every marker has in
+common: they are the same unit shape, so the offsets are shared, and a
+normal is unchanged by uniform positive scaling, so each triangle's normal
+is computed once for the shape rather than once per marker. Only the
+positions differ, and those are one broadcast add.
+`_marker_radii_for_points` vectorises the per-point radius the same way.
+
+`_lit_marker_triangles` stays for the handful of *selected* markers, where
+a loop costs nothing and the per-marker shape can vary (`_PathViewport`
+draws a different solid per bezier node type). The bulk path is checked
+against it row for row, since `upload_points` reads the rows positionally
+and a reordering would be a silently wrong picture rather than an error.
+
+**Show points** turns off the marker on every unselected point. An
+image-derived field is routinely 50x50 or more, where a marker per point
+buries the surface it sits on; selected points keep their markers either
+way, so it never loses track of what is being edited.
 
 **Normalize…** rescales every height into a given range (0..1 by default),
 linearly, so the field keeps its shape — a heightfield is usually consumed
