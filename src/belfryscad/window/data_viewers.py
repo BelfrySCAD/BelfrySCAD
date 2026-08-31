@@ -1140,6 +1140,15 @@ def _key_nudge_magnitude(modifiers) -> float:
     return 1.0
 
 
+#: A heightfield's own nudge steps, keyed by what `_key_nudge_magnitude`
+#: returns. Its 10/1/0.1 are world units, sized for geometry; a heightfield
+#: is usually a 0..1 field, where a 1-unit step leaps past the entire range.
+#: Same coarse/normal/fine relationship, sized for that range instead --
+#: the coarse step covers it in a couple of presses, and the fine one still
+#: shows in the table's three decimals.
+_HEIGHT_NUDGE_STEPS = {10.0: 0.5, 1.0: 0.05, 0.1: 0.005}
+
+
 def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.ndarray | None:
     """World-space delta (`magnitude` world units, from `_key_nudge_magnitude`)
     for arrow-key vertex nudging, confined to the same axis-locked plane
@@ -5469,6 +5478,11 @@ class _GridViewport(Viewport):
         #: only the middle one is editable, and a marker on a point that
         #: cannot be grabbed is an invitation to try.
         self.marker_indices = None
+        #: World-Z per unit of stored height, so a z_only nudge can be a
+        #: step in the value the user is editing rather than in the
+        #: exaggerated preview. Kept in step with the Z scale by the
+        #: dialog; 1.0 means the two are the same thing.
+        self.z_nudge_scale = 1.0
         #: Constrain editing to height alone: a heightfield stores one
         #: number per cell, and x/y ARE the cell's position in the array,
         #: so a moved x or y is not something it can express.
@@ -5519,6 +5533,24 @@ class _GridViewport(Viewport):
             cam.orthographic = True
         else:
             cam.orthographic = False
+
+    def _emit_moved(self, vi: int, pt) -> None:
+        """Emit a moved vertex.
+
+        Rounded to three decimals for geometry, where the number IS the
+        coordinate and a tidy one is worth having. Not rounded at all in
+        z_only mode: there, world Z is the stored height times the preview
+        exaggeration, so rounding here quantises the user's data by an
+        amount that depends on the Z scale -- at 25% a 0.001 step became
+        0.0008, and a finer one vanished entirely. The heightfield dialog
+        divides the exaggeration back out and rounds the stored value
+        itself, which is the number that actually needs to be tidy.
+        """
+        if self.z_only:
+            self.vertex_moved.emit(vi, float(pt[0]), float(pt[1]), float(pt[2]))
+            return
+        self.vertex_moved.emit(vi, round(float(pt[0]), 3),
+                               round(float(pt[1]), 3), round(float(pt[2]), 3))
 
     def _blink_tick(self):
         self._blink_red = not self._blink_red
@@ -5901,8 +5933,7 @@ class _GridViewport(Viewport):
                     # Height follows the cursor; the cell keeps its place.
                     start_pt = self._all_pts[self._drag_vertex_idx]
                     hit = np.array([start_pt[0], start_pt[1], hit[2]], dtype=np.float32)
-                self.vertex_moved.emit(self._drag_vertex_idx,
-                                        round(float(hit[0]), 3), round(float(hit[1]), 3), round(float(hit[2]), 3))
+                self._emit_moved(self._drag_vertex_idx, hit)
             return
         if self._last_mouse is None:
             pos = event.position().toPoint()
@@ -5989,7 +6020,15 @@ class _GridViewport(Viewport):
                 # Up/down raise and lower. Left/right would mean moving a
                 # cell sideways, which a heightfield cannot represent, so
                 # they fall through to the viewport's own key handling.
-                step = {Qt.Key.Key_Up: magnitude, Qt.Key.Key_Down: -magnitude}.get(event.key())
+                #
+                # Steps of the STORED height, not of world space: a
+                # heightfield is usually a 0..1 field, where the shared
+                # 10/1/0.1 would leap clean past the whole range. Scaling
+                # by z_nudge_scale also cancels the exaggeration the
+                # writeback divides out, so the step is the same 0.1/0.01/
+                # 0.001 at every Z scale rather than magnitude/scale.
+                stored = _HEIGHT_NUDGE_STEPS[magnitude] * self.z_nudge_scale
+                step = {Qt.Key.Key_Up: stored, Qt.Key.Key_Down: -stored}.get(event.key())
                 delta = None if step is None else np.array([0.0, 0.0, step], dtype=np.float32)
             else:
                 delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
@@ -5998,8 +6037,7 @@ class _GridViewport(Viewport):
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._all_pts):
                         new_pt = self._all_pts[vi] + delta
-                        self.vertex_moved.emit(vi, round(float(new_pt[0]), 3),
-                                                round(float(new_pt[1]), 3), round(float(new_pt[2]), 3))
+                        self._emit_moved(vi, new_pt)
                 self.vertex_drag_finished.emit()
                 event.accept()
                 return
@@ -6028,10 +6066,12 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
 
     committed = Signal(str)
 
-    #: Heights are usually a 0..1 field, where more than two decimals is
-    #: noise on screen. Display only -- the stored value keeps every digit
-    #: it had, and only a cell the user actually types into changes.
-    _DECIMALS = 2
+    #: Heights are usually a 0..1 field. Three decimals is what the finest
+    #: nudge steps by, so a cell always shows the change a keypress made --
+    #: at two it looked like nothing had happened. Matches the writeback.
+    #: Display only: the stored value keeps every digit it had, and only a
+    #: cell the user actually types into changes.
+    _DECIMALS = 3
 
     #: Display-only exaggeration for the preview, as a percentage. A height
     #: map's values are often a small fraction of its width, which renders
@@ -6060,6 +6100,7 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
 
         self._vp = _GridViewport(self._as_grid(), False, self, editable=editable)
         self._vp.z_only = True
+        self._vp.z_nudge_scale = self._zscale
         _sync_viewport_to_main_window(self._vp)
         self._vp.vertex_clicked.connect(self._on_vertex_clicked)
         if editable:
@@ -6408,6 +6449,7 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
             self._zcombo.setCurrentText(self._fmt_pct(self._zscale))
             return
         self._zscale = pct / 100.0
+        self._vp.z_nudge_scale = self._zscale
         self._zcombo.setCurrentText(self._fmt_pct(self._zscale))
         self._reload_surface()
 

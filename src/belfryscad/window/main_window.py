@@ -600,6 +600,8 @@ class MainWindow(QMainWindow):
         self._undo_stack = self._create_undo_stack()
         self._render_cancel: threading.Event | None = None
         self._render_id: int = 0
+        #: The render whose result should be framed -- see _render(reframe=).
+        self._reframe_render_id: int = -1
         self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
         # Window-level render results (shared by viewport, export, gizmo, selection)
         self.id_to_node: dict = {}
@@ -1610,7 +1612,7 @@ class MainWindow(QMainWindow):
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        self._render(tab)
+        self._render(tab, reframe=True)      # a new tab from a file
 
     def _save_file(self):
         tab = self._current_tab()
@@ -2074,7 +2076,14 @@ class MainWindow(QMainWindow):
             self._viewport.update()
         return changed
 
-    def _render(self, tab=None, profile: bool = False):
+    def _render(self, tab=None, profile: bool = False, reframe: bool = False):
+        """`reframe` fits the camera to the result when it lands.
+
+        Only a tab newly loaded from a file asks for it. Re-fitting after
+        every render fought the user: any edit-and-re-render threw away the
+        angle and zoom they had just set up, and on a model that grows or
+        shrinks as a parameter changes the view jumped on every render.
+        """
         if not isinstance(tab, QWidget):
             tab = self._current_tab()
         if not tab:
@@ -2089,6 +2098,11 @@ class MainWindow(QMainWindow):
 
         self._render_id += 1
         render_id = self._render_id
+        # Recorded by id rather than as a plain flag: renders overlap (an
+        # animation frame can start before the last one finished), and only
+        # the render that asked for it should move the camera.
+        if reframe:
+            self._reframe_render_id = render_id
         tab.editor.clear_errors()
         self._console.clear()
         if self._measurements:
@@ -2229,8 +2243,13 @@ class MainWindow(QMainWindow):
                 bb_max = np.max(maxs, axis=0).astype(np.float32)
                 # Skip auto-fit if the script explicitly positioned the camera,
                 # or if animation playback is active.
-                if not script_moved_camera and not self._animate_pane.is_playing():
-                    self._viewport.frame_scene(bb_min, bb_max)
+                # The bounds are always cached, so View All can use them
+                # later; only a render that asked to be framed moves the
+                # camera now.
+                wants_frame = (self._reframe_render_id == render_id
+                               and not script_moved_camera
+                               and not self._animate_pane.is_playing())
+                self._viewport.frame_scene(bb_min, bb_max, reframe=wants_frame)
                 # Timestamped so a reader can tell one render's output from
                 # the last one's. The AI tools rely on this: the console is
                 # otherwise identical whether a render just landed or the
@@ -2387,7 +2406,7 @@ class MainWindow(QMainWindow):
         if idx != -1:
             self._tabs.setCurrentIndex(idx)
             self._sync_tab_label(idx, tab)
-        self._render(tab)
+        self._render(tab, reframe=True)      # also a new tab from a file
 
     def _open_use_library(self):
         """Pick a library and the file to pull in from it.

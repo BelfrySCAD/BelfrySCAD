@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "belfryscad"
-version = "0.106.0"
+version = "0.107.3"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

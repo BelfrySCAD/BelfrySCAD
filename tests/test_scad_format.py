@@ -214,3 +214,77 @@ def test_wrapping_never_moves_a_trailing_comment():
     from belfryscad.window.scad_format import format_scad
 
     assert format_scad("cube(1);  // why") == "cube(1);  // why\n"
+
+
+# ---------------------------------------------------------------------------
+# include/use end their own line
+# ---------------------------------------------------------------------------
+#
+# `include <path>` has no terminating semicolon, so nothing else in the
+# token pass ever ended the line -- the next statement was run onto the end
+# of it: `include <BOSL2/std.scad>cube(1);`.
+
+def test_include_ends_its_line():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("include <BOSL2/std.scad>\ncube(1);") == (
+        "include <BOSL2/std.scad>\n"
+        "cube(1);\n"
+    )
+
+
+def test_include_ends_its_line_even_when_the_source_ran_them_together():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("include <BOSL2/std.scad> cube(1);") == (
+        "include <BOSL2/std.scad>\n"
+        "cube(1);\n"
+    )
+
+
+def test_use_behaves_the_same_as_include():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("use <foo.scad>\nsphere(1);") == (
+        "use <foo.scad>\n"
+        "sphere(1);\n"
+    )
+
+
+def test_consecutive_includes_each_get_a_line():
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("include <a.scad>\ninclude <b.scad>\ncube(1);") == (
+        "include <a.scad>\n"
+        "include <b.scad>\n"
+        "cube(1);\n"
+    )
+
+
+def test_a_less_than_is_not_an_include_path():
+    """Only `include`/`use` take an angle-bracketed path, so `a < b` must
+    not be mistaken for the start of one -- which would swallow the rest of
+    the statement looking for a closing `>`."""
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("if(a<b)cube(1);") == "if(a<b)\n    cube(1);\n"
+    assert format_scad("x = a<b;") == "x = a<b;\n"
+
+
+def test_a_path_keeps_its_own_spacing():
+    """Whitespace inside `<...>` is part of a filename, not something to
+    normalise."""
+    from belfryscad.window.scad_format import format_scad
+
+    assert format_scad("include <my dir/a.scad>\ncube(1);").startswith(
+        "include <my dir/a.scad>\n")
+
+
+def test_include_formatting_is_idempotent():
+    from belfryscad.window.scad_format import format_scad
+
+    for src in ("include <BOSL2/std.scad>\ncube(1);",
+                "include <a.scad> include <b.scad> cube(1);",
+                "use <foo.scad>\nsphere(1);"):
+        once = format_scad(src)
+        assert format_scad(once) == once, f"not idempotent: {src!r}"

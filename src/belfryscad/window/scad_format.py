@@ -3,8 +3,10 @@
 
 Scope is deliberately limited to *structural* formatting -- statement/block
 indentation, brace placement (K&R-style, `} else {` merged onto one line),
-one statement per line, a modifier's child on its own indented line, and
-collapsing runs of blank lines to at most one. An over-long argument list or
+one statement per line (including `include`/`use`, whose `<path>` has no
+terminating semicolon and so needed its own rule -- without it the next
+statement ran onto the end of the include), a modifier's child on its own
+indented line, and collapsing runs of blank lines to at most one. An over-long argument list or
 vector is then reflowed across lines (`_wrap_long_lists`); one that already
 fits, or that the user wrapped by hand, is left as written.
 
@@ -69,6 +71,15 @@ def can_format(text: str) -> bool:
         return False
 
 
+def _is_include(line: str) -> bool:
+    """Whether `line` so far is an `include`/`use` awaiting its `<path>`.
+
+    Distinguishes that `<` from a less-than: only these two statements take
+    an angle-bracketed path, and only as the whole statement.
+    """
+    return re.fullmatch(r"\s*(include|use)\s*", line) is not None
+
+
 def _is_declaration(line: str) -> bool:
     """Whether `line` is a module/function declaration.
 
@@ -90,6 +101,12 @@ def format_scad(text: str, indent_size: int = 4) -> str:
     # `translate(...) cube(1);`. Separate from `indent`, which only braces
     # move, and reset by the `;` that ends the statement.
     chain = 0
+    # Inside the `<...>` of an `include`/`use`. Those have no terminating
+    # semicolon, so nothing else here would ever end the line -- the next
+    # statement was being run onto the end of the include. The path is also
+    # copied verbatim while this is set, since whitespace in it is part of
+    # a filename rather than something to normalise.
+    in_path = False
     i = 0
     n = len(tokens)
 
@@ -114,7 +131,7 @@ def format_scad(text: str, indent_size: int = 4) -> str:
         kind, txt = tokens[i]
 
         if kind == "ws":
-            if paren_depth > 0:
+            if paren_depth > 0 or in_path:
                 cur += txt
             elif "\n" in txt:
                 saw_newline_since_flush = True
@@ -147,6 +164,19 @@ def format_scad(text: str, indent_size: int = 4) -> str:
                 cur = indent_str() + txt
             else:
                 cur += " " + txt
+            i += 1
+            continue
+
+        if kind == "sym" and txt == "<" and not in_path and _is_include(cur):
+            cur += txt
+            in_path = True
+            i += 1
+            continue
+
+        if kind == "sym" and txt == ">" and in_path:
+            cur += txt
+            in_path = False
+            flush()
             i += 1
             continue
 
