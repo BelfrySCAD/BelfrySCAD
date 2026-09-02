@@ -3038,3 +3038,65 @@ def test_typing_a_sample_size_keeps_the_aspect_and_the_grid_in_step(tmp_path):
     assert out["typed_cols"]["boxes"] == [20, 40], "typing 40 columns matches 20 rows"
     assert out["typed_rows"]["boxes"] == [15, 30], "and typing rows drives columns"
     assert out["uniform_off"]["boxes"] == [15, 7], "unchecked, the two are free again"
+
+
+# ---------------------------------------------------------------------------
+# "Add data literal..." — creating a literal on a half-typed `foo =` line
+# ---------------------------------------------------------------------------
+
+def test_find_empty_assignment_matches_only_a_valueless_assignment():
+    from belfryscad.window.data_viewers import find_empty_assignment as f
+
+    assert f("foo =", 5) == ("foo", "", 0, 5)
+    assert f("    bar =  ", 6) == ("bar", "    ", 0, 11)
+    assert f("baz = ;", 4) == ("baz", "", 0, 7)
+    assert f("$fn =", 4) == ("$fn", "", 0, 5)          # OpenSCAD $-names count
+
+    # Anything that already has a value, or isn't an assignment at all.
+    assert f("x = 5", 4) is None
+    assert f("foo == bar", 4) is None
+    assert f("module m() {", 4) is None
+    assert f("// foo =", 4) is None
+
+
+def test_find_empty_assignment_spans_the_whole_line_not_just_the_rhs():
+    """The caller rewrites the line as a unit, so the span has to include
+    the indent and the name -- that is what makes the `;` and the spacing
+    come out consistent however the half-typed line was left."""
+    from belfryscad.window.data_viewers import find_empty_assignment
+
+    text = "size = 10;\n    mydata =\ncube(size);\n"
+    name, indent, start, end = find_empty_assignment(text, text.index("mydata") + 3)
+    assert (name, indent) == ("mydata", "    ")
+    assert text[start:end] == "    mydata ="
+
+
+def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
+    """Each seed must already satisfy the `_is_*` predicate for its shape.
+
+    That is the whole contract: an editor opened on a value its own detector
+    would reject writes back a literal that "Edit as..." can no longer find,
+    so the user could create it once and never reopen it.
+    """
+    from belfryscad.window.data_viewers import (
+        _NEW_LITERAL_SEEDS, _is_path, _is_grid, _is_heightfield, _is_matrix,
+        _is_affine_matrix, _is_vnf, _is_region,
+    )
+    predicates = {
+        "path": _is_path, "grid": _is_grid, "heightfield": _is_heightfield,
+        "matrix": _is_matrix, "affine": _is_affine_matrix, "vnf": _is_vnf,
+        "region": _is_region,
+    }
+    seen = set()
+    for label, shape, _opener, seed in _NEW_LITERAL_SEEDS:
+        seen.add(shape)
+        if shape == "object":
+            # Not a bare literal -- it renders as an `object(...)` call, and
+            # needs at least one entry or it round-trips as `object()`, which
+            # the call-site detector does not match.
+            assert seed and len(seed[0]) == 2
+            continue
+        assert predicates[shape](seed), f"{label} seed rejected by _is_{shape}"
+
+    # Every editable shape is offered, or a type is silently uncreatable.
+    assert seen == set(predicates) | {"object"}
