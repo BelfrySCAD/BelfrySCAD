@@ -56,8 +56,11 @@ def test_a_write_in_testing_mode_never_reaches_the_real_store(scratch, tmp_path)
     assert bs_settings.app_settings().value(probe) == "should-not-persist"
 
     # The redirected file is the temp one, and the real store is untouched.
-    assert str(tmp_path) in scratch
-    assert pathlib.Path(scratch).exists()
+    # Compared as paths, not strings: Qt hands back forward slashes even
+    # on Windows, where str(tmp_path) uses backslashes.
+    scratch_path = pathlib.Path(scratch)
+    assert tmp_path in scratch_path.parents
+    assert scratch_path.exists()
     real_after = QSettings(bs_settings.ORG, bs_settings.APP)
     assert real_after.value(probe) is None
     assert len(real_after.allKeys()) == n_before
@@ -77,7 +80,10 @@ def test_every_settings_call_site_routes_through_app_settings():
     for path in src.rglob("*.py"):
         if path.name == "settings.py":
             continue          # defines ORG/APP; documents the constructor
-        for n, line in enumerate(path.read_text().splitlines(), 1):
+        # Explicit encoding: Windows defaults to cp1252, and this walks
+        # every source file, including ones holding non-Latin-1 text.
+        text = path.read_text(encoding="utf-8")
+        for n, line in enumerate(text.splitlines(), 1):
             if 'QSettings("BelfrySCAD"' in line and not line.lstrip().startswith("#"):
                 offenders.append(f"{path.relative_to(src)}:{n}")
     assert not offenders, (
