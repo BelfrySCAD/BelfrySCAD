@@ -362,7 +362,18 @@ def paint_rgba(ctx, renderer, fbo, opts: _RenderOptions, bodies, read_fbo=None) 
         ctx.copy_framebuffer(read_fbo, fbo)
         src = read_fbo
     data = src.read(components=4, alignment=1)
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(opts.h, opts.w, 4)
+    arr = np.frombuffer(data, dtype=np.uint8).reshape(opts.h, opts.w, 4).copy()
+    # Force the alpha channel opaque, the way the reference's own PNGs are.
+    #
+    # ctx.clear() is given three components, so the background clears to
+    # alpha 0, and blended geometry writes a partial alpha of its own. The
+    # RGB channels are right either way -- they already hold the result
+    # blended against the scene's background colour -- but the alpha meant
+    # every viewer composited the picture over ITS OWN background a second
+    # time. On the Docs pane's white page that washed BOSL2's
+    # expose_anchors() example out until its translucent cube read as no
+    # cube at all: only 1.3% of that image's pixels were fully opaque.
+    arr[..., 3] = 255
     return arr[::-1, :, :].tobytes()  # GL reads bottom-to-top; PNG wants top-to-bottom
 
 
