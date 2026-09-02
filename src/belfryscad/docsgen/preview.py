@@ -76,6 +76,31 @@ def invalidate_cache(src_file: str) -> int:
     return count
 
 
+def invalidate_image(src_file: str, rel: str) -> bool:
+    """Drop one rendered image from `src_file`'s cache. True if it was there.
+
+    `invalidate_cache` above is the Refresh button's hammer -- it throws away
+    every image for the file, and on a BOSL2-sized file re-rendering them all
+    is minutes of work. This is the single-image version behind the Docs
+    pane's "Re-render This Image", for the case where one Example's picture
+    is stale: its code changed, or the renderer itself did (a translucency
+    fix that changed every transparent render is what prompted this -- the
+    cache is keyed by source path and content, so nothing about a renderer
+    change invalidates it).
+    """
+    root = Path(_cache_dir(src_file)).resolve()
+    # `rel` comes out of the rendered document, so treat it as untrusted and
+    # refuse anything that resolves outside the cache directory.
+    target = (root / rel).resolve()
+    if root not in target.parents:
+        return False
+    try:
+        target.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def build_preview(source_text: str, src_file: str, gen_images: bool = True,
                    images=None, progress=None) -> DocsPreview:
     """Parse `source_text` as if it were `src_file`, and return its rendered

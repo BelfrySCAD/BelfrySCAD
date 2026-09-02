@@ -361,6 +361,29 @@ else ever clears it. The Refresh button is the way out: it deletes the
 file's cache directory, so every image reverts to a placeholder and the
 next click renders afresh.
 
+**Right-click a rendered image for "Re-render This Image."** Refresh is the
+whole-file hammer; this is the single-image version, for the common case
+where one Example is stale and rebuilding the other hundred-odd is minutes
+of work. `DocsPane._image_rel_at` reads the `QTextImageFormat` under the
+cursor, so the menu entry only appears over an actual image, and the name it
+returns is the document-relative path (`images/<lib>/<x>.png`) that
+`_queue`'s image list and the render placeholders already use.
+`preview.invalidate_image` deletes just that file and the pane re-queues it.
+That path comes out of the rendered document, so it is treated as untrusted:
+anything resolving outside the cache directory is refused rather than
+unlinked.
+
+The entry exists because the cache is keyed on source path and contents,
+which means a change to the *renderer* invalidates nothing at all -- the
+pane keeps serving pictures drawn by the old code with no way to say
+otherwise short of discarding the whole file's images. A translucency fix
+that changed every transparent render is what prompted it.
+
+`DocsPane.build_context_menu(pos)` is split out from the
+`customContextMenuRequested` handler purely so the assembled menu can be
+asserted on: `QMenu.exec()` cannot be monkeypatched and blocks the event
+loop.
+
 Only that button does it. `refresh()` also runs when the Docs dock is shown
 and when a file opens, and those must not cost the user every image they
 have already rendered -- so the button sets a one-shot flag that the next

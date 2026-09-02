@@ -17,7 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (QColor, QDesktopServices, QFontInfo, QImage, QPalette, QTextBlockFormat, QTextCursor, QTextDocument,
                             QTextCharFormat, QTextFormat, QTextFrameFormat, QTextTable)
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMenu, QPushButton,
                                 QSplitter, QTextBrowser, QTreeWidget,
                                 QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -618,6 +618,11 @@ class DocsPane(QWidget):
         self._anim_timer.timeout.connect(self._on_anim_tick)
 
         self._view.anchorClicked.connect(self._on_anchor_clicked)
+        # Custom rather than an overridden contextMenuEvent: the standard
+        # menu (Copy, Select All) is still built and only added to, so a
+        # plain QTextBrowser instance needs no subclass.
+        self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._view.customContextMenuRequested.connect(self._on_context_menu)
 
     # -- driving -------------------------------------------------------
 
@@ -646,6 +651,59 @@ class DocsPane(QWidget):
         if self._last_source:
             text, path = self._last_source
             self._queue(text, path, [rel])
+
+    def _image_rel_at(self, pos):
+        """Document-relative path of the image under `pos`, or None.
+
+        The path is the one written in the markdown (`images/<lib>/<x>.png`),
+        which is what `_queue`'s image list and the render placeholders use,
+        so it can be handed straight back to either.
+        """
+        cursor = self._view.cursorForPosition(pos)
+        fmt = cursor.charFormat()
+        if not fmt.isImageFormat():
+            # cursorForPosition lands BETWEEN two characters, so an image
+            # sitting to the right of that gap is the next character, not
+            # the format of the one behind it.
+            cursor.movePosition(QTextCursor.MoveOperation.NextCharacter,
+                                 QTextCursor.MoveMode.KeepAnchor)
+            fmt = cursor.charFormat()
+        if not fmt.isImageFormat():
+            return None
+        return fmt.toImageFormat().name() or None
+
+    def build_context_menu(self, pos) -> QMenu:
+        """The view's menu for `pos`, standard entries plus our own.
+
+        Split from `_on_context_menu` so it can be inspected without
+        exec()-ing anything: a QMenu.exec() cannot be monkeypatched and
+        blocks the event loop, which makes the assembled menu untestable
+        any other way.
+        """
+        menu = self._view.createStandardContextMenu(pos)
+        rel = self._image_rel_at(pos)
+        if rel and self._last_source and not self._busy:
+            menu.addSeparator()
+            act = menu.addAction("Re-render This Image")
+            act.triggered.connect(lambda _checked=False, rel=rel: self._rerender_image(rel))
+        return menu
+
+    def _on_context_menu(self, pos):
+        self.build_context_menu(pos).exec(self._view.viewport().mapToGlobal(pos))
+
+    def _rerender_image(self, rel: str):
+        """Force one already-rendered Example/Figure to be rendered again.
+
+        Needed because the image cache is keyed by the source file's path
+        and contents, so a change to the RENDERER leaves every cached image
+        in place and the pane keeps showing the old picture with no way to
+        say otherwise short of Refresh, which discards the whole file's
+        images and costs minutes to rebuild on a BOSL2-sized library.
+        """
+        from belfryscad.docsgen.preview import invalidate_image
+        text, path = self._last_source
+        invalidate_image(path, rel)
+        self._queue(text, path, [rel])
 
     def _on_status_link(self, href: str):
         if href == _RENDER_ALL_HREF:
