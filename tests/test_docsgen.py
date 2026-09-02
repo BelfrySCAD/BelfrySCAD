@@ -1300,3 +1300,54 @@ def test_error_pane_hides_when_clean_and_shows_full_messages(tmp_path):
     assert out["detail_is_full_message"], "the detail pane shows every line"
     assert out["detail_follows_selection"]
     assert out["hidden_again"] and out["detail_cleared"]
+
+
+# ---------------------------------------------------------------------------
+# Single-image cache invalidation (the Docs pane's "Re-render This Image")
+# ---------------------------------------------------------------------------
+
+def test_invalidate_image_drops_only_the_one_asked_for(tmp_path, monkeypatch):
+    """Refresh throws away every image for the file, which on a BOSL2-sized
+    library is minutes to rebuild. This drops exactly one."""
+    from belfryscad.docsgen import preview
+
+    src = tmp_path / "lib.scad"
+    src.write_text("// LibFile: lib.scad\n")
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(preview, "_cache_dir", lambda _p: str(cache))
+
+    imgs = cache / "images" / "lib"
+    imgs.mkdir(parents=True)
+    (imgs / "a.png").write_bytes(b"a")
+    (imgs / "b.png").write_bytes(b"b")
+
+    assert preview.invalidate_image(str(src), "images/lib/a.png") is True
+    assert not (imgs / "a.png").exists()
+    assert (imgs / "b.png").exists(), "the sibling image was collateral damage"
+
+
+def test_invalidate_image_reports_a_miss_rather_than_raising(tmp_path, monkeypatch):
+    from belfryscad.docsgen import preview
+
+    src = tmp_path / "lib.scad"
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(preview, "_cache_dir", lambda _p: str(cache))
+    cache.mkdir()
+
+    assert preview.invalidate_image(str(src), "images/lib/missing.png") is False
+
+
+def test_invalidate_image_refuses_a_path_outside_the_cache(tmp_path, monkeypatch):
+    """`rel` comes out of the rendered document, so it is untrusted input:
+    a traversal must not be able to delete anything outside the cache."""
+    from belfryscad.docsgen import preview
+
+    src = tmp_path / "lib.scad"
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(preview, "_cache_dir", lambda _p: str(cache))
+    cache.mkdir()
+    victim = tmp_path / "precious.png"
+    victim.write_bytes(b"do not delete")
+
+    assert preview.invalidate_image(str(src), "../precious.png") is False
+    assert victim.exists(), "a traversal deleted a file outside the cache"
