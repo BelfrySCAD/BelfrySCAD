@@ -785,19 +785,31 @@ class DocsPane(QWidget):
         self._invalidate_next = True
         self.refresh_requested.emit()
 
-    def _frame_suffix(self) -> str:
-        """" (frame X of Y)" while an animated example renders, else "".
+    def _frame_percent(self) -> str:
+        """"73%" through an animated example's frames, or "" for a still.
 
-        Only used on the in-document label when exactly one image is being
-        rendered: with several queued, the progress signal says how many are
-        done but not WHICH block the frames belong to, and putting the count
-        on the wrong example would be worse than leaving it off. The status
-        line below carries it in every case.
+        A percentage rather than "frame 26 of 36": the raw counts are noise
+        next to the one thing the reader wants, which is how much longer
+        this is going to take. Counted on the frame STARTING, so it reaches
+        100% as the last frame renders rather than stopping at 97%.
+
+        Returns the bare figure; each caller wraps it, since the label wants
+        it parenthesised on its own and the status line wants it inside the
+        parentheses it already has.
         """
         frame, frames = self._frame
-        if frames > 1 and len(self._rendering) == 1:
-            return f" (frame {frame} of {frames})"
-        return ""
+        return f"{round(100 * frame / frames)}%" if frames > 1 else ""
+
+    def _label_percent(self) -> str:
+        """" (73%)" for the in-document label, or "".
+
+        Only when exactly one image is queued: with several, the progress
+        signal says how many are done but not WHICH block the frames belong
+        to, and putting the figure on the wrong Example would be worse than
+        leaving it off. The status line carries it in every case.
+        """
+        pct = self._frame_percent() if len(self._rendering) == 1 else ""
+        return f" ({pct})" if pct else ""
 
     def _on_progress(self, done: int, total: int, frame: int = 0, frames: int = 0):
         """Count up as each image lands.
@@ -814,18 +826,18 @@ class DocsPane(QWidget):
             # "1 of 1" for its whole duration and reads as hung.
             if frames > 1:
                 # `done` counts FINISHED images, so mid-animation it is one
-                # behind: "0 of 1, frame 3 of 36" reads as nothing being
-                # worked on. Count the one in flight instead.
+                # behind: "0 of 1, 8%" reads as nothing being worked on.
+                # Count the one in flight instead.
                 self._status.setText(
                     f"Building preview… ({done + 1} of {total}, "
-                    f"frame {frame} of {frames})")
+                    f"{self._frame_percent()})")
             else:
                 self._status.setText(f"Building preview… ({done} of {total})")
         if self._rendering:
             # Repaint the in-document label now rather than waiting for the
             # next dots tick, so the frame number tracks the render.
             write_rendering_text(self._view.document(), self._rendering,
-                                  self._dots, self._frame_suffix())
+                                  self._dots, self._label_percent())
 
     def _start_pending(self):
         args, self._pending = self._pending, None
@@ -914,7 +926,7 @@ class DocsPane(QWidget):
     def _on_dots_tick(self):
         self._dots = (self._dots + 1) % len(_ELLIPSIS)
         write_rendering_text(self._view.document(), self._rendering, self._dots,
-                              self._frame_suffix())
+                              self._label_percent())
 
     def _clear_rendering(self):
         self._dots_timer.stop()
