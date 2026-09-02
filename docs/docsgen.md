@@ -423,6 +423,22 @@ the link is what stops a second click queueing the same image twice. The
 render itself runs on the worker thread, so the clock keeps ticking; without
 it a "render all" is minutes of a page with nothing moving on it.
 
+**Both messages count an animation's frames.** One `Spin`/`Anim` Example is
+a single unit of the image total but dozens of renders, so it used to sit at
+`(1 of 1)` for its whole duration and read as hung. `process_requests` passes
+a per-frame callback into `process_request`, which fires as each frame
+starts, and the progress signal carries `(done, total, frame, frames)` —
+`frame`/`frames` are `0` for a still. The status line reads
+`Building preview… (1 of 1, frame 3 of 36)`, counting the image *in flight*
+rather than the finished ones, since `done` is otherwise one behind and
+`(0 of 1, frame 3 of 36)` reads as nothing being worked on.
+
+The in-document label gets the same `(frame 3 of 36)` before its ellipsis,
+but **only when exactly one image is queued** — with several, the signal says
+how many are done, not *which* block the frames belong to, and putting the
+count on the wrong Example would be worse than leaving it off. The status
+line carries it either way.
+
 **Animated examples really animate.** A `Spin`/`Anim` example is written as
 an APNG, and Qt animates nothing: its image reader returns frame 0 and
 QTextDocument has no notion of a moving image. `png_writer.read_apng_frames`

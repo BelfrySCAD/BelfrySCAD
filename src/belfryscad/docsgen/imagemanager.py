@@ -273,9 +273,15 @@ class ImageManager:
         placeholder per example and render them one click at a time --
         rendering every Example in a big BOSL2 file up front costs minutes.
 
-        `progress` is called as progress(done, total) before the first
-        render and after each one. The selection is resolved up front so
-        that `total` is the real count of work, not the queue length.
+        `progress` is called as progress(done, total, frame, frames) before
+        the first render and after each one, and again for each frame of an
+        animated request while it renders (`frame`/`frames` are 0 outside
+        one). The selection is resolved up front so that `total` is the real
+        count of work, not the queue length.
+
+        The per-frame calls matter because one animated Example is a single
+        unit of `total` but 36 renders of work: without them a Spin example
+        looks frozen at "1 of 1" for its whole duration.
         """
         self.test_only = test_only
         selected = [
@@ -284,14 +290,19 @@ class ImageManager:
         ]
         total = len(selected)
         if progress:
-            progress(0, total)
+            progress(0, total, 0, 0)
         for done, req in enumerate(selected, 1):
-            self.process_request(req)
+            frame_cb = None
+            if progress and (req.animation_frames or 0) > 1:
+                # `done - 1` images are finished while this one renders.
+                frame_cb = (lambda n, t, finished=done - 1:
+                            progress(finished, total, n, t))
+            self.process_request(req, frame_progress=frame_cb)
             if progress:
-                progress(done, total)
+                progress(done, total, 0, 0)
         self.requests = []
 
-    def process_request(self, req):
+    def process_request(self, req, frame_progress=None):
         req.starting()
         src_dir = os.path.dirname(os.path.abspath(req.src_file)) or "."
         frames = req.animation_frames or 1
@@ -306,6 +317,8 @@ class ImageManager:
         rgba_frames = []
         last = None
         for i in range(frames):
+            if frame_progress:
+                frame_progress(i + 1, frames)
             params = {"$t": i / frames} if req.animation_frames else {}
             # A fixed-view example must see the camera it is rendered with,
             # exactly as OpenSCAD's own --camera makes it visible. A
