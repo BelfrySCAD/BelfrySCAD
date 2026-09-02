@@ -180,6 +180,21 @@ _RENDER_PREFIX = "\u25b6 Render "
 _ELLIPSIS_MS = 1000
 _ELLIPSIS = ("", ".", "..", "...")
 
+#: Width in cells of the little progress bar shown while an animated Example
+#: renders. Ten reads as a bar at a glance and still resolves each 10%.
+_BAR_CELLS = 10
+#: Both from the Block Elements range, so a font that has one has the other
+#: and they share a cell width -- mixing in a character from elsewhere makes
+#: the bar visibly ragged as it fills.
+_BAR_FULL = "\u2588"    # FULL BLOCK
+_BAR_EMPTY = "\u2591"   # LIGHT SHADE
+
+
+def progress_bar(fraction: float, cells: int = _BAR_CELLS) -> str:
+    """A `fraction` (0..1) drawn as `cells` block characters."""
+    filled = max(0, min(cells, round(fraction * cells)))
+    return _BAR_FULL * filled + _BAR_EMPTY * (cells - filled)
+
 
 def placeholder_markdown(md: str, base_dir: str) -> tuple:
     """`md` with every image that is not on disk yet replaced by a
@@ -428,8 +443,14 @@ def mark_rendering(doc, rels):
     return targets
 
 
-def write_rendering_text(doc, targets, dots: int, suffix: str = ""):
-    """Rewrite each marked block with `suffix` and `dots` trailing dots."""
+def write_rendering_text(doc, targets, dots: int, suffix: str = "",
+                          ellipsis: bool = True):
+    """Rewrite each marked block with `suffix` and `dots` trailing dots.
+
+    `ellipsis=False` drops the dots: a progress bar already shows the render
+    is alive, and a tail that grows and resets underneath it just makes the
+    line jitter.
+    """
     cursor = QTextCursor(doc)
     cursor.beginEditBlock()
     for number, text, fmt in targets:
@@ -439,7 +460,8 @@ def write_rendering_text(doc, targets, dots: int, suffix: str = ""):
         cursor.setPosition(block.position())
         cursor.setPosition(block.position() + block.length() - 1,
                            QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertText(text + suffix + _ELLIPSIS[dots % len(_ELLIPSIS)], fmt)
+        tail = _ELLIPSIS[dots % len(_ELLIPSIS)] if ellipsis else ""
+        cursor.insertText(text + suffix + tail, fmt)
     cursor.endEditBlock()
 
 
@@ -785,31 +807,28 @@ class DocsPane(QWidget):
         self._invalidate_next = True
         self.refresh_requested.emit()
 
-    def _frame_percent(self) -> str:
-        """"73%" through an animated example's frames, or "" for a still.
+    def _frame_bar(self) -> str:
+        """A little progress bar through an animated Example's frames, or "".
 
-        A percentage rather than "frame 26 of 36": the raw counts are noise
-        next to the one thing the reader wants, which is how much longer
-        this is going to take. Counted on the frame STARTING, so it reaches
-        100% as the last frame renders rather than stopping at 97%.
-
-        Returns the bare figure; each caller wraps it, since the label wants
-        it parenthesised on its own and the status line wants it inside the
-        parentheses it already has.
+        A bar rather than "26 of 36" or "73%": the reader wants one thing
+        from this -- how much longer -- and a bar answers it without asking
+        them to read a number at all. Counted on the frame STARTING, so it
+        fills completely as the last frame renders rather than stopping a
+        cell short.
         """
         frame, frames = self._frame
-        return f"{round(100 * frame / frames)}%" if frames > 1 else ""
+        return progress_bar(frame / frames) if frames > 1 else ""
 
-    def _label_percent(self) -> str:
-        """" (73%)" for the in-document label, or "".
+    def _label_bar(self) -> str:
+        """"  <bar>" for the in-document label, or "".
 
         Only when exactly one image is queued: with several, the progress
         signal says how many are done but not WHICH block the frames belong
-        to, and putting the figure on the wrong Example would be worse than
+        to, and putting the bar on the wrong Example would be worse than
         leaving it off. The status line carries it in every case.
         """
-        pct = self._frame_percent() if len(self._rendering) == 1 else ""
-        return f" ({pct})" if pct else ""
+        bar = self._frame_bar() if len(self._rendering) == 1 else ""
+        return f"  {bar}" if bar else ""
 
     def _on_progress(self, done: int, total: int, frame: int = 0, frames: int = 0):
         """Count up as each image lands.
@@ -826,18 +845,19 @@ class DocsPane(QWidget):
             # "1 of 1" for its whole duration and reads as hung.
             if frames > 1:
                 # `done` counts FINISHED images, so mid-animation it is one
-                # behind: "0 of 1, 8%" reads as nothing being worked on.
-                # Count the one in flight instead.
+                # behind: "0 of 1" reads as nothing being worked on. Count
+                # the one in flight instead.
                 self._status.setText(
-                    f"Building preview… ({done + 1} of {total}, "
-                    f"{self._frame_percent()})")
+                    f"Building preview… ({done + 1} of {total})  "
+                    f"{self._frame_bar()}")
             else:
                 self._status.setText(f"Building preview… ({done} of {total})")
         if self._rendering:
             # Repaint the in-document label now rather than waiting for the
             # next dots tick, so the frame number tracks the render.
+            bar = self._label_bar()
             write_rendering_text(self._view.document(), self._rendering,
-                                  self._dots, self._label_percent())
+                                  self._dots, bar, ellipsis=not bar)
 
     def _start_pending(self):
         args, self._pending = self._pending, None
@@ -925,8 +945,9 @@ class DocsPane(QWidget):
 
     def _on_dots_tick(self):
         self._dots = (self._dots + 1) % len(_ELLIPSIS)
+        bar = self._label_bar()
         write_rendering_text(self._view.document(), self._rendering, self._dots,
-                              self._label_percent())
+                              bar, ellipsis=not bar)
 
     def _clear_rendering(self):
         self._dots_timer.stop()

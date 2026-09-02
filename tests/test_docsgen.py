@@ -1423,3 +1423,37 @@ def test_frame_counts_are_scoped_to_the_image_being_rendered():
         (1, 2, 0, 0),
         (2, 2, 0, 0),
     ]
+
+
+def test_progress_bar_fills_proportionally_and_clamps():
+    from belfryscad.window.docs_pane import progress_bar, _BAR_FULL, _BAR_EMPTY
+
+    assert progress_bar(0.0, 10) == _BAR_EMPTY * 10
+    assert progress_bar(1.0, 10) == _BAR_FULL * 10
+    assert progress_bar(0.5, 10) == _BAR_FULL * 5 + _BAR_EMPTY * 5
+    # Every cell is one of the two glyphs, whatever the fraction -- a bar
+    # that changes width as it fills reads as the line jittering.
+    for n in range(0, 37):
+        bar = progress_bar(n / 36, 10)
+        assert len(bar) == 10
+        assert set(bar) <= {_BAR_FULL, _BAR_EMPTY}
+    # Out-of-range input cannot produce a short or over-long bar.
+    assert progress_bar(-1.0, 10) == _BAR_EMPTY * 10
+    assert progress_bar(2.0, 10) == _BAR_FULL * 10
+
+
+def test_a_progress_bar_replaces_the_ellipsis_rather_than_joining_it():
+    """The bar already shows the render is alive; dots growing and resetting
+    underneath it just make the line jitter."""
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.window.docs_pane import write_rendering_text, _ELLIPSIS
+
+    doc = QTextDocument()
+    doc.setPlainText("Rendering Example 8")
+    targets = [(0, "Rendering Example 8", doc.begin().begin().fragment().charFormat())]
+
+    write_rendering_text(doc, targets, dots=2, suffix="  ####", ellipsis=False)
+    assert doc.begin().text() == "Rendering Example 8  ####"
+
+    write_rendering_text(doc, targets, dots=2)
+    assert doc.begin().text() == "Rendering Example 8" + _ELLIPSIS[2]
