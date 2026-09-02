@@ -2036,16 +2036,20 @@ class CodeEditor(QPlainTextEdit):
         # when not debugging (unlike the debug-locals "View 'word' as..."
         # block above, which is keyed by identifier name).
         from belfryscad.window.data_viewers import (
-            find_viewable_literals, find_editable_literals,
-            build_lexical_view_menu, build_editor_menu,
+            find_viewable_literals, find_editable_literals, find_empty_assignment,
+            build_lexical_view_menu, build_editor_menu, build_new_literal_menu,
         )
         text = self.toPlainText()
         offset = self.cursorForPosition(event.pos()).position()
 
         view_literals = find_viewable_literals(text, offset)
         edit_literals = find_editable_literals(text, offset) if not self.isReadOnly() else {}
+        # A half-typed `foo =` has no literal to find, so this is the one
+        # branch the two above can never cover: the editor produces the
+        # value instead of editing one.
+        new_assign = find_empty_assignment(text, offset) if not self.isReadOnly() else None
 
-        if view_literals or edit_literals:
+        if view_literals or edit_literals or new_assign:
             last = menu.actions()[-1] if menu.actions() else None
             if last is not None and not last.isSeparator():
                 menu.addSeparator()
@@ -2065,5 +2069,19 @@ class CodeEditor(QPlainTextEdit):
             build_editor_menu(edit_sub, text, edit_literals, on_commit, self)
             if not edit_sub.isEmpty():
                 menu.addMenu(edit_sub)
+
+        if new_assign:
+            name, indent, start, end = new_assign
+            # The whole line is rewritten, so the name/spacing/`;` come out
+            # consistent however the half-typed line was left.
+            def on_new_commit(literal_text, name=name, indent=indent,
+                              start=start, end=end):
+                self.replace_span(start, end, f"{indent}{name} = {literal_text};")
+                self.source_edited_externally.emit()
+
+            add_sub = QMenu("Add data literal...", self)
+            build_new_literal_menu(add_sub, name, on_new_commit, self)
+            if not add_sub.isEmpty():
+                menu.addMenu(add_sub)
 
         menu.exec(event.globalPos())

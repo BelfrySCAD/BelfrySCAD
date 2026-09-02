@@ -8634,3 +8634,82 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as Region...", lambda start=start, end=end, value=value:
                        _open_region_editor(_preview(start, end), value,
                                             lambda t, s=start, e=end: on_commit(t, s, e), parent))
+
+
+# ---------------------------------------------------------------------------
+# "Add data literal..." — creating a literal that isn't there yet
+# ---------------------------------------------------------------------------
+
+#: Matches a line that is an assignment with no value yet — `foo =`, which is
+#: what the user has typed when they want an editor to *produce* the value.
+#: The trailing `;` is optional because the editor's auto-indent/typing may or
+#: may not have put one there; either way the whole line is replaced on save.
+#: `$`-names are allowed, matching OpenSCAD's own identifier rules.
+_EMPTY_ASSIGNMENT_RE = re.compile(
+    r"^([ \t]*)(\$?[A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*;?[ \t]*$")
+
+
+#: `(label, shape, opener, seed)` for every editable shape, offered by
+#: `build_new_literal_menu`.
+#:
+#: A literal being *created* has no source text to parse, and every editor is
+#: built to edit an existing value rather than to start from nothing — so each
+#: seed is the smallest value its own `_is_*` predicate already accepts. That
+#: is deliberately the acceptance threshold and not something prettier: it
+#: guarantees what the editor writes back is immediately re-editable through
+#: "Edit as...", which a degenerate seed (an empty path, a 1x1 heightfield, an
+#: `object()` with no entries) is not.
+_NEW_LITERAL_SEEDS = [
+    ("Object", "object", lambda *a: _open_object_editor(*a), [("key", 0)]),
+    ("Path", "path", lambda *a: _open_path_editor(*a),
+     [[0, 0], [10, 0], [10, 10]]),
+    ("Region", "region", lambda *a: _open_region_editor(*a),
+     [[[0, 0], [10, 0], [10, 10], [0, 10]]]),
+    ("Grid", "grid", lambda *a: _open_grid_editor(*a),
+     [[[0, 0, 0], [10, 0, 0]], [[0, 10, 0], [10, 10, 0]]]),
+    ("Heightfield", "heightfield", lambda *a: _open_heightfield_editor(*a),
+     [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]),
+    ("Matrix", "matrix", lambda *a: _open_matrix_editor(*a),
+     [[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
+    ("Affine Transform", "affine", lambda *a: _open_affine_matrix_editor(*a),
+     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]),
+    ("VNF", "vnf", lambda *a: _open_vnf_editor(*a),
+     [[[0, 0, 0], [10, 0, 0], [0, 10, 0]], [[0, 1, 2]]]),
+]
+
+
+def find_empty_assignment(text: str, offset: int):
+    """`(name, indent, start, end)` when the line containing `offset` is an
+    assignment with no value yet (`foo =`), else None.
+
+    `start`/`end` span the whole line, not just the empty right-hand side:
+    the caller rewrites the line as a unit, so the name, the `=` spacing and
+    the terminating `;` all come out consistent no matter how they were
+    typed.
+
+    Deliberately lexical, like `find_editable_literals` — `foo =` is a syntax
+    error, so there is no AST to ask, and this has to work on exactly the
+    half-typed line the parser rejects.
+    """
+    line_start = text.rfind("\n", 0, offset) + 1
+    line_end = text.find("\n", offset)
+    if line_end == -1:
+        line_end = len(text)
+    m = _EMPTY_ASSIGNMENT_RE.match(text[line_start:line_end])
+    if not m:
+        return None
+    return m.group(2), m.group(1), line_start, line_end
+
+
+def build_new_literal_menu(menu: QMenu, name: str, on_commit, parent=None):
+    """Add one action per editable shape to `menu`, each opening that shape's
+    editor on a minimal seed value (see `_NEW_LITERAL_SEEDS`).
+
+    `on_commit(literal_text)` fires once, only when a dialog's Save button is
+    clicked, with just the literal — the caller owns wrapping it back into an
+    assignment, since only it knows the span being replaced.
+    """
+    for label, _shape, opener, seed in _NEW_LITERAL_SEEDS:
+        menu.addAction(f"{label}...", lambda opener=opener, seed=seed, label=label:
+                       opener(name or label, copy.deepcopy(seed), on_commit, parent))
