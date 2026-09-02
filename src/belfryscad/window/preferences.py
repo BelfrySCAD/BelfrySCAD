@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtCore import QSettings, Qt, Signal
+from belfryscad.settings import app_settings
 
 from belfryscad.window.color_themes import (
     COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes, is_builtin,
@@ -68,7 +69,7 @@ _DEFAULTS = {
 
 
 def load_preference(key, type_=None):
-    s = QSettings("BelfrySCAD", "BelfrySCAD")
+    s = app_settings()
     default = _DEFAULTS[key]
     if type_ is not None:
         return s.value(key, default, type=type_)
@@ -76,7 +77,7 @@ def load_preference(key, type_=None):
 
 
 def save_preferences(values: dict):
-    s = QSettings("BelfrySCAD", "BelfrySCAD")
+    s = app_settings()
     for k, v in values.items():
         s.setValue(k, v)
 
@@ -106,7 +107,7 @@ class PreferencesDialog(QDialog):
         self.setMinimumWidth(360)
         self._on_change = on_change
 
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
 
         outer = QVBoxLayout(self)
         outer.setSpacing(12)
@@ -332,7 +333,7 @@ class PreferencesDialog(QDialog):
 
     def _save_ai_cli_path(self):
         path = self._ai_cli_path.text().strip()
-        QSettings("BelfrySCAD", "BelfrySCAD").setValue(self._cli_key(), path)
+        app_settings().setValue(self._cli_key(), path)
         self._update_ai_cli_status()
 
     def _browse_ai_cli_path(self):
@@ -387,7 +388,7 @@ class PreferencesDialog(QDialog):
         self._loading_ai = True
         try:
             p = self._current_ai_preset()
-            s = QSettings("BelfrySCAD", "BelfrySCAD")
+            s = app_settings()
             self._ai_base_url.setText(s.value(base_url_key(p.id), p.base_url))
             self._ai_base_url.setPlaceholderText(p.base_url or "https://…/v1")
 

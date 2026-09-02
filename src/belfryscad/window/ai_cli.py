@@ -54,8 +54,8 @@ def find_claude_cli() -> str | None:
     or was removed should fall back to PATH instead of failing to launch
     with a confusing error from deep inside the coprocess.
     """
-    from PySide6.QtCore import QSettings
-    configured = (QSettings("BelfrySCAD", "BelfrySCAD")
+    from belfryscad.settings import app_settings
+    configured = (app_settings()
                   .value(CLI_PATH_KEY, "") or "").strip()
     if configured and os.path.isfile(configured) and os.access(configured, os.X_OK):
         return configured

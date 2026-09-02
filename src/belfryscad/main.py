@@ -71,6 +71,13 @@ def _parse_args(argv):
                         help="Never ask about unsaved changes when closing a "
                              "tab or quitting (for testing; edits are "
                              "discarded without asking)")
+    parser.add_argument("--testing", action="store_true",
+                        help="Testing mode: implies --no-save-prompts, and "
+                             "throws away every settings change on exit "
+                             "(preferences, recent files, window layout, AI "
+                             "config) instead of persisting it. Current "
+                             "settings are still read, so the app behaves "
+                             "like the real install")
     parser.add_argument("--docsgen", action="store_true",
                         help="Generate openscad_docsgen documentation. Takes "
                              "over the rest of the command line; run "
@@ -167,8 +174,26 @@ def _adopt_working_dir():
     return target
 
 
+def _isolate_settings():
+    """Send every settings read/write to a throwaway copy for `--testing`.
+
+    See `belfryscad.settings` for why this cannot be done with Qt's own
+    `QSettings.setDefaultFormat()` and needs the app's call sites to route
+    through `app_settings()` instead.
+    """
+    import atexit
+    import shutil
+    import tempfile
+    from belfryscad.settings import use_scratch_settings
+
+    tmpdir = tempfile.mkdtemp(prefix="belfryscad-testing-")
+    atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
+    return use_scratch_settings(tmpdir)
+
+
 def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
-             ai_echo: bool = False, ai_prompt: str | None = None):
+             ai_echo: bool = False, ai_prompt: str | None = None,
+             testing: bool = False):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
@@ -194,6 +219,11 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
 
     app = BelfrySCADApp(sys.argv)
     app.setApplicationName("BelfrySCAD")
+    if testing:
+        # Before MainWindow, which reads settings while constructing itself.
+        path = _isolate_settings()
+        print(f"belfryscad: --testing: settings changes will be discarded "
+              f"({path})", file=sys.stderr)
     window = MainWindow()
     # Reaches the escape hatch _confirm_unsaved already honours, so both
     # closing a tab and quitting stop prompting -- the two places it is
@@ -461,8 +491,9 @@ def main():
     if ignored:
         print(f"belfryscad: {', '.join(ignored)} only apply together with -o/--output; ignoring", file=sys.stderr)
 
-    _run_gui(args.file, no_save_prompts=args.no_save_prompts,
-             ai_echo=args.ai_echo, ai_prompt=args.ai)
+    _run_gui(args.file,
+             no_save_prompts=args.no_save_prompts or args.testing,
+             ai_echo=args.ai_echo, ai_prompt=args.ai, testing=args.testing)
 
 
 if __name__ == "__main__":
