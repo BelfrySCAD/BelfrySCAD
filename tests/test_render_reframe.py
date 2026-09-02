@@ -23,6 +23,12 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+# Never touch the developer's real settings: MainWindow/DocsPane read
+# them, and open_file_by_path WRITES recentFiles. Left unisolated, running
+# the suite quietly replaced the recent-files list with pytest tmp paths.
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.main_window import MainWindow
 
 path = sys.argv[1]
