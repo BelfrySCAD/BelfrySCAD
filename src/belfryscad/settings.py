@@ -35,21 +35,31 @@ def app_settings() -> QSettings:
                      ORG, APP)
 
 
-def use_scratch_settings(tmpdir: str) -> str:
-    """Redirect `app_settings()` into `tmpdir`, seeded with a copy of the
-    real settings, and return the file it will use.
+def use_scratch_settings(tmpdir: str, seed: bool = True) -> str:
+    """Redirect `app_settings()` into `tmpdir` and return the file it will use.
 
-    The current settings are copied in rather than starting from an empty
-    slate: testing mode is for exercising the real app, and an install with
-    no recent files, no configured AI provider and default preferences is not
-    the app being tested. Reads therefore behave normally; only writes are
-    discarded, along with `tmpdir`.
+    With `seed` (the `--testing` case) the current settings are copied in
+    rather than starting from an empty slate: testing mode is for exercising
+    the real app, and an install with no recent files, no configured AI
+    provider and default preferences is not the app being tested. Reads
+    therefore behave normally; only writes are discarded, along with `tmpdir`.
+
+    `seed=False` gives a genuinely empty store, which is what a *test* wants --
+    one asserting "no custom themes by default" has to not see the developer's
+    own themes. Tests use this rather than monkeypatching `QSettings` inside
+    some particular module: that is how `test_color_themes.py`'s fixture was
+    written, and when the call sites moved behind `app_settings()` the patch
+    silently stopped isolating anything and the suite started reading and
+    writing the developer's real preferences. Going through the same switch
+    the app uses means an isolation fixture cannot drift out of date again.
+    Restore the previous value of `_scratch_dir` when done.
     """
     global _scratch_dir
     snapshot = {}
-    real = QSettings(ORG, APP)
-    for key in real.allKeys():
-        snapshot[key] = real.value(key)
+    if seed:
+        real = QSettings(ORG, APP)
+        for key in real.allKeys():
+            snapshot[key] = real.value(key)
 
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                       tmpdir)
