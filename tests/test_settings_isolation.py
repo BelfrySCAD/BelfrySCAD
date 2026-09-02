@@ -88,3 +88,22 @@ def test_every_settings_call_site_routes_through_app_settings():
                 offenders.append(f"{path.relative_to(src)}:{n}")
     assert not offenders, (
         "these bypass app_settings() and so ignore --testing: " + ", ".join(offenders))
+
+
+def test_every_gui_driving_test_isolates_its_settings():
+    """A test that builds a MainWindow or DocsPane must redirect settings.
+
+    `MainWindow.open_file_by_path` writes `recentFiles`, so an unisolated
+    GUI test quietly replaces the developer's recent-files list with pytest
+    tmp paths -- which is exactly what happened before this guard existed,
+    and the only visible symptom was the list looking wrong days later.
+    """
+    tests_dir = pathlib.Path(__file__).resolve().parent
+    offenders = []
+    for path in sorted(tests_dir.glob("test_*.py")):
+        text = path.read_text(encoding="utf-8")
+        builds_gui = "MainWindow(" in text or "DocsPane(" in text
+        if builds_gui and "use_scratch_settings" not in text:
+            offenders.append(path.name)
+    assert not offenders, (
+        "these build a GUI window without redirecting settings: " + ", ".join(offenders))
