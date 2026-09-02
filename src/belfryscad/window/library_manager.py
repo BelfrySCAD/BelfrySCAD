@@ -38,6 +38,7 @@ def _make_ssl_context() -> ssl.SSLContext:
 _SSL_CTX = _make_ssl_context()
 
 from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal, Slot
+from belfryscad.settings import app_settings
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -90,20 +91,20 @@ class _InstalledVersions:
     _PREFIX = "libraries/"
 
     def get(self, name: str) -> str | None:
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         v = s.value(f"{self._PREFIX}{name}/version")
         return str(v) if v is not None else None
 
     def set(self, name: str, version: str) -> None:
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.setValue(f"{self._PREFIX}{name}/version", version)
 
     def remove(self, name: str) -> None:
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.remove(f"{self._PREFIX}{name}")
 
     def all_installed(self) -> dict[str, str]:
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.beginGroup("libraries")
         result = {}
         for name in s.childGroups():

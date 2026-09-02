@@ -60,8 +60,8 @@ def find_copilot_cli() -> str | None:
     is not a corner case, it is the ordinary way to resolve it. Either
     candidate is verified to actually be GitHub's before being returned.
     """
-    from PySide6.QtCore import QSettings
-    configured = (QSettings("BelfrySCAD", "BelfrySCAD")
+    from belfryscad.settings import app_settings
+    configured = (app_settings()
                   .value(CLI_PATH_KEY, "") or "").strip()
     if (configured and os.path.isfile(configured) and os.access(configured, os.X_OK)
             and _is_github_copilot(configured)):

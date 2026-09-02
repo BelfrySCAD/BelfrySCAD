@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
+from belfryscad.settings import app_settings
 import os
 import threading
 import time
@@ -1103,12 +1104,12 @@ class MainWindow(QMainWindow):
         design_menu.addSeparator()
         self._act_auto_reload = self._add_checkable(
             design_menu, "Automatic Reload and Render",
-            QSettings("BelfrySCAD", "BelfrySCAD").value(
+            app_settings().value(
                 "autoReload", False, type=bool),
             self._set_auto_reload)
         self._act_stop_on_warning = self._add_checkable(
             design_menu, "Stop on First Warning",
-            QSettings("BelfrySCAD", "BelfrySCAD").value(
+            app_settings().value(
                 "stopOnFirstWarning", False, type=bool),
             self._set_stop_on_warning)
         design_menu.addSeparator()
@@ -1602,7 +1603,7 @@ class MainWindow(QMainWindow):
                     text = f.read()
             except OSError as e:
                 QMessageBox.critical(self, "Open Error", str(e))
-                settings = QSettings("BelfrySCAD", "BelfrySCAD")
+                settings = app_settings()
                 recents = settings.value("recentFiles", [], type=list)
                 if path in recents:
                     recents.remove(path)
@@ -1646,7 +1647,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _set_stop_on_warning(self, on: bool):
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.setValue("stopOnFirstWarning", bool(on))
         self.log("Stop on First Warning is "
                  + ("on: a render now halts at the first WARNING instead of "
@@ -1654,7 +1655,7 @@ class MainWindow(QMainWindow):
                     if on else "off."))
 
     def _set_auto_reload(self, on: bool):
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.setValue("autoReload", bool(on))
         self._refresh_watched_files()
         self.log("Automatic Reload and Render is "
@@ -1924,7 +1925,7 @@ class MainWindow(QMainWindow):
     _MAX_RECENT = 10
 
     def _update_recent_files(self, path: str):
-        settings = QSettings("BelfrySCAD", "BelfrySCAD")
+        settings = app_settings()
         recents = settings.value("recentFiles", [], type=list)
         path = str(Path(path).resolve())
         if path in recents:
@@ -1936,7 +1937,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_recent_menu(self):
         self._recent_menu.clear()
-        settings = QSettings("BelfrySCAD", "BelfrySCAD")
+        settings = app_settings()
         recents = settings.value("recentFiles", [], type=list)
         if not recents:
             placeholder = QAction("(empty)", self)
@@ -1957,7 +1958,7 @@ class MainWindow(QMainWindow):
         self.open_file_by_path(path)
 
     def _clear_recent_files(self):
-        settings = QSettings("BelfrySCAD", "BelfrySCAD")
+        settings = app_settings()
         settings.setValue("recentFiles", [])
         self._rebuild_recent_menu()
 
@@ -4126,7 +4127,7 @@ class MainWindow(QMainWindow):
                 bar.move(-600, -530)          # Qt's own parking spot
 
     def _restore_settings(self):
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         # The as-built arrangement, captured before any saved layout is
         # applied over it. This is the only moment it exists, and it is what
         # Reset Panel Layout puts back.
@@ -4240,7 +4241,7 @@ class MainWindow(QMainWindow):
             time.sleep(0.005)
 
         if self.persist_settings:
-            s = QSettings("BelfrySCAD", "BelfrySCAD")
+            s = app_settings()
             s.setValue("windowGeometry", self.saveGeometry())
             s.setValue("windowState", self.saveState())
             s.setValue("layoutVersion", self._LAYOUT_VERSION)
@@ -4287,7 +4288,7 @@ class MainWindow(QMainWindow):
         if default is not None:
             self.restoreState(default)
             self._park_idle_dock_tabbars()
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         s.remove("windowState")
         s.remove("windowGeometry")
         s.remove("layoutVersion")

@@ -16,7 +16,8 @@ import threading
 import time
 from html import escape
 
-from PySide6.QtCore import QObject, QSettings, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+from belfryscad.settings import app_settings
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
@@ -553,7 +554,7 @@ class AIChatPane(QWidget):
         self._provider = QComboBox()
         for _p in PRESETS:
             self._provider.addItem(_p.label, _p.id)
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         idx = self._provider.findData(s.value("ai/activeProvider", "openai"))
         self._provider.setCurrentIndex(idx if idx >= 0 else 0)
         self._provider.currentIndexChanged.connect(self._on_provider_changed)
@@ -821,7 +822,7 @@ class AIChatPane(QWidget):
         self._turn_started_at = time.monotonic()
         preset = preset_for(self._provider.currentData())
         provider = preset.protocol
-        s = QSettings("BelfrySCAD", "BelfrySCAD")
+        s = app_settings()
         base_url = s.value(base_url_key(preset.id), preset.base_url)
         model = s.value(model_key(preset.id), "")
         cli_session = None
@@ -1143,7 +1144,7 @@ class AIChatPane(QWidget):
         return self._mode.currentData() or MODE_MANUAL
 
     def _on_mode_changed(self):
-        QSettings("BelfrySCAD", "BelfrySCAD").setValue("ai/mode", self.mode())
+        app_settings().setValue("ai/mode", self.mode())
         self._say(f"Mode: {MODE_LABELS[self.mode()]}.")
 
     @Slot(object)
@@ -1256,7 +1257,7 @@ class AIChatPane(QWidget):
     # -- misc ---------------------------------------------------------------
 
     def _on_provider_changed(self):
-        QSettings("BelfrySCAD", "BelfrySCAD").setValue(
+        app_settings().setValue(
             "ai/activeProvider", self._provider.currentData())
 
     def _clear_conversation(self):

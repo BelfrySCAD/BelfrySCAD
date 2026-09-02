@@ -3,12 +3,11 @@ layer built on top (all_themes/load_custom_themes/save_custom_themes/
 is_builtin/unique_theme_name). The persistence helpers round-trip through
 real `QSettings` (via `preferences.load_preference`/`save_preferences`),
 so any test that touches them uses the `isolated_settings` fixture below
-to point `QSettings` at a temp INI file instead of the developer's actual
-saved app preferences -- confirmed via search that no other test in this
-suite touches QSettings/preferences.py, so this fixture is new territory,
-not an existing convention being reused."""
+to point the app's settings at an empty temp INI file instead of the
+developer's actual saved app preferences -- see the fixture for why it goes
+through `belfryscad.settings.use_scratch_settings` rather than patching
+`QSettings` in some particular module."""
 import pytest
-from PySide6.QtCore import QSettings
 
 from belfryscad.window.color_themes import (
     COLOR_THEMES, DEFAULT_COLOR_THEME, THEME_COLOR_KEYS, all_themes,
@@ -17,17 +16,24 @@ from belfryscad.window.color_themes import (
 
 
 @pytest.fixture
-def isolated_settings(tmp_path, monkeypatch):
-    """Redirect every `QSettings("BelfrySCAD", "BelfrySCAD")` constructed
-    inside `preferences.py` to a temp INI file for the duration of the
-    test, so custom-theme round-trip tests never read/write the real
-    developer machine's saved preferences."""
-    ini_path = str(tmp_path / "test_settings.ini")
+def isolated_settings(tmp_path):
+    """Point `app_settings()` at an empty temp INI for the duration of the
+    test, so custom-theme round-trip tests never read or write the real
+    developer machine's saved preferences.
 
-    def _fake_qsettings(*args, **kwargs):
-        return QSettings(ini_path, QSettings.Format.IniFormat)
-
-    monkeypatch.setattr("belfryscad.window.preferences.QSettings", _fake_qsettings)
+    This used to monkeypatch `belfryscad.window.preferences.QSettings`. When
+    the settings call sites moved behind `app_settings()`, that patch quietly
+    stopped intercepting anything -- the round-trip tests then wrote a
+    `colorThemes/custom` key into the developer's real preferences, and the
+    only symptom was `test_no_custom_themes_by_default` failing because it
+    could suddenly see real themes. Going through the app's own switch means
+    this fixture cannot drift out of date that way again.
+    """
+    from belfryscad import settings as bs_settings
+    before = bs_settings._scratch_dir
+    bs_settings.use_scratch_settings(str(tmp_path), seed=False)
+    yield
+    bs_settings._scratch_dir = before
 
 
 def test_default_theme_is_in_table():
