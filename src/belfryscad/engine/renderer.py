@@ -1242,24 +1242,48 @@ class SceneRenderer:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
-            # With depth write off, a body's own far/hidden faces are drawn
-            # in raw mesh-triangle order rather than depth-sorted -- for a
-            # thin/coplanar body (e.g. a top-level 2D shape's near-zero-height
-            # extrusion) the hidden face can land after the visible one and
-            # wrongly overwrite it. Culling removes the hidden face outright
-            # so only the camera-facing side of each body is ever drawn.
+            # Two sub-passes, far wall first, rather than culling one away.
+            #
+            # With depth write off, a body's own faces are drawn in raw
+            # mesh-triangle order rather than depth-sorted, so a hidden face
+            # can land after the visible one and wrongly overwrite it. That
+            # was originally fixed by culling back faces outright -- which
+            # also threw away the far wall, and with it half the body's
+            # opacity: a solid at alpha 0.2 showed one layer (0.2) where the
+            # reference shows two (1 - 0.8^2 = 0.36). Measured against
+            # OpenSCAD on BOSL2's expose_anchors() example, whose translucent
+            # cube came out 204 on a 255 background where the reference gives
+            # 163 -- pale enough to read as no cube at all in a small docs
+            # image.
+            #
+            # Ordering by cull mode gets both: back faces then front faces is
+            # exactly the near/far order the raw triangle order could not be
+            # trusted to give.
             self._ctx.enable(mgl.CULL_FACE)
-            for buf, buf_model, color in translucent:
-                self._prog["model"].write(buf_model.T.tobytes())
-                self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
-                # uses_vertex_color buffers carry their real per-triangle
-                # alpha in in_vcolor.a already -- color[3] here is just a
-                # dummy <1.0 marker used to route the buffer into this pass,
-                # and must not also multiply into the real alpha.
-                uniform_color = (*color[:3], 1.0) if buf.uses_vertex_color else color
-                self._prog["object_color"].value = uniform_color
-                self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
-                buf.vao.render()
+            for cull in ("front", "back"):
+                self._ctx.cull_face = cull
+                # Culling the FRONT leaves the far wall, so the faces this
+                # sub-pass draws are backfaces by design.
+                far_wall = (cull == "front")
+                for buf, buf_model, color in translucent:
+                    self._prog["model"].write(buf_model.T.tobytes())
+                    self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
+                    # uses_vertex_color buffers carry their real per-triangle
+                    # alpha in in_vcolor.a already -- color[3] here is just a
+                    # dummy <1.0 marker used to route the buffer into this
+                    # pass, and must not also multiply into the real alpha.
+                    uniform_color = (*color[:3], 1.0) if buf.uses_vertex_color else color
+                    self._prog["object_color"].value = uniform_color
+                    # Light the far wall with the object colour rather than
+                    # the magenta inverted-normal cue. That cue is for the
+                    # opposite case -- a backface visible through a closed
+                    # OPAQUE body means something is genuinely wrong -- but
+                    # seeing the inside of a translucent one is the whole
+                    # point, and it came out solid magenta without this.
+                    self._prog["flat_preview"].value = (
+                        True if far_wall else (buf.flat_preview or self.light_backfaces))
+                    buf.vao.render()
+            self._ctx.cull_face = "back"        # moderngl's default
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
