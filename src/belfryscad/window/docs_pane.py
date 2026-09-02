@@ -428,8 +428,8 @@ def mark_rendering(doc, rels):
     return targets
 
 
-def write_rendering_text(doc, targets, dots: int):
-    """Rewrite each marked block with `dots` trailing dots."""
+def write_rendering_text(doc, targets, dots: int, suffix: str = ""):
+    """Rewrite each marked block with `suffix` and `dots` trailing dots."""
     cursor = QTextCursor(doc)
     cursor.beginEditBlock()
     for number, text, fmt in targets:
@@ -439,7 +439,7 @@ def write_rendering_text(doc, targets, dots: int):
         cursor.setPosition(block.position())
         cursor.setPosition(block.position() + block.length() - 1,
                            QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertText(text + _ELLIPSIS[dots % len(_ELLIPSIS)], fmt)
+        cursor.insertText(text + suffix + _ELLIPSIS[dots % len(_ELLIPSIS)], fmt)
     cursor.endEditBlock()
 
 
@@ -487,7 +487,9 @@ class _DocsWorker(QObject):
     """Lives on the pane's worker thread; owns every docsgen call."""
     ready = Signal(object)      # belfryscad.docsgen.preview.DocsPreview
     failed = Signal(str)
-    progress = Signal(int, int)  # images rendered so far, images to render
+    # images done, images to render, frame of the one in flight, its frames
+    # (the last two are 0 when the current image is not an animation)
+    progress = Signal(int, int, int, int)
 
     request = Signal(str, str, object)   # source_text, src_file, image selection
 
@@ -607,6 +609,9 @@ class DocsPane(QWidget):
         #: (block number, text without dots, char format).
         self._rendering = []
         self._dots = 0
+        # (frame, frames) of the image currently rendering; (0, 0) when the
+        # current one is a still or nothing is rendering.
+        self._frame = (0, 0)
         self._dots_timer = QTimer(self)
         self._dots_timer.setInterval(_ELLIPSIS_MS)
         self._dots_timer.timeout.connect(self._on_dots_tick)
@@ -780,7 +785,33 @@ class DocsPane(QWidget):
         self._invalidate_next = True
         self.refresh_requested.emit()
 
-    def _on_progress(self, done: int, total: int):
+    def _frame_percent(self) -> str:
+        """"73%" through an animated example's frames, or "" for a still.
+
+        A percentage rather than "frame 26 of 36": the raw counts are noise
+        next to the one thing the reader wants, which is how much longer
+        this is going to take. Counted on the frame STARTING, so it reaches
+        100% as the last frame renders rather than stopping at 97%.
+
+        Returns the bare figure; each caller wraps it, since the label wants
+        it parenthesised on its own and the status line wants it inside the
+        parentheses it already has.
+        """
+        frame, frames = self._frame
+        return f"{round(100 * frame / frames)}%" if frames > 1 else ""
+
+    def _label_percent(self) -> str:
+        """" (73%)" for the in-document label, or "".
+
+        Only when exactly one image is queued: with several, the progress
+        signal says how many are done but not WHICH block the frames belong
+        to, and putting the figure on the wrong Example would be worse than
+        leaving it off. The status line carries it in every case.
+        """
+        pct = self._frame_percent() if len(self._rendering) == 1 else ""
+        return f" ({pct})" if pct else ""
+
+    def _on_progress(self, done: int, total: int, frame: int = 0, frames: int = 0):
         """Count up as each image lands.
 
         A "render all" over a big BOSL2 file is minutes of work; without a
@@ -788,8 +819,25 @@ class DocsPane(QWidget):
         gives no sense of whether it is nearly done. Silent when there are
         no images to render, which is the ordinary refresh.
         """
+        self._frame = (frame, frames)
         if total:
-            self._status.setText(f"Building preview… ({done} of {total})")
+            # One animated Example is a single unit of `total` but dozens of
+            # renders, so without the frame count a Spin example sits at
+            # "1 of 1" for its whole duration and reads as hung.
+            if frames > 1:
+                # `done` counts FINISHED images, so mid-animation it is one
+                # behind: "0 of 1, 8%" reads as nothing being worked on.
+                # Count the one in flight instead.
+                self._status.setText(
+                    f"Building preview… ({done + 1} of {total}, "
+                    f"{self._frame_percent()})")
+            else:
+                self._status.setText(f"Building preview… ({done} of {total})")
+        if self._rendering:
+            # Repaint the in-document label now rather than waiting for the
+            # next dots tick, so the frame number tracks the render.
+            write_rendering_text(self._view.document(), self._rendering,
+                                  self._dots, self._label_percent())
 
     def _start_pending(self):
         args, self._pending = self._pending, None
@@ -870,17 +918,20 @@ class DocsPane(QWidget):
     def _mark_rendering(self, rels):
         self._rendering = mark_rendering(self._view.document(), rels)
         self._dots = 0
+        self._frame = (0, 0)
         write_rendering_text(self._view.document(), self._rendering, self._dots)
         if self._rendering:
             self._dots_timer.start()
 
     def _on_dots_tick(self):
         self._dots = (self._dots + 1) % len(_ELLIPSIS)
-        write_rendering_text(self._view.document(), self._rendering, self._dots)
+        write_rendering_text(self._view.document(), self._rendering, self._dots,
+                              self._label_percent())
 
     def _clear_rendering(self):
         self._dots_timer.stop()
         self._rendering = []
+        self._frame = (0, 0)
 
     # -- animation -----------------------------------------------------
 

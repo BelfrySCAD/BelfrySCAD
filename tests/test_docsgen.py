@@ -1004,7 +1004,7 @@ def _fake_manager(names):
     mgr = ImageManager()
     mgr.requests = [ImageRequest("f.scad", 1, n, ["cube(1);"], "3D") for n in names]
     done = []
-    mgr.process_request = done.append
+    mgr.process_request = lambda req, frame_progress=None: done.append(req)
     return mgr, done
 
 
@@ -1014,7 +1014,7 @@ def test_progress_counts_only_the_images_actually_selected():
     would be a lie."""
     mgr, rendered = _fake_manager(["images/a.png", "images/b.png", "images/c.png"])
     seen = []
-    mgr.process_requests(only=["images/b.png"], progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(only=["images/b.png"], progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
 
     assert seen == [(0, 1), (1, 1)]
     assert [r.image_file for r in rendered] == ["images/b.png"]
@@ -1023,7 +1023,7 @@ def test_progress_counts_only_the_images_actually_selected():
 def test_progress_counts_every_image_when_rendering_all():
     mgr, rendered = _fake_manager(["a.png", "b.png", "c.png"])
     seen = []
-    mgr.process_requests(only=None, progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(only=None, progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
 
     assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
     assert len(rendered) == 3
@@ -1032,7 +1032,7 @@ def test_progress_counts_every_image_when_rendering_all():
 def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
     mgr, _ = _fake_manager([])
     seen = []
-    mgr.process_requests(progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
     assert seen == [(0, 0)], "a zero total is what tells the label to stay quiet"
 
     mgr, _ = _fake_manager(["a.png"])
@@ -1174,7 +1174,7 @@ def _fake_manager(names):
     mgr = ImageManager()
     mgr.requests = [ImageRequest("f.scad", 1, n, ["cube(1);"], "3D") for n in names]
     done = []
-    mgr.process_request = done.append
+    mgr.process_request = lambda req, frame_progress=None: done.append(req)
     return mgr, done
 
 
@@ -1184,7 +1184,7 @@ def test_progress_counts_only_the_images_actually_selected():
     would be a lie."""
     mgr, rendered = _fake_manager(["images/a.png", "images/b.png", "images/c.png"])
     seen = []
-    mgr.process_requests(only=["images/b.png"], progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(only=["images/b.png"], progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
 
     assert seen == [(0, 1), (1, 1)]
     assert [r.image_file for r in rendered] == ["images/b.png"]
@@ -1193,7 +1193,7 @@ def test_progress_counts_only_the_images_actually_selected():
 def test_progress_counts_every_image_when_rendering_all():
     mgr, rendered = _fake_manager(["a.png", "b.png", "c.png"])
     seen = []
-    mgr.process_requests(only=None, progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(only=None, progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
 
     assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
     assert len(rendered) == 3
@@ -1202,7 +1202,7 @@ def test_progress_counts_every_image_when_rendering_all():
 def test_progress_is_optional_and_an_empty_queue_still_reports_a_total():
     mgr, _ = _fake_manager([])
     seen = []
-    mgr.process_requests(progress=lambda d, t: seen.append((d, t)))
+    mgr.process_requests(progress=lambda d, t, f=0, nf=0: seen.append((d, t)))
     assert seen == [(0, 0)], "a zero total is what tells the label to stay quiet"
 
     mgr, _ = _fake_manager(["a.png"])
@@ -1357,3 +1357,69 @@ def test_invalidate_image_refuses_a_path_outside_the_cache(tmp_path, monkeypatch
 
     assert preview.invalidate_image(str(src), "../precious.png") is False
     assert victim.exists(), "a traversal deleted a file outside the cache"
+
+
+# -- per-frame progress for animated examples ------------------------------
+
+def _fake_manager_with_frames(specs):
+    """`specs` is [(image_file, animation_frames), ...]; frames drive the
+    real process_request loop, so the frame callback is exercised for real
+    rather than simulated."""
+    from belfryscad.docsgen.imagemanager import ImageManager, ImageRequest
+
+    mgr = ImageManager()
+    mgr.requests = []
+    for name, frames in specs:
+        req = ImageRequest("f.scad", 1, name, ["cube(1);"], "3D")
+        req.animation_frames = frames
+        mgr.requests.append(req)
+
+    # Stand in for the render loop, calling the frame callback the way the
+    # real process_request does.
+    def fake(req, frame_progress=None):
+        for i in range(req.animation_frames or 1):
+            if frame_progress:
+                frame_progress(i + 1, req.animation_frames)
+    mgr.process_request = fake
+    return mgr
+
+
+def test_progress_reports_each_frame_of_an_animated_example():
+    """One animated Example is a single unit of `total` but dozens of
+    renders. Without per-frame calls a Spin example sits at "1 of 1" for its
+    whole duration and reads as hung."""
+    mgr = _fake_manager_with_frames([("spin.png", 4)])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t, f, nf: seen.append((d, t, f, nf)))
+
+    assert seen == [
+        (0, 1, 0, 0),          # queue announced
+        (0, 1, 1, 4),          # ...and then frame by frame, image not done yet
+        (0, 1, 2, 4),
+        (0, 1, 3, 4),
+        (0, 1, 4, 4),
+        (1, 1, 0, 0),          # image finished; no frame in flight
+    ]
+
+
+def test_a_still_image_reports_no_frame_counts():
+    mgr = _fake_manager_with_frames([("still.png", 0)])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t, f, nf: seen.append((d, t, f, nf)))
+
+    assert seen == [(0, 1, 0, 0), (1, 1, 0, 0)]
+
+
+def test_frame_counts_are_scoped_to_the_image_being_rendered():
+    """With a still queued after an animation, the frame numbers must not
+    bleed past the animated one, and `done` must keep counting images."""
+    mgr = _fake_manager_with_frames([("spin.png", 2), ("still.png", 0)])
+    seen = []
+    mgr.process_requests(only=None, progress=lambda d, t, f, nf: seen.append((d, t, f, nf)))
+
+    assert seen == [
+        (0, 2, 0, 0),
+        (0, 2, 1, 2), (0, 2, 2, 2),
+        (1, 2, 0, 0),
+        (2, 2, 0, 0),
+    ]
