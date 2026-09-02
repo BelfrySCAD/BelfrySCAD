@@ -430,19 +430,28 @@ hung. `process_requests` passes a per-frame callback into `process_request`,
 which fires as each frame starts, and the progress signal carries
 `(done, total, frame, frames)` — `frame`/`frames` are `0` for a still.
 
-It is shown as a **percentage**, not `frame 26 of 36`: the raw counts are
-noise next to the one thing the reader wants, which is how much longer this
-will take. Counted on the frame *starting*, so it reaches 100% as the last
-frame renders rather than stopping at 97%. The status line reads
-`Building preview… (1 of 1, 8%)`, counting the image *in flight* rather than
-the finished ones, since `done` is otherwise one behind and `(0 of 1, 8%)`
-reads as nothing being worked on.
+It is shown as a **little progress bar**, not `frame 26 of 36` and not a
+percentage: the reader wants one thing from this — how much longer — and a
+bar answers it without asking them to read a number at all. `progress_bar`
+draws it from two Block Elements characters (`U+2588` FULL BLOCK and `U+2591`
+LIGHT SHADE) so a font that has one has the other and they share a cell
+width; mixing in a glyph from elsewhere makes the bar visibly ragged as it
+fills. The width is fixed at ten cells whatever the fraction, since a bar
+that changes length as it fills reads as the line jittering. Counted on the
+frame *starting*, so it fills completely as the last frame renders rather
+than stopping a cell short.
 
-The in-document label gets the same figure before its ellipsis
-(`Rendering Example 1 (8%)...`), but **only when exactly one image is
-queued** — with several, the signal says how many are done, not *which*
-block the frames belong to, and putting the figure on the wrong Example
-would be worse than leaving it off. The status line carries it either way.
+The status line reads `Building preview… (1 of 1)  ████░░░░░░`, counting the
+image *in flight* rather than the finished ones, since `done` is otherwise
+one behind and `(0 of 1)` reads as nothing being worked on.
+
+The in-document label gets the same bar, and the bar **replaces** the
+ellipsis rather than joining it (`write_rendering_text(..., ellipsis=False)`)
+— the bar already shows the render is alive, and dots growing and resetting
+underneath it only add jitter. It appears **only when exactly one image is
+queued**: with several, the signal says how many are done, not *which* block
+the frames belong to, and putting the bar on the wrong Example would be
+worse than leaving it off. The status line carries it either way.
 
 **Animated examples really animate.** A `Spin`/`Anim` example is written as
 an APNG, and Qt animates nothing: its image reader returns frame 0 and
