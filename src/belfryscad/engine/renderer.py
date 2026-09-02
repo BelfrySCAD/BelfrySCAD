@@ -55,6 +55,10 @@ uniform vec4 object_color;
 uniform vec3 light_dir;
 uniform vec3 eye_pos;
 uniform bool flat_preview;
+// 0 for ordinary geometry, 1 for a translucent body being drawn as glass.
+// A plain float rather than a bool so the two looks can be mixed between
+// rather than branched on.
+uniform float glass;
 out vec4 fragColor;
 void main() {
     // At a silhouette edge, a manifold solid's front- and back-facing
@@ -96,10 +100,26 @@ void main() {
 
     vec3 V = normalize(eye_pos - v_world_pos);
     vec3 H = normalize(L + V);
-    float spec = pow(max(dot(n, H), 0.0), 64.0) * 0.5;
+    // Glass reads as a tighter, brighter highlight than a matte surface's.
+    float spec = pow(max(dot(n, H), 0.0), mix(64.0, 120.0, glass))
+               * mix(0.5, 1.15, glass);
     lit += vec3(spec);
 
-    fragColor = vec4(lit, object_color.a * v_vcolor.a);
+    float alpha = object_color.a * v_vcolor.a;
+    // Fresnel: a real pane reflects far more at a grazing angle than
+    // face-on, which is what actually makes something read as glass rather
+    // than as a flat wash of colour -- the silhouette and the far wall's
+    // edges pick up a bright rim and go more opaque, while the face-on
+    // centre is left alone. Deliberately zero at normal incidence
+    // (dot(n,V)==1), so a flat face still composites to exactly the alpha
+    // the script asked for and stays comparable with the reference.
+    if (glass > 0.0) {
+        float fres = pow(1.0 - max(dot(n, V), 0.0), 3.0);
+        lit += vec3(0.30 * fres * glass);
+        alpha = clamp(alpha + (1.0 - alpha) * fres * 0.6 * glass, 0.0, 1.0);
+    }
+
+    fragColor = vec4(lit, alpha);
 }
 """
 
@@ -689,6 +709,13 @@ class SceneRenderer:
         # open surface comes out magenta where OpenSCAD shows the object
         # colour, measured as 6.5% of one such frame.
         self.light_backfaces: bool = False
+        # How glassy a translucent body looks: 0 is the plain matte wash,
+        # 1 adds a tighter/brighter highlight and a Fresnel rim so it reads
+        # as glass rather than as flat tinted colour. Only ever applied to
+        # translucent bodies; opaque geometry is unaffected either way, and
+        # the effect is zero at normal incidence so a flat face still
+        # composites to exactly the alpha the script asked for.
+        self.glass_translucent: float = 1.0
         self.show_axes: bool = True
         # The XY grid is drawn from _render_axes but toggles on its own:
         # it is the one overlay dense enough to be worth hiding while
@@ -1209,6 +1236,7 @@ class SceneRenderer:
             self._prog["mvp"].write((proj @ view @ buf_model).T.astype(np.float32).tobytes())
             self._prog["object_color"].value = color
             self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
+            self._prog["glass"].value = 0.0
             # A 2D shape is drawn as a wafer-thin slab, and every 2D shape in
             # a script gets the SAME slab -- so two that overlap are exactly
             # coplanar. Under the default '<' depth test the second one's
@@ -1282,6 +1310,9 @@ class SceneRenderer:
                     # point, and it came out solid magenta without this.
                     self._prog["flat_preview"].value = (
                         True if far_wall else (buf.flat_preview or self.light_backfaces))
+                    # Only translucent bodies get the glass treatment; every
+                    # other pass sets this back to 0.
+                    self._prog["glass"].value = self.glass_translucent
                     buf.vao.render()
             self._ctx.cull_face = "back"        # moderngl's default
             self._ctx.disable(mgl.CULL_FACE)
@@ -1330,6 +1361,7 @@ class SceneRenderer:
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = _BACKGROUND_COLOR
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
+                self._prog["glass"].value = 0.0
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
@@ -1359,6 +1391,7 @@ class SceneRenderer:
                 # highlight at all.
                 self._prog["object_color"].value = _HIGHLIGHT_COLOR
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
+                self._prog["glass"].value = 0.0
                 buf.vao.render()
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
