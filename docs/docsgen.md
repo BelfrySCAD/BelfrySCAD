@@ -564,11 +564,28 @@ docsgen targets emit (`<img>`, `<a>`, `<code>`, `<abbr>`, `<sup>`, `<br>`)
 into markdown, because Qt's markdown reader drops raw HTML silently — which
 would lose every example image.
 
-One trap worth remembering: docsgen escapes underscores for GitHub, so an
-alt text reads `ball\_bearing() Example 1`. Qt's parser splits an image
-apart at each escape and emits **one copy per fragment** — three
-side-by-side copies of every BOSL2 example image. The escapes are stripped
-from alt text for that reason.
+One trap worth remembering, and it has bitten twice: **any** inline markup
+in an alt text makes Qt's parser split the image apart and emit **one copy
+per fragment**. One code span gives three copies, two give five, and bold or
+italics behave the same way.
+
+The first bite was backslashes — docsgen escapes underscores for GitHub, so
+an alt read `ball\_bearing() Example 1` and every BOSL2 example image
+appeared three times. The second was backticks, in `distributors.scad`,
+whose Figure alts say ``Adaptive Children Using `$` Variables``: one code
+span, three copies of each figure. Stripping only the backslashes left that
+one standing.
+
+`_ALT_MARKUP` strips backslash, backtick and `*` from every alt text.
+Nothing is lost by it: an alt is a tooltip and a fallback, never shown once
+the image loads.
+
+`_` is deliberately **not** stripped. It is part of real names, and taking
+it out turned `ball\_bearing()` into `ballbearing()` — a worse bug than the
+one being fixed, caught by the existing test for the backslash case.
+Keeping it is safe anyway: an underscore inside a word is not emphasis in
+CommonMark. `*` has no such excuse — no OpenSCAD identifier contains one, so
+there it can only ever be markup.
 
 ## Measured against the real thing
 

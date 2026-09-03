@@ -229,16 +229,30 @@ def _parse_siblings(parser, src_file: str, skip_name: str):
 # blocks.py for tags, not by guessing. Qt's markdown reader drops raw HTML
 # silently, which would lose every example image, so each of these is turned
 # back into the markdown equivalent Qt does understand.
-def _image_link(m):
-    """`![alt](src)` with the alt text's backslash escapes removed.
+#: Characters that start an inline-markup run inside an alt text. Qt's
+#: markdown parser splits an image apart at each one and emits a COPY of the
+#: image per fragment: an alt with one `code span` renders three times, two
+#: spans five times, and bold or italics the same way.
+#:
+#: Backslash came first -- docsgen escapes underscores for GitHub, so an alt
+#: read `ball\_bearing() Example 1` and every BOSL2 example image appeared
+#: three times. Backticks are the same bug found again, in
+#: distributors.scad, whose Figure alts say "Adaptive Children Using `$`
+#: Variables": one code span, three copies of the figure.
+#:
+#: None of it is a loss. An alt text is a tooltip and a fallback, never
+#: rendered when the image loads, so it wants to be plain text.
+#: `_` is deliberately NOT in here: it is part of real names
+#: (`vnf_vertex_array()`), and stripping it turned `ball\_bearing()` into
+#: `ballbearing()`. Keeping it is also safe -- an underscore inside a word
+#: is not emphasis in CommonMark. `*` has no such excuse: no OpenSCAD
+#: identifier contains one, so it can only ever be bold/italic markup.
+_ALT_MARKUP = str.maketrans("", "", "\\`*")
 
-    docsgen escapes underscores for GitHub, so an alt reads
-    `ball\\_bearing() Example 1`. Qt's markdown parser splits an image
-    apart at each escape and emits one copy per fragment -- three side-by-side
-    copies of every BOSL2 example image, which is how this was found. The
-    escapes are only needed by GitHub's renderer, so they come out here.
-    """
-    return "![{}]({})".format(m.group(1).replace("\\", ""), m.group(2))
+
+def _image_link(m):
+    """`![alt](src)` with inline markdown stripped out of the alt text."""
+    return "![{}]({})".format(m.group(1).translate(_ALT_MARKUP), m.group(2))
 
 
 _HTML_FIXUPS = (
