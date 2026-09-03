@@ -243,7 +243,14 @@ in vec2 v_uv;
 uniform sampler2D tex;
 out vec4 fragColor;
 void main() {
-    fragColor = texture(tex, v_uv);
+    vec4 c = texture(tex, v_uv);
+    // A label's texture is mostly empty -- the glyphs cover a fraction of
+    // the quad. Skipping those texels outright is cheaper than blending
+    // nothing over the framebuffer. What actually keeps a label from
+    // cutting a hole in the ghost/highlight passes behind it is the depth
+    // mask, not this; see _render_axis_labels.
+    if (c.a < 0.01) discard;
+    fragColor = c;
 }
 """
 
@@ -1701,6 +1708,17 @@ class SceneRenderer:
         perp_axis = [1, 0, 1]  # must match _render_axes
 
         self._ctx.enable(mgl.BLEND)
+        # Depth TEST stays on, so a label is still hidden behind solid
+        # geometry -- but it writes no depth of its own. A label is a
+        # rectangular billboard with a mostly empty texture and nothing
+        # behind it should ever be occluded by the empty part; the ghost (%)
+        # and highlight (#) passes run after this one and were being
+        # depth-rejected across the whole quad, leaving a crisp rectangle of
+        # background in a see-through body wherever a number sat in front of
+        # it. Discarding empty texels (see _LABEL_FRAG) is not enough on its
+        # own: an antialiased edge texel is faint but not empty, so it still
+        # wrote depth and still cut its own pixel out.
+        self._active_fbo.depth_mask = False
         self._label_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         self._label_prog["tex"].value = 0
 
@@ -1720,6 +1738,7 @@ class SceneRenderer:
             self._label_prog["half_size"].write(np.array([half_w, half_h], dtype=np.float32).tobytes())
             self._label_quad_vao.render(mgl.TRIANGLE_FAN)
 
+        self._active_fbo.depth_mask = True
         self._ctx.disable(mgl.BLEND)
 
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
