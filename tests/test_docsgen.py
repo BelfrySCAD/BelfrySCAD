@@ -1514,3 +1514,53 @@ def test_the_html_docsgen_really_emits_still_becomes_markdown():
     out = markdown_for_qt('<a href="Topics">Topics</a> and <code>cube(1)</code>')
     assert "[Topics](Topics)" in out and "`cube(1)`" in out
     assert "&lt;a href" not in out
+
+
+# ---------------------------------------------------------------------------
+# Inline markup in an alt text duplicates the image (Qt's markdown parser)
+# ---------------------------------------------------------------------------
+
+def _image_fragments(markdown_src):
+    """How many image fragments Qt actually puts in the document."""
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.docsgen.preview import markdown_for_qt
+
+    doc = QTextDocument()
+    doc.setMarkdown(markdown_for_qt(markdown_src), QTextDocument.MarkdownDialectGitHub)
+    n = 0
+    block = doc.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid() and frag.charFormat().isImageFormat():
+                n += 1
+            it += 1
+        block = block.next()
+    return n
+
+
+@pytest.mark.parametrize("alt", [
+    "move_copies() Example 1",                      # plain
+    "ball\\_bearing() Example 1",                   # GitHub underscore escape
+    "Adaptive Children Using `$` Variables Fig 1.1",  # a code span
+    "a `x` b `y` c",                                # two code spans
+    "a **bold** c",                                 # bold
+    "vnf\\_vertex\\_array() Example 1",              # two escaped underscores
+])
+def test_an_image_appears_once_whatever_markup_its_alt_carries(alt):
+    """Qt emits one copy of the image per inline-markup fragment of the alt:
+    one code span gave three copies of every Figure in distributors.scad."""
+    src = f'<img align="left" alt="{alt}" src="images/x.png" width="320">'
+    assert _image_fragments(src) == 1
+
+
+def test_only_backslash_and_backtick_come_out_of_an_alt():
+    """`_` and `*` stay: they are part of real names, and stripping them
+    turned `ball\\_bearing()` into `ballbearing()`. An underscore inside a
+    word is not emphasis in CommonMark, so keeping it is safe too."""
+    from belfryscad.docsgen.preview import markdown_for_qt
+
+    out = markdown_for_qt(
+        '<img align="left" alt="Using `$` in vnf\\_vertex\\_array()" src="images/x.png">')
+    assert out.strip() == "![Using $ in vnf_vertex_array()](images/x.png)"
