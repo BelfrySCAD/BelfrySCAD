@@ -1457,3 +1457,60 @@ def test_a_progress_bar_replaces_the_ellipsis_rather_than_joining_it():
 
     write_rendering_text(doc, targets, dots=2)
     assert doc.begin().text() == "Rendering Example 8" + _ELLIPSIS[2]
+
+
+# ---------------------------------------------------------------------------
+# Literal `<...>` in prose (QTextDocument.setMarkdown passes HTML through)
+# ---------------------------------------------------------------------------
+
+def test_tag_shaped_text_is_escaped_so_qt_shows_it():
+    from belfryscad.docsgen.preview import escape_stray_angle_brackets as esc
+
+    assert esc("a vector <x,y,z> here") == "a vector &lt;x,y,z> here"
+    assert esc('get "edge<i>" back') == 'get "edge&lt;i>" back'
+
+
+def test_the_escaper_leaves_code_and_autolinks_alone():
+    """Qt already renders code spans literally, and in an autolink the
+    angle brackets ARE the syntax."""
+    from belfryscad.docsgen.preview import escape_stray_angle_brackets as esc
+
+    assert esc("`if (a<b) x=1;`") == "`if (a<b) x=1;`"
+    assert (esc("see <https://example.com/page> now")
+            == "see <https://example.com/page> now")
+    assert esc("mail <mailto:a@b.com>") == "mail <mailto:a@b.com>"
+    # ...but only a real one: a stray `<` inside is not autolink syntax, so
+    # the whole thing is prose and gets escaped.
+    assert esc("<https://x.com/a<b>") == "&lt;https://x.com/a&lt;b>"
+    assert esc("    indented <code>") == "    indented <code>"
+    fenced = "```\nif (a<b) { cube(<1,2,3>); }\n```"
+    assert esc(fenced) == fenced
+
+
+def test_real_bosl2_prose_survives_the_round_trip():
+    """Both lines lost text before this: `screws.scad`'s drive= paragraph
+    ended at `or "t`, and `constants.scad`'s EDGE() sentence ran two
+    sentences together with the middle missing."""
+    from PySide6.QtGui import QTextDocument
+    from belfryscad.docsgen.preview import markdown_for_qt
+
+    for src in (
+        'Use `EDGE(i)` to get "edge<i>".  Use `EDGE(TOP,i)` to get "top_edge<i>" and more.',
+        'or "t<size>" (for Torx at a specified size, e.g. "t20").  If you have no head '
+        'but still give a drive type you will get a set screw.',
+    ):
+        doc = QTextDocument()
+        doc.setMarkdown(markdown_for_qt(src), QTextDocument.MarkdownDialectGitHub)
+        shown = doc.toPlainText().strip()
+        # Backticks are consumed by inline-code rendering; nothing else may be.
+        assert shown == src.replace("`", ""), shown
+
+
+def test_the_html_docsgen_really_emits_still_becomes_markdown():
+    """The escaper runs after `_HTML_FIXUPS`, which is what makes it safe --
+    if it ran first it would freeze real tags into literal text."""
+    from belfryscad.docsgen.preview import markdown_for_qt
+
+    out = markdown_for_qt('<a href="Topics">Topics</a> and <code>cube(1)</code>')
+    assert "[Topics](Topics)" in out and "`cube(1)`" in out
+    assert "&lt;a href" not in out

@@ -406,6 +406,24 @@ difference between 5104 and 5105 of BOSL2's 5109 intra-file links
 resolving; the last few point at headings that do not exist, and are
 broken on the published wiki too.
 
+**Literal `<...>` in prose is escaped.** `QTextDocument.setMarkdown` passes
+inline HTML straight through, so a tag-shaped `<size>` in a Description is
+parsed as an unknown element: it vanishes, and so does everything after it,
+waiting for a close tag that never comes. Real damage, not a hypothetical --
+`screws.scad`'s `drive=` paragraph ended at `or "t`, losing the whole
+sentence after `"t<size>"`, and `constants.scad`'s `EDGE()` description ran
+two sentences together with the middle gone.
+
+`escape_stray_angle_brackets` turns the remaining `<` into `&lt;`. It runs
+**after** `_HTML_FIXUPS`, and that ordering is what makes it safe: the real
+HTML docsgen emits (`<img>`, `<a>`, `<code>`, `<br>`, `<abbr>`, `<sup>`) has
+already been rewritten as markdown by then, so whatever `<` is left is text
+the author typed. Code spans, fenced blocks and indented blocks are skipped
+(Qt already renders those literally) and so are autolinks like
+`<https://example.com>`, where the brackets are the syntax. Only `<` is
+touched: a bare `>` is harmless in text, and escaping it would break
+blockquotes.
+
 **The status line counts the images up.** A "render all" over a big file
 is minutes of work, and the pane used to say "Building preview…" for the
 whole of it. `process_requests` now resolves its selection up front -- so
