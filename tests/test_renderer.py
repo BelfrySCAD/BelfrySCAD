@@ -577,3 +577,34 @@ class TestCameraClipPlanes:
             point = np.array([0.0, 0.0, z])
             depth = float(np.dot(point - eye, view_dir))
             assert near < depth < far, f"z={z} at depth={depth} falls outside [{near}, {far}]"
+
+
+def test_frame_bounds_matches_the_reference_view_all():
+    """`radius / sin(fov/2)`, the same formula as OpenSCAD's Camera::viewAll.
+
+    It was `radius / tan(fov/2) * 1.1`, which sits `1.1 * cos(fov/2)` — 7.9%
+    at the default 22.5 fov — further out, so every `--viewall` docs image
+    came out about 7% smaller than the published one.
+    """
+    from belfryscad.engine.renderer import Camera
+
+    cam = Camera()
+    bb_min = np.array([-10.0, -20.0, -1.0])
+    bb_max = np.array([10.0, 20.0, 1.0])
+    cam.frame_bounds(bb_min, bb_max)
+
+    radius = float(np.linalg.norm(bb_max - bb_min) / 2)
+    assert cam.distance == approx(radius / math.sin(math.radians(cam.fov / 2)))
+    # The target is the bbox centre, which is what makes viewAll's
+    # centre-to-target term zero.
+    assert cam.target == approx(np.array([0.0, 0.0, 0.0]))
+
+
+def test_frame_bounds_never_returns_a_degenerate_distance():
+    """A single point has zero radius; the camera still needs somewhere to
+    stand."""
+    from belfryscad.engine.renderer import Camera
+
+    cam = Camera()
+    cam.frame_bounds(np.zeros(3), np.zeros(3))
+    assert cam.distance >= 1.0
