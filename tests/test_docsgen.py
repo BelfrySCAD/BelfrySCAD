@@ -1564,3 +1564,52 @@ def test_only_backslash_and_backtick_come_out_of_an_alt():
     out = markdown_for_qt(
         '<img align="left" alt="Using `$` in vnf\\_vertex\\_array()" src="images/x.png">')
     assert out.strip() == "![Using $ in vnf_vertex_array()](images/x.png)"
+
+
+# ---------------------------------------------------------------------------
+# Cross-file image references (an image another source file owns)
+# ---------------------------------------------------------------------------
+
+def test_an_image_another_file_owns_is_labelled_not_offered_for_render():
+    """BOSL2's masks.scad hand-writes
+    `![Types of Roundovers](images/rounding/figure_1_1.png)` in four doc
+    comments. Rendering masks.scad alone can never produce those, and the
+    render link for them was a silent no-op -- the click selected no
+    ImageRequest, nothing rendered, nothing errored.
+    """
+    from belfryscad.window.docs_pane import placeholder_markdown
+
+    md = ("![Types of Roundovers](images/rounding/figure_1_1.png)\n\n"
+          "![mask2d_roundover() Example 1](images/masks/mask2d_roundover.png)\n")
+    out, pending = placeholder_markdown(md, "/nonexistent", "images/masks/")
+
+    assert "\U0001f517 Types of Roundovers (from rounding.scad)" in out
+    assert "images/rounding" not in out, "no dead link to another file's image"
+    # This file's own image is still click-to-render.
+    assert pending == ["images/masks/mask2d_roundover.png"]
+    assert "images/masks/mask2d_roundover.png" in out
+
+
+def test_without_an_own_images_dir_every_missing_image_is_still_offered():
+    """The parameter is optional; omitting it keeps the old behaviour, which
+    is what the other callers and tests rely on."""
+    from belfryscad.window.docs_pane import placeholder_markdown
+
+    md = "![A](images/rounding/figure_1_1.png)\n"
+    out, pending = placeholder_markdown(md, "/nonexistent")
+    assert pending == ["images/rounding/figure_1_1.png"]
+    assert "bfsrender:" in out
+
+
+def test_an_image_already_on_disk_is_left_alone_whoever_owns_it(tmp_path):
+    """A full-library build has the other file's figure on disk -- then it is
+    a real image and must render as one, not a label."""
+    from belfryscad.window.docs_pane import placeholder_markdown
+
+    img = tmp_path / "images" / "rounding" / "figure_1_1.png"
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"x")
+    md = "![Types of Roundovers](images/rounding/figure_1_1.png)\n"
+    out, pending = placeholder_markdown(md, str(tmp_path), "images/masks/")
+    assert out.strip() == md.strip()
+    assert pending == []
