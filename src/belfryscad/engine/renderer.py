@@ -535,10 +535,25 @@ class Camera:
         return right_eye, left_eye  # left panel = right eye (cross-eye)
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray):
+        """Fit the bounding sphere, the way the reference's own viewAll does.
+
+        `radius / sin(fov/2)` is the exact distance at which a sphere of that
+        radius fills the view cone -- no fudge factor needed, and `sin` is
+        already more generous than `tan` (which fits only the sphere's centre
+        plane). This was `radius / tan(fov/2) * 1.1`, which sits
+        `1.1 * cos(fov/2)` = 7.9% further out at the default 22.5 fov, so
+        every `--viewall` docs image came out 7% smaller than the published
+        one. Measured against OpenSCAD before the change: 0.928 on two
+        different examples, against the 1/1.0789 this predicts.
+
+        Camera::viewAll also adds the distance from the camera target to the
+        bbox centre, which is zero here -- `target` is set to that centre on
+        the line above, exactly as its `autocenter` branch does.
+        """
         center = (bb_min + bb_max) / 2
         radius = np.linalg.norm(bb_max - bb_min) / 2
         self.target = center.astype(np.float32)
-        self.distance = max(radius / math.tan(math.radians(self.fov / 2)) * 1.1, 1.0)
+        self.distance = max(radius / math.sin(math.radians(self.fov / 2)), 1.0)
 
 
 def _axis_extent(camera: Camera) -> float:
