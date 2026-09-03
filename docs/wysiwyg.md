@@ -46,6 +46,31 @@ the target without changing scale, and it fires a great many events.
 
 **Outer-ring roll**: within Shift+drag, if the drag's current mouse position falls in the outer 20% of the viewport (by radial distance from center, normalized against the inscribed circle — `Viewport._outer_ring_roll_delta_deg`), the drag rolls the view around the target→camera axis like turning a dial rim instead of tilting it: `Camera.roll` changes by the mouse's actual angular sweep around the viewport center, 1:1, in whichever direction makes the on-screen content spin the same way the mouse is dragged (clockwise drag → clockwise-looking roll, from the viewer's own point of view — note this is the *opposite* sign of `Camera.roll` itself, since increasing `roll` rotates the *up vector* clockwise around the view axis, which makes the rendered scene appear to rotate counterclockwise). Falling back to the ordinary trackball tilt inside the inner 80% keeps a single Shift+drag able to both tilt and roll depending on where on the rim you grab it.
 
+## Axis scale labels
+
+`_render_axis_labels` draws each number as a textured billboard quad. The
+pass keeps the depth **test** on — a label behind solid geometry is still
+hidden by it — but turns the depth **mask** off.
+
+That matters because a label's texture is mostly empty: the glyphs cover a
+fraction of the quad. Blending hid the empty texels, but they still wrote
+depth, and this pass runs *before* the background-ghost (`%`) and highlight
+(`#`) passes. The whole rectangle therefore punched a depth hole those later
+passes were rejected from, so a see-through body came out with a crisp
+rectangle of background wherever a number sat in front of it — reported
+against BOSL2's `highlight()` example, whose pink cube was cut open by the
+scale numbers over it.
+
+Discarding empty texels in `_LABEL_FRAG` is not enough on its own: an
+antialiased edge texel is faint but not empty, so it still wrote depth and
+still cut its own pixel out. Six pixels survived that way, which is what
+sent the fix to the depth mask instead. The discard stays because skipping
+empty texels is cheaper than blending nothing.
+
+`test_headless_render.py` renders the same `#` body twice, with and without
+scale labels, and fails on any pixel that is body without them and
+background with them.
+
 ## Orientation cube
 
 A 92 px chamfered cube parked in the viewport's top-right corner (`window/orientation_cube.py`, `OrientationCube`; created only when `Viewport(orientation_cube=True)`, which is the main window — the data-viewer preview viewports leave it off). It mirrors the camera's orientation, including roll, and offers 26 clickable patches: 6 face squares labelled `X+`/`X-`/`Y+`/`Y-`/`Z+`/`Z-`, 12 edge bevels and 8 corner bevels. Clicking one turns it to face the viewer — an edge brings both its faces obliquely into view, a corner all three. `+X`/`+Y`/`+Z` are tinted with the same red/green/blue the axes use, mixed 55% toward the neutral face grey so the label still reads; the negative faces stay grey, mirroring how the axes only colour their positive halves.

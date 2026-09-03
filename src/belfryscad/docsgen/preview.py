@@ -253,6 +253,54 @@ _HTML_FIXUPS = (
 )
 
 
+#: A markdown autolink -- `<https://example.com>`, `<mailto:x@y>`. Left
+#: alone by the escaper below, since the angle brackets ARE the syntax.
+_AUTOLINK = re.compile(r"<[a-zA-Z][a-zA-Z0-9+.-]*:[^<>\s]*>")
+
+
+def escape_stray_angle_brackets(markdown: str) -> str:
+    """`<` that is not markup becomes `&lt;`, so Qt shows it.
+
+    QTextDocument.setMarkdown passes inline HTML straight through, so a
+    literal `<size>` in prose is parsed as an unknown tag: it vanishes, and
+    so does everything after it until a matching close that never comes. A
+    BOSL2 Description saying "the vector <x,y,z>" lost the rest of its
+    sentence.
+
+    Runs AFTER `_HTML_FIXUPS`, which is what makes this safe -- the real
+    HTML docsgen emits (`<img>`, `<a>`, `<code>`, `<br>`, `<abbr>`, `<sup>`)
+    has already been rewritten as markdown by then, so whatever `<` is left
+    is text the author typed. Code spans and fenced blocks are skipped
+    because Qt already renders those literally, and autolinks because there
+    the brackets are syntax.
+    """
+    out = []
+    fenced = False
+    for line in markdown.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            out.append(line)
+            continue
+        if fenced or line.startswith("    "):
+            out.append(line)          # fenced or indented code: verbatim
+            continue
+        parts = []
+        for part in re.split(r"(`+[^`]*`+)", line):
+            if part.startswith("`"):
+                parts.append(part)
+                continue
+            kept = []
+            pos = 0
+            for m in _AUTOLINK.finditer(part):
+                kept.append(part[pos:m.start()].replace("<", "&lt;"))
+                kept.append(m.group(0))
+                pos = m.end()
+            kept.append(part[pos:].replace("<", "&lt;"))
+            parts.append("".join(kept))
+        out.append("".join(parts))
+    return "\n".join(out)
+
+
 #: A pipe-table's separator row: dashes, colons, pipes and spaces, nothing
 #: else. What tells a table apart from an ordinary line that has a `|` in it.
 _TABLE_SEPARATOR = re.compile(r"^[-:| ]*\|[-:| ]*$")
@@ -303,5 +351,7 @@ def markdown_for_qt(markdown: str) -> str:
         out = re.sub(pattern, replacement, out, flags=re.S)
     # Pandoc-style fence attributes confuse Qt's info-string handling.
     out = out.replace("``` {.C linenos=True}", "```")
+    # After the fixups, so real HTML has already become markdown.
+    out = escape_stray_angle_brackets(out)
     out = render_math(out)
     return collapse_table_spaces(out.replace("&nbsp;", " "))

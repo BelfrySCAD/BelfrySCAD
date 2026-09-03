@@ -272,3 +272,46 @@ class TestRenderPngAnimation:
         src.write_text("cube(1);\n")
         code = render_png_animation(str(src), str(tmp_path / "out.png"), 0)
         assert code == 1
+
+
+@needs_gl
+def test_axis_labels_do_not_punch_holes_in_a_see_through_body(tmp_path):
+    """A `#` body must not lose rectangles where a scale label sits.
+
+    An axis label is a rectangular billboard whose texture is mostly empty.
+    Blending hid the empty texels, but they still wrote depth -- and the
+    label pass runs before the ghost/highlight passes, so the whole quad
+    punched a depth hole those passes were then rejected from. The
+    see-through cube came out with a crisp rectangle of background wherever
+    a number sat in front of it.
+
+    Rendered twice, with and without the scale labels: any pixel that is
+    body without labels and background with them is such a hole.
+    """
+    scad = tmp_path / "hl.scad"
+    scad.write_text("#cube(20, center=true);\n")
+    common = dict(imgsize="240,200", camera="0,0,0,55,0,25,90",
+                   colorscheme="Cornfield", quiet=True)
+
+    plain = tmp_path / "plain.png"
+    labelled = tmp_path / "labelled.png"
+    assert render_png(str(scad), str(plain), view="axes", **common) == 0
+    assert render_png(str(scad), str(labelled), view="axes,scales", **common) == 0
+
+    w, h, a = _read_png(str(plain))
+    w2, h2, b = _read_png(str(labelled))
+    assert (w, h) == (w2, h2)
+
+    bg = _pixel(w, h, a, 2, 2)[:3]          # the colour scheme's background
+
+    def is_bg(px):
+        return all(abs(px[i] - bg[i]) <= 6 for i in range(3))
+
+    holes = 0
+    for y in range(h):
+        for x in range(w):
+            was_body = not is_bg(_pixel(w, h, a, x, y)[:3])
+            now_bg = is_bg(_pixel(w, h, b, x, y)[:3])
+            if was_body and now_bg:
+                holes += 1
+    assert holes == 0, f"{holes} pixels of the see-through body were erased by labels"
