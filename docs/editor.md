@@ -20,6 +20,27 @@ Parse errors get a squiggly underline at the error location via `QTextCharFormat
 - `_find_selections` is a separate extra-selection list on `CodeEditor`, inserted between `_selection_extra` and `_exec_selection` in `_refresh_extra_selections`
 - Document changes while open auto-rerun the search via `document().contentsChanged`
 
+## Minimum width
+
+`CodeEditor` never shrinks below `_MIN_COLUMNS` (40) characters of code.
+`_apply_min_width()` computes the floor as 40 character widths plus the
+chrome that takes real width regardless — the gutter (breakpoint column and
+line numbers) and the scrollbar extent, which macOS overlay scrollbars still
+reserve — and calls `setMinimumWidth`.
+
+A real `setMinimumWidth`, not a `minimumSizeHint()` override: the hint only
+guides layouts, and a direct `resize()` walks straight past it. That was
+measured, not assumed — with the hint alone, squeezing the widget to 40px
+left it at 40px, and the first version of the test was passing on a bogus
+measurement until it was pointed at `minimumWidth()` instead.
+
+Recomputed rather than baked in, from `changeEvent`'s `FontChange` (a
+preferences font change or a Cmd+[/Cmd+] zoom both move the floor) and from
+`_update_line_number_area_width` (the gutter widens by a digit as the file
+passes 10/100/1000 lines). `test_editor_min_width.py` squeezes a real
+`CodeEditor` at three font sizes and checks both that the floor holds and
+that it tracks the font.
+
 ## Indent Guides
 
 Faint vertical lines drawn inside each indented line's leading whitespace, every `_indent_size` columns, except at the column of the first non-whitespace character. The pen comes from `ui_colors.guide_colors()` (indent, column) and both overlays register `on_appearance_change` so a live light/dark switch repaints them. The values were hardcoded near-white, which measured 1.3:1 against a white page but **13.6:1** against the dark editor background (`Base` is `#171717`) — ten times louder than the same lines are in light mode, which is what "too bright in dark mode" was. The dark values are chosen to land at the same contrast ratio as the light ones rather than picked by eye; `tests/test_editor_indent.py::TestGuideColors` pins the ratios. Implemented as `_IndentGuides(QWidget)`, a transparent overlay on `CodeEditor.viewport()`, created before `_ColumnGuide` so the column guide renders on top. Repainted on `document().contentsChanged` and `set_indent_size()`.

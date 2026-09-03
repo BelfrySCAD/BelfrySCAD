@@ -3,7 +3,7 @@ import re
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
-    QMenu, QCompleter, QApplication, QMessageBox,
+    QMenu, QCompleter, QApplication, QMessageBox, QStyle,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
@@ -1159,12 +1159,47 @@ class CodeEditor(QPlainTextEdit):
 
     _BP_W = 14  # breakpoint column width (left gutter)
 
+    #: The editor never shrinks below this many characters of code. A dock
+    #: or splitter will otherwise squeeze it to nothing, and the gutter and
+    #: scrollbar keep their width regardless, so the TEXT is what vanishes
+    #: first -- long before the pane looks small enough to have stopped
+    #: being usable.
+    _MIN_COLUMNS = 40
+
+    def _apply_min_width(self):
+        """Clamp the editor to `_MIN_COLUMNS` characters of code plus chrome.
+
+        A real `setMinimumWidth`, not just a `minimumSizeHint` override: the
+        hint only guides layouts, and a direct `resize()` walks straight past
+        it (measured -- a squeeze to 40px stayed at 40px with the hint alone).
+
+        Recomputed rather than baked in, so it follows a preferences font
+        change or a Cmd+[/Cmd+] zoom. The gutter counts because it eats real
+        width (breakpoint column, line numbers) and grows with the line
+        count; the scrollbar extent counts because macOS overlay scrollbars
+        still reserve it.
+        """
+        chars = self.fontMetrics().horizontalAdvance("0") * self._MIN_COLUMNS
+        chrome = (self.line_number_area_width()
+                  + self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+                  + 2 * self.frameWidth())
+        self.setMinimumWidth(chars + chrome)
+
+    def changeEvent(self, event):
+        # A new font changes how wide 40 characters are, so the floor moves.
+        if event.type() == QEvent.Type.FontChange:
+            self._apply_min_width()
+        super().changeEvent(event)
+
     def line_number_area_width(self):
         digits = max(1, len(str(self.blockCount())))
         return 6 + self._BP_W + self.fontMetrics().horizontalAdvance("9") * digits + 14
 
     def _update_line_number_area_width(self):
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        # The gutter is part of the minimum, and widens by a digit as the
+        # file passes 10/100/1000 lines.
+        self._apply_min_width()
 
     def _update_line_number_area(self, rect, dy):
         if dy:
