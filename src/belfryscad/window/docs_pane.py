@@ -196,9 +196,19 @@ def progress_bar(fraction: float, cells: int = _BAR_CELLS) -> str:
     return _BAR_FULL * filled + _BAR_EMPTY * (cells - filled)
 
 
-def placeholder_markdown(md: str, base_dir: str) -> tuple:
+def placeholder_markdown(md: str, base_dir: str, own_images_dir: str = "") -> tuple:
     """`md` with every image that is not on disk yet replaced by a
     click-to-render link, plus the list of those images' paths.
+
+    `own_images_dir` ("images/masks/") is the directory docsgen writes THIS
+    file's images to. An image below any other one belongs to a different
+    source file -- BOSL2's masks.scad hand-writes
+    `![Types of Roundovers](images/rounding/figure_1_1.png)` in four doc
+    comments, pointing at figures rounding.scad owns. Rendering this file
+    alone can never produce those, and offering a render link for them was a
+    silent no-op: the click selected no ImageRequest, nothing rendered,
+    nothing errored, and the placeholder came back unchanged. They are
+    labelled instead, the same way a remote image is.
 
     Rendering every Example in a BOSL2 file up front costs minutes, and an
     image reference whose file does not exist renders as a broken-image
@@ -226,6 +236,10 @@ def placeholder_markdown(md: str, base_dir: str) -> tuple:
             return f"[\U0001f517 {label} (remote image)]({_REMOTE_SCHEME}:{rel})"
         if os.path.exists(os.path.join(base_dir, rel)):
             return m.group(0)
+        if own_images_dir and not rel.startswith(own_images_dir):
+            # Owned by another source file; this preview cannot make it.
+            owner = os.path.basename(os.path.dirname(rel))
+            return f"\U0001f517 {label} (from {owner}.scad)" if owner else label
         pending.append(rel)
         return f"[{_RENDER_PREFIX}{label}]({_RENDER_SCHEME}:{rel})"
 
@@ -878,8 +892,13 @@ class DocsPane(QWidget):
         self._view.setSearchPaths([preview.base_dir])
         self._view.document().setBaseUrl(QUrl.fromLocalFile(preview.base_dir + "/"))
         if preview.markdown:
+            own_images = ""
+            if self._last_source:
+                import os as _os
+                stem = _os.path.splitext(_os.path.basename(self._last_source[1]))[0]
+                own_images = f"images/{stem}/"
             md, self._pending_images = placeholder_markdown(
-                markdown_for_qt(preview.markdown), preview.base_dir)
+                markdown_for_qt(preview.markdown), preview.base_dir, own_images)
             # document().setMarkdown, not the widget's one-argument
             # setMarkdown: the GitHub dialect is what renders the argument
             # tables, and only the document-level call accepts it.
