@@ -603,6 +603,39 @@ Keeping it is safe anyway: an underscore inside a word is not emphasis in
 CommonMark. `*` has no such excuse — no OpenSCAD identifier contains one, so
 there it can only ever be markup.
 
+## Comparing a whole library against OpenSCAD
+
+`scripts/compare_docs_images.py` diffs two rendered image trees. It exists
+because eyeballing 2576 BOSL2 images is hopeless and a pixel diff is
+useless: *every* image differs, since the two renderers light and label
+things differently.
+
+    # build both trees, from inside the library checkout
+    PATH=/path/to/openscad/bin:$PATH openscad-docsgen -m   # reference
+    belfryscad --docsgen -m                                # ours
+
+    uv run python scripts/compare_docs_images.py compare REF NEW --json before.json
+    # ...make a change, rebuild ours...
+    uv run python scripts/compare_docs_images.py delta before.json after.json
+
+The metric is the IoU of each image's foreground mask, averaged over 4×4
+blocks. Lighting drops out completely — a shaded pixel is still foreground,
+so shading changes a pixel's colour but never the mask. Axes, ticks and
+label strokes mostly drop out too: they are a pixel or two wide, so the
+block average erases them while a solid body survives. A missing, moved or
+wrongly-scaled model does not drop out, which is the point.
+
+Read it with its limits in mind. A thin 2D line drawing of a few hundred
+blocks scores badly for a 2–3 pixel offset, so a low score there means
+"look at this", not "this is broken" — sort by `ref_px` when triaging. And
+an image only one side produced is the loudest signal in the report: either
+we failed to render it, or the reference did (OpenSCAD crashes on BOSL2's
+`cuboid_10` with a CGAL assertion; we render it).
+
+`delta` exits non-zero when any image moved backwards, so a fix that
+quietly breaks another image cannot pass unnoticed. That is what the run
+behind evaluator 0.55.5 was checked with: 6 images improved, 0 regressed.
+
 ## Measured against the real thing
 
 Both tools run over identical copies of BOSL2's `.scad` files, with
