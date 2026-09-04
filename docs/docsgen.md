@@ -361,6 +361,22 @@ else ever clears it. The Refresh button is the way out: it deletes the
 file's cache directory, so every image reverts to a placeholder and the
 next click renders afresh.
 
+**An image another source file owns is labelled, not offered.** BOSL2's
+`masks.scad` hand-writes `![Types of Roundovers](images/rounding/figure_1_1.png)`
+in four doc comments, pointing at figures `rounding.scad` owns. Previewing
+`masks.scad` alone can never produce those — and the click-to-render
+placeholder for them was a **silent no-op**: the click selected no
+`ImageRequest`, so nothing rendered, nothing errored, and the placeholder came
+back unchanged. That is what "four images that never get generated" looked
+like.
+
+`placeholder_markdown` takes the directory docsgen writes *this* file's
+images to (`images/<stem>/`) and labels anything below a different one
+`🔗 Types of Roundovers (from rounding.scad)`, the same treatment a remote
+image gets. An image that *is* already on disk — a full-library build, where
+`rounding.scad` really did produce it — is left as a real image whoever owns
+it.
+
 **Right-click a rendered image for "Re-render This Image."** Refresh is the
 whole-file hammer; this is the single-image version, for the common case
 where one Example is stale and rebuilding the other hundred-odd is minutes
