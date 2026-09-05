@@ -102,7 +102,11 @@ jobs:
     needs: [build-pypi]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    environment: testpypi
+    # The pypi environment, not a separate testpypi one: one environment to
+    # create, and one environment name to enter on both indexes' trusted
+    # publisher forms. Its required-reviewer rule therefore gates this job
+    # too, so a tag waits for approval twice.
+    environment: pypi
     # OIDC trusted publishing: no API token is stored anywhere. id-token
     # write is what mints the short-lived OIDC credential, and job-level
     # permissions replace the workflow-level block wholesale rather than
