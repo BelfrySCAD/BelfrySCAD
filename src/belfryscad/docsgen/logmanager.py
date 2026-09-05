@@ -85,7 +85,8 @@ class LogManager:
         src_dir = os.path.dirname(os.path.abspath(req.src_file)) or "."
         try:
             result = runner.run(req.script_lines, src_dir,
-                                hard_warnings=self.test_only)
+                                hard_warnings=self.test_only,
+                                generate=not self.test_only)
         except Exception as e:
             req.completed("FAIL")
             req.errors = [str(e)]

@@ -153,7 +153,8 @@ class ScriptRunner:
     # -- evaluation ----------------------------------------------------
 
     def run(self, script_lines, src_dir: str, params: dict | None = None,
-            hard_warnings: bool = False, preview: bool = True) -> ScriptResult:
+            hard_warnings: bool = False, preview: bool = True,
+            generate: bool = True) -> ScriptResult:
         """Evaluate `script_lines`. The script is written to a temp file in
         `src_dir` so that its own relative `include <...>` paths resolve
         the same way they would for the file being documented -- the same
@@ -202,7 +203,14 @@ class ScriptRunner:
                 # about matching what the published docs show.
                 seeded = dict(params or {})
                 seeded["$preview"] = bool(preview)
-                bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path))
+                # generate=False stops after the resolve pass. The script
+                # still runs, so every echo, warning and error it produces is
+                # reported as usual -- only the Manifold work is skipped, and
+                # `bodies` comes back empty. That is what --test-only wants,
+                # and it matches what the reference does for
+                # `openscad -o out.term`.
+                bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path),
+                                                  generate=generate)
             except RecursionError:
                 result.errors.append("ERROR: AST too deeply nested "
                                      "(recursion limit exceeded during evaluation).")
