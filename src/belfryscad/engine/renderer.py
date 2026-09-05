@@ -147,8 +147,11 @@ void main() {
 _EDGE_VERT = """
 #version 330 core
 in vec3 in_position;
-in vec3 in_color;
 uniform mat4 mvp;
+// One colour for the whole body, so it is a uniform rather than a copy per
+// vertex. That also lets it follow a live colour-theme change, which a
+// value baked into the buffer at build time could not.
+uniform vec3 edge_color;
 out vec3 v_color;
 void main() {
     gl_Position = mvp * vec4(in_position, 1.0);
@@ -164,7 +167,7 @@ void main() {
     // enough to beat depth-buffer quantisation on the coplanar line, small
     // enough that a line never shows through the far side of a solid.
     gl_Position.z -= 0.00001 * gl_Position.w;
-    v_color = in_color;
+    v_color = edge_color;
 }
 """
 
@@ -961,17 +964,15 @@ class SceneRenderer:
         T = len(v0)
         if T == 0:
             return
-        ec = np.array([0.15, 0.15, 0.15], dtype=np.float32)
         starts = np.concatenate([v0, v1, v2], axis=0)   # (3T, 3)
         ends   = np.concatenate([v1, v2, v0], axis=0)   # (3T, 3)
-        cols   = np.tile(ec, (3 * T, 1))                 # (3T, 3)
-        edge_rows = np.empty((6 * T, 6), dtype=np.float32)
-        edge_rows[0::2] = np.concatenate([starts, cols], axis=1)
-        edge_rows[1::2] = np.concatenate([ends,   cols], axis=1)
+        edge_rows = np.empty((6 * T, 3), dtype=np.float32)
+        edge_rows[0::2] = starts
+        edge_rows[1::2] = ends
         buf.edge_vbo = self._ctx.buffer(edge_rows.tobytes())
         buf.edge_vao = self._ctx.vertex_array(
             self._edge_prog,
-            [(buf.edge_vbo, "3f 3f", "in_position", "in_color")],
+            [(buf.edge_vbo, "3f", "in_position")],
         )
 
     # ------------------------------------------------------------------
@@ -1357,6 +1358,21 @@ class SceneRenderer:
                     if buf.edge_vao is not None:
                         self._edge_prog["mvp"].write(
                             (proj @ view @ buf_model).T.astype(np.float32).tobytes()
+                        )
+                        # The body's own colour, blended halfway to white --
+                        # what the reference draws edges in, measured from
+                        # it: a blue cube gets (127,127,255), a red one
+                        # (255,127,127). A single dark grey for every body
+                        # was fine on a large shape and destroyed a small
+                        # one: BOSL2's debug_vnf() labels are extruded text
+                        # a few pixels across, so the wireframe covered the
+                        # glyphs completely and every number came out black
+                        # instead of the blue and red it colours them.
+                        base = buf.color if buf.color is not None else self._default_color
+                        self._edge_prog["edge_color"].value = (
+                            0.5 + 0.5 * float(base[0]),
+                            0.5 + 0.5 * float(base[1]),
+                            0.5 + 0.5 * float(base[2]),
                         )
                         buf.edge_vao.render(mgl.LINES)
 
