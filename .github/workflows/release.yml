@@ -3,7 +3,7 @@ name: Release
 on:
   # Manually runnable so a packaging change can be proven before a tag is
   # cut. The release and publish jobs are all tag-only, so a dispatch run
-  # builds every platform plus the sdist/wheel and publishes nothing.
+  # builds Windows, Linux and the sdist/wheel, and publishes nothing.
   workflow_dispatch:
   push:
     tags:
@@ -13,30 +13,6 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          python-version: "3.12"
-
-      - run: uv sync --frozen --python 3.12
-
-      - name: Build macOS app
-        run: |
-          uv run --python 3.12 briefcase create macOS app
-          uv run --python 3.12 briefcase build macOS app
-          uv run --python 3.12 briefcase package macOS app --adhoc-sign
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: macos-arm64
-          path: dist/*.dmg
-
   build-windows:
     runs-on: windows-latest
     steps:
@@ -170,7 +146,7 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   release:
-    needs: [build-macos, build-windows, build-linux, build-pypi]
+    needs: [build-windows, build-linux, build-pypi]
     # Only a tag publishes. A workflow_dispatch run exists to prove the
     # builds still work, and must not create a release.
     if: startsWith(github.ref, 'refs/tags/')
