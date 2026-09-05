@@ -693,7 +693,13 @@ class SceneRenderer:
         self._label_quad_vbo: Optional[mgl.Buffer] = None
         self._label_quad_vao: Optional[mgl.VertexArray] = None
         self._label_tex_cache: dict[tuple[str, tuple], tuple[mgl.Texture, int, int]] = {}
-        self._label_texture_scale = 4
+        # Labels are rasterised at the size they are drawn -- 1:1 texel to
+        # pixel. Supersampling and minifying instead loses the glyph: the
+        # texture's background is transparent black, so every mip level
+        # bleeds it into the strokes and a small label fades to a grey
+        # smudge. Qt antialiases the text far better at the real size than
+        # any amount of downsampling does.
+        self._label_supersample = 1
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._mesh_prog: Optional[mgl.Program] = None
@@ -1676,16 +1682,25 @@ class SceneRenderer:
             n += 1
         return result
 
-    def _get_label_texture(self, text: str) -> tuple[mgl.Texture, int, int]:
+    def _get_label_texture(self, text: str, font_px: int) -> tuple[mgl.Texture, int, int]:
         """Return (texture, pixel_width, pixel_height) for a tick-label string, cached.
-        Cache key includes axes_color so a color-theme change invalidates it."""
-        key = (text, self.axes_color)
+
+        `font_px` is the pixel size to rasterise at -- the label's on-screen
+        height times _label_supersample. Drawing text at the size it will
+        appear is what keeps it readable: rasterising once at a fixed large
+        size and minifying to fit turns a small label into an illegible
+        smudge, however good the filtering.
+
+        Cache key includes axes_color so a color-theme change invalidates it,
+        and font_px so two sizes never collide.
+        """
+        key = (text, self.axes_color, font_px)
         cached = self._label_tex_cache.get(key)
         if cached is not None:
             return cached
 
         font = QFont("Helvetica")
-        font.setPixelSize(12 * self._label_texture_scale)
+        font.setPixelSize(font_px)
         fm = QFontMetrics(font)
         tw = max(1, fm.horizontalAdvance(text))
         th = max(1, fm.height())
@@ -1701,6 +1716,8 @@ class SceneRenderer:
         painter.end()
 
         tex = self._ctx.texture((tw, th), 4, bytes(img.constBits()))
+        # No mipmaps: the texture is already at its drawn size, and mip
+        # levels would only reintroduce the transparent-black bleed.
         tex.filter = (mgl.LINEAR, mgl.LINEAR)
 
         result = (tex, tw, th)
@@ -1716,8 +1733,22 @@ class SceneRenderer:
         view = self.camera.view_matrix()
         right = view[0, :3].astype(np.float64)
         up = view[1, :3].astype(np.float64)
-        label_scale = 3.0
-        gap = 6 * px_to_world * label_scale
+        # Axis labels were a flat 36 on-screen pixels whatever the viewport:
+        # comfortable in a window, overbearing in a small one -- 15% of the
+        # height of a 240px docsgen image, against roughly 4% in the
+        # reference's own output. Cap the height at 4% of the viewport, which
+        # leaves a viewport 900px or taller exactly as it was.
+        target_px = min(36.0, 0.04 * max(h, 1))
+        ss = self._label_supersample
+        # Quantised, so dragging a window edge does not rebuild every label
+        # texture for each pixel of resize.
+        # QFontMetrics.height() runs ~20% above the requested pixel size,
+        # and it is height() the billboard is sized from -- so ask for a
+        # size that lands there rather than one that overshoots.
+        font_px = max(6, int(round(target_px * ss / 1.2)))
+        # Gap scales with the label, so the text keeps the same distance off
+        # its tick in proportion to its own size.
+        gap = (target_px * 0.5) * px_to_world
 
         # Labels sit on the negative perpendicular side (opposite the ticks).
         perp_axis = [1, 0, 1]  # must match _render_axes
@@ -1738,9 +1769,13 @@ class SceneRenderer:
         self._label_prog["tex"].value = 0
 
         for world_pos, text, ai in self._axis_tick_world_points():
-            tex, tw, th = self._get_label_texture(text)
-            half_w = (tw / self._label_texture_scale / 2) * px_to_world * label_scale
-            half_h = (th / self._label_texture_scale / 2) * px_to_world * label_scale
+            tex, tw, th = self._get_label_texture(text, font_px)
+            # th is the font's full line height at font_px, which is a little
+            # more than font_px itself, so scale to land on target_px exactly
+            # rather than trusting the requested size.
+            fit = target_px / max(th / ss, 1e-6)
+            half_w = (tw / ss / 2) * px_to_world * fit
+            half_h = (th / ss / 2) * px_to_world * fit
 
             perp_dir = np.zeros(3, dtype=np.float64)
             perp_dir[perp_axis[ai]] = -1.0
