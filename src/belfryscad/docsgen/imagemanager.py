@@ -334,7 +334,7 @@ class ImageManager:
             # steering its own camera is exempt (those legitimately warn
             # about the override).
             last = runner.run(req.script_lines, src_dir, params, preview=req.preview,
-                              hard_warnings=False)
+                              hard_warnings=False, generate=not self.test_only)
             if no_vp:
                 last.errors.extend(_unmasked(last.warnings))
             if last.errors or last.bodies is None:
