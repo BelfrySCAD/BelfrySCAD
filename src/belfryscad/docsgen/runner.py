@@ -158,8 +158,8 @@ class ScriptRunner:
         `src_dir` so that its own relative `include <...>` paths resolve
         the same way they would for the file being documented -- the same
         reason openscad_docsgen's logmanager writes its temp file there."""
-        from openscad_cpp_evaluator import (Evaluator, EvalError, ParseError,
-                                             parse as oce_parse, to_renderable_bodies)
+        from openscad_cpp_evaluator import (Evaluator, EvalError,
+                                             to_renderable_bodies)
 
         src_dir = self.src_dir_override or src_dir
         result = ScriptResult()
@@ -179,11 +179,12 @@ class ScriptRunner:
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(script_lines) + "\n")
-            try:
-                oce_parse(path)
-            except ParseError as e:
-                result.errors.append(f"ERROR: {e}")
-                return result
+            # No oce_parse() pre-flight here. evaluate() parses the file
+            # itself, and reports a syntax error as an EvalError whose text is
+            # byte-identical to the ParseError a separate parse would raise --
+            # so the pre-flight bought nothing and parsed every example twice.
+            # It cost ~30% of the per-example time, the single largest item
+            # after the library include itself.
             evaluator = Evaluator(echo_fn=echo_fn)
             try:
                 # seed_params, not the raw dict: OpenSCAD defines $vpt/$vpr/
