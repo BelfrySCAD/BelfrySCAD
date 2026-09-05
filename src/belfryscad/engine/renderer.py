@@ -1700,6 +1700,7 @@ class SceneRenderer:
             return cached
 
         font = QFont("Helvetica")
+        font.setWeight(QFont.Weight.Light)
         font.setPixelSize(font_px)
         fm = QFontMetrics(font)
         tw = max(1, fm.horizontalAdvance(text))
