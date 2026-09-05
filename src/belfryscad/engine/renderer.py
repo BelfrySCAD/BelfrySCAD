@@ -1733,22 +1733,22 @@ class SceneRenderer:
         view = self.camera.view_matrix()
         right = view[0, :3].astype(np.float64)
         up = view[1, :3].astype(np.float64)
-        # Axis labels were a flat 36 on-screen pixels whatever the viewport:
-        # comfortable in a window, overbearing in a small one -- 15% of the
-        # height of a 240px docsgen image, against roughly 4% in the
-        # reference's own output. Cap the height at 4% of the viewport, which
-        # leaves a viewport 900px or taller exactly as it was.
-        target_px = min(36.0, 0.04 * max(h, 1))
+        # A label's on-screen height, worked out rather than assumed: the
+        # billboard is sized in world units, so it is
+        #     (th / ss / 2) * px_to_world * label_scale
+        # in world units, and dividing by the world-per-screen-pixel at the
+        # label's own depth gives 18 * (camera.distance / depth) pixels for
+        # the sizing this has always used. Note it does NOT depend on the
+        # viewport: the labels were ~21px in a 1080px window and ~21px in a
+        # 240px docsgen image, which is 2% of one and 9% of the other.
+        NOMINAL_PX = 18.0
+        max_px = 0.04 * max(h, 1)
+
+        tan_half = math.tan(math.radians(self.camera.fov / 2))
+        eye = self.camera.eye_position().astype(np.float64)
+        fwd = self.camera.target.astype(np.float64) - eye
+        fwd /= max(float(np.linalg.norm(fwd)), 1e-9)
         ss = self._label_supersample
-        # Quantised, so dragging a window edge does not rebuild every label
-        # texture for each pixel of resize.
-        # QFontMetrics.height() runs ~20% above the requested pixel size,
-        # and it is height() the billboard is sized from -- so ask for a
-        # size that lands there rather than one that overshoots.
-        font_px = max(6, int(round(target_px * ss / 1.2)))
-        # Gap scales with the label, so the text keeps the same distance off
-        # its tick in proportion to its own size.
-        gap = (target_px * 0.5) * px_to_world
 
         # Labels sit on the negative perpendicular side (opposite the ticks).
         perp_axis = [1, 0, 1]  # must match _render_axes
@@ -1769,17 +1769,32 @@ class SceneRenderer:
         self._label_prog["tex"].value = 0
 
         for world_pos, text, ai in self._axis_tick_world_points():
+            # Perspective makes a world-sized billboard shrink with depth,
+            # so each label is measured at its own: an orthographic camera
+            # has no such falloff and uses the camera distance throughout.
+            if self.camera.orthographic:
+                depth = float(self.camera.distance)
+            else:
+                depth = max(float(np.dot(world_pos - eye, fwd)), 1e-6)
+            world_per_px = 2.0 * depth * tan_half / max(h, 1)
+
+            # Cap only. Under 4% of the viewport a label keeps exactly the
+            # size it has always had, falloff and all.
+            natural_px = NOMINAL_PX * (float(self.camera.distance) / depth)
+            px = min(natural_px, max_px)
+
+            # QFontMetrics.height() runs ~20% above the requested pixel
+            # size, and height() is what the billboard is sized from.
+            font_px = max(6, int(round(px * ss / 1.2)))
             tex, tw, th = self._get_label_texture(text, font_px)
-            # th is the font's full line height at font_px, which is a little
-            # more than font_px itself, so scale to land on target_px exactly
-            # rather than trusting the requested size.
-            fit = target_px / max(th / ss, 1e-6)
-            half_w = (tw / ss / 2) * px_to_world * fit
-            half_h = (th / ss / 2) * px_to_world * fit
+            # Land on px exactly rather than trusting the requested size.
+            fit = px / max(th / ss, 1e-6)
+            half_w = (tw / ss / 2) * world_per_px * fit
+            half_h = (th / ss / 2) * world_per_px * fit
 
             perp_dir = np.zeros(3, dtype=np.float64)
             perp_dir[perp_axis[ai]] = -1.0
-            center = world_pos + perp_dir * (half_h + gap)
+            center = world_pos + perp_dir * (half_h + (px * 0.5) * world_per_px)
 
             tex.use(location=0)
             self._label_prog["center"].write(center.astype(np.float32).tobytes())
