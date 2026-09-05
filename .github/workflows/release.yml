@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     # The pypi environment, not a separate testpypi one: one environment to
     # create, and one environment name to enter on both indexes' trusted
-    # publisher forms. Its required-reviewer rule therefore gates this job
-    # too, so a tag waits for approval twice.
+    # publisher forms. The name is part of the OIDC subject PyPI matches
+    # against, so it is load-bearing even with no protection rules on it.
     environment: pypi
     # OIDC trusted publishing: no API token is stored anywhere. id-token
     # write is what mints the short-lived OIDC credential, and job-level
@@ -140,9 +140,11 @@ jobs:
     needs: [publish-testpypi]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    # Requires a "pypi" GitHub Environment with a required-reviewer rule, so
-    # this pauses for manual approval once TestPyPI has been eyeballed. A
-    # PyPI upload cannot be undone or replaced at the same version.
+    # The environment carries no protection rules today, so a tag runs
+    # straight through to PyPI with nothing to stop it -- and a PyPI upload
+    # cannot be undone or replaced at the same version. Adding a required
+    # reviewer to the environment reinstates that brake; GitHub permits
+    # approving your own deployment unless "Prevent self-review" is ticked.
     environment: pypi
     # OIDC trusted publishing -- see the comment on publish-testpypi above.
     permissions:
