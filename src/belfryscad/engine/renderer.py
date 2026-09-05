@@ -693,7 +693,13 @@ class SceneRenderer:
         self._label_quad_vbo: Optional[mgl.Buffer] = None
         self._label_quad_vao: Optional[mgl.VertexArray] = None
         self._label_tex_cache: dict[tuple[str, tuple], tuple[mgl.Texture, int, int]] = {}
-        self._label_texture_scale = 4
+        # Labels are rasterised at the size they are drawn -- 1:1 texel to
+        # pixel. Supersampling and minifying instead loses the glyph: the
+        # texture's background is transparent black, so every mip level
+        # bleeds it into the strokes and a small label fades to a grey
+        # smudge. Qt antialiases the text far better at the real size than
+        # any amount of downsampling does.
+        self._label_supersample = 1
         self._gizmo_vbo: Optional[mgl.Buffer] = None
         self._gizmo_vao: Optional[mgl.VertexArray] = None
         self._mesh_prog: Optional[mgl.Program] = None
@@ -1676,16 +1682,26 @@ class SceneRenderer:
             n += 1
         return result
 
-    def _get_label_texture(self, text: str) -> tuple[mgl.Texture, int, int]:
+    def _get_label_texture(self, text: str, font_px: int) -> tuple[mgl.Texture, int, int]:
         """Return (texture, pixel_width, pixel_height) for a tick-label string, cached.
-        Cache key includes axes_color so a color-theme change invalidates it."""
-        key = (text, self.axes_color)
+
+        `font_px` is the pixel size to rasterise at -- the label's on-screen
+        height times _label_supersample. Drawing text at the size it will
+        appear is what keeps it readable: rasterising once at a fixed large
+        size and minifying to fit turns a small label into an illegible
+        smudge, however good the filtering.
+
+        Cache key includes axes_color so a color-theme change invalidates it,
+        and font_px so two sizes never collide.
+        """
+        key = (text, self.axes_color, font_px)
         cached = self._label_tex_cache.get(key)
         if cached is not None:
             return cached
 
         font = QFont("Helvetica")
-        font.setPixelSize(12 * self._label_texture_scale)
+        font.setWeight(QFont.Weight.Light)
+        font.setPixelSize(font_px)
         fm = QFontMetrics(font)
         tw = max(1, fm.horizontalAdvance(text))
         th = max(1, fm.height())
@@ -1701,6 +1717,8 @@ class SceneRenderer:
         painter.end()
 
         tex = self._ctx.texture((tw, th), 4, bytes(img.constBits()))
+        # No mipmaps: the texture is already at its drawn size, and mip
+        # levels would only reintroduce the transparent-black bleed.
         tex.filter = (mgl.LINEAR, mgl.LINEAR)
 
         result = (tex, tw, th)
@@ -1716,8 +1734,22 @@ class SceneRenderer:
         view = self.camera.view_matrix()
         right = view[0, :3].astype(np.float64)
         up = view[1, :3].astype(np.float64)
-        label_scale = 3.0
-        gap = 6 * px_to_world * label_scale
+        # A label's on-screen height, worked out rather than assumed: the
+        # billboard is sized in world units, so it is
+        #     (th / ss / 2) * px_to_world * label_scale
+        # in world units, and dividing by the world-per-screen-pixel at the
+        # label's own depth gives 18 * (camera.distance / depth) pixels for
+        # the sizing this has always used. Note it does NOT depend on the
+        # viewport: the labels were ~21px in a 1080px window and ~21px in a
+        # 240px docsgen image, which is 2% of one and 9% of the other.
+        NOMINAL_PX = 18.0
+        max_px = 0.04 * max(h, 1)
+
+        tan_half = math.tan(math.radians(self.camera.fov / 2))
+        eye = self.camera.eye_position().astype(np.float64)
+        fwd = self.camera.target.astype(np.float64) - eye
+        fwd /= max(float(np.linalg.norm(fwd)), 1e-9)
+        ss = self._label_supersample
 
         # Labels sit on the negative perpendicular side (opposite the ticks).
         perp_axis = [1, 0, 1]  # must match _render_axes
@@ -1738,13 +1770,32 @@ class SceneRenderer:
         self._label_prog["tex"].value = 0
 
         for world_pos, text, ai in self._axis_tick_world_points():
-            tex, tw, th = self._get_label_texture(text)
-            half_w = (tw / self._label_texture_scale / 2) * px_to_world * label_scale
-            half_h = (th / self._label_texture_scale / 2) * px_to_world * label_scale
+            # Perspective makes a world-sized billboard shrink with depth,
+            # so each label is measured at its own: an orthographic camera
+            # has no such falloff and uses the camera distance throughout.
+            if self.camera.orthographic:
+                depth = float(self.camera.distance)
+            else:
+                depth = max(float(np.dot(world_pos - eye, fwd)), 1e-6)
+            world_per_px = 2.0 * depth * tan_half / max(h, 1)
+
+            # Cap only. Under 4% of the viewport a label keeps exactly the
+            # size it has always had, falloff and all.
+            natural_px = NOMINAL_PX * (float(self.camera.distance) / depth)
+            px = min(natural_px, max_px)
+
+            # QFontMetrics.height() runs ~20% above the requested pixel
+            # size, and height() is what the billboard is sized from.
+            font_px = max(6, int(round(px * ss / 1.2)))
+            tex, tw, th = self._get_label_texture(text, font_px)
+            # Land on px exactly rather than trusting the requested size.
+            fit = px / max(th / ss, 1e-6)
+            half_w = (tw / ss / 2) * world_per_px * fit
+            half_h = (th / ss / 2) * world_per_px * fit
 
             perp_dir = np.zeros(3, dtype=np.float64)
             perp_dir[perp_axis[ai]] = -1.0
-            center = world_pos + perp_dir * (half_h + gap)
+            center = world_pos + perp_dir * (half_h + (px * 0.5) * world_per_px)
 
             tex.use(location=0)
             self._label_prog["center"].write(center.astype(np.float32).tobytes())
