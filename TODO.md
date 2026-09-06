@@ -16,11 +16,12 @@
   and `MeshBuffer.original_ids`, a pure-Python `set(int(x) for x in tri_ids)`
   over every triangle. Measure those two before building anything.
 
-- Integrate openscad_test into belfryscad. It is the last thing BOSL2's CI
-  still needs the OpenSCAD binary for: `belfryscad --docsgen` and
-  `--mdimggen` now cover the `CheckDocs` and `CheckTutorials` jobs
-  (BOSL2 #2034), leaving only `Regressions`, which runs
-  `openscad-test ./scripts/run_tests.sh` against a downloaded
-  OpenSCAD 2021.01 AppImage. Replacing it would drop the AppImage,
-  `libfuse2` and the last non-BelfrySCAD evaluator from that workflow, and
-  would let the regression suite run on the same evaluator the docs do.
+- Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
+  thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
+  `--docsgen` and `--mdimggen` took over `CheckDocs` and `CheckTutorials`
+  in BOSL2 #2034. All 909 of its tests now pass on this evaluator (exit 0,
+  ~82s serial, against openscad-test's 8.3s for 226 with 5-way
+  parallelism), so the swap is a workflow edit rather than a porting job:
+  drop the AppImage, `libfuse2` and `pip install openscad-test`, and run
+  `belfryscad --test tests/*.scadtest`. Needs belfryscad with
+  openscad_cpp_evaluator >= 1.3.0.
