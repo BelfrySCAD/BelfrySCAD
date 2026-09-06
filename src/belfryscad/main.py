@@ -86,6 +86,9 @@ def _parse_args(argv):
                         help="Render the openscad code blocks in markdown "
                              "files to images. Takes over the rest of the "
                              "command line; run `belfryscad --mdimggen -h`")
+    parser.add_argument("--test", action="store_true",
+                        help="Run .scadtest files. Takes over the rest of "
+                             "the command line; run `belfryscad --test -h`")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -373,6 +376,8 @@ def _proc_name(argv) -> str:
         return PROC_NAME + "-docsgen"
     if "--mdimggen" in argv:
         return PROC_NAME + "-mdimggen"
+    if "--test" in argv:
+        return PROC_NAME + "-test"
     if "-o" in argv or "--output" in argv or any(a.startswith("--output=") for a in argv):
         return PROC_NAME + "-headless"
     return PROC_NAME
@@ -395,6 +400,10 @@ def main():
         idx = sys.argv.index("--mdimggen")
         from belfryscad.docsgen import mdimggen
         raise SystemExit(mdimggen.main(sys.argv[idx + 1:]))
+    if "--test" in sys.argv[1:]:
+        idx = sys.argv.index("--test")
+        from belfryscad import scadtest
+        raise SystemExit(scadtest.main(sys.argv[idx + 1:]))
 
     args = _parse_args(sys.argv[1:])
 
