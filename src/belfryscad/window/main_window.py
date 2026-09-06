@@ -726,6 +726,12 @@ class MainWindow(QMainWindow):
 
         # Viewport is the central widget
         self._viewport = Viewport(orientation_cube=True)
+        # Smaller than Viewport's own 400x300 floor, which is sized for the
+        # data-viewer dialogs that also use it. The main window's viewport
+        # shares a splitter with the editor and the docked panes, so its
+        # minimum is what stops the window being made small; 320x200 lets it
+        # go down to the smallest size a rendered image is ever wanted at.
+        self._viewport.setMinimumSize(320, 200)
         self._viewport.selection_changed.connect(self._on_selection_changed)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
