@@ -16,25 +16,12 @@
   and `MeshBuffer.original_ids`, a pure-Python `set(int(x) for x in tri_ids)`
   over every triangle. Measure those two before building anything.
 
-- Close the five evaluator gaps `belfryscad --test` found, so BOSL2's
-  `Regressions` job can move off the OpenSCAD binary. The runner itself is
-  done; over BOSL2's 909 tests it passes 841 in ~100s, against
-  openscad-test's 8.3s for 226 with 5-way parallelism (so ~3x faster
-  serially). openscad-test passes all 226 in the files where we fail, so
-  every one of these is ours:
-    - **61 tests** -- `str()` of a function literal. The reference prints
-      the function's own source, we print `<function-literal>`. Needs a
-      printer in the evaluator: the parser's `toString()` is
-      precedence-minimal and used in 94 places there, while OpenSCAD
-      parenthesises every binary and ternary, so neither can be reused.
-      Rules, derived from the binary: binary `(a + b)` always, even as a
-      call argument (`f((a + b))`); ternary `(c ? t : f)`; unary bare
-      (`-x`, `-(a + b)`); index/member/call/vector bare; a comprehension
-      body gets an extra wrap (`[for(i = [0 : a]) ((i + 1))]`); `let` body
-      bare; ranges spaced `[1 : 2 : 9]`.
-    - `str_strip`, `format`, `format_float` (3 tests, strings.scad)
-    - `in_list(..., idx=)` (1)
-    - `hstack`, `echo_matrix` (2)
-    - `typeof([0:NAN:INF])` should be `"invalid"` (1)
-  Fixing only the first still leaves the job unable to switch -- it is
-  five fixes, not one.
+- Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
+  thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
+  `--docsgen` and `--mdimggen` took over `CheckDocs` and `CheckTutorials`
+  in BOSL2 #2034. All 909 of its tests now pass on this evaluator (exit 0,
+  ~82s serial, against openscad-test's 8.3s for 226 with 5-way
+  parallelism), so the swap is a workflow edit rather than a porting job:
+  drop the AppImage, `libfuse2` and `pip install openscad-test`, and run
+  `belfryscad --test tests/*.scadtest`. Needs belfryscad with
+  openscad_cpp_evaluator >= 1.3.0.
