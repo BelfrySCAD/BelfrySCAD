@@ -612,6 +612,40 @@ def _axis_density(camera: Camera) -> tuple[list[bool], list[int]]:
     return end_on, stride
 
 
+def _axis_spans(L: float, seg: float) -> list[tuple[float, float]]:
+    """One axis half, 0..L, as consecutive (start, end) spans of at most
+    `seg` -- the pieces `_render_axes` draws instead of a single long line.
+
+    A single 0..L line is what the geometry is, and a GPU draws it. Apple's
+    Software Renderer does not: GitHub's macOS runners have no GPU, that is
+    what builds BOSL2's wiki images, and L is ~2.5x the camera distance, so
+    an axis' far end lands several screens outside the frustum -- the Y axis
+    in cube()'s second example reached ndc y +5.7. That renderer drops the
+    whole primitive rather than clipping it, which left an axis with no line
+    but a full set of tick marks: ticks are separate short primitives in the
+    same draw call, well inside the view, so they were drawn. Confirmed both
+    ways on a macos-latest runner.
+
+    Splitting keeps every primitive near the view, so nothing depends on how
+    a rasteriser treats a far out-of-range endpoint. It also puts an axis on
+    the same footing as its own ticks: depth interpolated across a 0..L span
+    and across a few-pixel tick disagree in the low bits where they meet,
+    the same z-fighting the XY grid avoids by drawing with depth writes off.
+
+    seg <= 0 (no sensible tick spacing to divide by) yields the single
+    0..L span, i.e. exactly the old behaviour.
+    """
+    if not (seg > 0.0) or L <= 0.0:
+        return [(0.0, L)] if L > 0.0 else []
+    spans = []
+    t = 0.0
+    while t < L - 1e-9:
+        t_next = min(t + seg, L)
+        spans.append((t, t_next))
+        t = t_next
+    return spans
+
+
 def _tick_is_drawn(k: int, major_steps: int, end_on: bool, stride: int) -> bool:
     """Whether _render_axes draws the tick at minor-spacing index k (1, 2,
     3, ...). At the hard end-on cutoff, only major ticks draw (unchanged
@@ -1515,21 +1549,18 @@ class SceneRenderer:
 
         rows: list[np.ndarray] = []
 
-        # Positive solid axes
+        # Each axis goes out as a chain of short segments -- positive in
+        # the axis colour, negative in light gray. See _axis_spans for why
+        # it is not one line.
         for i in range(3):
-            p0 = np.zeros(3, dtype=np.float32)
-            p1 = np.zeros(3, dtype=np.float32)
-            p1[i] = float(L)
-            rows.append(np.concatenate([p0, axis_colors[i]]))
-            rows.append(np.concatenate([p1, axis_colors[i]]))
-
-        # Negative axes — solid, light gray
-        for i in range(3):
-            p0 = np.zeros(3, dtype=np.float32)
-            p1 = np.zeros(3, dtype=np.float32)
-            p1[i] = -float(L)
-            rows.append(np.concatenate([p0, gray]))
-            rows.append(np.concatenate([p1, gray]))
+            for sign, color in ((1.0, axis_colors[i]), (-1.0, gray)):
+                for t0, t1 in _axis_spans(L, minor_spacing):
+                    p0 = np.zeros(3, dtype=np.float32)
+                    p1 = np.zeros(3, dtype=np.float32)
+                    p0[i] = sign * t0
+                    p1[i] = sign * t1
+                    rows.append(np.concatenate([p0, color]))
+                    rows.append(np.concatenate([p1, color]))
 
         # Suppress (and, before that, thin) minor ticks for axes nearing
         # end-on to the camera -- same helper _axis_tick_world_points uses

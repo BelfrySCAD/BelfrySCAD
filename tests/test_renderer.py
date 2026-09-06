@@ -13,7 +13,7 @@ from pytest import approx
 
 from belfryscad.engine.renderer import (
     nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
-    _axis_density, _tick_is_drawn, _axis_extent,
+    _axis_density, _tick_is_drawn, _axis_extent, _axis_spans,
 )
 
 
@@ -608,3 +608,39 @@ def test_frame_bounds_never_returns_a_degenerate_distance():
     cam = Camera()
     cam.frame_bounds(np.zeros(3), np.zeros(3))
     assert cam.distance >= 1.0
+
+
+class TestAxisSpans:
+    """`_axis_spans` splits an axis half into short pieces so no single
+    primitive reaches far outside the frustum. Apple's Software Renderer --
+    what GitHub's macOS runners use, and what builds BOSL2's wiki images --
+    drops such a primitive whole, which left cube()'s second example with a
+    Y axis that had every tick mark and no line."""
+
+    def test_covers_the_whole_axis_without_gaps_or_overlap(self):
+        spans = _axis_spans(100.0, 10.0)
+        assert spans[0][0] == 0.0
+        assert spans[-1][1] == approx(100.0)
+        for (_, end), (start, _) in zip(spans, spans[1:]):
+            assert start == approx(end)
+
+    def test_no_span_exceeds_the_tick_spacing(self):
+        # The point of the split: every piece stays near the view, on the
+        # same footing as a tick mark.
+        for L, seg in ((100.0, 10.0), (429.81, 10.0), (7.5, 2.0)):
+            assert all(end - start <= seg + 1e-9 for start, end in _axis_spans(L, seg))
+
+    def test_a_final_short_span_is_kept_rather_than_rounded_away(self):
+        # L is a camera-derived float, so it rarely lands on a tick
+        # boundary; dropping the remainder would leave the axis visibly
+        # short of its own last tick.
+        assert _axis_spans(25.0, 10.0)[-1] == approx((20.0, 25.0))
+
+    def test_falls_back_to_one_span_without_a_usable_spacing(self):
+        # Exactly the old single-line behaviour, so a degenerate spacing
+        # cannot spin the while loop forever.
+        assert _axis_spans(100.0, 0.0) == [(0.0, 100.0)]
+        assert _axis_spans(100.0, -1.0) == [(0.0, 100.0)]
+
+    def test_a_degenerate_axis_draws_nothing(self):
+        assert _axis_spans(0.0, 10.0) == []
