@@ -22,7 +22,8 @@ from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
 from belfryscad.window.docs_pane import DocsPane
-from belfryscad.window.preferences import PreferencesDialog, load_preference, pdf_export_options
+from belfryscad.window.export_options import ask_export_options, export_kwargs
+from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
@@ -2029,9 +2030,18 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        path, _ext = _resolve_export_format(path, chosen)
+        path, ext = _resolve_export_format(path, chosen)
         if self._geometry is None:
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
+            return
+        # Format options are asked HERE, not in Preferences: the format is
+        # only known once the name has been typed and the filter picked, and
+        # a setting three menus away from the command that uses it may as
+        # well not exist. Nothing is shown for a format with no options.
+        # Cancel here cancels the export -- writing a file with settings the
+        # user just backed out of would be worse than writing none.
+        options = ask_export_options(ext, self, os.path.basename(path))
+        if options is None:
             return
         try:
             # One call: the evaluator owns the split, the colour handling,
@@ -2039,12 +2049,11 @@ class MainWindow(QMainWindow):
             # problems worth surfacing. Warned rather than refused -- a
             # deliberately open surface is a legitimate export, and blocking
             # a save the user asked for would be worse than saying so.
-            split = load_preference("export/splitComponents", type_=bool)
             # The design's own name, for the PDF page: the writer has no
             # way to know it, and draws it only when asked to.
             design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
-            for problem in exporters.export_model(path, self._geometry, split_components=split,
-                                                   pdf_options=pdf_export_options(design)):
+            for problem in exporters.export_model(path, self._geometry,
+                                                   **export_kwargs(ext, options, design)):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:

@@ -219,15 +219,20 @@ def test_pdf_export_refuses_a_3d_model(tmp_path):
         exporters.export_model(str(tmp_path / "solid.pdf"), g)
 
 
-def test_pdf_preferences_build_the_option_dict():
-    """The GUI's page setup is preferences, not dialog widgets: a native
-    macOS save dialog cannot host extra controls."""
-    from belfryscad.window.preferences import pdf_export_options
+def test_pdf_dialog_answers_become_export_arguments():
+    """The export dialog's answers, turned into export_model() arguments."""
+    from belfryscad.window.export_options import export_kwargs
 
-    opts = pdf_export_options("scale-card.scad")
-    assert opts["paper-size"] in ("a6", "a5", "a4", "a3", "letter", "legal", "tabloid")
-    assert opts["orientation"] in ("portrait", "landscape", "auto")
+    answers = {
+        "export/pdfPaperSize": "letter",
+        "export/pdfOrientation": "landscape",
+        "export/pdfShowScale": True,
+        "export/pdfShowGrid": False,
+    }
+    opts = export_kwargs(".pdf", answers, "scale-card.scad")["pdf_options"]
+    assert opts["paper-size"] == "letter"
+    assert opts["orientation"] == "landscape"
     assert opts["design-filename"] == "scale-card.scad"
     assert opts["show-filename"] is True
     # No script name means nothing to draw, so the switch goes off with it.
-    assert pdf_export_options()["show-filename"] is False
+    assert export_kwargs(".pdf", answers)["pdf_options"]["show-filename"] is False

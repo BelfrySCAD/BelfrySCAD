@@ -53,8 +53,8 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
 
     `pdf_options` is the `.pdf` page setup -- paper size, orientation, the
     ruler switches -- keyed as OpenSCAD names its own `-O export-pdf/...`
-    settings. `preferences.pdf_export_options()` builds it from the saved
-    preferences.
+    settings. `window.export_options.export_kwargs()` builds it from what
+    the export dialog asked.
     """
     from openscad_cpp_evaluator import export_model as _export_model
 
