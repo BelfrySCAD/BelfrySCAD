@@ -381,7 +381,7 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
                 camera: str | None = None, autocenter: bool = False, viewall: bool = False,
                 projection: str | None = None, view: str | None = None, colorscheme: str | None = None,
                 defines: list[str] = (), quiet: bool = False, hard_warnings: bool = False,
-                backend: str | None = None, summary: str | None = None,
+                backend: str | None = None, strict_commas: bool = False, summary: str | None = None,
                 summary_file: str | None = None) -> int:
     """Parse + evaluate source_path and render a PNG screenshot to
     output_path. Returns a process exit code (0 success, 1 failure)."""
@@ -399,7 +399,7 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
         return 1
     try:
         result = _evaluate(parse_path, viewport_params_from_camera(opts.camera_spec),
-                            quiet=quiet, hard_warnings=hard_warnings)
+                            quiet=quiet, hard_warnings=hard_warnings, strict_commas=strict_commas)
     finally:
         _cleanup(tmp_path)
     if result is None:
@@ -429,7 +429,8 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
                           camera: str | None = None, autocenter: bool = False, viewall: bool = False,
                           projection: str | None = None, view: str | None = None, colorscheme: str | None = None,
                           defines: list[str] = (), animate_dir: str | None = None,
-                          quiet: bool = False, hard_warnings: bool = False, backend: str | None = None) -> int:
+                          quiet: bool = False, hard_warnings: bool = False, backend: str | None = None,
+                          strict_commas: bool = False) -> int:
     """PNG counterpart to belfryscad.headless.render_and_export_animation --
     same $t = i/steps cycle and {stem}{i:05d}.png frame naming. The camera
     is re-fit (or an explicit --camera re-applied) on every frame -- see
@@ -462,7 +463,8 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
             frame_path = dest_dir / f"{out.stem}{i:05d}.png"
             frame_params = dict(viewport_params_from_camera(opts.camera_spec))
             frame_params["$t"] = i / steps
-            result = _evaluate(parse_path, frame_params, quiet=quiet, hard_warnings=hard_warnings)
+            result = _evaluate(parse_path, frame_params, quiet=quiet, hard_warnings=hard_warnings,
+                                strict_commas=strict_commas)
             if result is None:
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)
                 ok = False

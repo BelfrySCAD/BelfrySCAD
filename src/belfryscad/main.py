@@ -40,6 +40,12 @@ def _parse_args(argv):
     parser.add_argument("--export-format", dest="export_format", metavar="FORMAT",
                          help="'asciistl' or 'binstl' -- overrides .stl export format (default binstl). "
                               "Only applies together with -o")
+    parser.add_argument("--strict-commas", dest="strict_commas", action="store_true",
+                         help="Reject a trailing comma in a call argument list or a let/for "
+                              "assignment list, as OpenSCAD 2021.01 did -- cube(1,) and "
+                              "let(x=1,), but not [2,4,] or module m(a,b,), which it accepted. "
+                              "For checking a script against that version. Only applies "
+                              "together with -o")
     parser.add_argument("--split-components", dest="split_components", action="store_true",
                          help="Give every disconnected piece its own object in the multi-object "
                               "formats (3mf, amf, obj, ply, wrl, x3d). Off by default, matching "
@@ -500,7 +506,8 @@ def main():
             from belfryscad.scad_deps import run_make_for_missing
             run_make_for_missing(args.file, args.make_cmd)
 
-        common = dict(defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings, backend=args.backend)
+        common = dict(defines=args.defines, quiet=args.quiet, hard_warnings=args.hardwarnings,
+                      backend=args.backend, strict_commas=args.strict_commas)
         if args.output.lower().endswith(".png"):
             png_common = dict(
                 common, imgsize=args.imgsize, camera=args.camera, autocenter=args.autocenter,
@@ -544,6 +551,7 @@ def main():
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
         "--split-components": args.split_components,
+        "--strict-commas": args.strict_commas,
         "--summary/--summary-file": args.summary or args.summary_file,
         "--imgsize/--camera/--autocenter/--viewall/--projection/--view/--colorscheme":
             args.camera or args.autocenter or args.viewall or args.projection or args.view or args.colorscheme,
