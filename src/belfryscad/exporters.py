@@ -33,7 +33,7 @@ def exportable(bodies):
 
 
 def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
-                 strip_slivers: bool = True) -> list:
+                 strip_slivers: bool = True, split_components: bool = False) -> list:
     """Write `geometry` to `path`; returns the warnings to surface.
 
     `geometry` is the opaque handle the evaluator stashes on itself as
@@ -44,11 +44,16 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
     Format comes from the extension unless `format` overrides it. Nothing
     here refuses to write: a deliberately open surface is a legitimate
     export, so problems come back as warnings for the caller to log.
+
+    `split_components` gives every disconnected piece its own object in the
+    multi-object formats. Off by default, which is what OpenSCAD writes;
+    turning it on used to be the only behaviour, and a model in many pieces
+    then filled a slicer's object list (issue #319).
     """
     from openscad_cpp_evaluator import export_model as _export_model
 
     return _export_model(path, geometry, format=format, ascii_stl=ascii_stl,
-                         strip_slivers=strip_slivers)
+                         strip_slivers=strip_slivers, split_components=split_components)
 
 
 def export_extensions() -> list:

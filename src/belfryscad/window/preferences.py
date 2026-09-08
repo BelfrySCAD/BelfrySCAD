@@ -65,6 +65,11 @@ _DEFAULTS = {
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
     "ai/claudeCliPath": "",   # empty -> look on PATH
+    # One object per disconnected piece in 3MF/AMF/OBJ/PLY/VRML/X3D. Off
+    # matches OpenSCAD, which writes one object however many pieces a model
+    # is in; on was the only behaviour until issue #319, where a slicer
+    # listed a multiboard tile's every hole separately.
+    "export/splitComponents": False,
 }
 
 
@@ -228,6 +233,22 @@ class PreferencesDialog(QDialog):
         vp_form.addRow("Color theme:", self._color_theme)
 
         tabs.addTab(viewport_tab, "Viewport")
+
+        # --- Export tab ---
+        export_tab = QWidget()
+        ex_form = QFormLayout(export_tab)
+        self._split_components = QCheckBox("Separate object per disconnected piece")
+        self._split_components.setChecked(
+            s.value("export/splitComponents", _DEFAULTS["export/splitComponents"], type=bool))
+        self._split_components.setToolTip(
+            "3MF, AMF, OBJ, PLY, VRML and X3D can hold several objects in one file.\n"
+            "Off (the default, and what OpenSCAD writes) keeps a model in one object\n"
+            "however many disjoint pieces it is in. On gives every piece its own,\n"
+            "which a slicer then lists separately.")
+        self._split_components.toggled.connect(
+            lambda v: self._emit("export/splitComponents", bool(v)))
+        ex_form.addRow("Multi-object formats:", self._split_components)
+        tabs.addTab(export_tab, "Export")
         tabs.tabBar().moveTab(1, 0)  # Viewport first
         tabs.setCurrentIndex(0)     # ...and selected by default
 
