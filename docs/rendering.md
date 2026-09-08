@@ -167,14 +167,42 @@ ruler is the point of the format: measuring between the 0 tick and the last
 one on a printed page is how you find out that your printer is scaling by
 99.2%.
 
-Its page setup is **Preferences ▸ Export**, not the save dialog: the native
-macOS dialog cannot host extra controls. `preferences.pdf_export_options()`
-turns those settings into the dict `export_model(pdf_options=...)` wants,
-keyed as OpenSCAD names its own `-O export-pdf/...` settings, and the CLI
-has `--pdf-paper-size`, `--pdf-orientation`, `--pdf-no-scale` and
-`--pdf-grid`. An unknown key raises rather than being quietly dropped -- a
-misspelt `papersize` would otherwise print the wrong page size with nothing
-to explain it.
+Its page setup is asked **after** the save dialog, by
+`window/export_options.py`: the format is only known once the name has been
+typed and the filter picked, and the native macOS dialog cannot host extra
+controls of its own. `export_kwargs()` turns the answers into the dict
+`export_model(pdf_options=...)` wants, keyed as OpenSCAD names its own
+`-O export-pdf/...` settings, and the CLI has `--pdf-paper-size`,
+`--pdf-orientation`, `--pdf-no-scale` and `--pdf-grid`. An unknown key
+raises rather than being quietly dropped -- a misspelt `papersize` would
+otherwise print the wrong page size with nothing to explain it.
+
+### The export options dialog
+
+These options lived in Preferences > Export first. That worked, but put
+PDF's paper size three menus away from the Export command that uses it,
+with nothing to hint the setting existed. They are now asked where they
+apply:
+
+```
+File > Export  ->  save dialog (name + format)  ->  options for THAT format  ->  write
+```
+
+`export_fields(ext)` returns the controls for a format as plain data --
+no Qt -- so what each format offers is testable without a widget, and the
+dialog only renders it. An empty list means no dialog at all (`.off`),
+which is why an export of a format with nothing to choose is still one
+click. Cancelling the options cancels the export: the file has been named
+but not written, and writing it with settings the user just backed out of
+would be worse.
+
+The `export/*` preference keys did not go away -- they are the defaults the
+dialog opens on, and every export writes its answers back, so the second
+export of a session opens on what the first one used.
+
+Two things became reachable in the process that never had a home in the
+GUI before: **ASCII STL** (previously `--export-format asciistl`, CLI only)
+and **SVG's stroke width**, which also decides the document's size.
 
 ### The geometry handle
 
