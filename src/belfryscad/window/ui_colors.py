@@ -38,6 +38,40 @@ def is_dark() -> bool:
     return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
 
 
+def syntax_colors() -> dict:
+    """Editor syntax highlighting, per theme.
+
+    The dark set is what the highlighter always used -- VS Code Dark+, near
+    enough -- and it is fine where it was meant to be read, measuring 4.50:1
+    or better against a #1E1E1E editor background. The trouble was that it
+    was used in LIGHT mode too, where the same colours run 1.81:1 to 3.71:1
+    against white: every single one below the 4.5:1 WCAG 1.4.3 minimum for
+    normal text, and most below even the 3:1 large-text floor. Reported as
+    unreadable (issue #357).
+
+    The light set is each of those colours with its hue and saturation kept
+    and only its lightness lowered, to the first value clearing 4.5:1. Same
+    palette, same relationships -- the bracket-depth ring keeps its hue
+    spacing and its distance from the unmatched-bracket red, which is the
+    one property that carries meaning here -- just dark enough to read.
+    """
+    if is_dark():
+        return {
+            "keyword": "#569CD6", "builtin": "#4EC9B0", "number": "#5A9E4A",
+            "string": "#CE9178", "comment": "#6A9955", "special_var": "#C586C0",
+            "brackets": ("#C4921C", "#59D798", "#C3ACFA", "#8BCD5C", "#54A5DE"),
+            # Nudged up from #FF2D2D, which measured 4.497:1 -- under the bar
+            # by a rounding error rather than by design.
+            "unmatched": "#FF3838",
+        }
+    return {
+        "keyword": "#2D7ABA", "builtin": "#288471", "number": "#4A823D",
+        "string": "#B16140", "comment": "#598047", "special_var": "#AD54A6",
+        "brackets": ("#956F15", "#208653", "#8455F5", "#4E8428", "#237BB8"),
+        "unmatched": "#EC0000",
+    }
+
+
 def gutter_colors() -> tuple[str, str]:
     """(background, line-number text) for the editor's line number area."""
     return ("#3A3A3A", "#FFFFFF") if is_dark() else ("#CCCCCC", "#000000")

@@ -119,3 +119,65 @@ def test_no_application_falls_back_to_light(monkeypatch):
     monkeypatch.setattr(ui_colors.QApplication, "instance", staticmethod(lambda: None))
     assert ui_colors.is_dark() is False
     assert ui_colors.text_color() == "#000000"
+
+
+# --- syntax highlighting must be readable on its own background -------
+# Issue #357: the highlighter used one palette -- VS Code Dark+, near enough
+# -- in BOTH appearances. On dark it is fine; on white every colour in it ran
+# between 1.81:1 and 3.71:1, i.e. all twelve below the 4.5:1 WCAG 1.4.3
+# minimum for normal text and most below even the 3:1 large-text floor.
+def _syntax_flat(colors: dict) -> list[tuple[str, str]]:
+    """(name, #rrggbb) for every colour in the palette, brackets unrolled."""
+    out = []
+    for key, value in colors.items():
+        if isinstance(value, tuple):
+            out += [(f"{key}[{i}]", c) for i, c in enumerate(value)]
+        else:
+            out.append((key, value))
+    return out
+
+
+@pytest.mark.parametrize("dark, background", [(False, "#FFFFFF"), (True, "#1E1E1E")])
+def test_syntax_colors_meet_wcag_on_their_own_background(appearance, dark, background):
+    appearance(dark)
+    for name, colour in _syntax_flat(ui_colors.syntax_colors()):
+        assert _contrast(colour, background) >= 4.5, (
+            f"{name} {colour} is {_contrast(colour, background):.2f}:1 on {background}"
+        )
+
+
+def test_syntax_dark_mode_keeps_the_palette_it_was_designed_for(appearance):
+    # Only light mode was wrong, so dark must not drift -- these are the
+    # values the highlighter has always used.
+    appearance(True)
+    c = ui_colors.syntax_colors()
+    assert c["keyword"] == "#569CD6"
+    assert c["string"] == "#CE9178"
+    assert c["comment"] == "#6A9955"
+
+
+def test_syntax_light_mode_keeps_every_hue(appearance):
+    """The light set is the dark set darkened, not a different palette.
+
+    Hue carries meaning here: the five bracket-depth colours are spaced
+    round the wheel and held away from the unmatched-bracket red, so a
+    "fix" that reached for arbitrary darker colours would quietly break
+    the one property the ring has.
+    """
+    from PySide6.QtGui import QColor
+
+    appearance(True)
+    dark = dict(_syntax_flat(ui_colors.syntax_colors()))
+    appearance(False)
+    light = dict(_syntax_flat(ui_colors.syntax_colors()))
+
+    for name, dark_hex in dark.items():
+        if name == "unmatched":
+            continue  # nudged for contrast, not darkened; see syntax_colors()
+        dh = QColor(dark_hex).hue()
+        lh = QColor(light[name]).hue()
+        delta = min(abs(dh - lh), 360 - abs(dh - lh))
+        assert delta <= 4, f"{name} moved hue {dh} -> {lh}"
+        assert QColor(light[name]).lightness() < QColor(dark_hex).lightness(), (
+            f"{name} light variant is not darker"
+        )
