@@ -102,7 +102,7 @@ def _print_error(msg) -> None:
 
 
 def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_warnings: bool = False,
-               source_path: str | None = None):
+               source_path: str | None = None, strict_commas: bool = False):
     """Parse + evaluate parse_path.
 
     Returns (bodies, elapsed_seconds, geometry) on success, or None after
@@ -132,7 +132,11 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
         # was run. Seeded from source_path when given, since parse_path may
         # be a temp file built for -D/preset injection.
         params = seed_params(viewport_params, source_path or parse_path)
-        bodies, _id_to_node = evaluator.evaluate(parse_path, params)
+        # The _oce_parse() pre-check above is deliberately NOT strict: it
+        # exists to report an ordinary syntax error early, and a strict-comma
+        # rejection is reported from here instead, with the same caret
+        # diagnostic the parser produces either way.
+        bodies, _id_to_node = evaluator.evaluate(parse_path, params, strict_commas=strict_commas)
     except RecursionError:
         _print_error("AST too deeply nested (recursion limit exceeded during evaluation).")
         return None
@@ -261,7 +265,7 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
                        quiet: bool = False, hard_warnings: bool = False,
                        export_format: str | None = None, backend: str | None = None,
                        summary: str | None = None, summary_file: str | None = None,
-                       split_components: bool = False) -> int:
+                       split_components: bool = False, strict_commas: bool = False) -> int:
     """Parse + evaluate source_path (with any -D overrides applied) and
     export the result to output_path. Returns a process exit code (0
     success, 1 failure); never raises for an ordinary parse/eval/export
@@ -283,6 +287,7 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
         return 1
     try:
         result = _evaluate(parse_path, {}, quiet=quiet, hard_warnings=hard_warnings,
+                            strict_commas=strict_commas,
                             source_path=source_path)
     finally:
         _cleanup(tmp_path)
@@ -304,7 +309,7 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
                                  defines: list[str] = (), animate_dir: str | None = None,
                                  quiet: bool = False, hard_warnings: bool = False,
                                  export_format: str | None = None, backend: str | None = None,
-                                 split_components: bool = False) -> int:
+                                 split_components: bool = False, strict_commas: bool = False) -> int:
     """Renders `steps` animation frames ($t = i/steps for i in 0..steps-1,
     same cycle AnimatePane.current_t() uses) and exports each to its own
     numbered file -- {stem}{i:05d}{ext}, 5-digit zero-padded regardless of
@@ -346,6 +351,7 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
         for i in range(steps):
             frame_path = dest_dir / f"{out.stem}{i:05d}{ext}"
             result = _evaluate(parse_path, {"$t": i / steps}, quiet=quiet, hard_warnings=hard_warnings,
+                                strict_commas=strict_commas,
                                 source_path=source_path)
             if result is None:
                 print(f"belfryscad: frame {i}: render failed", file=sys.stderr)

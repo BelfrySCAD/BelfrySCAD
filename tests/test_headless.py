@@ -342,3 +342,55 @@ class TestSummary:
         assert code == 0
         data = json.loads(summary_path.read_text())
         assert data["area"] == pytest.approx(2 * (10 * 5 + 10 * 3 + 5 * 3))
+
+
+class TestStrictCommas:
+    """--strict-commas: a trailing comma in a call argument list or a let/for
+    assignment list is a syntax error, as OpenSCAD 2021.01 had it (issue #362).
+
+    Deliberately NOT every trailing comma. Measured against 2021.01 itself,
+    it accepted one in a list literal, a list comprehension and a parameter
+    declaration, so rejecting those would fail files it loads happily.
+    """
+
+    REJECTED = [
+        "cube(1,);",
+        "y = let(x = 1,) x; cube(y);",
+        "for (i = [0:1],) cube(1);",
+    ]
+    ACCEPTED = [
+        "a = [2, 4,]; cube(a[0]);",
+        "module m(a, b,) { cube(a); } m(1, 2);",
+        "a = [for (i = [0:1]) i,]; cube(len(a));",
+    ]
+
+    def _run(self, tmp_path, src, strict):
+        from belfryscad.headless import render_and_export
+
+        f = tmp_path / "s.scad"
+        f.write_text(src)
+        return render_and_export(str(f), str(tmp_path / "o.stl"), quiet=True,
+                                 strict_commas=strict)
+
+    @pytest.mark.parametrize("src", REJECTED)
+    def test_rejected_forms_fail_under_the_flag(self, tmp_path, src):
+        assert self._run(tmp_path, src, strict=True) == 1, src
+
+    @pytest.mark.parametrize("src", REJECTED)
+    def test_the_same_forms_pass_without_it(self, tmp_path, src):
+        """Opt-in: current OpenSCAD accepts all of these, and so must we."""
+        assert self._run(tmp_path, src, strict=False) == 0, src
+
+    @pytest.mark.parametrize("src", ACCEPTED)
+    def test_what_2021_01_accepted_still_passes(self, tmp_path, src):
+        assert self._run(tmp_path, src, strict=True) == 0, src
+
+    def test_the_error_points_at_the_comma(self, tmp_path, capsys):
+        f = tmp_path / "s.scad"
+        f.write_text("cube(1,);\n")
+        from belfryscad.headless import render_and_export
+
+        render_and_export(str(f), str(tmp_path / "o.stl"), quiet=True, strict_commas=True)
+        err = capsys.readouterr().err
+        assert "trailing comma in argument list" in err, err
+        assert "line 1, column 7" in err, err
