@@ -167,3 +167,25 @@ def test_cli_passes_the_flag_through(tmp_path):
         assert headless.render_and_export(str(src), str(out), quiet=True,
                                           split_components=split) == 0
         assert _objects_in(out) == expected
+
+
+# --- SVG: the one 2D format (#367) ------------------------------------
+def test_svg_export_writes_a_2d_model_at_true_size(tmp_path):
+    """The boundary check the rest of this file makes for the mesh formats.
+    The bytes themselves are pinned against real OpenSCAD in the
+    evaluator's own suite."""
+    g = geometry_for("square([70.4, 25.3]);", tmp_path)
+    out = tmp_path / "flat.svg"
+    assert exporters.export_model(str(out), g) == []  # no mesh checks apply
+    text = out.read_text()
+    # mm, 1:1 -- that is what makes a print measure what the script says.
+    assert 'width="72mm" height="27mm"' in text
+    assert "<path" in text
+
+
+def test_svg_export_refuses_a_3d_model(tmp_path):
+    """OpenSCAD's rule: 2D export needs an all-2D top level. Refusing is
+    the honest answer -- a silhouette would be a different model."""
+    g = geometry_for("cube(10);", tmp_path)
+    with pytest.raises(Exception, match="not a 2D object"):
+        exporters.export_model(str(tmp_path / "solid.svg"), g)

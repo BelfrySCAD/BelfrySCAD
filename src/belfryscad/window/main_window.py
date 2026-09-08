@@ -52,6 +52,10 @@ _EXPORT_FORMATS = (
     ("AMF Files (*.amf)", ".amf"),
     ("OFF Files (*.off)", ".off"),
     ("PLY Files (*.ply)", ".ply"),
+    # The one 2D format: a model that is all 2D, written at 1:1 in
+    # millimetres so a print of it measures what the script says. Exporting
+    # anything 3D to it fails, as it does in OpenSCAD.
+    ("SVG Files (*.svg)", ".svg"),
     ("VRML Files (*.wrl)", ".wrl"),
     ("X3D Files (*.x3d)", ".x3d"),
 )
@@ -2038,6 +2042,12 @@ class MainWindow(QMainWindow):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+        except Exception as e:
+            # Not every export failure is an OSError: SVG refuses a model
+            # that is not all 2D, and the evaluator raises EvalError for
+            # that. Caught here so it reaches the user as the dialog every
+            # other export problem gets, instead of a traceback on stderr.
             QMessageBox.critical(self, "Export Error", str(e))
 
     def _viewport_params(self) -> dict:

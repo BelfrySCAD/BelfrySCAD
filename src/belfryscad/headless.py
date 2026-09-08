@@ -169,6 +169,12 @@ def _export(output_path: str, ext: str, geometry, export_format: str | None = No
     except OSError as e:
         _print_error(e)
         return False
+    except Exception as e:
+        # Not every export failure is an OSError: .svg refuses a model that
+        # is not all 2D, and the evaluator raises EvalError for that. One
+        # printed error and a non-zero exit, like any other failure here.
+        _print_error(e)
+        return False
     return True
 
 

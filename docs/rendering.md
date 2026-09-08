@@ -133,7 +133,7 @@ Sanitising keeps `[A-Za-z0-9_+.-]` and replaces every other character with one u
 ## Export
 
 **Export lives in openscad_cpp_evaluator, not here.** Every writer -- STL
-(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D -- and the whole colour
+(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D and SVG -- and the whole colour
 pipeline behind them now live in that package's `export.cpp`. This used to
 be ~400 lines of Python in `exporters.py` that the evaluator's own CLI never
 saw, and the two disagreed: the CLI wrote `cube(100); cube(100,
@@ -147,6 +147,17 @@ rule). The rules themselves -- the implicit top-level union, one object per
 colour with the later shape winning an overlap, the connected-component
 split, per-triangle colour, and the sliver-strip/mesh-check repair policy --
 are documented in openscad_cpp_evaluator's own `CLAUDE.md`.
+
+**SVG is the one 2D format, and the one that can refuse.** It writes a
+model that is all 2D at 1:1 in millimetres -- so a print of it measures
+what the script says, which is what the format was asked for (BelfrySCAD
+#367: a printed paper scale for calibrating a laser printer). None of the
+mesh pipeline applies to it: no merge, no sliver strip, no manifoldness
+check, and so no warnings. A model with any 3D in it raises
+`Current top level object is not a 2D object` rather than writing a
+silhouette, exactly as OpenSCAD refuses -- so the GUI's Export and the
+CLI's `-o` both catch more than `OSError` now, and show it the way they
+show any other export failure.
 
 ### The geometry handle
 
