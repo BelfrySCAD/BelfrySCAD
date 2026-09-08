@@ -22,6 +22,7 @@ from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
 from belfryscad.window.docs_pane import DocsPane
+from belfryscad.window.about import open_documentation, show_about_dialog
 from belfryscad.window.export_options import ask_export_options, export_kwargs
 from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
@@ -1268,6 +1269,14 @@ class MainWindow(QMainWindow):
         self._add_action(window_menu, "Move Tab to New Window", self._tear_off_tab)
         window_menu.addSeparator()
         self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
+
+        help_menu = mb.addMenu("Help")
+        # AboutRole moves this into the application menu on macOS, where
+        # the platform expects it -- the same reason Preferences carries
+        # PreferencesRole above. On Windows and Linux it stays in Help.
+        about_act = self._add_action(help_menu, "About BelfrySCAD", lambda: show_about_dialog(self))
+        about_act.setMenuRole(QAction.MenuRole.AboutRole)
+        self._add_action(help_menu, "Documentation", open_documentation)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)

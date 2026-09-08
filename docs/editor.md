@@ -1023,3 +1023,9 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 - Show Edges / Show Axes / Show Scale Markers / Show Crosshairs
 
 **Window**: Minimize / Zoom / — / Move Tab to New Window / — / *(open document list)* / Bring All to Front
+
+**Help**: About BelfrySCAD / Documentation
+
+`window/about.py` holds both, and the version facts behind them as plain data (`about_info()` / `about_html()` / `about_text()`) so they test without a widget. The About action carries `MenuRole.AboutRole`, which moves it into the application menu on macOS where the platform expects it — the same treatment Preferences already gets with `PreferencesRole`; on Windows and Linux it stays under Help.
+
+The dialog leads with the version, because "mainly I want to know what version I'm running" is what issue #379 asked for, and lists **openscad_cpp_evaluator** beside it: geometry comes from there, it moves independently of the app, and a bug report needs both. A **Copy Versions** button puts the plain-text form on the clipboard so a version reaches an issue without being retyped. Documentation opens the wiki. A Font List is still to come — it has to list what `text(font=)` will actually accept, which means asking the evaluator's own FreeType index rather than Qt's font database, whose differing names are the very thing the request complains about.
