@@ -65,6 +65,26 @@ _EXPORT_FORMATS = (
 )
 
 
+def redo_shortcuts() -> list:
+    """Every key that should mean Redo, on every platform.
+
+    Qt's StandardKey.Redo is a LIST, and it differs per platform --
+    Ctrl+Y first on Windows, Ctrl+Shift+Z on macOS. `setShortcut()` binds
+    only the first of them, which is why Ctrl+Shift+Z did nothing on
+    Windows (issue #377).
+
+    Both are named here rather than trusting that table: Ctrl/Cmd+Shift+Z
+    is what OpenSCAD, VS Code, the Adobe tools and macOS itself use, and
+    Ctrl+Y is the Office/Windows habit worth keeping. Qt maps Ctrl to
+    Command on macOS, so this is Cmd+Shift+Z there without a special case.
+    """
+    keys = list(QKeySequence.keyBindings(QKeySequence.StandardKey.Redo))
+    for extra in (QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")):
+        if extra not in keys:
+            keys.append(extra)
+    return keys
+
+
 def _resolve_export_format(path: str, chosen_filter: str):
     """(path, extension) for a save dialog result.
 
@@ -1000,13 +1020,17 @@ class MainWindow(QMainWindow):
 
         self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
         self._set_toolbar_icon(self._act_undo, "undo")
-        self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        # setShortcutS, plural: the standard key is a LIST of bindings per
+        # platform and setShortcut() takes only the first one. That is why
+        # Ctrl+Shift+Z did nothing on Windows (issue #377) -- Qt lists it
+        # for Redo there, behind Ctrl+Y, and only Ctrl+Y was ever bound.
+        self._act_undo.setShortcuts(QKeySequence.StandardKey.Undo)
         self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
         self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
         self._set_toolbar_icon(self._act_redo, "redo")
-        self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._act_redo.setShortcuts(redo_shortcuts())
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_redo)
 
@@ -4166,6 +4190,8 @@ class MainWindow(QMainWindow):
         tab.editor.set_indent_size(indent)
         tab.editor._column_guide.set_column(guide_col)
         tab.editor._column_guide.setVisible(show_guide)
+        tab.editor.set_append_line_on_down(
+            load_preference("editor/appendLineOnDownArrow", type_=bool))
 
     def _park_idle_dock_tabbars(self):
         """Move dock tab bars that have nothing to show out of the way.
