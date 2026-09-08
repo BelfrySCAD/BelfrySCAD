@@ -139,3 +139,50 @@ class TestDepsAndMake:
         assert exc.value.code == 0
         assert src.exists()
         assert out.exists()
+
+
+class TestEnsureStreams:
+    """A windowed launch has sys.stdout/stderr = None (issue #364).
+
+    print() tolerates that; a bare .flush() does not, and openscad_docsgen's
+    vendored modules flush after every message -- errorlog.add_entry does it
+    for every documentation error, so the Docs pane died with
+    "'NoneType' object has no attribute 'flush'" precisely when it had
+    something to report, losing the report with it.
+    """
+
+    def test_replaces_missing_streams(self, monkeypatch):
+        from belfryscad.main import _ensure_streams
+
+        monkeypatch.setattr(sys, "stdout", None)
+        monkeypatch.setattr(sys, "stderr", None)
+        _ensure_streams()
+        assert sys.stdout is not None
+        assert sys.stderr is not None
+        sys.stdout.write("")      # usable, not just non-None
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+    def test_leaves_real_streams_alone(self, monkeypatch):
+        """Every CLI mode depends on writing to the stdout it was given."""
+        import io
+        from belfryscad.main import _ensure_streams
+
+        mine = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", mine)
+        _ensure_streams()
+        assert sys.stdout is mine
+
+    def test_a_documentation_error_survives_missing_streams(self, monkeypatch):
+        """The actual crash site: errorlog.add_entry flushes stderr."""
+        from belfryscad.main import _ensure_streams
+        from belfryscad.docsgen.errorlog import ErrorLog
+
+        monkeypatch.setattr(sys, "stdout", None)
+        monkeypatch.setattr(sys, "stderr", None)
+        _ensure_streams()
+
+        log = ErrorLog()
+        log.add_entry("widget.scad", 8, 'Unrecognized block: "Bogus"', ErrorLog.FAIL)
+        assert log.errlist == [("widget.scad", 8, 'Unrecognized block: "Bogus"', ErrorLog.FAIL)]
+        assert log.has_errors
