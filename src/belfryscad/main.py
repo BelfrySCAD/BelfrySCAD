@@ -319,6 +319,49 @@ CRASH_LOG = "~/.cache/BelfrySCAD/crash.log"
 #: Kept alive for the process's lifetime -- faulthandler writes to this file
 #: descriptor from a signal handler, so it must not be closed or collected.
 _crash_stream = None
+#: Held for the process lifetime so the stream stays open; see _ensure_streams.
+_null_stream = None
+
+
+def _ensure_streams():
+    """Give the process usable stdout/stderr even when it was given none.
+
+    A windowed launch -- Finder, or the .app bundle -- leaves `sys.stdout`
+    and `sys.stderr` as None. `print(..., file=sys.stderr)` tolerates that
+    (it just goes nowhere), but a bare `sys.stderr.flush()` raises
+    AttributeError, and openscad_docsgen's vendored modules flush after
+    every message they print. `errorlog.add_entry` does it for EVERY
+    documentation error, so the Docs pane died with
+
+        AttributeError: 'NoneType' object has no attribute 'flush'
+
+    exactly when it had a real error to report -- and the error itself, the
+    thing the user needed, was lost with it (issue #364). Thirteen flush
+    calls across errorlog/parser/blocks/filehashes/mdimggen are reachable
+    from a preview; all of them are fixed by there being a stream at all.
+
+    Fixed here rather than in those modules because they are vendored from
+    openscad_docsgen and kept byte-identical on purpose -- that is what
+    makes the Docs pane's verdict the same verdict a real docs build gives
+    (docs/docsgen.md).
+
+    os.devnull rather than io.StringIO: it is a real file with a real
+    fileno(), so anything that inspects the stream or hands it to a
+    subprocess still works, and nothing accumulates in memory over a long
+    session. Only ever installed over a None -- a terminal launch, and every
+    CLI mode, keeps the streams it was given.
+    """
+    global _null_stream
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        _null_stream = open(os.devnull, "w")
+    except OSError:
+        return          # never let this be the thing that stops a launch
+    if sys.stdout is None:
+        sys.stdout = _null_stream
+    if sys.stderr is None:
+        sys.stderr = _null_stream
 
 
 def _install_crash_log():
@@ -390,6 +433,9 @@ def _proc_name(argv) -> str:
 def main():
     setproctitle.setproctitle(_proc_name(sys.argv[1:]))
     sys.setrecursionlimit(10000)
+    # Before the crash log, which writes to a stream of its own but whose
+    # excepthook chains to the prior one -- and before anything that prints.
+    _ensure_streams()
     _install_crash_log()
 
     # --docsgen swallows the whole remaining command line rather than going
