@@ -805,13 +805,16 @@ class FindBar(QWidget):
         outer.addWidget(self._replace_widget)
         self._replace_widget.hide()
 
-        # Connections
-        self._find_input.textChanged.connect(self._on_search_changed)
+        # Connections. The _on_search_changed ones are WRAPPED: textChanged
+        # passes the new text and toggled passes a bool, either of which
+        # would land in its `move_cursor` argument -- so unchecking Match
+        # Case would quietly stop the search jumping to its hit.
+        self._find_input.textChanged.connect(lambda _text: self._on_search_changed())
         self._find_input.returnPressed.connect(self._find_next)
-        self._btn_case.toggled.connect(self._on_search_changed)
+        self._btn_case.toggled.connect(lambda _on: self._on_search_changed())
         self._btn_disclose.toggled.connect(self._on_disclose_toggled)
-        self._btn_word.toggled.connect(self._on_search_changed)
-        self._btn_regex.toggled.connect(self._on_search_changed)
+        self._btn_word.toggled.connect(lambda _on: self._on_search_changed())
+        self._btn_regex.toggled.connect(lambda _on: self._on_search_changed())
         self._btn_prev.clicked.connect(self._find_prev)
         self._btn_next.clicked.connect(self._find_next)
         self._btn_close.clicked.connect(self.close_bar)
@@ -993,7 +996,17 @@ class FindBar(QWidget):
         pat = QRegularExpression(text, opts)
         return pat if pat.isValid() else None
 
-    def _on_search_changed(self):
+    def _on_search_changed(self, move_cursor: bool = True):
+        """Recompute the match list and the highlights.
+
+        `move_cursor` is what separates searching from editing. Typing in
+        the SEARCH field should jump the editor to the next hit -- that is
+        find-as-you-type. Typing in the DOCUMENT should not: the jump
+        selects the match, so the next keystroke replaced it, and typing a
+        word with the bar open silently overwrote a different occurrence
+        per letter (issue #376). Highlights still refresh either way, so
+        the bar keeps up with the edit.
+        """
         if self.isHidden():
             return
         pattern = self._make_pattern()
@@ -1038,11 +1051,12 @@ class FindBar(QWidget):
                 break
 
         self._update_highlights()
-        self._scroll_to_current()
+        if move_cursor:
+            self._scroll_to_current()
 
     def _on_doc_changed(self):
         if self.isVisible():
-            self._on_search_changed()
+            self._on_search_changed(move_cursor=False)
 
     def _update_highlights(self):
         sels = []
@@ -1108,6 +1122,10 @@ class FindBar(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
+    #: See set_append_line_on_down(). Off unless a preference turns it on,
+    #: so an editor built without one behaves the way the platform does.
+    _append_line_on_down = False
+
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
     edit_parameter_requested = Signal(str)     # emits a Customizer parameter's name
@@ -1337,6 +1355,16 @@ class CodeEditor(QPlainTextEdit):
         self._update_line_number_area_width()
         self._line_number_area.update()
 
+    def set_append_line_on_down(self, enabled: bool):
+        """Whether a plain Down arrow on the last line appends one.
+
+        Off by default: every other editor stops at the end of the file,
+        and the surprise of a document that grows while you navigate it is
+        what issue #378 reported. Kept as a setting rather than removed
+        because it was a deliberate convenience for whoever wants it.
+        """
+        self._append_line_on_down = enabled
+
     def set_indent_size(self, size: int):
         self._indent_size = size
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * size)
@@ -1458,9 +1486,20 @@ class CodeEditor(QPlainTextEdit):
                 # delete, which is also what a tab-containing indent wants:
                 # len() counts a tab as one column, so its multiples mean
                 # nothing here.
-        if event.key() == Qt.Key.Key_Down:
+        if event.key() == Qt.Key.Key_Down and self._append_line_on_down:
+            # Never while EXTENDING A SELECTION: Shift+Down at the last line
+            # has to stop there like every other way of selecting to the end
+            # does (drag, Shift+PageDown). Inserting a line instead both
+            # edits the document the user was only trying to select and
+            # drops the selection they had built up (issue #378).
+            #
+            # Any other modifier is left alone too -- Ctrl/Cmd+Down and the
+            # like mean "move somewhere", never "type something".
+            extending = event.modifiers() & (
+                Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.AltModifier)
             cursor = self.textCursor()
-            if cursor.block() == self.document().lastBlock():
+            if not extending and cursor.block() == self.document().lastBlock():
                 cursor.movePosition(cursor.MoveOperation.EndOfBlock)
                 cursor.insertText("\n")
                 self.setTextCursor(cursor)

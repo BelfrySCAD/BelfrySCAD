@@ -77,6 +77,11 @@ _DEFAULTS = {
     "export/pdfOrientation": "portrait",
     "export/pdfShowScale": True,
     "export/pdfShowGrid": False,
+    # Down arrow on the LAST line appends a new one. A deliberate
+    # convenience, off by default: every other editor stops at the end of
+    # the file, and a document that grows while you navigate it surprised a
+    # user into filing issue #378.
+    "editor/appendLineOnDownArrow": False,
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
@@ -171,6 +176,18 @@ class PreferencesDialog(QDialog):
         self._indent_size.setValue(s.value("editor/indentSize", _DEFAULTS["editor/indentSize"], type=int))
         self._indent_size.valueChanged.connect(lambda v: self._emit("editor/indentSize", v))
         form.addRow("Indent size:", self._indent_size)
+
+        # Down arrow past the last line
+        self._append_line_down = QCheckBox("Down arrow at the last line adds a new line")
+        self._append_line_down.setChecked(
+            s.value("editor/appendLineOnDownArrow",
+                    _DEFAULTS["editor/appendLineOnDownArrow"], type=bool))
+        self._append_line_down.setToolTip(
+            "Off (the default) stops at the end of the file, as other editors do.\n"
+            "Selecting with Shift+Down stops there either way.")
+        self._append_line_down.toggled.connect(
+            lambda v: self._emit("editor/appendLineOnDownArrow", bool(v)))
+        form.addRow("Cursor:", self._append_line_down)
 
         # Column guide
         guide_row = QHBoxLayout()
