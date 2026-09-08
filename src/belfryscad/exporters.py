@@ -33,7 +33,8 @@ def exportable(bodies):
 
 
 def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
-                 strip_slivers: bool = True, split_components: bool = False) -> list:
+                 strip_slivers: bool = True, split_components: bool = False,
+                 pdf_options: dict | None = None) -> list:
     """Write `geometry` to `path`; returns the warnings to surface.
 
     `geometry` is the opaque handle the evaluator stashes on itself as
@@ -49,11 +50,17 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
     multi-object formats. Off by default, which is what OpenSCAD writes;
     turning it on used to be the only behaviour, and a model in many pieces
     then filled a slicer's object list (issue #319).
+
+    `pdf_options` is the `.pdf` page setup -- paper size, orientation, the
+    ruler switches -- keyed as OpenSCAD names its own `-O export-pdf/...`
+    settings. `preferences.pdf_export_options()` builds it from the saved
+    preferences.
     """
     from openscad_cpp_evaluator import export_model as _export_model
 
     return _export_model(path, geometry, format=format, ascii_stl=ascii_stl,
-                         strip_slivers=strip_slivers, split_components=split_components)
+                         strip_slivers=strip_slivers, split_components=split_components,
+                         pdf_options=pdf_options)
 
 
 def export_extensions() -> list:

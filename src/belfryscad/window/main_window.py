@@ -22,7 +22,7 @@ from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
 from belfryscad.window.docs_pane import DocsPane
-from belfryscad.window.preferences import PreferencesDialog, load_preference
+from belfryscad.window.preferences import PreferencesDialog, load_preference, pdf_export_options
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
@@ -52,10 +52,12 @@ _EXPORT_FORMATS = (
     ("AMF Files (*.amf)", ".amf"),
     ("OFF Files (*.off)", ".off"),
     ("PLY Files (*.ply)", ".ply"),
-    # The one 2D format: a model that is all 2D, written at 1:1 in
+    # The two 2D formats: a model that is all 2D, written at 1:1 in
     # millimetres so a print of it measures what the script says. Exporting
-    # anything 3D to it fails, as it does in OpenSCAD.
+    # anything 3D to either fails, as it does in OpenSCAD. PDF adds the
+    # page setup (size, orientation, ruler) from Preferences > Export.
     ("SVG Files (*.svg)", ".svg"),
+    ("PDF Files (*.pdf)", ".pdf"),
     ("VRML Files (*.wrl)", ".wrl"),
     ("X3D Files (*.x3d)", ".x3d"),
 )
@@ -2038,7 +2040,11 @@ class MainWindow(QMainWindow):
             # deliberately open surface is a legitimate export, and blocking
             # a save the user asked for would be worse than saying so.
             split = load_preference("export/splitComponents", type_=bool)
-            for problem in exporters.export_model(path, self._geometry, split_components=split):
+            # The design's own name, for the PDF page: the writer has no
+            # way to know it, and draws it only when asked to.
+            design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
+            for problem in exporters.export_model(path, self._geometry, split_components=split,
+                                                   pdf_options=pdf_export_options(design)):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:

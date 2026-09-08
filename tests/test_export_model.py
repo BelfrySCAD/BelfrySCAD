@@ -189,3 +189,45 @@ def test_svg_export_refuses_a_3d_model(tmp_path):
     g = geometry_for("cube(10);", tmp_path)
     with pytest.raises(Exception, match="not a 2D object"):
         exporters.export_model(str(tmp_path / "solid.svg"), g)
+
+
+# --- PDF: 2D on a fixed page (#368) -----------------------------------
+def test_pdf_export_centres_the_drawing_on_a4_by_default(tmp_path):
+    g = geometry_for("square([70, 25]);", tmp_path)
+    out = tmp_path / "flat.pdf"
+    assert exporters.export_model(str(out), g) == []
+    data = out.read_bytes()
+    assert data.startswith(b"%PDF-1.4")
+    assert b"/MediaBox [0 0 595 842]" in data
+    # The ruler is the reason the format exists; base-14 Helvetica is why
+    # it needs no embedded font.
+    assert b"/BaseFont /Helvetica" in data
+    assert b"/FontFile" not in data
+
+
+def test_pdf_options_reach_the_writer(tmp_path):
+    g = geometry_for("square([70, 25]);", tmp_path)
+    out = tmp_path / "letter.pdf"
+    exporters.export_model(str(out), g, pdf_options={"paper-size": "letter",
+                                                      "orientation": "landscape"})
+    assert b"/MediaBox [0 0 792 612]" in out.read_bytes()
+
+
+def test_pdf_export_refuses_a_3d_model(tmp_path):
+    g = geometry_for("cube(10);", tmp_path)
+    with pytest.raises(Exception, match="not a 2D object"):
+        exporters.export_model(str(tmp_path / "solid.pdf"), g)
+
+
+def test_pdf_preferences_build_the_option_dict():
+    """The GUI's page setup is preferences, not dialog widgets: a native
+    macOS save dialog cannot host extra controls."""
+    from belfryscad.window.preferences import pdf_export_options
+
+    opts = pdf_export_options("scale-card.scad")
+    assert opts["paper-size"] in ("a6", "a5", "a4", "a3", "letter", "legal", "tabloid")
+    assert opts["orientation"] in ("portrait", "landscape", "auto")
+    assert opts["design-filename"] == "scale-card.scad"
+    assert opts["show-filename"] is True
+    # No script name means nothing to draw, so the switch goes off with it.
+    assert pdf_export_options()["show-filename"] is False
