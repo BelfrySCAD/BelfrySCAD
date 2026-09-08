@@ -19,6 +19,9 @@ _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
 # Ignore near-zero scroll deltas, which otherwise jitter the camera.
 _WHEEL_DEADSPOT = 5
+# One mouse-wheel notch (angleDelta 120) zooms by this factor, matching
+# OpenSCAD's Camera::zoom.
+_WHEEL_ZOOM_BASE = 0.9
 
 # Trackpad axis conventions vary by platform, and on macOS the pan sign
 # also flips with the user's "natural scrolling" preference -- which Qt
@@ -1107,12 +1110,24 @@ class Viewport(QOpenGLWidget):
             self._pan_by(_TRACKPAD_PAN_SIGN * pixel.x(), _TRACKPAD_PAN_SIGN * pixel.y())
         else:
             delta = pixel.y() if is_trackpad else event.angleDelta().y()
-            # Fixed 1% step with a deadspot, deliberately not proportional
-            # to the delta: one wheel notch should always be one consistent
-            # zoom increment, and near-zero deltas otherwise jitter.
             if abs(delta) <= _WHEEL_DEADSPOT:
                 return
-            self._zoom_to_cursor(0.99 if delta > 0 else 1.01, event.position().toPoint())
+            if is_trackpad:
+                # Ctrl+two-finger scroll. A fixed small step suits continuous
+                # input, where the gesture itself sets the pace.
+                factor = 0.99 if delta > 0 else 1.01
+            else:
+                # A mouse wheel gets OpenSCAD's own curve, which a 1% fixed
+                # step was ten times slower than (issue #358). angleDelta is
+                # in eighths of a degree, so one standard notch is 120 and
+                # lands on exactly 0.9; a high-resolution wheel reporting
+                # many small deltas sums to the same zoom over the same
+                # physical travel, which a fixed step per event does not.
+                # Camera::zoom, src/glview/Camera.cc: distance *= pow(0.9, v / 120).
+                factor = _WHEEL_ZOOM_BASE ** (abs(delta) / 120.0)
+                if delta < 0:
+                    factor = 1.0 / factor
+            self._zoom_to_cursor(factor, event.position().toPoint())
             self._on_zoom_changed()
 
         if self._measurements:

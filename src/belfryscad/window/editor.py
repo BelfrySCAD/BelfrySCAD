@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 from belfryscad.window.ui_colors import (
     execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
     fold_arrow_color, guide_colors, gutter_colors, on_appearance_change,
+    syntax_colors,
 )
 
 
@@ -444,8 +445,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         self._unmatched = {}
         self._rescanning = False
 
-        keyword_format = QTextCharFormat()
-        keyword_format.setForeground(QColor("#569CD6"))
+        self._keyword_format = keyword_format = QTextCharFormat()
         keyword_format.setFontWeight(QFont.Weight.Bold)
         keywords = [
             "module", "function", "if", "else", "for", "let",
@@ -457,8 +457,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 keyword_format,
             ))
 
-        builtin_format = QTextCharFormat()
-        builtin_format.setForeground(QColor("#4EC9B0"))
+        self._builtin_format = builtin_format = QTextCharFormat()
         builtins = [
             "cube", "sphere", "cylinder", "polyhedron",
             "translate", "rotate", "scale", "mirror", "multmatrix",
@@ -472,8 +471,7 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
                 builtin_format,
             ))
 
-        number_format = QTextCharFormat()
-        number_format.setForeground(QColor("#5A9E4A"))
+        self._number_format = number_format = QTextCharFormat()
         self._rules.append((
             QRegularExpression(r"\b\d+\.?\d*\b"),
             number_format,
@@ -484,10 +482,8 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         # pattern can follow, and `"[^"]*"` also stopped at the first
         # escaped quote inside one.
         self._string_format = QTextCharFormat()
-        self._string_format.setForeground(QColor("#CE9178"))
 
         self._comment_format = QTextCharFormat()
-        self._comment_format.setForeground(QColor("#6A9955"))
         self._rules.append((
             QRegularExpression(r"//[^\n]*"),
             self._comment_format,
@@ -496,7 +492,6 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         self._block_comment_end = QRegularExpression(r"\*/")
 
         self._special_var_format = QTextCharFormat()
-        self._special_var_format.setForeground(QColor("#C586C0"))
         self._rules.append((
             QRegularExpression(r"\$\w+"),
             self._special_var_format,
@@ -527,24 +522,42 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         #
         # Saturation and value are tuned per colour for readability. Hue is
         # not free: it carries both the spacing and the distance from red.
-        self._bracket_formats = []
-        for colour in ("#C4921C",   # dark goldenrod    42
-                        "#59D798",   # spring green    150
-                        "#C3ACFA",   # violet, pastel  258
-                        "#8BCD5C",   # green            95
-                        "#54A5DE"):  # blue            205
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(colour))
-            self._bracket_formats.append(fmt)
+        # Five depths: dark goldenrod 42, spring green 150, pastel violet
+        # 258, green 95, blue 205. The angles are the point; the light theme
+        # keeps them and only lowers lightness (ui_colors.syntax_colors).
+        self._bracket_formats = [QTextCharFormat() for _ in range(5)]
 
         # An opener with no closer is an error, not a depth. Bold as well as
         # red: rose sits in the depth cycle, and colour alone would leave the
         # two telling apart by hue on a dark background.
         self._unmatched_format = QTextCharFormat()
-        self._unmatched_format.setForeground(QColor("#FF2D2D"))
         self._unmatched_format.setFontWeight(QFont.Weight.Bold)
 
+        # Every colour above comes from here, and comes back through here on
+        # a light/dark switch -- the formats are shared by reference with the
+        # rules built in this constructor, so recolouring them in place and
+        # rehighlighting is all a retheme needs.
+        self._apply_syntax_colors()
+        on_appearance_change(self, self._retheme_syntax)
+
         document.contentsChanged.connect(self._rescan_unmatched)
+
+    def _apply_syntax_colors(self):
+        """Paint the current theme's palette onto the shared formats."""
+        c = syntax_colors()
+        self._keyword_format.setForeground(QColor(c["keyword"]))
+        self._builtin_format.setForeground(QColor(c["builtin"]))
+        self._number_format.setForeground(QColor(c["number"]))
+        self._string_format.setForeground(QColor(c["string"]))
+        self._comment_format.setForeground(QColor(c["comment"]))
+        self._special_var_format.setForeground(QColor(c["special_var"]))
+        for fmt, colour in zip(self._bracket_formats, c["brackets"]):
+            fmt.setForeground(QColor(colour))
+        self._unmatched_format.setForeground(QColor(c["unmatched"]))
+
+    def _retheme_syntax(self):
+        self._apply_syntax_colors()
+        self.rehighlight()
 
     _OPENERS = _OPENERS
     _CLOSERS = _CLOSERS

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Fit to view: a frame with arrows pushing out to all four corners -->
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <polyline points="4,11 4,4 11,4"/>
+    <polyline points="21,4 28,4 28,11"/>
+    <polyline points="28,21 28,28 21,28"/>
+    <polyline points="11,28 4,28 4,21"/>
+    <rect x="11" y="11" width="10" height="10"/>
+  </g>
+</svg>

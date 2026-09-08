@@ -976,6 +976,12 @@ class MainWindow(QMainWindow):
         self._act_open.triggered.connect(self._open_file)
         tb.addAction(self._act_open)
 
+        self._act_save_tb = QAction("Save", self)
+        self._set_toolbar_icon(self._act_save_tb, "save")
+        self._act_save_tb.setToolTip("Save (Ctrl+S)")
+        self._act_save_tb.triggered.connect(self._save_file)
+        tb.addAction(self._act_save_tb)
+
         self._act_export = QAction("Export", self)
         self._set_toolbar_icon(self._act_export, "export")
         self._act_export.setToolTip("Export…")
@@ -1017,6 +1023,24 @@ class MainWindow(QMainWindow):
         self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_animate_tb.triggered.connect(self._show_animate)
         tb.addAction(self._act_animate_tb)
+
+        tb.addSeparator()
+
+        # The two view resets, as their own group. Their View-menu twins are
+        # built later (_make_menus runs after this), so these carry their own
+        # handlers rather than reusing those QActions -- both just call
+        # _set_view, which is the whole of what the menu items do.
+        self._act_view_iso_tb = QAction("Isometric View", self)
+        self._set_toolbar_icon(self._act_view_iso_tb, "view-iso")
+        self._act_view_iso_tb.setToolTip("Reset orientation to isometric (Ctrl+0)")
+        self._act_view_iso_tb.triggered.connect(lambda: self._set_view("iso"))
+        tb.addAction(self._act_view_iso_tb)
+
+        self._act_view_all_tb = QAction("View All", self)
+        self._set_toolbar_icon(self._act_view_all_tb, "view-all")
+        self._act_view_all_tb.setToolTip("Zoom to fit the whole model (Shift+Ctrl+V)")
+        self._act_view_all_tb.triggered.connect(lambda: self._set_view("all"))
+        tb.addAction(self._act_view_all_tb)
 
         tb.addSeparator()
         tb.addAction(self._act_measure_distance)
