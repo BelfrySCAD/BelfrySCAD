@@ -152,7 +152,7 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
 
 
 def _export(output_path: str, ext: str, geometry, export_format: str | None = None,
-            split_components: bool = False) -> bool:
+            split_components: bool = False, pdf_options: dict | None = None) -> bool:
     """Writes `geometry` to output_path. Returns True on success, False
     after printing an error to stderr.
 
@@ -164,7 +164,7 @@ def _export(output_path: str, ext: str, geometry, export_format: str | None = No
     try:
         for problem in exporters.export_model(
                 output_path, geometry, ascii_stl=(ext == ".stl" and export_format == "asciistl"),
-                split_components=split_components):
+                split_components=split_components, pdf_options=pdf_options):
             print(f"WARNING: export: {problem}", file=sys.stderr)
     except OSError as e:
         _print_error(e)
@@ -271,7 +271,8 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
                        quiet: bool = False, hard_warnings: bool = False,
                        export_format: str | None = None, backend: str | None = None,
                        summary: str | None = None, summary_file: str | None = None,
-                       split_components: bool = False, strict_commas: bool = False) -> int:
+                       split_components: bool = False, strict_commas: bool = False,
+                       pdf_options: dict | None = None) -> int:
     """Parse + evaluate source_path (with any -D overrides applied) and
     export the result to output_path. Returns a process exit code (0
     success, 1 failure); never raises for an ordinary parse/eval/export
@@ -302,7 +303,7 @@ def render_and_export(source_path: str, output_path: str, defines: list[str] = (
     bodies, elapsed, geometry = result
 
     if not _export(output_path, ext, geometry, export_format=export_format,
-                    split_components=split_components):
+                    split_components=split_components, pdf_options=pdf_options):
         return 1
     if summary is not None and not _emit_summary(bodies, elapsed, summary, summary_file):
         return 1
@@ -315,7 +316,8 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
                                  defines: list[str] = (), animate_dir: str | None = None,
                                  quiet: bool = False, hard_warnings: bool = False,
                                  export_format: str | None = None, backend: str | None = None,
-                                 split_components: bool = False, strict_commas: bool = False) -> int:
+                                 split_components: bool = False, strict_commas: bool = False,
+                                 pdf_options: dict | None = None) -> int:
     """Renders `steps` animation frames ($t = i/steps for i in 0..steps-1,
     same cycle AnimatePane.current_t() uses) and exports each to its own
     numbered file -- {stem}{i:05d}{ext}, 5-digit zero-padded regardless of
@@ -365,7 +367,7 @@ def render_and_export_animation(source_path: str, output_path: str, steps: int,
                 continue
             bodies, elapsed, geometry = result
             if not _export(str(frame_path), ext, geometry, export_format=export_format,
-                            split_components=split_components):
+                            split_components=split_components, pdf_options=pdf_options):
                 print(f"belfryscad: frame {i}: export failed", file=sys.stderr)
                 ok = False
                 continue

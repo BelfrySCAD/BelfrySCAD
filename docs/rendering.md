@@ -133,8 +133,8 @@ Sanitising keeps `[A-Za-z0-9_+.-]` and replaces every other character with one u
 ## Export
 
 **Export lives in openscad_cpp_evaluator, not here.** Every writer -- STL
-(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D and SVG -- and the whole colour
-pipeline behind them now live in that package's `export.cpp`. This used to
+(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D, SVG and PDF -- and the whole
+colour pipeline behind them now live in that package's `export.cpp`. This used to
 be ~400 lines of Python in `exporters.py` that the evaluator's own CLI never
 saw, and the two disagreed: the CLI wrote `cube(100); cube(100,
 center=true);` as two overlapping objects of 24 triangles where this side
@@ -148,7 +148,7 @@ colour with the later shape winning an overlap, the connected-component
 split, per-triangle colour, and the sliver-strip/mesh-check repair policy --
 are documented in openscad_cpp_evaluator's own `CLAUDE.md`.
 
-**SVG is the one 2D format, and the one that can refuse.** It writes a
+**SVG and PDF are the 2D formats, and the ones that can refuse.** It writes a
 model that is all 2D at 1:1 in millimetres -- so a print of it measures
 what the script says, which is what the format was asked for (BelfrySCAD
 #367: a printed paper scale for calibrating a laser printer). None of the
@@ -158,6 +158,23 @@ check, and so no warnings. A model with any 3D in it raises
 silhouette, exactly as OpenSCAD refuses -- so the GUI's Export and the
 CLI's `-o` both catch more than `OSError` now, and show it the way they
 show any other export failure.
+
+**PDF differs from SVG in what a page is.** SVG cuts the page to fit the
+model; PDF centres the model on a fixed sheet and draws OpenSCAD's ruler
+around it -- two axes at a 30pt margin, ticks every 10mm of *model* space,
+labels on every second tick, and a caption saying what to measure. That
+ruler is the point of the format: measuring between the 0 tick and the last
+one on a printed page is how you find out that your printer is scaling by
+99.2%.
+
+Its page setup is **Preferences ▸ Export**, not the save dialog: the native
+macOS dialog cannot host extra controls. `preferences.pdf_export_options()`
+turns those settings into the dict `export_model(pdf_options=...)` wants,
+keyed as OpenSCAD names its own `-O export-pdf/...` settings, and the CLI
+has `--pdf-paper-size`, `--pdf-orientation`, `--pdf-no-scale` and
+`--pdf-grid`. An unknown key raises rather than being quietly dropped -- a
+misspelt `papersize` would otherwise print the wrong page size with nothing
+to explain it.
 
 ### The geometry handle
 

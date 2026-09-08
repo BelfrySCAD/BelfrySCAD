@@ -70,7 +70,38 @@ _DEFAULTS = {
     # is in; on was the only behaviour until issue #319, where a slicer
     # listed a multiboard tile's every hole separately.
     "export/splitComponents": False,
+    # PDF (2D) page setup. The ruler and its caption are what make a
+    # printed page a measuring tool rather than a plot, so they are on --
+    # that is OpenSCAD's default too, and the reason the format exists.
+    "export/pdfPaperSize": "a4",
+    "export/pdfOrientation": "portrait",
+    "export/pdfShowScale": True,
+    "export/pdfShowGrid": False,
 }
+
+# Paper sizes the PDF writer knows, in the order a size dropdown should
+# show them. The evaluator validates the name too, and raises for one it
+# does not know rather than quietly picking a default.
+PDF_PAPER_SIZES = ("a6", "a5", "a4", "a3", "letter", "legal", "tabloid")
+PDF_ORIENTATIONS = ("portrait", "landscape", "auto")
+
+
+def pdf_export_options(design_filename: str = "") -> dict:
+    """The `pdf_options` dict for `export_model`, from the saved
+    preferences.
+
+    Keyed as OpenSCAD names its own `-O export-pdf/...` settings, which is
+    what the evaluator's binding expects. `design_filename` is the
+    script's name: the writer cannot know it, and only draws it when
+    `show-filename` asks."""
+    return {
+        "paper-size": load_preference("export/pdfPaperSize", type_=str),
+        "orientation": load_preference("export/pdfOrientation", type_=str),
+        "show-scale": load_preference("export/pdfShowScale", type_=bool),
+        "show-grid": load_preference("export/pdfShowGrid", type_=bool),
+        "design-filename": design_filename,
+        "show-filename": bool(design_filename),
+    }
 
 
 def load_preference(key, type_=None):
@@ -248,6 +279,45 @@ class PreferencesDialog(QDialog):
         self._split_components.toggled.connect(
             lambda v: self._emit("export/splitComponents", bool(v)))
         ex_form.addRow("Multi-object formats:", self._split_components)
+
+        # PDF is the one format with a page to set up: it centres the
+        # drawing on a fixed sheet rather than cutting the page to fit.
+        self._pdf_paper = QComboBox()
+        self._pdf_paper.addItems([n.upper() if n.startswith("a") else n.capitalize()
+                                   for n in PDF_PAPER_SIZES])
+        self._pdf_paper.setCurrentIndex(
+            PDF_PAPER_SIZES.index(s.value("export/pdfPaperSize", _DEFAULTS["export/pdfPaperSize"], type=str)))
+        self._pdf_paper.currentIndexChanged.connect(
+            lambda i: self._emit("export/pdfPaperSize", PDF_PAPER_SIZES[i]))
+        ex_form.addRow("PDF paper size:", self._pdf_paper)
+
+        self._pdf_orientation = QComboBox()
+        self._pdf_orientation.addItems([n.capitalize() for n in PDF_ORIENTATIONS])
+        self._pdf_orientation.setCurrentIndex(
+            PDF_ORIENTATIONS.index(
+                s.value("export/pdfOrientation", _DEFAULTS["export/pdfOrientation"], type=str)))
+        self._pdf_orientation.setToolTip(
+            "Auto turns the page sideways when the model is wider than it is tall.")
+        self._pdf_orientation.currentIndexChanged.connect(
+            lambda i: self._emit("export/pdfOrientation", PDF_ORIENTATIONS[i]))
+        ex_form.addRow("PDF orientation:", self._pdf_orientation)
+
+        self._pdf_scale = QCheckBox("Ruler and calibration caption")
+        self._pdf_scale.setChecked(
+            s.value("export/pdfShowScale", _DEFAULTS["export/pdfShowScale"], type=bool))
+        self._pdf_scale.setToolTip(
+            "Draws a millimetre ruler along two edges, labelled in MODEL coordinates,\n"
+            "with a caption explaining what to measure. That is what lets a printed\n"
+            "page show how far off a printer's scaling is. Off leaves just the drawing.")
+        self._pdf_scale.toggled.connect(lambda v: self._emit("export/pdfShowScale", bool(v)))
+        ex_form.addRow("PDF scale:", self._pdf_scale)
+
+        self._pdf_grid = QCheckBox("Grid over the page")
+        self._pdf_grid.setChecked(
+            s.value("export/pdfShowGrid", _DEFAULTS["export/pdfShowGrid"], type=bool))
+        self._pdf_grid.toggled.connect(lambda v: self._emit("export/pdfShowGrid", bool(v)))
+        ex_form.addRow("PDF grid:", self._pdf_grid)
+
         tabs.addTab(export_tab, "Export")
         tabs.tabBar().moveTab(1, 0)  # Viewport first
         tabs.setCurrentIndex(0)     # ...and selected by default

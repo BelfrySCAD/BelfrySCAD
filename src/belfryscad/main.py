@@ -50,6 +50,18 @@ def _parse_args(argv):
                          help="Give every disconnected piece its own object in the multi-object "
                               "formats (3mf, amf, obj, ply, wrl, x3d). Off by default, matching "
                               "OpenSCAD. Only applies together with -o")
+    parser.add_argument("--pdf-paper-size", dest="pdf_paper_size", metavar="SIZE",
+                         help="Paper size for .pdf output: a6, a5, a4 (default), a3, letter, "
+                              "legal, tabloid. Only applies together with -o")
+    parser.add_argument("--pdf-orientation", dest="pdf_orientation", metavar="NAME",
+                         help="Page orientation for .pdf output: portrait (default), landscape, "
+                              "or auto (landscape when the model is wider than tall). Only "
+                              "applies together with -o")
+    parser.add_argument("--pdf-no-scale", dest="pdf_no_scale", action="store_true",
+                         help="Leave the ruler and its caption off a .pdf, drawing the model "
+                              "alone. Only applies together with -o")
+    parser.add_argument("--pdf-grid", dest="pdf_grid", action="store_true",
+                         help="Draw a grid across a .pdf page. Only applies together with -o")
     parser.add_argument("--backend", metavar="NAME",
                          help="Accepted for OpenSCAD CLI compatibility -- must be 'Manifold' "
                               "(BelfrySCAD has no CGAL backend). Only applies together with -o")
@@ -522,8 +534,18 @@ def main():
                 code = render_png(args.file, args.output, summary=args.summary,
                                    summary_file=args.summary_file, **png_common)
         else:
+            pdf_options = {"design-filename": os.path.basename(args.file)}
+            if args.pdf_paper_size:
+                pdf_options["paper-size"] = args.pdf_paper_size
+            if args.pdf_orientation:
+                pdf_options["orientation"] = args.pdf_orientation
+            if args.pdf_no_scale:
+                pdf_options["show-scale"] = False
+            if args.pdf_grid:
+                pdf_options["show-grid"] = True
             mesh_common = dict(common, export_format=args.export_format,
-                                split_components=args.split_components)
+                                split_components=args.split_components,
+                                pdf_options=pdf_options)
             if args.animate is not None:
                 from belfryscad.headless import render_and_export_animation
                 code = render_and_export_animation(
@@ -551,6 +573,8 @@ def main():
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
         "--split-components": args.split_components,
+        "--pdf-paper-size/--pdf-orientation/--pdf-no-scale/--pdf-grid":
+            args.pdf_paper_size or args.pdf_orientation or args.pdf_no_scale or args.pdf_grid,
         "--strict-commas": args.strict_commas,
         "--summary/--summary-file": args.summary or args.summary_file,
         "--imgsize/--camera/--autocenter/--viewall/--projection/--view/--colorscheme":
