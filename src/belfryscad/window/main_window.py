@@ -2033,7 +2033,8 @@ class MainWindow(QMainWindow):
             # problems worth surfacing. Warned rather than refused -- a
             # deliberately open surface is a legitimate export, and blocking
             # a save the user asked for would be worse than saying so.
-            for problem in exporters.export_model(path, self._geometry):
+            split = load_preference("export/splitComponents", type_=bool)
+            for problem in exporters.export_model(path, self._geometry, split_components=split):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:

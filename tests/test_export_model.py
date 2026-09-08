@@ -129,3 +129,41 @@ def test_top_level_is_an_implicit_union(tmp_path):
     assert len(re.findall(r"<object ", xml)) == 1
     assert len(re.findall(r"<vertex ", xml)) == 20
     assert len(re.findall(r"<triangle ", xml)) == 36
+
+
+# --- the split option (issue #319) -------------------------------------
+# The behaviour itself belongs to the evaluator and is tested there. What
+# this file owns is the boundary: that the flag survives the trip from a
+# caller, through exporters, into the writer -- which is exactly what broke
+# once already, when the evaluator's own Python facade quietly dropped it.
+def _objects_in(path):
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        return z.read("3D/3dmodel.model").decode().count("<object ")
+
+
+def test_disjoint_pieces_are_one_object_by_default(tmp_path):
+    g = geometry_for("cube(10); translate([20,0,0]) cube(10); translate([40,0,0]) cube(10);", tmp_path)
+    out = tmp_path / "joined.3mf"
+    exporters.export_model(str(out), g)
+    assert _objects_in(out) == 1
+
+
+def test_split_components_separates_them(tmp_path):
+    g = geometry_for("cube(10); translate([20,0,0]) cube(10); translate([40,0,0]) cube(10);", tmp_path)
+    out = tmp_path / "split.3mf"
+    exporters.export_model(str(out), g, split_components=True)
+    assert _objects_in(out) == 3
+
+
+def test_cli_passes_the_flag_through(tmp_path):
+    """--split-components reaches the writer, not just argparse."""
+    from belfryscad import headless
+
+    src = tmp_path / "pieces.scad"
+    src.write_text("cube(10); translate([20,0,0]) cube(10);")
+    for split, expected in ((False, 1), (True, 2)):
+        out = tmp_path / f"cli-{split}.3mf"
+        assert headless.render_and_export(str(src), str(out), quiet=True,
+                                          split_components=split) == 0
+        assert _objects_in(out) == expected

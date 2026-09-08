@@ -40,6 +40,10 @@ def _parse_args(argv):
     parser.add_argument("--export-format", dest="export_format", metavar="FORMAT",
                          help="'asciistl' or 'binstl' -- overrides .stl export format (default binstl). "
                               "Only applies together with -o")
+    parser.add_argument("--split-components", dest="split_components", action="store_true",
+                         help="Give every disconnected piece its own object in the multi-object "
+                              "formats (3mf, amf, obj, ply, wrl, x3d). Off by default, matching "
+                              "OpenSCAD. Only applies together with -o")
     parser.add_argument("--backend", metavar="NAME",
                          help="Accepted for OpenSCAD CLI compatibility -- must be 'Manifold' "
                               "(BelfrySCAD has no CGAL backend). Only applies together with -o")
@@ -465,7 +469,8 @@ def main():
                 code = render_png(args.file, args.output, summary=args.summary,
                                    summary_file=args.summary_file, **png_common)
         else:
-            mesh_common = dict(common, export_format=args.export_format)
+            mesh_common = dict(common, export_format=args.export_format,
+                                split_components=args.split_components)
             if args.animate is not None:
                 from belfryscad.headless import render_and_export_animation
                 code = render_and_export_animation(
@@ -492,6 +497,7 @@ def main():
         "--animate/--animate_dir": args.animate is not None or args.animate_dir,
         "-q/--quiet": args.quiet, "--hardwarnings": args.hardwarnings,
         "--export-format": args.export_format, "--backend": args.backend,
+        "--split-components": args.split_components,
         "--summary/--summary-file": args.summary or args.summary_file,
         "--imgsize/--camera/--autocenter/--viewall/--projection/--view/--colorscheme":
             args.camera or args.autocenter or args.viewall or args.projection or args.view or args.colorscheme,
