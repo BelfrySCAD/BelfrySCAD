@@ -118,7 +118,7 @@ No live preview. Full Manifold CSG processing runs when:
 - A **gizmo drag commits** (mouse-up)
 - An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
-- A **file is saved** (`_write_file` triggers `_render` after writing)
+- A **file is saved**, but only with **Design ▸ Automatic Reload and Render** on (`_write_file`; a plain save is not a render, #395)
 - The user stops editing **Customizer** fields for 2 seconds (`MainWindow._customizer_render_timer`, a debounced single-shot `QTimer` restarted on every edit — see `docs/editor.md`'s CustomizerPane section)
 - An **animation frame advances** (`MainWindow._on_animate_frame` renders per tick; a tick is skipped while a render is still in flight, since overlapping renders invoke the parser concurrently and can segfault)
 - A **watched file changes on disk**, with **Design ▸ Automatic Reload and Render** on (`_on_watched_file_changed`; skipped for a tab with unsaved edits, which are never overwritten)

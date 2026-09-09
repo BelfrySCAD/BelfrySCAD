@@ -1152,6 +1152,11 @@ class CodeEditor(QPlainTextEdit):
         )
 
         self._error_selections: list = []
+        # A parse-error squiggle is an ExtraSelection anchored in the
+        # document: left in place, it stretches under everything typed
+        # inside it (#388). Any edit drops it; the next render puts a fresh
+        # one where it now belongs.
+        self.document().contentsChanged.connect(self.clear_errors)
         self._selection_extra: list = []
         self._exec_selection: list = []
         self._find_selections: list = []
@@ -1388,6 +1393,8 @@ class CodeEditor(QPlainTextEdit):
         self._refresh_extra_selections()
 
     def clear_errors(self):
+        if not self._error_selections:
+            return  # called on every keystroke; nothing to repaint
         self._error_selections = []
         self._refresh_extra_selections()
 
