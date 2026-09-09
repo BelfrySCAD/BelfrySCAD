@@ -151,7 +151,8 @@ class FontPickerDialog:
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QFont, QFontDatabase
         from PySide6.QtWidgets import (
-            QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QVBoxLayout,
+            QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
+            QVBoxLayout,
         )
         from belfryscad.window.font_list import load_fonts
 
@@ -164,7 +165,13 @@ class FontPickerDialog:
         dlg = QDialog(parent)
         dlg.setWindowTitle("Choose Font")
         dlg.resize(720, 520)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # NOT WA_DeleteOnClose. This dialog is run with exec(), and the
+        # caller reads the choice back after that returns -- by which time
+        # DeleteOnClose has already destroyed the C++ widgets, so reading
+        # the selection raised "Internal C++ object already deleted" the
+        # moment Save was clicked. The selection is also recorded on
+        # accept (below), so even a caller that keeps the dialog alive
+        # never depends on the list widgets outliving the dialog.
         layout = QVBoxLayout(dlg)
 
         search = QLineEdit()
@@ -179,22 +186,27 @@ class FontPickerDialog:
         panes.addWidget(style_list, 1)
         layout.addLayout(panes)
 
-        layout.addWidget(QLabel("Preview:"))
-        preview_edit = QLineEdit(preview_text or DEFAULT_PREVIEW)
-        layout.addWidget(preview_edit)
-        preview = QLabel()
-        preview.setMinimumHeight(72)
-        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        layout.addWidget(preview)
+        # ONE field, not an editor plus a label: you type into the preview
+        # and what you type is already set in the chosen face. A separate
+        # sample underneath meant reading your text in one font and the
+        # font in another.
+        layout.addWidget(QLabel("Preview (type here):"))
+        preview_edit = QPlainTextEdit(preview_text or DEFAULT_PREVIEW)
+        preview_edit.setMinimumHeight(120)
+        layout.addWidget(preview_edit, 1)
 
+        # The spec shares the button row: it is what Save writes, so it
+        # belongs beside the button rather than on a line of its own.
         spec_label = QLabel()
         spec_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(spec_label)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                     | QDialogButtonBox.StandardButton.Cancel)
-        layout.addWidget(buttons)
+        bottom = QHBoxLayout()
+        bottom.addWidget(spec_label)
+        bottom.addStretch(1)
+        bottom.addWidget(buttons)
+        layout.addLayout(bottom)
 
         # Qt cannot render a face by the evaluator's name -- that mismatch
         # is the whole reason this dialog exists -- so the actual file is
@@ -228,16 +240,22 @@ class FontPickerDialog:
             font = by_key.get((family, style))
             qt_name = qt_family(font) if font else None
             f = QFont(qt_name or family)
-            f.setPointSize(28)
-            # Only as a hint for a substituted face: a real loaded file
-            # already IS the weight, and asking for bold on top double-
-            # bolds it.
-            if qt_name is None and "bold" in style.casefold():
-                f.setBold(True)
-            if qt_name is None and ("italic" in style.casefold() or "oblique" in style.casefold()):
-                f.setItalic(True)
-            preview.setFont(f)
-            preview.setText(preview_edit.text())
+            f.setPointSize(24)
+            # setStyleName is what actually selects the FACE. Without it
+            # every style of a family rendered identically (Regular),
+            # because QFont(family) alone says nothing about which of the
+            # family's faces to use -- Qt's own style names match the ones
+            # the evaluator reports, both being read from the font's name
+            # table.
+            f.setStyleName(style)
+            # Bold/italic as a hint only where the face itself could not be
+            # selected -- a substituted family has no "Condensed Black" to
+            # name, so the nearest weight beats nothing.
+            if qt_name is None and family not in QFontDatabase.families():
+                low = style.casefold()
+                f.setBold("bold" in low or "black" in low or "heavy" in low)
+                f.setItalic("italic" in low or "oblique" in low)
+            preview_edit.setFont(f)
 
         def fill_styles():
             item = family_list.currentItem()
@@ -264,17 +282,26 @@ class FontPickerDialog:
         search.textChanged.connect(fill_families)
         family_list.currentItemChanged.connect(lambda *_: fill_styles())
         style_list.currentItemChanged.connect(lambda *_: refresh_preview())
-        preview_edit.textChanged.connect(lambda *_: refresh_preview())
+        def live_spec() -> str:
+            family, style = current()
+            return spec_for(family, style) if family else spec
+
+        def chosen_spec() -> str:
+            """What Save chose. Falls back to reading the widgets for a
+            caller that asks while the dialog is still up."""
+            recorded = getattr(dlg, "_chosen", None)
+            return recorded if recorded is not None else live_spec()
+
+        dlg.chosen_spec = chosen_spec
+
+        # Recorded BEFORE accept(), while the widgets are certainly alive.
+        # Connection order is emission order, so this runs first.
+        buttons.accepted.connect(lambda: setattr(dlg, "_chosen", live_spec()))
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
 
         fill_families()
 
-        def chosen_spec() -> str:
-            family, style = current()
-            return spec_for(family, style) if family else spec
-
-        dlg.chosen_spec = chosen_spec
         dlg.families = families
         return dlg
 
