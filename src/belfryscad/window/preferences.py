@@ -90,6 +90,9 @@ _DEFAULTS = {
     # the running BelfrySCAD as a new tab, instead of starting another one.
     # Read once at launch, in main.py, before any window exists.
     "app/openInRunningInstance": True,
+    # The Customizer's "Automatic update" box (#397): a field change renders
+    # 2s later. Off keeps the write-back and leaves rendering to F6.
+    "customizer/autoUpdate": True,
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,

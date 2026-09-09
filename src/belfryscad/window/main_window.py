@@ -1623,6 +1623,8 @@ class MainWindow(QMainWindow):
             self._render_cancel.set()
             self._set_render_busy(False)
             self.log("Render cancelled — Customizer field changed.")
+        if not self._customizer_pane.auto_update():
+            return          # #397: the source is updated; the render waits for F6
         self._customizer_render_tab = tab
         self._customizer_render_timer.start(self._CUSTOMIZER_RENDER_DELAY_MS)
 

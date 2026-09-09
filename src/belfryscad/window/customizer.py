@@ -44,6 +44,7 @@ from typing import Any, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
     QPushButton, QScrollArea, QSlider, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QWidget,
@@ -859,6 +860,13 @@ class CustomizerPane(QWidget):
 
     source_changed = Signal(str)
 
+    def auto_update(self) -> bool:
+        """Whether a field change should schedule a render (see #397)."""
+        return self._auto_update.isChecked()
+
+    def set_auto_update(self, on: bool):
+        self._auto_update.setChecked(bool(on))
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._source = ''
@@ -881,6 +889,19 @@ class CustomizerPane(QWidget):
         self._add_param_btn.clicked.connect(self._on_add_parameter)
         add_row.addWidget(self._add_param_btn)
         add_row.addStretch()
+        # OpenSCAD's "Automatic Preview" box (#397): off, a field change
+        # still writes the value back to the source but nothing renders
+        # until Render/F6 -- what you want while tuning a model that takes
+        # minutes. A preference, so it stays off across sessions.
+        from belfryscad.window.preferences import load_preference, save_preferences
+        self._auto_update = QCheckBox("Automatic update")
+        self._auto_update.setToolTip(
+            "Render 2 seconds after the last field change.\n"
+            "Off: fields still update the source; press Render (F6) when ready.")
+        self._auto_update.setChecked(load_preference("customizer/autoUpdate", type_=bool))
+        self._auto_update.toggled.connect(
+            lambda on: save_preferences({"customizer/autoUpdate": bool(on)}))
+        add_row.addWidget(self._auto_update)
         add_row_widget = QWidget()
         add_row_widget.setLayout(add_row)
 
