@@ -118,6 +118,50 @@ def parse_spec(spec: str) -> tuple:
     return family.strip(), style
 
 
+def qt_family_for(font: dict, cache: dict) -> str | None:
+    """Qt's own family name for one of the evaluator's faces, or None.
+
+    Qt cannot render a face by the evaluator's name -- that mismatch is the
+    whole reason the picker exists -- so the actual file is loaded and the
+    name Qt gives it is used for previews only. A bundled face has no file
+    (its bytes live inside the evaluator) and returns None, leaving the
+    caller to whatever Qt substitutes. `cache` maps path -> family (or
+    None) so each file is registered with Qt once; shared by the picker
+    and the Font List's sample column.
+    """
+    from PySide6.QtGui import QFontDatabase
+    path = font.get("path", "")
+    if not path or path.startswith("<"):
+        return None
+    if path not in cache:
+        fid = QFontDatabase.addApplicationFont(path)
+        fams = QFontDatabase.applicationFontFamilies(fid) if fid != -1 else []
+        cache[path] = fams[0] if fams else None
+    return cache[path]
+
+
+def qt_font_for(font: dict | None, family: str, style: str, point_size: int, cache: dict):
+    """A QFont that draws `family`/`style` as text() would, as nearly as Qt can."""
+    from PySide6.QtGui import QFont, QFontDatabase
+    qt_name = qt_family_for(font, cache) if font else None
+    f = QFont(qt_name or family)
+    f.setPointSize(point_size)
+    # setStyleName is what actually selects the FACE. Without it every
+    # style of a family renders identically (Regular), because
+    # QFont(family) alone says nothing about which of the family's faces
+    # to use -- Qt's own style names match the ones the evaluator reports,
+    # both being read from the font's name table.
+    f.setStyleName(style)
+    # Bold/italic as a hint only where the face itself could not be
+    # selected -- a substituted family has no "Condensed Black" to name,
+    # so the nearest weight beats nothing.
+    if qt_name is None and family not in QFontDatabase.families():
+        low = style.casefold()
+        f.setBold("bold" in low or "black" in low or "heavy" in low)
+        f.setItalic("italic" in low or "oblique" in low)
+    return f
+
+
 def spec_for(family: str, style: str) -> str:
     """The canonical `font=` string. Regular is the bare family -- writing
     `:style=Regular` would teach a habit nobody needs."""
@@ -215,16 +259,6 @@ class FontPickerDialog:
         # and falls back to whatever Qt substitutes.
         loaded: dict = {}
 
-        def qt_family(font: dict) -> str | None:
-            path = font.get("path", "")
-            if not path or path.startswith("<"):
-                return None
-            if path not in loaded:
-                fid = QFontDatabase.addApplicationFont(path)
-                fams = QFontDatabase.applicationFontFamilies(fid) if fid != -1 else []
-                loaded[path] = fams[0] if fams else None
-            return loaded[path]
-
         def current():
             fam = family_list.currentItem()
             sty = style_list.currentItem()
@@ -238,24 +272,7 @@ class FontPickerDialog:
                 return
             spec_label.setText(f"font = \"{_escape(spec_for(family, style))}\"")
             font = by_key.get((family, style))
-            qt_name = qt_family(font) if font else None
-            f = QFont(qt_name or family)
-            f.setPointSize(24)
-            # setStyleName is what actually selects the FACE. Without it
-            # every style of a family rendered identically (Regular),
-            # because QFont(family) alone says nothing about which of the
-            # family's faces to use -- Qt's own style names match the ones
-            # the evaluator reports, both being read from the font's name
-            # table.
-            f.setStyleName(style)
-            # Bold/italic as a hint only where the face itself could not be
-            # selected -- a substituted family has no "Condensed Black" to
-            # name, so the nearest weight beats nothing.
-            if qt_name is None and family not in QFontDatabase.families():
-                low = style.casefold()
-                f.setBold("bold" in low or "black" in low or "heavy" in low)
-                f.setItalic("italic" in low or "oblique" in low)
-            preview_edit.setFont(f)
+            preview_edit.setFont(qt_font_for(font, family, style, 24, loaded))
 
         def fill_styles():
             item = family_list.currentItem()
