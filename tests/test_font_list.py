@@ -170,3 +170,18 @@ print(json.dumps(out))
     assert out["sample_item_font"] == "Regular"
     assert out["painted"]
     assert out["row_height"] >= 32                  # room for a 16pt sample
+
+
+def test_private_dot_families_are_hidden_from_the_gui(monkeypatch):
+    """macOS's `.SF NS`-style faces are not offered (issue #402), and the
+    filter sits in load_fonts(), which both the list and the picker use."""
+    import openscad_cpp_evaluator
+    from belfryscad.window.font_list import is_private_family
+    fake = [
+        {"family": ".Al Bayan PUA", "style": "Regular", "spec": ".Al Bayan PUA", "path": "/p1"},
+        {"family": "Al Bayan", "style": "Regular", "spec": "Al Bayan", "path": "/p2"},
+        {"family": ".SF NS", "style": "Bold", "spec": ".SF NS:style=Bold", "path": "/p3"},
+    ]
+    monkeypatch.setattr(openscad_cpp_evaluator, "list_fonts", lambda: fake)
+    assert [f["family"] for f in load_fonts()] == ["Al Bayan"]
+    assert is_private_family(".SF NS") and not is_private_family("SF Pro")

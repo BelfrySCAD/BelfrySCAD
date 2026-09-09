@@ -94,19 +94,33 @@ class _SampleDelegate(QStyledItemDelegate):
         return QSize(hint.width(), max(hint.height(), _SAMPLE_POINT_SIZE * 2))
 
 
+def is_private_family(family: str) -> bool:
+    """macOS's dot-prefixed system faces (`.SF NS`, `.Al Bayan PUA`, ...).
+
+    Font Book hides them and they are not meant to be picked; offering one
+    only earns Qt's "missing font family" warning. 111 of the 797 faces
+    on one Mac. Issue #402.
+    """
+    return family.startswith(".")
+
+
 def load_fonts() -> list:
-    """Every resolvable face, as dicts of family/style/spec/path.
+    """Every face the GUI should offer, as dicts of family/style/spec/path.
 
     Separated from the dialog so what is shown can be tested without a
-    widget. Returns [] rather than raising if the evaluator is too old to
-    have `list_fonts` — an out-of-date wheel should cost the Font List,
-    not the whole Help menu.
+    widget, and the one place both the Font List and the font picker get
+    their fonts, so a face hidden here is hidden everywhere. Returns []
+    rather than raising if the evaluator is too old to have `list_fonts` —
+    an out-of-date wheel should cost the Font List, not the whole Help
+    menu. Private families are left out here, on the GUI side: whether
+    `text(font=".SF NS")` resolves is the evaluator's business and
+    unchanged.
     """
     try:
         from openscad_cpp_evaluator import list_fonts
     except ImportError:
         return []
-    return list_fonts()
+    return [f for f in list_fonts() if not is_private_family(f["family"])]
 
 
 def matches(font: dict, needle: str) -> bool:
