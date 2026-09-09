@@ -124,3 +124,49 @@ print(json.dumps(out))
     # The row that survives a filter applied AFTER sorting is the right one.
     assert out["visible_after_sort"] == ["Helvetica Neue"]
     assert out["clipboard"] == out["spec_col_of_row0"]
+
+
+def test_the_sample_sentence_is_a_pangram_with_digits_and_stable():
+    from belfryscad.window.font_list import PANGRAMS, sample_text_for
+    s = sample_text_for("Liberation Sans")
+    assert s == sample_text_for("Liberation Sans")          # same face, same sentence
+    assert s.endswith(" 0123456789")
+    assert s[:-len(" 0123456789")] in PANGRAMS
+    letters = {c for c in s.casefold() if c.isalpha()}
+    assert letters >= set("abcdefghijklmnopqrstuvwxyz")      # it really is a pangram
+
+
+def test_the_sample_column_paints_each_row_in_its_own_face(tmp_path):
+    """Driven in a subprocess: widgets crash the pytest runner here. The
+    grab() is what runs the delegate's paint() over the visible rows."""
+    driver = tmp_path / "_fs.py"
+    driver.write_text('''
+import json
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.font_list import FontListDialog, _SAMPLE_COL, sample_text_for
+FAKE = [
+    {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
+    {"family": "Liberation Sans", "style": "Bold", "spec": "Liberation Sans:style=Bold", "path": "<bundled>"},
+]
+dlg = FontListDialog(None, fonts=FAKE)
+dlg.show(); app.processEvents()
+pix = dlg.grab()
+out = {"columns": dlg._table.columnCount(),
+       "sample_item_text": dlg._table.item(0, _SAMPLE_COL).text(),
+       "sample_item_font": dlg._table.item(0, _SAMPLE_COL).data(Qt.ItemDataRole.UserRole)["style"],
+       "painted": not pix.isNull() and pix.width() > 0,
+       "row_height": dlg._table.rowHeight(0)}
+print(json.dumps(out))
+''')
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["columns"] == 4
+    assert out["sample_item_text"] == ""            # the delegate paints it; nothing to sort or filter on
+    assert out["sample_item_font"] == "Regular"
+    assert out["painted"]
+    assert out["row_height"] >= 32                  # room for a 16pt sample
