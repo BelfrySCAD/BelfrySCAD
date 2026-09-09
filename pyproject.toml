@@ -14,7 +14,7 @@ dependencies = [
     "moderngl",
     "numpy",
     "setproctitle>=1.3.7",
-    "openscad_cpp_evaluator>=1.14.0",
+    "openscad_cpp_evaluator>=1.15.0",
     "certifi",
     "keyring>=25.0",
     # .openscad_mdimggen_rc is real YAML and this project does not own the
@@ -62,7 +62,7 @@ requires = [
     "moderngl",
     "numpy",
     "setproctitle>=1.3.7",
-    "openscad_cpp_evaluator>=1.14.0",
+    "openscad_cpp_evaluator>=1.15.0",
     "certifi",
     "keyring>=25.0",
 ]
