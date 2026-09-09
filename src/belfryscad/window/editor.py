@@ -2157,6 +2157,28 @@ class CodeEditor(QPlainTextEdit):
             if not edit_sub.isEmpty():
                 menu.addMenu(edit_sub)
 
+        # A font= argument is a string in an argument position, not a
+        # bracket literal, so it has its own finder and its own top-level
+        # item -- "Edit as..." is for shapes.
+        if not self.isReadOnly():
+            from belfryscad.window.font_picker import (
+                find_font_argument, find_preview_text, open_font_picker,
+            )
+            font_arg = find_font_argument(text, offset)
+            if font_arg is not None:
+                start, end, spec = font_arg
+                preview = find_preview_text(text, offset)
+
+                def on_font_commit(new_spec, start=start, end=end):
+                    self.replace_span(start, end, '"' + new_spec.replace('"', '\\"') + '"')
+                    self.source_edited_externally.emit()
+
+                if not menu.actions() or not menu.actions()[-1].isSeparator():
+                    menu.addSeparator()
+                menu.addAction(
+                    "Choose Font...",
+                    lambda: open_font_picker(spec, preview, on_font_commit, self))
+
         if new_assign:
             name, indent, start, end = new_assign
             # The whole line is rewritten, so the name/spacing/`;` come out

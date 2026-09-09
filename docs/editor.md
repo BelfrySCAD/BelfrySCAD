@@ -1036,3 +1036,15 @@ The dialog leads with the version, because "mainly I want to know what version I
 It reads `openscad_cpp_evaluator.list_fonts()`, **not** Qt's `QFontDatabase`: the names a system font dialog shows are frequently not the names OpenSCAD takes, and that mismatch is the whole complaint the feature answers (*"All too often I specify an interesting font only to get the default Liberation Sans instead"*). The evaluator reports from the same FreeType index `text()`/`textmetrics()`/`fontmetrics()` match against.
 
 The filter reads each row's own cells rather than indexing the source list by row number — clicking a column header sorts the table, after which row *n* is no longer the *n*th font, and a list-indexed filter hides the wrong lines.
+
+### Choose Font… (the `font=` picker)
+
+`window/font_picker.py`. Right-click a `font="…"` argument in the editor and the context menu offers **Choose Font…** — a family pane, a style pane, and a live preview. Save writes the canonical spec back through `replace_span`, the same path the "Edit as…" viewers use. It is a top-level item rather than an "Edit as…" entry, since that submenu is for shapes.
+
+The **style pane lists what the selected family actually has**, not a fixed Bold/Italic pair: 93 of the 379 families on a plain macOS install have styles outside those four, and Helvetica Neue alone has fourteen — a curated list would make its Thin and UltraLight faces unreachable. The strings shown are literally what goes after `:style=`. Regular leads (it is the default) and saves as the *bare family*, never `:style=Regular`.
+
+**Preview text** comes from the enclosing `text()` call's own string literal when there is one, falling back to a pangram, and is always editable — seeing the font set in your own label beats seeing "the quick brown fox". Rendering it needs Qt, which cannot resolve the evaluator's names (that mismatch is the reason the picker exists), so the face's *file* is loaded with `QFontDatabase.addApplicationFont` and Qt's own name for it used for the preview only. A bundled face has no file — its bytes live inside the evaluator — and falls back to a Qt substitute with bold/italic applied as a hint.
+
+`find_font_argument`/`find_preview_text` are lexical, like `find_editable_literals`: no parser, just the source text around the cursor, matching `font` on a word boundary so `subfont=` is not mistaken for it.
+
+The **Customizer** offers the same picker for a font-ish parameter (`font`, `title_font`, `font_face`, …, matched by name because an OpenSCAD string parameter carries no type beyond "string"). The text field stays editable — a script may legitimately name a font this machine does not have.
