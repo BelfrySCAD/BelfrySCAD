@@ -51,9 +51,32 @@ def test_stl_can_finally_choose_ascii_from_the_gui():
 
 
 @pytest.mark.parametrize("ext", [".3mf", ".amf", ".obj", ".ply", ".wrl", ".x3d"])
-def test_every_multi_object_format_offers_the_split(ext):
-    assert keys(ext) == ["export/splitComponents"]
-    assert export_kwargs(ext, {"export/splitComponents": True}) == {"split_components": True}
+def test_every_multi_object_format_asks_what_the_print_is_for(ext):
+    """All of them carry material or colour per object -- 3MF a material
+    per object, AMF one per volume, OBJ a `usemtl` per run, PLY
+    per-vertex colour, VRML and X3D a Material per Shape -- so the
+    question means something in all of them. "Should the parts be
+    separate?" is an implementation detail that answer implies."""
+    assert keys(ext) == ["export/printType", "export/splitComponents"]
+
+
+@pytest.mark.parametrize("ext", [".3mf", ".amf", ".obj", ".ply", ".wrl", ".x3d"])
+def test_multi_material_splits_by_colour_and_single_does_not(ext):
+    multi = export_kwargs(ext, {"export/printType": "multi", "export/splitComponents": False})
+    single = export_kwargs(ext, {"export/printType": "single", "export/splitComponents": False})
+    # One object per colour for a slicer to assign to filaments...
+    assert multi == {"split_colors": True, "split_components": False}
+    # ... and one welded solid when the colours are irrelevant.
+    assert single == {"split_colors": False, "split_components": False}
+
+
+@pytest.mark.parametrize("ext", [".3mf", ".amf", ".obj", ".ply", ".wrl", ".x3d"])
+def test_separate_pieces_is_independent_of_the_print_type(ext):
+    """Disjoint pieces and colour regions are different questions: a
+    single-material print of two separate parts may still want them
+    listed separately."""
+    kwargs = export_kwargs(ext, {"export/printType": "single", "export/splitComponents": True})
+    assert kwargs == {"split_colors": False, "split_components": True}
 
 
 def test_svg_answers_become_export_arguments():

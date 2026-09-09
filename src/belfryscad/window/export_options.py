@@ -18,6 +18,20 @@ from dataclasses import dataclass
 # Formats that can hold more than one object in a file.
 _MULTI_OBJECT = (".3mf", ".amf", ".obj", ".ply", ".wrl", ".x3d")
 
+# Every one of them carries material or colour per object, so the
+# single/multi question means something in all of them: 3MF a material per
+# object, AMF one per volume, OBJ a `usemtl` per run in a companion .mtl,
+# PLY per-vertex colour, VRML and X3D a Material per Shape. Slicers read
+# the first two, but a DCC tool importing an OBJ has the same choice to
+# make -- one object per colour, or one merged mesh.
+_MULTI_MATERIAL = _MULTI_OBJECT
+
+#: What the file is FOR, which is the question worth asking -- "should the
+#: parts be separate?" is an implementation detail the answer implies.
+#: Multi-material keeps one object per colour for the slicer to assign;
+#: single-material welds the lot, colours being irrelevant to it.
+PRINT_TYPES = ("multi", "single")
+
 PDF_PAPER_SIZES = ("a6", "a5", "a4", "a3", "letter", "legal", "tabloid")
 PDF_ORIENTATIONS = ("portrait", "landscape", "auto")
 
@@ -78,13 +92,24 @@ def export_fields(ext: str) -> list:
                       "readable, and what some older toolchains expect."),
         ]
     if ext in _MULTI_OBJECT:
-        return [
-            Field("export/splitComponents", "bool", "Multi-object:",
-                  caption="Separate object per disconnected piece",
+        fields = []
+        if ext in _MULTI_MATERIAL:
+            fields.append(
+                Field("export/printType", "choice", "Printing for:",
+                      choices=PRINT_TYPES,
+                      choice_labels=("Multi-material print", "Single-material print"),
+                      tip="Multi-material writes one object per colour, so a slicer can\n"
+                          "assign each to a filament or a tool.\n\n"
+                          "Single-material welds the whole model into one solid. A\n"
+                          "single-material print has no use for the colours, and splitting\n"
+                          "on them only fills the slicer's object list."))
+        fields.append(
+            Field("export/splitComponents", "bool", "Separate pieces:",
+                  caption="One object per disconnected piece",
                   tip="Off (the default, and what OpenSCAD writes) keeps a model in one\n"
                       "object however many disjoint pieces it is in. On gives every piece\n"
-                      "its own, which a slicer then lists separately."),
-        ]
+                      "its own, which a slicer then lists separately."))
+        return fields
     return []
 
 
@@ -112,7 +137,13 @@ def export_kwargs(ext: str, values: dict, design_filename: str = "") -> dict:
     if ext == ".stl":
         return {"ascii_stl": bool(values["export/stlAscii"])}
     if ext in _MULTI_OBJECT:
-        return {"split_components": bool(values["export/splitComponents"])}
+        kwargs = {"split_components": bool(values["export/splitComponents"])}
+        # Only where the answer means something. A format no slicer reads
+        # keeps the per-colour split it always had, so an OBJ still arrives
+        # in a DCC tool as one object per colour.
+        if ext in _MULTI_MATERIAL:
+            kwargs["split_colors"] = values["export/printType"] == "multi"
+        return kwargs
     return {}
 
 
