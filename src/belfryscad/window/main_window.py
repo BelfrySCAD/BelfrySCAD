@@ -1581,7 +1581,32 @@ class MainWindow(QMainWindow):
             return
         tab._last_cursor = tab.editor.textCursor().position()
 
+    def _log_modified_diagnostic(self, tab):
+        """Why did this tab just become modified? For #394, which nobody can
+        reproduce outside Windows file association: BELFRYSCAD_DEBUG_MODIFIED=1
+        logs, to the console and stderr, who changed the document and where
+        the text first differs from what was loaded.
+        """
+        import sys
+        import traceback
+        before = getattr(tab, "_last_text", "")
+        after = tab.editor.toPlainText()
+        i = next((k for k, (a, b) in enumerate(zip(before, after)) if a != b), min(len(before), len(after)))
+        lines = [
+            "DEBUG_MODIFIED: tab became modified",
+            f"  file: {tab.file_path!r}  read-only: {tab.editor.isReadOnly()}",
+            f"  text length before/after: {len(before)}/{len(after)}; first difference at offset {i}",
+            f"  before[{i}:{i+40}] = {before[i:i+40]!r}",
+            f"  after [{i}:{i+40}] = {after[i:i+40]!r}",
+            "  called from:",
+        ] + ["    " + ln.rstrip() for ln in traceback.format_stack(limit=12)[:-1]]
+        msg = "\n".join(lines)
+        self.log(msg)
+        print(msg, file=sys.stderr, flush=True)
+
     def _on_editor_changed(self, tab):
+        if not tab.is_modified and os.environ.get("BELFRYSCAD_DEBUG_MODIFIED"):
+            self._log_modified_diagnostic(tab)
         tab.is_modified = True
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
