@@ -1613,3 +1613,36 @@ def test_an_image_already_on_disk_is_left_alone_whoever_owns_it(tmp_path):
     out, pending = placeholder_markdown(md, str(tmp_path), "images/masks/")
     assert out.strip() == md.strip()
     assert pending == []
+
+
+def _run_docsgen_cli(tmp_path, monkeypatch, argv):
+    from belfryscad import docsgen as docsgen_cli
+    (tmp_path / "demo.scad").write_text(DEMO)
+    (tmp_path / "other.scad").write_text(DEMO.replace("demo.scad", "other.scad")
+                                             .replace("widget", "gadget"))
+    monkeypatch.chdir(tmp_path)
+    docsgen_cli.main(argv)
+
+
+def test_cli_explicit_docs_dir_wins_over_the_rc_files_docs_directory(tmp_path, monkeypatch):
+    """`-D` is a promise about where output goes. The rc's DocsDirectory is
+    re-read for every file parsed, so without a lock the second file
+    silently sent everything back to the project's real docs tree -- which,
+    for a run inside a library checkout, was 1,600 files into its wiki."""
+    (tmp_path / ".openscad_docsgen_rc").write_text("DocsDirectory: leaked/\n")
+    _run_docsgen_cli(tmp_path, monkeypatch, ["-D", "out", "-n", "-m"])
+    assert (tmp_path / "out" / "demo.scad.md").exists()
+    assert (tmp_path / "out" / "other.scad.md").exists()
+    assert not (tmp_path / "leaked").exists()
+
+
+def test_cli_without_docs_dir_still_honours_the_rc_file(tmp_path, monkeypatch):
+    (tmp_path / ".openscad_docsgen_rc").write_text("DocsDirectory: fromrc/\n")
+    _run_docsgen_cli(tmp_path, monkeypatch, ["-n", "-m"])
+    assert (tmp_path / "fromrc" / "demo.scad.md").exists()
+    assert not (tmp_path / "docs").exists()
+
+
+def test_cli_without_docs_dir_or_rc_defaults_to_docs(tmp_path, monkeypatch):
+    _run_docsgen_cli(tmp_path, monkeypatch, ["-n", "-m"])
+    assert (tmp_path / "docs" / "demo.scad.md").exists()

@@ -14,6 +14,11 @@ Three entry points, one implementation:
 * **View ▸ Show Docs** — the Docs pane, which renders the current editor
   buffer's documentation, lists everything the parser objects to, and shows
   every Example and Figure as a real rendered image.
+  An explicit `-D` **wins over the rc file's `DocsDirectory`**. The parser re-reads
+  the rc for every file, so before this was locked a `-D /tmp/out` run inside a
+  library checkout quietly wrote every file after the first into the library's
+  real docs tree (1,600 files into a wiki checkout, in one case). Without `-D`
+  the rc still decides, then `docs/`.
 
 ## Why it lives here
 

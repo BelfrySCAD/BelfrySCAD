@@ -38,7 +38,14 @@ class Options:
         self.target_profile = args.target_profile
         self.project_name = args.project_name
         self._docs_dir_locked = False
-        self.docs_dir = args.docs_dir.rstrip("/")
+        # An explicit -D wins over the rc file's DocsDirectory, which
+        # DocsGenParser re-reads for every file it parses (see lock_docs_dir).
+        # Without the lock, `--docsgen -D /tmp/out` run inside a project
+        # whose rc names its real docs tree silently wrote into that tree
+        # -- 1,600 files into a wiki checkout, in one real case.
+        self.docs_dir = (args.docs_dir or "docs").rstrip("/")
+        if args.docs_dir is not None:
+            self._docs_dir_locked = True
         self.quiet = args.quiet
         self.force = args.force
         self.strict = args.strict
@@ -186,8 +193,9 @@ def _build_parser():
                     "comments. A drop-in replacement for openscad-docsgen "
                     "that renders Examples and Figures with BelfrySCAD's "
                     "own evaluator instead of the OpenSCAD binary.")
-    parser.add_argument('-D', '--docs-dir', default="docs",
-                        help='The directory to put generated documentation in.')
+    parser.add_argument('-D', '--docs-dir', default=None,
+                        help='The directory to put generated documentation in (default: docs, '
+                             'or the rc file\'s DocsDirectory; given explicitly, this wins over the rc).')
     parser.add_argument('-T', '--test-only', action="store_true",
                         help="If given, don't generate images, but do try executing the scripts.")
     parser.add_argument('-q', '--quiet', action="store_true",
