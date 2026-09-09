@@ -86,6 +86,10 @@ _DEFAULTS = {
     # the file, and a document that grows while you navigate it surprised a
     # user into filing issue #378.
     "editor/appendLineOnDownArrow": False,
+    # A file opened from the desktop (double-click, "open with") goes to
+    # the running BelfrySCAD as a new tab, instead of starting another one.
+    # Read once at launch, in main.py, before any window exists.
+    "app/openInRunningInstance": True,
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
@@ -192,6 +196,18 @@ class PreferencesDialog(QDialog):
         self._append_line_down.toggled.connect(
             lambda v: self._emit("editor/appendLineOnDownArrow", bool(v)))
         form.addRow("Cursor:", self._append_line_down)
+
+        # Second launch with a file: hand it to the running instance
+        self._single_instance = QCheckBox("A file opened from the desktop goes to the running BelfrySCAD as a new tab")
+        self._single_instance.setChecked(
+            s.value("app/openInRunningInstance",
+                    _DEFAULTS["app/openInRunningInstance"], type=bool))
+        self._single_instance.setToolTip(
+            "Off starts a separate BelfrySCAD for every file, as OpenSCAD does.\n"
+            "Takes effect the next time BelfrySCAD starts.")
+        self._single_instance.toggled.connect(
+            lambda v: self._emit("app/openInRunningInstance", bool(v)))
+        form.addRow("Opening files:", self._single_instance)
 
         # Column guide
         guide_row = QHBoxLayout()

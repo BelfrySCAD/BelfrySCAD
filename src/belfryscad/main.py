@@ -249,17 +249,38 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
         path = _isolate_settings()
         print(f"belfryscad: --testing: settings changes will be discarded "
               f"({path})", file=sys.stderr)
+    file_to_open = None
+    if initial_file and initial_file.endswith(".scad") and os.path.isfile(initial_file):
+        file_to_open = os.path.abspath(initial_file)
+    # A double-click in a file manager is a second launch with a file on
+    # its command line. Unless the preference says otherwise, hand the file
+    # to the BelfrySCAD already running and leave, rather than open a whole
+    # new window (#393). Never under --testing: a test launch must not
+    # reach into the developer's real session.
+    from belfryscad.settings import app_settings
+    from belfryscad.single_instance import InstanceServer, hand_off
+    single = app_settings().value("app/openInRunningInstance", True, type=bool) and not testing
+    if single and file_to_open and hand_off([file_to_open]):
+        return 0
     window = MainWindow()
     # Reaches the escape hatch _confirm_unsaved already honours, so both
     # closing a tab and quitting stop prompting -- the two places it is
     # consulted.
     window.skip_unsaved_prompts = no_save_prompts
+    if single:
+        def _open_handed_off(paths):
+            for p in paths:
+                window.open_file_by_path(p)
+            window.raise_()
+            window.activateWindow()
+        instance_server = InstanceServer(parent=app)   # kept alive by `app`
+        instance_server.paths_received.connect(_open_handed_off)
     if ai_echo or ai_prompt:
         _wire_ai_echo(window)
     app.file_open_requested.connect(window.open_file_by_path)
     window.show()
-    if initial_file and initial_file.endswith(".scad") and os.path.isfile(initial_file):
-        window.open_file_by_path(os.path.abspath(initial_file))
+    if file_to_open:
+        window.open_file_by_path(file_to_open)
     if ai_prompt:
         from PySide6.QtCore import QTimer
         # After the event loop is up and any initial file has opened and

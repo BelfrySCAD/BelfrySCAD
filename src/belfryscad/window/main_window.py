@@ -1692,12 +1692,12 @@ class MainWindow(QMainWindow):
         return tab
 
     def _open_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open File", "", "OpenSCAD Files (*.scad);;All Files (*)"
+        # Several at once, one tab each, as OpenSCAD's own Open does (#392).
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Open Files", "", "OpenSCAD Files (*.scad);;All Files (*)"
         )
-        if not path:
-            return
-        self.open_file_by_path(path)
+        for path in paths:
+            self.open_file_by_path(path)
 
     def open_file_by_path(self, path: str):
         """Open a .scad file by path. If already open, switch to its tab."""
