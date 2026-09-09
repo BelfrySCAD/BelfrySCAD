@@ -15,6 +15,8 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtCore import Qt, QEvent
 app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
 from belfryscad.window.editor import CodeEditor
 from belfryscad.window.main_window import MainWindow
 out = {}
