@@ -24,6 +24,7 @@ from belfryscad.window.ai_chat import AIChatPane
 from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.about import open_documentation, show_about_dialog
 from belfryscad.window.export_options import ask_export_options, export_kwargs
+from belfryscad.window.font_list import show_font_list
 from belfryscad.window.preferences import PreferencesDialog, load_preference
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
@@ -1301,6 +1302,9 @@ class MainWindow(QMainWindow):
         about_act = self._add_action(help_menu, "About BelfrySCAD", lambda: show_about_dialog(self))
         about_act.setMenuRole(QAction.MenuRole.AboutRole)
         self._add_action(help_menu, "Documentation", open_documentation)
+        # Not Qt's font database: these are the names text() will accept,
+        # read from the evaluator's own index (issue #379).
+        self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)
