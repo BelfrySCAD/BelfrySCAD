@@ -169,3 +169,63 @@ print(json.dumps(out))
     assert out["spec_after_switch"].startswith("Liberation Sans")
     assert out["spec_regular"] == "Liberation Sans"
     assert out["preview_seeded"] is True
+
+
+def test_saving_commits_the_spec_after_exec_returns(tmp_path):
+    """The crash this test exists for: Save raised
+
+        RuntimeError: Internal C++ object (QListWidget) already deleted
+
+    because the dialog carried WA_DeleteOnClose and the caller read the
+    selection back AFTER exec() returned -- by which time the widgets were
+    gone. Found by running the built app, not by any test that only ever
+    touched a live dialog.
+    """
+    driver = tmp_path / "_fpsave.py"
+    driver.write_text('''
+import json
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QListWidget
+app = QApplication([])
+from belfryscad.window.font_picker import FontPickerDialog, open_font_picker
+import belfryscad.window.font_picker as fp
+
+FONTS = [
+    {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
+    {"family": "Liberation Sans", "style": "Bold", "spec": "Liberation Sans:style=Bold", "path": "<bundled>"},
+]
+# open_font_picker builds its own dialog; force it to use the fake list.
+real = FontPickerDialog.__new__
+fp.FontPickerDialog = lambda spec, preview, parent: real(FontPickerDialog, spec, preview, parent, fonts=FONTS)
+
+out = {}
+committed = []
+# exec() blocks, so the click has to come from the event loop.
+def press_save():
+    for dlg in app.topLevelWidgets():
+        if dlg.windowTitle() == "Choose Font":
+            dlg.findChildren(QListWidget)[1].setCurrentRow(1)   # Bold
+            for b in dlg.findChildren(type(dlg).__bases__[0]):
+                pass
+            from PySide6.QtWidgets import QDialogButtonBox
+            box = dlg.findChild(QDialogButtonBox)
+            box.button(QDialogButtonBox.StandardButton.Save).click()
+            return
+QTimer.singleShot(0, press_save)
+try:
+    fp.open_font_picker("Liberation Sans", "Hi", committed.append, None)
+    out["committed"] = committed
+    out["error"] = None
+except Exception as e:
+    out["committed"] = committed
+    out["error"] = f"{type(e).__name__}: {e}"
+print(json.dumps(out))
+''')
+    import subprocess, sys, json
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["error"] is None, out["error"]
+    assert out["committed"] == ["Liberation Sans:style=Bold"]

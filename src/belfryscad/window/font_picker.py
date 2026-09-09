@@ -164,7 +164,13 @@ class FontPickerDialog:
         dlg = QDialog(parent)
         dlg.setWindowTitle("Choose Font")
         dlg.resize(720, 520)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # NOT WA_DeleteOnClose. This dialog is run with exec(), and the
+        # caller reads the choice back after that returns -- by which time
+        # DeleteOnClose has already destroyed the C++ widgets, so reading
+        # the selection raised "Internal C++ object already deleted" the
+        # moment Save was clicked. The selection is also recorded on
+        # accept (below), so even a caller that keeps the dialog alive
+        # never depends on the list widgets outliving the dialog.
         layout = QVBoxLayout(dlg)
 
         search = QLineEdit()
@@ -265,16 +271,26 @@ class FontPickerDialog:
         family_list.currentItemChanged.connect(lambda *_: fill_styles())
         style_list.currentItemChanged.connect(lambda *_: refresh_preview())
         preview_edit.textChanged.connect(lambda *_: refresh_preview())
+        def live_spec() -> str:
+            family, style = current()
+            return spec_for(family, style) if family else spec
+
+        def chosen_spec() -> str:
+            """What Save chose. Falls back to reading the widgets for a
+            caller that asks while the dialog is still up."""
+            recorded = getattr(dlg, "_chosen", None)
+            return recorded if recorded is not None else live_spec()
+
+        dlg.chosen_spec = chosen_spec
+
+        # Recorded BEFORE accept(), while the widgets are certainly alive.
+        # Connection order is emission order, so this runs first.
+        buttons.accepted.connect(lambda: setattr(dlg, "_chosen", live_spec()))
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
 
         fill_families()
 
-        def chosen_spec() -> str:
-            family, style = current()
-            return spec_for(family, style) if family else spec
-
-        dlg.chosen_spec = chosen_spec
         dlg.families = families
         return dlg
 
