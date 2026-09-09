@@ -141,9 +141,15 @@ class _TextEditCmd(QUndoCommand):
         return 2000
 
     def mergeWith(self, other):
+        # A burst of typing is one undo step, but only while it continues
+        # where the last keystroke left off. An edit that starts somewhere
+        # else -- the cursor was moved between keystrokes -- is its own
+        # step; merged, one undo threw away both and put the cursor at the
+        # FIRST edit's start, the "jumps to the previous action" of #389.
         if (not isinstance(other, _TextEditCmd)
                 or other._tab is not self._tab
-                or other._t - self._t > self._MERGE_WINDOW):
+                or other._t - self._t > self._MERGE_WINDOW
+                or other._cursor_before != self._cursor_after):
             return False
         self._after = other._after
         self._cursor_after = other._cursor_after
@@ -153,7 +159,13 @@ class _TextEditCmd(QUndoCommand):
     def _set_cursor(self, pos):
         cursor = self._editor.textCursor()
         cursor.setPosition(min(pos, len(self._editor.toPlainText())))
+        # Off-screen -> centre it, so the undone edit is in the middle of the
+        # view rather than hugging an edge; on-screen -> leave the scroll
+        # alone (#389).
+        visible = self._editor.viewport().rect().contains(self._editor.cursorRect(cursor))
         self._editor.setTextCursor(cursor)
+        if not visible:
+            self._editor.centerCursor()
 
     def undo(self):
         self._tab._suppress_text_undo = True
@@ -1347,8 +1359,12 @@ class MainWindow(QMainWindow):
 
     def _new_document(self):
         tab = FileTab()
+        tab._last_revision = tab.editor.document().revision()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
+        )
+        tab.editor.cursorPositionChanged.connect(
+            lambda t=tab: self._on_editor_cursor_moved(t)
         )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
@@ -1546,11 +1562,31 @@ class MainWindow(QMainWindow):
                 if is_modified:
                     win_tab.is_modified = True
 
+    def _on_editor_cursor_moved(self, tab):
+        """Keep `_last_cursor` current while the cursor moves WITHOUT an edit.
+
+        `_TextEditCmd` takes its `cursor_before` from `_last_cursor`, and
+        until this existed that was only ever written by `_on_editor_changed`
+        -- i.e. it held the cursor as it stood at the END of the previous
+        edit. Click elsewhere, type, undo, and the cursor landed where the
+        previous edit had finished (#389). Qt emits cursorPositionChanged
+        BEFORE contentsChanged for a keystroke, so a keystroke's own move
+        must be ignored here or it would overwrite the very position the
+        pending `_on_editor_changed` is about to use: the document
+        revision tells the two apart.
+        """
+        if getattr(tab, '_suppress_text_undo', False):
+            return
+        if tab.editor.document().revision() != getattr(tab, '_last_revision', -1):
+            return
+        tab._last_cursor = tab.editor.textCursor().position()
+
     def _on_editor_changed(self, tab):
         tab.is_modified = True
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._sync_tab_label(idx, tab)
+        tab._last_revision = tab.editor.document().revision()
         if getattr(tab, '_suppress_text_undo', False):
             return
         current = tab.editor.toPlainText()
@@ -1618,8 +1654,12 @@ class MainWindow(QMainWindow):
         tab._suppress_text_undo = False
         tab.editor.setPlainText(text)
         tab.is_modified = False
+        tab._last_revision = tab.editor.document().revision()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
+        )
+        tab.editor.cursorPositionChanged.connect(
+            lambda t=tab: self._on_editor_cursor_moved(t)
         )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
@@ -1989,7 +2029,12 @@ class MainWindow(QMainWindow):
             self._customizer_pane.set_file_path(path)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        self._render(tab)
+        # Saving is not rendering (#395). The exception is Automatic Reload
+        # and Render: with that on, a save is exactly the on-disk change it
+        # exists to pick up, so render now rather than waiting for the
+        # watcher to notice our own write.
+        if self._auto_reload_enabled():
+            self._render(tab)
         return True
 
     # ------------------------------------------------------------------
