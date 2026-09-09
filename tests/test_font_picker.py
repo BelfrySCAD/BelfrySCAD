@@ -149,8 +149,25 @@ out["spec_after_switch"] = dlg.chosen_spec()
 style_list.setCurrentRow([style_list.item(i).text() for i in range(style_list.count())].index("Regular"))
 out["spec_regular"] = dlg.chosen_spec()
 
-edits = dlg.findChildren(QLineEdit)
-out["preview_seeded"] = any(e.text() == "Hello" for e in edits)
+from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtGui import QFontInfo
+edit = dlg.findChild(QPlainTextEdit)
+# The preview IS the editor -- you type into the font, there is no
+# separate sample label.
+out["preview_seeded"] = edit.toPlainText() == "Hello"
+out["preview_is_editable"] = not edit.isReadOnly()
+out["label_count"] = len([w for w in dlg.findChildren(QLabel) if w.text().startswith("The quick")])
+
+# The preview font must FOLLOW the style selection. Asserted on the
+# REQUESTED font rather than QFontInfo's resolved one: what a given
+# platform substitutes for an absent family is not this dialog's
+# business, but asking for the right face is.
+requested = []
+for row in range(style_list.count()):
+    style_list.setCurrentRow(row)
+    requested.append(edit.font().styleName())
+out["requested_styles"] = requested
+out["style_names"] = [style_list.item(i).text() for i in range(style_list.count())]
 print(json.dumps(out))
 ''')
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
@@ -169,6 +186,13 @@ print(json.dumps(out))
     assert out["spec_after_switch"].startswith("Liberation Sans")
     assert out["spec_regular"] == "Liberation Sans"
     assert out["preview_seeded"] is True
+    assert out["preview_is_editable"] is True
+    # No leftover pangram label: the editor is the preview.
+    assert out["label_count"] == 0
+    # Selecting a style asks for THAT face. Without setStyleName every
+    # style of a family rendered identically as Regular, which is what
+    # was reported.
+    assert out["requested_styles"] == out["style_names"]
 
 
 def test_saving_commits_the_spec_after_exec_returns(tmp_path):
