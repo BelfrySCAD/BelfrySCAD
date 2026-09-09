@@ -1051,4 +1051,6 @@ Rendering needs Qt, which cannot resolve the evaluator's names (that mismatch is
 
 **The picker must not carry `WA_DeleteOnClose`.** It is run with `exec()` and the caller reads the choice back *after* that returns — by which point DeleteOnClose has already destroyed the C++ widgets, so reading the selection raised `RuntimeError: Internal C++ object (QListWidget) already deleted` the instant Save was clicked. The selection is now also recorded on `accepted` (connected before `accept`, since connection order is emission order), so nothing depends on the list widgets outliving the dialog either way. Every other editable viewer sets DeleteOnClose safely because they are modeless and commit through a signal rather than being read after `exec()`.
 
+The `font = "…"` line the dialog will write sits on the **button row**, beside Save — it is what the button commits, not a separate piece of information.
+
 The **Customizer** offers the same picker for a font-ish parameter (`font`, `title_font`, `font_face`, …, matched by name because an OpenSCAD string parameter carries no type beyond "string"). The text field stays editable — a script may legitimately name a font this machine does not have.

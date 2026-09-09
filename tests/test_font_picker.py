@@ -168,6 +168,18 @@ for row in range(style_list.count()):
     requested.append(edit.font().styleName())
 out["requested_styles"] = requested
 out["style_names"] = [style_list.item(i).text() for i in range(style_list.count())]
+
+# The spec line shares the button row rather than taking one of its own.
+from PySide6.QtWidgets import QDialogButtonBox
+dlg.resize(720, 520)
+dlg.show()
+app.processEvents()
+box = dlg.findChild(QDialogButtonBox)
+spec_lbl = [w for w in dlg.findChildren(QLabel) if w.text().startswith("font =")][0]
+out["spec_text"] = spec_lbl.text()
+out["spec_shares_button_row"] = abs(
+    (spec_lbl.y() + spec_lbl.height() / 2) - (box.y() + box.height() / 2)
+) < max(spec_lbl.height(), box.height())
 print(json.dumps(out))
 ''')
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
@@ -193,6 +205,9 @@ print(json.dumps(out))
     # style of a family rendered identically as Regular, which is what
     # was reported.
     assert out["requested_styles"] == out["style_names"]
+    # The spec is what Save writes, so it sits beside the button.
+    assert out["spec_text"].startswith('font = "')
+    assert out["spec_shares_button_row"] is True
 
 
 def test_saving_commits_the_spec_after_exec_returns(tmp_path):

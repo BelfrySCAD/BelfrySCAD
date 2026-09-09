@@ -195,13 +195,18 @@ class FontPickerDialog:
         preview_edit.setMinimumHeight(120)
         layout.addWidget(preview_edit, 1)
 
+        # The spec shares the button row: it is what Save writes, so it
+        # belongs beside the button rather than on a line of its own.
         spec_label = QLabel()
         spec_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(spec_label)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                     | QDialogButtonBox.StandardButton.Cancel)
-        layout.addWidget(buttons)
+        bottom = QHBoxLayout()
+        bottom.addWidget(spec_label)
+        bottom.addStretch(1)
+        bottom.addWidget(buttons)
+        layout.addLayout(bottom)
 
         # Qt cannot render a face by the evaluator's name -- that mismatch
         # is the whole reason this dialog exists -- so the actual file is
