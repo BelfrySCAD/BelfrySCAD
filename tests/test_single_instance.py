@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 DRIVER = '''
-import json, os, sys, uuid
+import json, os, subprocess, sys, uuid
 from PySide6.QtCore import QCoreApplication, QTimer
 app = QCoreApplication([])
 from belfryscad.single_instance import InstanceServer, hand_off
@@ -21,11 +21,18 @@ server = InstanceServer(name=name)
 out["listening"] = server.is_listening()
 got = []
 server.paths_received.connect(lambda paths: got.extend(paths))
-out["handoff_with_server"] = hand_off(["rel.scad", "/abs/two.scad"], name=name)
-# The server side is asynchronous: pump the loop until it has delivered.
-deadline = QTimer(); deadline.setSingleShot(True); deadline.start(3000)
-while not got and deadline.isActive():
+# The client is a second PROCESS, as it is for real. In-process, Windows'
+# named pipes never complete the write until the server side reads, and
+# the server side is this same thread waiting for the write.
+client = subprocess.Popen([sys.executable, "-c",
+    "import sys; from belfryscad.single_instance import hand_off; "
+    "print(hand_off(['rel.scad', '/abs/two.scad'], name=sys.argv[1]))", name],
+    stdout=subprocess.PIPE, text=True)
+deadline = QTimer(); deadline.setSingleShot(True); deadline.start(10000)
+while (not got or client.poll() is None) and deadline.isActive():
     app.processEvents()
+client.wait(timeout=10)
+out["handoff_with_server"] = client.stdout.read().strip() == "True"
 out["received"] = got
 out["first_is_absolute"] = os.path.isabs(got[0]) if got else None
 # A stale socket from a crashed run must not block a fresh listener.
@@ -48,5 +55,5 @@ def test_hand_off_reaches_a_listener_and_fails_cleanly_without_one():
     assert len(out["received"]) == 2
     assert out["first_is_absolute"] is True
     assert out["received"][0].endswith("rel.scad")
-    assert out["received"][1] == os.path.abspath("/abs/two.scad")
+    assert out["received"][1].endswith("two.scad")   # abspath differs per OS (drive letter on Windows)
     assert out["relisten_after_stale"] is True
