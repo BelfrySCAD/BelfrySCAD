@@ -70,6 +70,10 @@ _DEFAULTS = {
     # is in; on was the only behaviour until issue #319, where a slicer
     # listed a multiboard tile's every hole separately.
     "export/splitComponents": False,
+    # "multi" writes one object per colour, for a slicer to assign to
+    # filaments; "single" welds the model into one solid. Defaults to
+    # multi, which is what every export did before the question was asked.
+    "export/printType": "multi",
     # PDF (2D) page setup. The ruler and its caption are what make a
     # printed page a measuring tool rather than a plot, so they are on --
     # that is OpenSCAD's default too, and the reason the format exists.

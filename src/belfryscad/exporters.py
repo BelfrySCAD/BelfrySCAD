@@ -34,7 +34,7 @@ def exportable(bodies):
 
 def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
                  strip_slivers: bool = True, split_components: bool = False,
-                 pdf_options: dict | None = None) -> list:
+                 split_colors: bool = True, pdf_options: dict | None = None) -> list:
     """Write `geometry` to `path`; returns the warnings to surface.
 
     `geometry` is the opaque handle the evaluator stashes on itself as
@@ -51,6 +51,11 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
     turning it on used to be the only behaviour, and a model in many pieces
     then filled a slicer's object list (issue #319).
 
+    `split_colors` (the default) writes one object per colour, which is what
+    a multi-material print wants -- each colour is something the slicer
+    assigns to a filament. Off welds the model into one solid for a
+    single-material print, which has no use for the colours.
+
     `pdf_options` is the `.pdf` page setup -- paper size, orientation, the
     ruler switches -- keyed as OpenSCAD names its own `-O export-pdf/...`
     settings. `window.export_options.export_kwargs()` builds it from what
@@ -60,7 +65,7 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
 
     return _export_model(path, geometry, format=format, ascii_stl=ascii_stl,
                          strip_slivers=strip_slivers, split_components=split_components,
-                         pdf_options=pdf_options)
+                         split_colors=split_colors, pdf_options=pdf_options)
 
 
 def export_extensions() -> list:
