@@ -749,6 +749,56 @@ class _StringWidget(QWidget):
         self._edit.blockSignals(False)
 
 
+#: A parameter whose name says it holds a font= spec. Name-based because
+#: nothing else distinguishes it -- an OpenSCAD string parameter carries no
+#: type beyond "string", and a `//font` annotation would be a new dialect
+#: nobody else's scripts use.
+_FONT_NAMES = ("font", "fontname", "font_name", "typeface")
+
+
+def _is_font_parameter(name: str) -> bool:
+    key = name.strip().casefold().lstrip("$").replace("-", "_")
+    return key in _FONT_NAMES or key.endswith("_font") or key.startswith("font_")
+
+
+class _FontWidget(QWidget):
+    """A text field plus a Choose… button opening the font picker.
+
+    The field stays editable: a spec can name a font this machine does not
+    have (a script written for someone else's machine), and blocking that
+    would make the picker a cage rather than a convenience.
+    """
+    value_changed = Signal(object)
+
+    def __init__(self, value: str, maxlen: int = 0, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._edit = QLineEdit(str(value))
+        if maxlen > 0:
+            self._edit.setMaxLength(maxlen)
+        self._edit.editingFinished.connect(
+            lambda: self.value_changed.emit(self._edit.text()))
+        lay.addWidget(self._edit)
+        btn = QPushButton("Choose…")
+        btn.clicked.connect(self._choose)
+        lay.addWidget(btn)
+
+    def _choose(self):
+        from belfryscad.window.font_picker import open_font_picker
+
+        def commit(spec):
+            self._edit.setText(spec)
+            self.value_changed.emit(spec)
+
+        open_font_picker(self._edit.text(), None, commit, self)
+
+    def set_value(self, v):
+        self._edit.blockSignals(True)
+        self._edit.setText(str(v))
+        self._edit.blockSignals(False)
+
+
 class _VectorWidget(QWidget):
     value_changed = Signal(object)
 
@@ -1012,6 +1062,11 @@ class CustomizerPane(QWidget):
         elif isinstance(val, str):
             if wtype == 'dropdown':
                 w = _ComboWidget(spec['options'], val)
+            elif _is_font_parameter(param.name):
+                # A font parameter gets the picker rather than a bare text
+                # field: typing a font= spec by hand is exactly what people
+                # get wrong (issue #384).
+                w = _FontWidget(val, spec.get('maxlen', 0))
             else:
                 w = _StringWidget(val, spec.get('maxlen', 0))
         elif isinstance(val, (int, float)):
