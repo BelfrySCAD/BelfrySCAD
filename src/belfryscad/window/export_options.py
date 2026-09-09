@@ -18,13 +18,13 @@ from dataclasses import dataclass
 # Formats that can hold more than one object in a file.
 _MULTI_OBJECT = (".3mf", ".amf", ".obj", ".ply", ".wrl", ".x3d")
 
-# ... of which these are the ones a SLICER reads as multiple materials:
-# 3MF carries a material per object and AMF a material per volume, and
-# both are formats printers actually take. The others hold several objects
-# too, but for a renderer or a DCC tool -- no slicer assigns filaments
-# from an OBJ, so asking "what is this print for?" there would be a
-# question about a print that is not happening.
-_MULTI_MATERIAL = (".3mf", ".amf")
+# Every one of them carries material or colour per object, so the
+# single/multi question means something in all of them: 3MF a material per
+# object, AMF one per volume, OBJ a `usemtl` per run in a companion .mtl,
+# PLY per-vertex colour, VRML and X3D a Material per Shape. Slicers read
+# the first two, but a DCC tool importing an OBJ has the same choice to
+# make -- one object per colour, or one merged mesh.
+_MULTI_MATERIAL = _MULTI_OBJECT
 
 #: What the file is FOR, which is the question worth asking -- "should the
 #: parts be separate?" is an implementation detail the answer implies.
