@@ -369,11 +369,12 @@ class _RenderCallback(QObject):
             self._file_tab._last_parse_path = parse_path
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float, object, object, object, object, object)
+    @Slot(object, object, float, object, object, object, object, object, object)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,
-                    geometry=None, export_name=None):
+                    geometry=None, export_name=None, coverage_result=None):
         self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
-                                 profile_result=profile_result, geometry=geometry, export_name=export_name)
+                                 profile_result=profile_result, geometry=geometry, export_name=export_name,
+                                 coverage_result=coverage_result)
 
     @Slot()
     def on_done(self):
@@ -388,11 +389,12 @@ class _RenderWorker(QObject):
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
-    finished = Signal(object, object, float, object, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry, export_name)
+    finished = Signal(object, object, float, object, object, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry, export_name, coverage_result)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
-                 manifold_cache=None, profile: bool = False, hard_warnings: bool = False):
+                 manifold_cache=None, profile: bool = False, hard_warnings: bool = False,
+                 coverage: bool = False):
         super().__init__()
         self._source = source
         self._file_path = file_path
@@ -400,6 +402,7 @@ class _RenderWorker(QObject):
         self._viewport_params = viewport_params or {}
         self._manifold_cache = manifold_cache
         self._profile = profile
+        self._coverage = coverage
         self._hard_warnings = hard_warnings
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
 
@@ -478,7 +481,8 @@ class _RenderWorker(QObject):
             return
 
         # --- Evaluate ---
-        evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile)
+        evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile,
+                              coverage=self._coverage)
         try:
             # Seeded from the ORIGINAL path, not parse_path -- an unsaved
             # buffer renders through a temp file whose name would otherwise
@@ -528,7 +532,7 @@ class _RenderWorker(QObject):
         # go stale the way a camera value can.
         export_name = resolve_export_name(evaluator.dyn.get("$export_name"), self._file_path)
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
-                            geometry, export_name)
+                            geometry, export_name, evaluator.coverage_result)
 
 
 class _DetachedTabBar(QWidget):
@@ -650,6 +654,7 @@ class MainWindow(QMainWindow):
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
+        self._coverage = None  # CoverageReport from the last coverage render or test run; session-only
         # Maps a path the evaluator reports back to a friendlier label --
         # currently the temp .scad each render writes the live buffer to,
         # shown as its tab's name. Keyed by path, so stale entries from
@@ -1170,6 +1175,14 @@ class MainWindow(QMainWindow):
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
+        # Coverage: session-only toggles, on purpose. A diagnostic like
+        # profiling; one that survived the session would make every later
+        # render pay for it and paint tints nobody asked for that day.
+        self._add_action(design_menu, "Render with Coverage", lambda: self._render(coverage=True))
+        self._act_capture_coverage = self._add_checkable(design_menu, "Capture Coverage", False, None)
+        self._add_action(design_menu, "Show Coverage Report…", self._show_coverage_report)
+        self._add_action(design_menu, "Run Tests with Coverage…", self._run_tests_with_coverage)
+        design_menu.addSeparator()
         measure_menu = design_menu.addMenu("Measure")
         measure_menu.addAction(self._act_measure_distance)
         measure_menu.addAction(self._act_measure_angle)
@@ -1236,6 +1249,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act_show_docs)
 
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
+        self._act_show_coverage = self._add_checkable(view_menu, "Show Coverage", False,
+                                                      lambda _on: self._apply_coverage_overlays())
 
         view_menu.addSeparator()
         for label, preset, key in (
@@ -1460,6 +1475,7 @@ class MainWindow(QMainWindow):
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
             self._refresh_docs_pane()
+            self._apply_coverage_overlays(tab)
 
     def _refresh_docs_pane(self):
         """Rebuild the Docs preview from the live editor buffer, if the pane
@@ -2242,7 +2258,7 @@ class MainWindow(QMainWindow):
             self._viewport.update()
         return changed
 
-    def _render(self, tab=None, profile: bool = False, reframe: bool = False):
+    def _render(self, tab=None, profile: bool = False, reframe: bool = False, coverage: bool | None = None):
         """`reframe` fits the camera to the result when it lands.
 
         Only a tab newly loaded from a file asks for it. Re-fitting after
@@ -2293,9 +2309,11 @@ class MainWindow(QMainWindow):
         self._render_cancel = cancel
         self._set_render_busy(True)
 
+        if coverage is None:
+            coverage = self._act_capture_coverage.isChecked()
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
                                 hard_warnings=self._act_stop_on_warning.isChecked(),
-                               profile=profile)
+                               profile=profile, coverage=coverage)
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -2358,7 +2376,7 @@ class MainWindow(QMainWindow):
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
                         final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None,
-                        geometry=None, export_name=None):
+                        geometry=None, export_name=None, coverage_result=None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
         # The script's final $export_name, already sanitised, kept per tab
@@ -2375,6 +2393,9 @@ class MainWindow(QMainWindow):
         self._geometry = geometry
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
+        if coverage_result is not None:
+            from belfryscad.coverage import CoverageReport
+            self._set_coverage(CoverageReport.from_result(coverage_result))
         if profile_result is not None:
             if getattr(self, "_suppress_profile_report", False):
                 self._suppress_profile_report = False
@@ -2464,6 +2485,85 @@ class MainWindow(QMainWindow):
             return
         from openscad_cpp_evaluator import format_csg_tree
         self.log(format_csg_tree(self._last_csg_tree))
+
+    # ------------------------------------------------------------------
+    # Coverage (see docs/editor.md, "Coverage")
+    # ------------------------------------------------------------------
+
+    def _set_coverage(self, report):
+        """A new CoverageReport arrived (a coverage render, or Run Tests with
+        Coverage). Replaces the old one, turns the overlay on, and says how
+        it went in the console."""
+        self._coverage = report
+        total = report.total()
+        self.log(f"Coverage: {total.percent:.1f}% of {total.spans} spans "
+                 f"({total.statements_hit}/{total.statements} statements, "
+                 f"{total.branches_hit}/{total.branches} branches, "
+                 f"{total.bodies_hit}/{total.bodies} bodies) over {len(report.files())} files — "
+                 f"Design > Show Coverage Report… for the gaps.")
+        if not self._act_show_coverage.isChecked():
+            self._act_show_coverage.setChecked(True)   # toggled -> _apply_coverage_overlays
+        else:
+            self._apply_coverage_overlays()
+
+    def _coverage_spans_for_tab(self, tab) -> list:
+        """The report's spans that belong to this tab's document. A rendered
+        tab's own top-level code reports under the temp copy the worker
+        parsed (tab._last_parse_path); a library opened in a tab reports
+        under its real path."""
+        if self._coverage is None:
+            return []
+        origins = set()
+        if getattr(tab, "_last_parse_path", None):
+            origins.add(os.path.abspath(tab._last_parse_path))
+        if tab.file_path:
+            origins.add(os.path.abspath(tab.file_path))
+        return [s for s in self._coverage.spans.values() if os.path.abspath(s["origin"]) in origins]
+
+    def _apply_coverage_overlays(self, only_tab=None):
+        from belfryscad.window.preferences import load_preference
+        show = self._act_show_coverage.isChecked() and self._coverage is not None
+        tint = load_preference("coverage/tintCovered", type_=bool)
+        tabs = [only_tab] if only_tab is not None else [self._tabs.widget(i) for i in range(self._tabs.count())]
+        for tab in tabs:
+            if tab is None:
+                continue
+            spans = self._coverage_spans_for_tab(tab) if show else []
+            if spans:
+                tab.editor.set_coverage(spans, tint_covered=tint)
+            else:
+                tab.editor.clear_coverage()
+
+    def _show_coverage_report(self):
+        if self._coverage is None:
+            self.log("No coverage yet — Design > Render with Coverage, or Run Tests with Coverage… first.")
+            return
+        from belfryscad.window.coverage_report import CoverageReportDialog
+        from belfryscad.window.library_manager import _library_dir
+        CoverageReportDialog(self._coverage, base=str(_library_dir()), parent=self).show()
+
+    def _run_tests_with_coverage(self, files=None):
+        """Run .scadtest files with coverage on a worker thread; the merged
+        report becomes the current coverage and lights up every open tab
+        it covers. `files` is only passed by tests, to skip the dialog."""
+        if files is None:
+            files, _ = QFileDialog.getOpenFileNames(
+                self, "Run Tests with Coverage", "", "OpenSCAD tests (*.scadtest);;All Files (*)")
+        if not files:
+            return
+        from belfryscad.window.coverage_report import TestCoverageWorker
+        self.log(f"Running {len(files)} test file(s) with coverage…")
+        worker = TestCoverageWorker(files)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.logged.connect(self.log)
+        worker.finished.connect(lambda report: self._set_coverage(report) if report is not None else None)
+        worker.done.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.started.connect(worker.run)
+        self._test_coverage_job = (worker, thread)   # keep both alive until done
+        thread.start()
 
     def _show_profile_report(self):
         """Open a sortable per-call-site profiling report from the last

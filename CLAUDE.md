@@ -125,7 +125,7 @@ No live preview. Full Manifold CSG processing runs when:
 - The user **accepts an AI proposal** in the chat pane (`_on_ai_proposal_accepted` goes through `replace_span` + `source_edited_externally`, the same path "Edit as..." uses)
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
 
-**"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
+**"Render with Coverage"** and **"Capture Coverage"** (Design menu) collect which statements, branch arms and bodies ran (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
 
