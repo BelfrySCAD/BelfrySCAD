@@ -72,7 +72,7 @@ _AXIS_RGB = {
 _NEUTRAL_FACE = (150, 155, 165)
 
 # How far a positive face is pulled from the neutral grey towards its axis
-# colour. Enough to say "this is X" at 92px; much more and the cube reads as
+# colour. Enough to say "this is X" at this size; much more and the cube reads as
 # three saturated stickers rather than a grey cube with a hint of axis in it.
 _FACE_TINT_MIX = 0.28
 
@@ -192,9 +192,9 @@ class OrientationCube(QWidget):
     view_requested = Signal(float, float)   # azimuth, elevation (degrees)
     orbit_requested = Signal(float, float)  # drag delta in pixels (dx, dy)
 
-    SIZE = 92          # widget is square, in logical pixels
-    MARGIN = 10        # gap from the viewport's top-right corner
-    BEVEL = 0.16       # fraction of each half-edge taken by the chamfer
+    SIZE = 58          # widget is square, in logical pixels; snug around the cube
+    MARGIN = 6         # closest the cube comes to the viewport's top/right edges
+    BEVEL = 0.22       # fraction of each half-edge taken by the chamfer
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -241,9 +241,13 @@ class OrientationCube(QWidget):
         rotation alone, scaled to the widget. Larger depth is nearer."""
         v = pts @ self._rot.T
         half = self.SIZE / 2.0
-        # sqrt(3) is the cube's corner-to-centre distance, so the whole cube
-        # fits at any orientation with a little room for the outline.
-        scale = (half - 6) / math.sqrt(3.0)
+        # The farthest point from the centre is a corner-triangle vertex at
+        # (1, s, s), not the full cube's corner at sqrt(3): the chamfer cut
+        # those off. Sizing to it keeps the widget snug around what is drawn
+        # (2px of room for the outline), so MARGIN is the real gap to the
+        # viewport edge rather than MARGIN plus a band of dead widget.
+        s = 1.0 - self.BEVEL
+        scale = (half - 2) / math.sqrt(1.0 + 2.0 * s * s)
         out = np.empty_like(v)
         out[:, 0] = half + v[:, 0] * scale
         out[:, 1] = half - v[:, 1] * scale      # Qt's y grows downward
@@ -318,12 +322,18 @@ class OrientationCube(QWidget):
             painter.drawPolygon(poly)
 
             if reg.label:
-                self._draw_face_label(painter, reg.label, proj, idx == self._hover)
+                # Every label keeps a fixed foot: Z- for the vertical faces,
+                # Y- for the two Z faces. A label that re-orients itself as
+                # the camera swings reads as spinning.
+                foot = [0.0, -1.0, 0.0] if abs(float(reg.normal[2])) > 0.5 else [0.0, 0.0, -1.0]
+                d = np.array(foot) @ self._rot.T
+                down = np.array([d[0], -d[1]])      # screen y grows downward, as in _project
+                self._draw_face_label(painter, reg.label, proj, idx == self._hover, down)
 
         painter.end()
 
     @staticmethod
-    def _label_frame(proj: np.ndarray):
+    def _label_frame(proj: np.ndarray, down: np.ndarray | None = None):
         """Pick the (origin, x-edge, y-edge) frame to lay a face's label in,
         or None if the face is edge-on and has no usable frame.
 
@@ -338,7 +348,8 @@ class OrientationCube(QWidget):
 
         Among the candidates that read forwards, take the one whose "down"
         edge points most nearly down the screen, so labels stay upright-ish
-        rather than sideways.
+        rather than sideways -- or, when `down` (a screen-space direction)
+        is given, most nearly along it.
         """
         best = None
         for order in (proj, proj[::-1]):
@@ -349,14 +360,18 @@ class OrientationCube(QWidget):
                 det = x[0] * y[1] - x[1] * y[0]
                 if det <= 1e-9:       # mirrored, or degenerate edge-on
                     continue
-                if best is None or y[1] > best[3]:
-                    best = (o, x, y, y[1])
+                if down is None:
+                    score = y[1]
+                else:   # by direction, not length: a foreshortened edge must still win
+                    score = float(y[0] * down[0] + y[1] * down[1]) / max(math.hypot(y[0], y[1]), 1e-9)
+                if best is None or score > best[3]:
+                    best = (o, x, y, score)
         return None if best is None else best[:3]
 
     def _draw_face_label(self, painter: QPainter, text: str, proj: np.ndarray,
-                          hovered: bool) -> None:
+                          hovered: bool, down: np.ndarray | None = None) -> None:
         """Draw the name in the plane of the face."""
-        frame = self._label_frame(proj)
+        frame = self._label_frame(proj, down)
         if frame is None:
             return
         o, x, y = frame
@@ -367,12 +382,10 @@ class OrientationCube(QWidget):
                                         y[0] / box, y[1] / box,
                                         o[0], o[1]))
         font = QFont()
-        # 48 in the label's own 100-unit box, which the transform then scales
-        # to the face. Twice what the old word labels used, which they could
-        # not have taken -- "BOTTOM" barely fitted at half this. Two-character
-        # axis names leave the room.
-        font.setPixelSize(48)
-        font.setBold(True)
+        # 64 in the label's own 100-unit box, which the transform then scales
+        # to the face. Regular weight: at this size bold turned the two
+        # characters into a blob on the smaller cube.
+        font.setPixelSize(64)
         painter.setFont(font)
         painter.setPen(QColor(255, 255, 255) if hovered else QColor(35, 38, 44))
         painter.drawText(QRectF(0, 0, box, box), Qt.AlignmentFlag.AlignCenter, text)
