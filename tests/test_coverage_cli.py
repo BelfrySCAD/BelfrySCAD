@@ -98,3 +98,11 @@ def test_test_runner_merges_library_coverage_and_drops_snippets(tmp_path, capsys
     (lib,) = d["files"]
     assert lib["bodies"] == 3 and lib["bodies_hit"] == 2      # f and used, across two tests
     assert scadtest.main(["--coverage-min", "99", "test_lib.scadtest"]) == 1
+
+
+def test_rel_paths_outside_base_stay_absolute(tmp_path):
+    from belfryscad.coverage import _rel
+    inside = str(tmp_path / "lib" / "a.scad")
+    outside = str(tmp_path.parent / "elsewhere.scad")
+    assert _rel(inside, str(tmp_path)) == os.path.join("lib", "a.scad")
+    assert _rel(outside, str(tmp_path)) == outside
