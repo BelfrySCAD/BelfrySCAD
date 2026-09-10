@@ -110,7 +110,12 @@ def _parse_args(argv):
                              "command line; run `belfryscad --mdimggen -h`")
     parser.add_argument("--test", action="store_true",
                         help="Run .scadtest files. Takes over the rest of "
-                             "the command line; run `belfryscad --test -h`")
+                             "the command line; run `belfryscad --test -h` "
+                             "(--test --coverage reports what the tests exercised)")
+    parser.add_argument("--coverage", action="store_true",
+                        help="Run a script and report which statements, branch "
+                             "arms and bodies ran, per file. Takes over the rest "
+                             "of the command line; run `belfryscad --coverage -h`")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -464,6 +469,8 @@ def _proc_name(argv) -> str:
         return PROC_NAME + "-mdimggen"
     if "--test" in argv:
         return PROC_NAME + "-test"
+    if "--coverage" in argv:
+        return PROC_NAME + "-coverage"
     if "-o" in argv or "--output" in argv or any(a.startswith("--output=") for a in argv):
         return PROC_NAME + "-headless"
     return PROC_NAME
@@ -493,6 +500,10 @@ def main():
         idx = sys.argv.index("--test")
         from belfryscad import scadtest
         raise SystemExit(scadtest.main(sys.argv[idx + 1:]))
+    if "--coverage" in sys.argv[1:]:
+        idx = sys.argv.index("--coverage")
+        from belfryscad import coverage
+        raise SystemExit(coverage.main(sys.argv[idx + 1:]))
 
     args = _parse_args(sys.argv[1:])
 

@@ -94,6 +94,7 @@ class ScriptResult:
     echos: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    coverage: object = None   # the evaluator's {spans, files, total} when asked for
 
     @property
     def success(self) -> bool:
@@ -154,7 +155,7 @@ class ScriptRunner:
 
     def run(self, script_lines, src_dir: str, params: dict | None = None,
             hard_warnings: bool = False, preview: bool = True,
-            generate: bool = True) -> ScriptResult:
+            generate: bool = True, coverage: bool = False) -> ScriptResult:
         """Evaluate `script_lines`. The script is written to a temp file in
         `src_dir` so that its own relative `include <...>` paths resolve
         the same way they would for the file being documented -- the same
@@ -186,7 +187,7 @@ class ScriptRunner:
             # so the pre-flight bought nothing and parsed every example twice.
             # It cost ~30% of the per-example time, the single largest item
             # after the library include itself.
-            evaluator = Evaluator(echo_fn=echo_fn)
+            evaluator = Evaluator(echo_fn=echo_fn, coverage=coverage)
             try:
                 # seed_params, not the raw dict: OpenSCAD defines $vpt/$vpr/
                 # $vpd/$vpf for every run, and BOSL2 reads them (debug_vnf()
@@ -220,6 +221,7 @@ class ScriptRunner:
                 return result
             result.dyn = dict(evaluator.dyn)
             result.bodies = to_renderable_bodies(bodies)
+            result.coverage = evaluator.coverage_result
         finally:
             try:
                 os.unlink(path)

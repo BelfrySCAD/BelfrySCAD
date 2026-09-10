@@ -204,6 +204,22 @@ trustworthy: it is the same validation a real docs build performs. Full
 details, including the camera/`--viewall` semantics and the APNG animation
 support, in `docs/docsgen.md`.
 
+## Coverage
+
+`belfryscad --coverage FILE.scad [-D var=value] [--json PATH] [--min PERCENT] [--no-gaps]` runs
+the script with the evaluator's coverage on (resolve pass only: the geometry pass runs no script
+code) and prints one line per file (`percent`, statements, branches, bodies hit/total), a TOTAL
+line, then every uncovered span as `file:line:col  kind`. `belfryscad --test --coverage
+[--coverage-json PATH] [--coverage-min PERCENT]` does the same over every test's evaluation,
+merged in the main thread after the run, worst file first, with the tests' own temp snippets
+dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. Both live in
+`belfryscad/coverage.py` (`CoverageReport`: merge by `(origin, start, end, kind)`, per-file
+`FileSummary`, JSON round-trip, `format_report`) on top of openscad_cpp_evaluator ≥1.19.1's
+`Evaluator(coverage=True).coverage_result`; the vocabulary (statement / branch arm / body) is the
+evaluator's, see its `CLAUDE.md`. `--min`/`--coverage-min` are the CI hooks: exit 1 below the
+threshold even when everything passed. The GUI overlay (View ▸ Show Coverage) reads the same
+`CoverageReport`; see `docs/editor.md`.
+
 ## Further Documentation
 
 Detailed implementation notes live in `docs/`. AST Evaluator internals (scope processing, assignment order, built-ins reference, 2D/3D geometry handling, error format, `$variables` scoping, `include`/`use`, implementation quirks, and the Manifold provenance / AST ↔ geometry ID mapping API) now live in the separate `openscad_cpp_evaluator` package's own `CLAUDE.md`, not here.
