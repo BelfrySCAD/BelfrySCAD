@@ -46,6 +46,7 @@ class TestResult:
     test_case: TestCase
     passed: bool
     messages: list = field(default_factory=list)
+    coverage: object = None   # the evaluator's coverage result, with --coverage
 
 
 def parse_scadtest_file(filepath) -> list[TestCase]:
@@ -127,7 +128,7 @@ def _script_lines(tc: TestCase) -> list[str]:
     return lines
 
 
-def run_test(tc: TestCase) -> TestResult:
+def run_test(tc: TestCase, coverage: bool = False) -> TestResult:
     """Evaluate one test and judge it.
 
     The four assertions are the reference's own, in its order: whether the
@@ -147,7 +148,7 @@ def run_test(tc: TestCase) -> TestResult:
         # generate=False: run the language, build no geometry. The reference
         # renders to a .term CSG dump here, which likewise makes no solids.
         # No params here: set_vars went in as appended assignments above.
-        return runner.run(lines, tc.script_dir or ".", generate=False)
+        return runner.run(lines, tc.script_dir or ".", generate=False, coverage=coverage)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         future = ex.submit(evaluate)
@@ -159,6 +160,13 @@ def run_test(tc: TestCase) -> TestResult:
         except Exception as e:  # a crash is a failed test, not a crashed run
             return TestResult(tc, False, [f"Evaluation raised {type(e).__name__}: {e}"])
 
+    result = _judge(tc, res)
+    result.coverage = res.coverage   # kept even for a failed test: its code still ran
+    return result
+
+
+def _judge(tc: TestCase, res) -> TestResult:
+    """The four assertions, in the reference's order."""
     messages: list[str] = []
 
     if tc.expect_success and not res.success:
@@ -207,7 +215,16 @@ def main(argv=None) -> int:
                              "Each is a thread in this process, not a fresh "
                              "OpenSCAD launch, so serial is already faster "
                              "than the reference's parallel default.")
+    parser.add_argument("--coverage", action="store_true",
+                        help="Record which statements, branch arms and bodies of the LIBRARY files "
+                             "the tests exercised, merged over every test, and report it per file "
+                             "after the results. The test snippets themselves are left out.")
+    parser.add_argument("--coverage-json", metavar="PATH", help="Also write the merged coverage as JSON")
+    parser.add_argument("--coverage-min", type=float, metavar="PERCENT",
+                        help="Exit 1 if overall coverage is below this, even when every test passed")
     args = parser.parse_args(argv)
+    if args.coverage_json or args.coverage_min is not None:
+        args.coverage = True
 
     if not args.files:
         print("Usage: belfryscad --test [-j N] <file.scadtest> [file2.scadtest ...]")
@@ -215,6 +232,8 @@ def main(argv=None) -> int:
 
     passed = failed = 0
     failed_names = []
+    from belfryscad.coverage import CoverageReport, format_report
+    merged = CoverageReport() if args.coverage else None
 
     for filepath in args.files:
         try:
@@ -227,15 +246,19 @@ def main(argv=None) -> int:
         file_passed = file_failed = 0
 
         if args.jobs == 1 or len(tests) <= 1:
-            results = [run_test(tc) for tc in tests]
+            results = [run_test(tc, args.coverage) for tc in tests]
         else:
             # Threads, not processes: the evaluator releases the GIL for the
             # duration of a script, and a process pool would pay a fresh
             # interpreter and re-import per test.
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-                results = list(ex.map(run_test, tests))
+                results = list(ex.map(lambda tc: run_test(tc, args.coverage), tests))
 
         for result in results:
+
+            if merged is not None and result.coverage:
+
+                merged.merge_spans(result.coverage["spans"])   # main thread: no locking needed
             if result.passed:
                 print(f"  {result.test_case.name} PASSED")
                 file_passed += 1
@@ -258,4 +281,17 @@ def main(argv=None) -> int:
         for filepath, name in failed_names:
             print(f"  {filepath}: {name}")
 
+    if merged is not None:
+        # The snippets the runner wrote for each test are not the subject.
+        from belfryscad.docsgen.runner import _TEMP_PREFIX
+        merged.drop_origins(lambda origin: os.path.basename(origin).startswith(_TEMP_PREFIX))
+        print("\nCoverage (worst first):")
+        print(format_report(merged, base=os.getcwd(), uncovered=False, worst_first=True))
+        if args.coverage_json:
+            with open(args.coverage_json, "w", encoding="utf-8") as f:
+                f.write(merged.to_json())
+        if args.coverage_min is not None and merged.total().percent < args.coverage_min:
+            print(f"belfryscad: coverage {merged.total().percent:.1f}% is below --coverage-min {args.coverage_min}",
+                  file=sys.stderr)
+            return 1
     return 1 if failed > 0 else 0

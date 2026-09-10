@@ -125,7 +125,7 @@ No live preview. Full Manifold CSG processing runs when:
 - The user **accepts an AI proposal** in the chat pane (`_on_ai_proposal_accepted` goes through `replace_span` + `source_edited_externally`, the same path "Edit as..." uses)
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
 
-**"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
+**"Render with Coverage"** and **"Capture Coverage"** (Design menu) collect which statements, branch arms and bodies ran (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
 
@@ -203,6 +203,22 @@ Keeping the parser byte-identical is what makes the pane's verdict
 trustworthy: it is the same validation a real docs build performs. Full
 details, including the camera/`--viewall` semantics and the APNG animation
 support, in `docs/docsgen.md`.
+
+## Coverage
+
+`belfryscad --coverage FILE.scad [-D var=value] [--json PATH] [--min PERCENT] [--no-gaps]` runs
+the script with the evaluator's coverage on (resolve pass only: the geometry pass runs no script
+code) and prints one line per file (`percent`, statements, branches, bodies hit/total), a TOTAL
+line, then every uncovered span as `file:line:col  kind`. `belfryscad --test --coverage
+[--coverage-json PATH] [--coverage-min PERCENT]` does the same over every test's evaluation,
+merged in the main thread after the run, worst file first, with the tests' own temp snippets
+dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. Both live in
+`belfryscad/coverage.py` (`CoverageReport`: merge by `(origin, start, end, kind)`, per-file
+`FileSummary`, JSON round-trip, `format_report`) on top of openscad_cpp_evaluator ≥1.19.1's
+`Evaluator(coverage=True).coverage_result`; the vocabulary (statement / branch arm / body) is the
+evaluator's, see its `CLAUDE.md`. `--min`/`--coverage-min` are the CI hooks: exit 1 below the
+threshold even when everything passed. The GUI overlay (View ▸ Show Coverage) reads the same
+`CoverageReport`; see `docs/editor.md`.
 
 ## Further Documentation
 

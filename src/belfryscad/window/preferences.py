@@ -93,6 +93,10 @@ _DEFAULTS = {
     # The Customizer's "Automatic update" box (#397): a field change renders
     # 2s later. Off keeps the write-back and leaves rendering to F6.
     "customizer/autoUpdate": True,
+    # The coverage overlay tints uncovered spans red; this also tints the
+    # covered ones green, so "ran" and "no data" are told apart. A display
+    # taste, so persisted -- unlike the coverage toggles themselves.
+    "coverage/tintCovered": True,
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
@@ -211,6 +215,13 @@ class PreferencesDialog(QDialog):
         self._single_instance.toggled.connect(
             lambda v: self._emit("app/openInRunningInstance", bool(v)))
         form.addRow("Opening files:", self._single_instance)
+
+        self._tint_covered = QCheckBox("Coverage overlay also tints covered spans green")
+        self._tint_covered.setChecked(
+            s.value("coverage/tintCovered", _DEFAULTS["coverage/tintCovered"], type=bool))
+        self._tint_covered.setToolTip("Off: only spans that never ran are marked (red).")
+        self._tint_covered.toggled.connect(lambda v: self._emit("coverage/tintCovered", bool(v)))
+        form.addRow("Coverage:", self._tint_covered)
 
         # Column guide
         guide_row = QHBoxLayout()

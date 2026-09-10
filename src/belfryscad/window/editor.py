@@ -1157,6 +1157,10 @@ class CodeEditor(QPlainTextEdit):
         # inside it (#388). Any edit drops it; the next render puts a fresh
         # one where it now belongs.
         self.document().contentsChanged.connect(self.clear_errors)
+        # Coverage tints are anchored the same way and go stale the same way
+        # (the spans have moved); the next coverage render restores them.
+        self._coverage_selections: list = []
+        self.document().contentsChanged.connect(self.clear_coverage)
         self._selection_extra: list = []
         self._exec_selection: list = []
         self._find_selections: list = []
@@ -1396,6 +1400,44 @@ class CodeEditor(QPlainTextEdit):
         if not self._error_selections:
             return  # called on every keystroke; nothing to repaint
         self._error_selections = []
+        self._refresh_extra_selections()
+
+    def set_coverage(self, spans, tint_covered: bool = True):
+        """Tint each coverage span: red where it never ran, green where it
+        did (or nothing, with tint_covered off). `spans` are the coverage
+        dicts for THIS document (start/end are document offsets)."""
+        uncovered = QTextCharFormat()
+        uncovered.setBackground(QColor(255, 120, 120, 70))
+        covered = QTextCharFormat()
+        covered.setBackground(QColor(120, 220, 120, 55))
+        doc = self.document()
+        length = doc.characterCount() - 1
+        sels = []
+        for s in spans:
+            if s["hits"] == 0:
+                fmt = uncovered
+            elif tint_covered:
+                fmt = covered
+            else:
+                continue
+            start = max(0, min(int(s["start"]), length))
+            end = max(start, min(int(s["end"]), length))
+            if end == start:
+                continue
+            sel = QTextEdit.ExtraSelection()
+            sel.format = fmt
+            c = QTextCursor(doc)
+            c.setPosition(start)
+            c.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            sels.append(sel)
+        self._coverage_selections = sels
+        self._refresh_extra_selections()
+
+    def clear_coverage(self):
+        if not self._coverage_selections:
+            return
+        self._coverage_selections = []
         self._refresh_extra_selections()
 
     def set_selection(self, start_offset: int, end_offset: int):
@@ -1972,8 +2014,9 @@ class CodeEditor(QPlainTextEdit):
         self._refresh_extra_selections()
 
     def _refresh_extra_selections(self):
+        # Coverage first: a background tint every other marker paints over.
         self.setExtraSelections(
-            self._error_selections + self._selection_extra
+            self._coverage_selections + self._error_selections + self._selection_extra
             + self._find_selections + self._exec_selection + self._bracket_selections
         )
 
