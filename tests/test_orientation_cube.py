@@ -1,18 +1,35 @@
-"""Orientation cube geometry that needs no window: label feet and fit."""
+"""Orientation cube geometry that needs no window: label feet and fit.
+
+The widget itself cannot be built here (conftest's QGuiApplication is not a
+QApplication, and QWidget aborts without one), so the projection and label
+frame are driven through a stub carrying the same class constants.
+"""
 import math
 
 import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from belfryscad.window.orientation_cube import OrientationCube, _build_regions  # noqa: E402
+
+
+class _Stub:
+    SIZE = OrientationCube.SIZE
+    BEVEL = OrientationCube.BEVEL
+    _project = OrientationCube._project
+    _label_frame = staticmethod(OrientationCube._label_frame)
+
+    def __init__(self):
+        self._rot = np.eye(3)
+        self._regions = _build_regions(self.BEVEL)
+
+    def set_orientation(self, rot):
+        self._rot = np.asarray(rot, dtype=np.float64)
 
 
 @pytest.fixture(scope="module")
 def cube():
-    QApplication.instance() or QApplication([])
-    from belfryscad.window.orientation_cube import OrientationCube
-    return OrientationCube()
+    return _Stub()
 
 
 def _rz(d):
