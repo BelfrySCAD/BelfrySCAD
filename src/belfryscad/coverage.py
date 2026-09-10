@@ -127,9 +127,11 @@ class CoverageReport:
 def _rel(origin: str, base: str | None) -> str:
     if base:
         try:
-            return os.path.relpath(origin, base)
+            rel = os.path.relpath(origin, base)
         except ValueError:      # different drive on Windows
-            pass
+            return origin
+        if not rel.startswith(os.pardir):   # a path that climbs out of cwd reads worse than the absolute one
+            return rel
     return origin
 
 
