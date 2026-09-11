@@ -155,6 +155,17 @@ out["row_order"] = [row.itemAt(i).widget().__class__.__name__ + ":" +
                     (row.itemAt(i).widget().text() or "-")
                     for i in range(row.count())][-3:]
 
+# Enter in the search field steps once, forwards; Shift+Enter backwards.
+bar5._find_input.setFocus()
+def enter(shift=False):
+    mods = Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+    app.sendEvent(bar5._find_input,
+                  QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, mods))
+    return bar5._match_label.text()
+bar5._find_input.setText("Ex")            # back to a fresh search
+out["enter_labels"] = [enter() for _ in range(4)]
+out["shift_enter_labels"] = [enter(shift=True) for _ in range(2)]
+
 print(json.dumps(out))
 '''
 
@@ -233,3 +244,12 @@ def test_arrow_stepping_wraps_and_the_count_reads_n_slash_m(driven):
     assert kinds == ["QPushButton", "QLabel", "QPushButton"]
     assert driven["row_order"][0].endswith("▶")
     assert driven["row_order"][2].endswith("✕")
+
+
+def test_enter_steps_once_and_forwards(driven):
+    """QLineEdit emits returnPressed AND leaves the key unaccepted, so
+    wiring both it and keyPressEvent stepped twice per Enter -- with three
+    matches that reads as going backwards, and it cancelled Shift+Enter
+    out entirely."""
+    assert driven["enter_labels"] == ["1/2", "2/2", "1/2", "2/2"]
+    assert driven["shift_enter_labels"] == ["1/2", "2/2"]

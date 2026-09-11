@@ -815,7 +815,6 @@ class FindBar(QWidget):
         # textChanged passes the new text and toggled passes a bool, and it
         # takes no argument.
         self._find_input.textChanged.connect(lambda _text: self._on_search_changed())
-        self._find_input.returnPressed.connect(self._find_next)
         self._btn_case.toggled.connect(lambda _on: self._on_search_changed())
         self._btn_disclose.toggled.connect(self._on_disclose_toggled)
         self._btn_word.toggled.connect(lambda _on: self._on_search_changed())
@@ -827,6 +826,8 @@ class FindBar(QWidget):
         self._btn_replace_all.clicked.connect(self._replace_all)
 
         self._editor.document().contentsChanged.connect(self._on_doc_changed)
+        # See eventFilter: Enter has to be handled in one place only.
+        self._find_input.installEventFilter(self)
 
     # ------------------------------------------------------------------
     # Show / hide
@@ -966,6 +967,28 @@ class FindBar(QWidget):
     # ------------------------------------------------------------------
     # Key handling
     # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        """Enter in the search field steps the search, exactly once.
+
+        QLineEdit emits returnPressed AND leaves the key event unaccepted so
+        a parent can act on it too, so connecting returnPressed while
+        keyPressEvent below also handled Return gave every Enter TWO steps.
+        With three matches that reads as stepping backwards -- 3/3, 2/3,
+        1/3 -- because two forward is one back (#417 follow-up). It also
+        cancelled Shift+Enter out entirely: one step each way.
+
+        Filtering the field itself and consuming the key leaves exactly one
+        handler, whatever Qt decides to do with the event afterwards.
+        """
+        if (obj is self._find_input and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._find_prev()
+            else:
+                self._find_next()
+            return True
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
