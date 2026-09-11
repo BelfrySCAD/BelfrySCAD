@@ -309,7 +309,8 @@ def fake_exec(self):
     self._name.setText("beta_renamed")
     self._script.setPlainText("include <lib.scad>\\nused();\\nused();")
     self._timeout.setValue(99)
-    self._set_vars.setPlainText('size = 10\\nlabel = "cap"')
+    self._add_var_row("size", "10")
+    self._add_var_row("label", '"cap"')
     self._accept()
     return QDialog.DialogCode.Accepted if self.result_test() else QDialog.DialogCode.Rejected
 test_editor.TestEditDialog.exec = fake_exec
@@ -393,3 +394,76 @@ def test_test_editor_round_trips_through_the_file():
     assert out["names_after_deleting"] == ["beta_renamed", "gamma"]
     assert out["comment_still_there"], "deleting a block leaves the rest of the file alone"
     assert out["duplicate_refused"] and out["duplicate_complained"]
+
+
+# The variable-overrides table: + / −, TOML values, and the blank-row cases.
+VARS_DRIVER = '''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication, QMessageBox
+app = QApplication([])
+_boxes = []
+QMessageBox.warning = staticmethod(lambda *a, **k: _boxes.append(a[-1] if a else ""))
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.test_editor import TestEditDialog
+from belfryscad.scadtest import TestCase
+out = {}
+
+# An existing test's vars arrive as rows, values written back as TOML.
+tc = TestCase(name="t", script="x();", set_vars={"size": 10, "label": "cap", "flags": [1, 2]})
+dlg = TestEditDialog(tc)
+out["rows"] = dlg._vars.rowCount()
+out["cells"] = [[dlg._vars.item(r, 0).text(), dlg._vars.item(r, 1).text()]
+                for r in range(dlg._vars.rowCount())]
+
+# "+" appends an empty row; a wholly blank row is ignored, not an error.
+dlg._add_var_row("", "")
+out["rows_after_plus"] = dlg._vars.rowCount()
+out["collected_ignoring_blank"] = dlg._collect_vars()
+
+# "−" removes the selected row.
+dlg._vars.setCurrentCell(0, 0)
+dlg._remove_var_row()
+out["rows_after_minus"] = dlg._vars.rowCount()
+out["collected_after_minus"] = dlg._collect_vars()
+
+# A name with no value, and a value with no name, are both refused.
+def collect_error(name, value):
+    d = TestEditDialog(TestCase(name="t", script="x();"))
+    d._add_var_row(name, value)
+    try:
+        d._collect_vars()
+        return None
+    except ValueError as e:
+        return str(e)
+out["name_without_value"] = collect_error("size", "")
+out["value_without_name"] = collect_error("", "10")
+
+# Bad TOML is reported rather than written.
+d = TestEditDialog(TestCase(name="t", script="x();"))
+d._add_var_row("size", "not valid toml!!")
+d._name.setText("t"); d._script.setPlainText("x();")
+d._accept()
+out["bad_toml_refused"] = d.result_test() is None
+out["bad_toml_complained"] = any("not valid TOML" in str(b) for b in _boxes)
+print(json.dumps(out)); sys.stdout.flush()
+os._exit(0)
+'''
+
+
+def test_variable_overrides_table():
+    proc = subprocess.run([sys.executable, "-c", VARS_DRIVER], capture_output=True, text=True,
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=120)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["rows"] == 3
+    assert out["cells"] == [["size", "10"], ["label", '"cap"'], ["flags", "[1, 2]"]]
+    assert out["rows_after_plus"] == 4
+    # A blank row left over from clicking "+" is not an error.
+    assert out["collected_ignoring_blank"] == {"size": 10, "label": "cap", "flags": [1, 2]}
+    assert out["rows_after_minus"] == 3
+    assert out["collected_after_minus"] == {"label": "cap", "flags": [1, 2]}
+    assert "no value" in out["name_without_value"]
+    assert "no variable name" in out["value_without_name"]
+    assert out["bad_toml_refused"] and out["bad_toml_complained"]

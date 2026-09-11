@@ -19,11 +19,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QSpinBox,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QPushButton, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
-from belfryscad.scadtest import TestCase
+from belfryscad.scadtest import TestCase, _toml_literal
 
 
 def _mono(widget):
@@ -61,7 +62,6 @@ class TestEditDialog(QDialog):
         self._source = QComboBox()
         self._source.addItems(["Inline script", "Script file"])
         form.addRow("Source", self._source)
-        layout.addLayout(form)
 
         self._stack = QStackedWidget()
         self._script = _mono(QPlainTextEdit(test.script if test and test.script else ""))
@@ -78,15 +78,38 @@ class TestEditDialog(QDialog):
         self._source.currentIndexChanged.connect(self._stack.setCurrentIndex)
         if test and test.script_file:
             self._source.setCurrentIndex(1)
-        layout.addWidget(self._stack, 1)
+        form.addRow("", self._stack)        # indented under the Source dropdown
+        layout.addLayout(form, 1)
 
-        vars_box = QGroupBox("Variable overrides (TOML, one per line)")
-        vars_layout = QVBoxLayout(vars_box)
-        self._set_vars = _mono(QPlainTextEdit(_format_set_vars(test.set_vars if test else {})))
-        self._set_vars.setPlaceholderText('size = 10\nlabel = "cap"\nflags = [1, 2]')
-        self._set_vars.setMaximumHeight(90)
-        vars_layout.addWidget(self._set_vars)
+        vars_box = QGroupBox("Variable overrides")
+        vars_layout = QHBoxLayout(vars_box)
+        self._vars = QTableWidget(0, 2)
+        self._vars.setHorizontalHeaderLabels(["Name", "Value (TOML)"])
+        self._vars.verticalHeader().setVisible(False)
+        self._vars.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._vars.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._vars.setMinimumHeight(110)
+        self._vars.setMaximumHeight(170)
+        _mono(self._vars)
+        vars_layout.addWidget(self._vars, 1)
+        var_buttons = QVBoxLayout()
+        add_var = QPushButton("+")
+        add_var.setFixedWidth(32)
+        add_var.setToolTip("Add a variable override")
+        add_var.clicked.connect(lambda: self._add_var_row("", ""))
+        remove_var = QPushButton("−")
+        remove_var.setFixedWidth(32)
+        remove_var.setToolTip("Remove the selected override")
+        remove_var.clicked.connect(self._remove_var_row)
+        var_buttons.addWidget(add_var)
+        var_buttons.addWidget(remove_var)
+        var_buttons.addStretch(1)
+        vars_layout.addLayout(var_buttons)
         layout.addWidget(vars_box)
+        for name, value in (test.set_vars if test else {}).items():
+            self._add_var_row(name, _toml_literal(value))
 
         expect = QGroupBox("Expectations")
         ex = QFormLayout(expect)
@@ -99,14 +122,14 @@ class TestEditDialog(QDialog):
         ex.addRow("Echoes", self._echoes)
         self._no_echoes = QCheckBox("…and no others")
         self._no_echoes.setChecked(test.assert_no_echoes if test else True)
-        ex.addRow(self._no_echoes)
+        ex.addRow("", self._no_echoes)      # field column, under the Echoes box
         self._warnings = _mono(QPlainTextEdit("\n".join(test.assert_warnings) if test else ""))
         self._warnings.setPlaceholderText("one expected WARNING per line")
         self._warnings.setMaximumHeight(70)
         ex.addRow("Warnings", self._warnings)
         self._no_warnings = QCheckBox("…and no others")
         self._no_warnings.setChecked(test.assert_no_warnings if test else True)
-        ex.addRow(self._no_warnings)
+        ex.addRow("", self._no_warnings)
         layout.addWidget(expect)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -135,7 +158,7 @@ class TestEditDialog(QDialog):
             return self._complain("Name the script file, or switch to an inline script.")
 
         try:
-            set_vars = _parse_set_vars(self._set_vars.toPlainText())
+            set_vars = self._collect_vars()
         except ValueError as e:
             return self._complain(str(e))
 
@@ -153,17 +176,43 @@ class TestEditDialog(QDialog):
         )
         self.accept()
 
+    def _add_var_row(self, name: str, value: str):
+        row = self._vars.rowCount()
+        self._vars.insertRow(row)
+        self._vars.setItem(row, 0, QTableWidgetItem(name))
+        self._vars.setItem(row, 1, QTableWidgetItem(value))
+        if not name:
+            self._vars.setCurrentCell(row, 0)
+            self._vars.editItem(self._vars.item(row, 0))
+
+    def _remove_var_row(self):
+        row = self._vars.currentRow()
+        if row >= 0:
+            self._vars.removeRow(row)
+
+    def _collect_vars(self) -> dict:
+        """The table as a dict, values parsed as TOML so they mean what they
+        would mean in the file. Blank rows are ignored -- clicking + and
+        changing your mind should not be an error."""
+        lines = []
+        for row in range(self._vars.rowCount()):
+            name = (self._vars.item(row, 0).text() if self._vars.item(row, 0) else "").strip()
+            value = (self._vars.item(row, 1).text() if self._vars.item(row, 1) else "").strip()
+            if not name and not value:
+                continue
+            if not name:
+                raise ValueError(f"Row {row + 1} has a value but no variable name.")
+            if not value:
+                raise ValueError(f"{name} has no value.")
+            lines.append(f"{name} = {value}")
+        return _parse_set_vars("\n".join(lines))
+
     def _complain(self, message: str):
         QMessageBox.warning(self, "Test", message)
 
 
 def _lines(text: str) -> list:
     return [ln for ln in (l.strip() for l in text.splitlines()) if ln]
-
-
-def _format_set_vars(set_vars: dict) -> str:
-    from belfryscad.scadtest import _toml_literal
-    return "\n".join(f"{k} = {_toml_literal(v)}" for k, v in (set_vars or {}).items())
 
 
 def _parse_set_vars(text: str) -> dict:
