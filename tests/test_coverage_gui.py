@@ -219,9 +219,14 @@ for s in w._coverage_spans_for_tab(tab):
     a, b = int(s["start"]), int(s["end"])
     ca, cb = (m(a), m(b)) if m is not None else (a, b)
     out["n_spans"] += 1
-    if raw[a:b].decode("utf-8") != text[ca:cb]:
+    # Line endings normalised on both sides. On Windows the fixture is
+    # written CRLF, so the byte slice is CRLF where the document is LF --
+    # exactly the drift the map absorbs. Comparing the raw bytes to the
+    # document text would flag the correct answer as wrong.
+    want = raw[a:b].decode("utf-8").replace("\\r\\n", "\\n").replace("\\r", "\\n")
+    if want != text[ca:cb]:
         out["all_spans_map_exactly"] = False
-        out.setdefault("first_mismatch", [raw[a:b].decode("utf-8"), text[ca:cb]])
+        out.setdefault("first_mismatch", [want, text[ca:cb]])
 out["map_was_needed"] = m is not None
 
 out["sphere_is_uncovered"] = False
