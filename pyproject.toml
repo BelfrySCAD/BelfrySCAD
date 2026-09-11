@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "1.18.3"
+version = "1.18.4"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -45,7 +45,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "1.18.3"
+version = "1.18.4"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
@@ -88,6 +88,13 @@ universal_build = false
 
 [tool.briefcase.app.belfryscad.windows]
 installer_type = "msi"
+# Install to C:\Program Files\BelfrySCAD, not
+# C:\Program Files\Revar Desmera\BelfrySCAD. The template wraps the app
+# folder in one named after `author` unless this is off, and a vendor folder
+# for a single app is a surprise nobody asked for. The Manufacturer
+# shown in Programs and Features is unaffected -- that comes from `author`
+# either way.
+use_full_install_path = false
 
 [tool.briefcase.app.belfryscad.linux.appimage]
 manylinux = "manylinux_2_28"
