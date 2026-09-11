@@ -1622,6 +1622,18 @@ class MainWindow(QMainWindow):
         print(msg, file=sys.stderr, flush=True)
 
     def _on_editor_changed(self, tab):
+        # contentsChanged fires for FORMAT-only changes too, not just text:
+        # a light/dark switch calls the highlighter's rehighlight() on every
+        # tab, which re-applies character formats through the document and
+        # emits this without a single character changing. Taking the signal
+        # at its word marked untouched tabs as modified -- #394, where a
+        # read-only BOSL2 file opened from the Windows file association
+        # showed "* (ro)" before the user typed anything (the theme settles
+        # right after load there, so the retheme lands on a freshly opened
+        # tab). Compare the text instead of trusting the signal.
+        current = tab.editor.toPlainText()
+        if current == getattr(tab, '_last_text', None):
+            return
         if not tab.is_modified and os.environ.get("BELFRYSCAD_DEBUG_MODIFIED"):
             self._log_modified_diagnostic(tab)
         tab.is_modified = True
@@ -1631,7 +1643,6 @@ class MainWindow(QMainWindow):
         tab._last_revision = tab.editor.document().revision()
         if getattr(tab, '_suppress_text_undo', False):
             return
-        current = tab.editor.toPlainText()
         cursor_after = tab.editor.textCursor().position()
         before = getattr(tab, '_last_text', current)
         cursor_before = getattr(tab, '_last_cursor', 0)
