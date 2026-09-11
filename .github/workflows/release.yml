@@ -81,11 +81,14 @@ jobs:
       - name: Pin briefcase for the AppImage build
         run: uv pip install "briefcase==0.4.2"
 
+      # --no-sync, or `uv run` re-syncs from the lock file on every call and
+      # puts 0.4.5 straight back -- which is exactly what happened the first
+      # time this step was written without it.
       - name: Build Linux AppImage
         run: |
-          uv run --python 3.12 briefcase create linux appimage
-          uv run --python 3.12 briefcase build linux appimage
-          uv run --python 3.12 briefcase package linux appimage
+          uv run --no-sync --python 3.12 briefcase create linux appimage
+          uv run --no-sync --python 3.12 briefcase build linux appimage
+          uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
