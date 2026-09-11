@@ -805,10 +805,9 @@ class FindBar(QWidget):
         outer.addWidget(self._replace_widget)
         self._replace_widget.hide()
 
-        # Connections. The _on_search_changed ones are WRAPPED: textChanged
-        # passes the new text and toggled passes a bool, either of which
-        # would land in its `move_cursor` argument -- so unchecking Match
-        # Case would quietly stop the search jumping to its hit.
+        # Connections. The _on_search_changed ones are WRAPPED because
+        # textChanged passes the new text and toggled passes a bool, and it
+        # takes no argument.
         self._find_input.textChanged.connect(lambda _text: self._on_search_changed())
         self._find_input.returnPressed.connect(self._find_next)
         self._btn_case.toggled.connect(lambda _on: self._on_search_changed())
@@ -996,16 +995,20 @@ class FindBar(QWidget):
         pat = QRegularExpression(text, opts)
         return pat if pat.isValid() else None
 
-    def _on_search_changed(self, move_cursor: bool = True):
-        """Recompute the match list and the highlights.
+    def _on_search_changed(self):
+        """Recompute the match list and the highlights, moving nothing.
 
-        `move_cursor` is what separates searching from editing. Typing in
-        the SEARCH field should jump the editor to the next hit -- that is
-        find-as-you-type. Typing in the DOCUMENT should not: the jump
-        selects the match, so the next keystroke replaced it, and typing a
-        word with the bar open silently overwrote a different occurrence
-        per letter (issue #376). Highlights still refresh either way, so
-        the bar keeps up with the edit.
+        Typing never moves the editor's cursor or scrolls the view --
+        neither typing in the DOCUMENT (the jump used to select the match,
+        so the next keystroke replaced it, and typing a word with the bar
+        open silently overwrote a different occurrence per letter, #376)
+        nor typing in the SEARCH field (#417: the view jumped around
+        mid-word, and because each jump left the cursor at the end of the
+        hit, the NEXT keystroke searched on from there -- three letters
+        into a word you were three occurrences down the file).
+
+        Leaving the cursor alone is also what makes the cursor itself the
+        one honest search origin, which is what Next/Prev use.
         """
         if self.isHidden():
             return
@@ -1043,20 +1046,13 @@ class FindBar(QWidget):
             return
 
         self._find_input.setStyleSheet("")
-        pos = self._editor.textCursor().position()
-        self._current = 0
-        for i, m in enumerate(self._matches):
-            if m.selectionStart() >= pos:
-                self._current = i
-                break
-
+        # Which match Enter would take you to, marked but not scrolled to.
+        self._current = self._match_at_or_after(self._editor.textCursor().position())
         self._update_highlights()
-        if move_cursor:
-            self._scroll_to_current()
 
     def _on_doc_changed(self):
         if self.isVisible():
-            self._on_search_changed(move_cursor=False)
+            self._on_search_changed()
 
     def _update_highlights(self):
         sels = []
@@ -1080,24 +1076,56 @@ class FindBar(QWidget):
         n = len(self._matches)
         self._match_label.setText(f"{self._current + 1} of {n}" if n else "")
 
-    def _scroll_to_current(self):
-        if 0 <= self._current < len(self._matches):
-            self._editor.setTextCursor(self._matches[self._current])
-            self._editor.ensureCursorVisible()
+    def _match_at_or_after(self, pos: int) -> int:
+        """The first match starting at or after `pos`, wrapping to the top."""
+        for i, m in enumerate(self._matches):
+            if m.selectionStart() >= pos:
+                return i
+        return 0
+
+    def _match_before(self, pos: int) -> int:
+        """The last match ending strictly before `pos`, wrapping to the end.
+
+        Strictly, so that stepping back from the caret Next just left at the
+        end of a match reaches the match before it rather than that one.
+        """
+        for i in range(len(self._matches) - 1, -1, -1):
+            if self._matches[i].selectionEnd() < pos:
+                return i
+        return len(self._matches) - 1
+
+    def _go_to_current(self):
+        """Scroll to the current match and leave a caret at the end of it.
+
+        A caret, NOT the match selected (#417): a selection is invisible as
+        a cursor, so the arrow keys looked dead and the next thing typed
+        replaced the word that was found. The match is already obvious from
+        its highlight. The caret being AFTER the match is also what makes a
+        second Next move on rather than find the same one again.
+        """
+        if not (0 <= self._current < len(self._matches)):
+            return
+        c = QTextCursor(self._editor.document())
+        c.setPosition(self._matches[self._current].selectionEnd())
+        self._editor.setTextCursor(c)
+        self._editor.ensureCursorVisible()
 
     def _find_next(self):
+        # From the CURSOR, not from the last match found (#417): scroll
+        # somewhere else, click, and Next should carry on from where you
+        # are, not from wherever the search had got to.
         if not self._matches:
             return
-        self._current = (self._current + 1) % len(self._matches)
+        self._current = self._match_at_or_after(self._editor.textCursor().position())
         self._update_highlights()
-        self._scroll_to_current()
+        self._go_to_current()
 
     def _find_prev(self):
         if not self._matches:
             return
-        self._current = (self._current - 1) % len(self._matches)
+        self._current = self._match_before(self._editor.textCursor().position())
         self._update_highlights()
-        self._scroll_to_current()
+        self._go_to_current()
 
     # ------------------------------------------------------------------
     # Replace logic

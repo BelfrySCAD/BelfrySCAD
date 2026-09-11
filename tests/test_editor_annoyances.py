@@ -94,6 +94,44 @@ out["text_after_typing"] = ed3.toPlainText()
 # Highlights still track the edit.
 out["matches_after"] = len(bar._matches)
 
+# --- #417: search is relative to the cursor ---------------------------
+ed4 = CodeEditor()
+ed4.setPlainText("Example one\\nExample two\\nExample three\\nExample four")
+text4 = ed4.toPlainText()
+starts = [i for i in range(len(text4)) if text4.startswith("Example", i)]
+bar4 = FindBar(ed4)
+bar4.show()
+c = ed4.textCursor(); c.setPosition(0); ed4.setTextCursor(c)
+
+# Typing the search text letter by letter must not walk down the file.
+seen = []
+for n in range(1, len("Example") + 1):
+    bar4._find_input.setText("Example"[:n])
+    seen.append((ed4.textCursor().position(), bar4._current))
+out["typing_cursor_positions"] = sorted({p for p, _ in seen})
+out["typing_current"] = sorted({i for _, i in seen})
+
+# Enter steps forward, one match at a time, leaving a caret (no selection).
+bar4._find_next()
+out["next1"] = [bar4._current,
+                ed4.textCursor().position() == starts[0] + len("Example"),
+                ed4.textCursor().hasSelection()]
+bar4._find_next()
+out["next2_current"] = bar4._current
+
+# Click somewhere else: Next and Prev both work from THERE.
+c = ed4.textCursor(); c.setPosition(starts[3] - 2); ed4.setTextCursor(c)
+bar4._find_next()
+out["next_after_click"] = bar4._current          # the 4th match
+c = ed4.textCursor(); c.setPosition(starts[3] - 2); ed4.setTextCursor(c)
+bar4._find_prev()
+out["prev_after_click"] = bar4._current          # the 3rd match
+
+# Typing in the document replaces nothing: the caret is a caret.
+c = ed4.textCursor(); c.setPosition(starts[1] + len("Example")); ed4.setTextCursor(c)
+ed4.insertPlainText("!")
+out["doc_second_line"] = ed4.toPlainText().split("\\n")[1]
+
 print(json.dumps(out))
 '''
 
@@ -139,3 +177,25 @@ def test_typing_with_the_find_bar_open_does_not_jump(driven):
 def test_the_find_bar_still_tracks_the_edit(driven):
     """Highlights refresh even though the cursor stays put."""
     assert driven["matches_after"] == 3
+
+
+def test_find_as_you_type_does_not_walk_down_the_file(driven):
+    """#417: every keystroke jumped to the next hit and left the cursor at
+    the end of it, so the following keystroke searched on from there --
+    three letters in, you were three occurrences down the file."""
+    assert driven["typing_cursor_positions"] == [0]      # cursor never moved
+    assert driven["typing_current"] == [0]               # always the first match
+
+
+def test_find_next_and_prev_run_from_the_cursor(driven):
+    """#417: they stepped from the last match found, so scrolling away and
+    clicking somewhere else did not change where an arrow took you."""
+    current, caret_after_match, has_selection = driven["next1"]
+    assert current == 0
+    assert caret_after_match          # caret sits at the end of the match...
+    assert not has_selection          # ...as a caret, not the match selected
+    assert driven["next2_current"] == 1
+
+    assert driven["next_after_click"] == 3
+    assert driven["prev_after_click"] == 2
+    assert driven["doc_second_line"] == "Example! two"
