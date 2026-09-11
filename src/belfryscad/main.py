@@ -502,7 +502,7 @@ def main():
         # and look like the flag had silently stopped working.
         print("belfryscad: --coverage now only applies to --test; use "
               "`belfryscad --test --coverage`.\n"
-              "  For one script, open it and use Design > Render with Coverage.",
+              "  In the GUI, use Design > Run Tests… and tick Collect coverage.",
               file=sys.stderr)
         raise SystemExit(2)
 

@@ -126,7 +126,7 @@ No live preview. Full Manifold CSG processing runs when:
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
 - **Preferences ▸ Viewport ▸ Cut faces** is toggled (`_apply_preferences`): the rule for which colour a `difference()` cut face takes is baked into the geometry by the evaluator (`keep_minuend_color`), so the current design re-renders to show it (#412; see `docs/rendering.md`)
 
-**"Render with Coverage"** and **"Capture Coverage"** (Design menu) collect which statements, branch arms and bodies ran (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
+**"Run Tests…"** (Design menu) asks for a directory of `.scadtest` files and opens the Testing pane, which is where coverage comes from — there is no per-render capture (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
 
@@ -219,12 +219,14 @@ dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. It l
 `FileSummary`, JSON round-trip, `format_report`) on top of openscad_cpp_evaluator ≥1.19.1's
 `Evaluator(coverage=True).coverage_result`; the vocabulary (statement / branch arm / body) is the
 evaluator's, see its `CLAUDE.md`. `--coverage-min` is the CI hook: exit 1 below the threshold even
-when everything passed. The GUI overlay (View ▸ Show Coverage) reads the same `CoverageReport`;
-see `docs/editor.md`.
+when everything passed. The GUI's Testing pane (Design ▸ Run Tests…) runs the same code on a
+worker thread over a directory of suites, and its overlay reads the same `CoverageReport`; see
+`docs/editor.md`. `merge_spans` abspaths every origin, so one library reached as `lib.scad` from
+beside it and `../lib.scad` from a subdirectory is one file, not two half-covered ones.
 
 **There is no `--coverage FILE.scad`.** It existed, and was removed as redundant: coverage of one
-run is what Design ▸ Render with Coverage already paints onto the source, far more usefully than a
-list of spans, and a script that wants it headlessly can be wrapped in a one-line `.scadtest`.
+run answers a question worth little — coverage is about what a *suite* misses — and a script that
+wants measuring anyway can be wrapped in a one-line `.scadtest`.
 `--coverage` without `--test` now exits 2 with that advice rather than falling through to the GUI
 (`_parse_args` tolerates unknown arguments, so it otherwise opened a window and looked like the
 flag had silently broken).

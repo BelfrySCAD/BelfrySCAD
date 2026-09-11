@@ -2,16 +2,17 @@
 
 `belfryscad --test --coverage` runs every test with the evaluator's coverage
 on (resolve pass only -- the geometry pass runs no script code) and merges
-the result; the GUI's Render with Coverage does the same for one render.
-Both share this module: the evaluator hands back `{spans, files, total}`
+the result; the GUI's Testing pane (Design > Run Tests…) runs the same code
+on a worker thread. Both share this module: the evaluator hands back
+`{spans, files, total}`
 (see openscad_cpp_evaluator's coverage.hpp), and this file merges, filters,
 summarises and formats it. No Qt here, so the GUI's overlay and the test
 runner read the same CoverageReport.
 
-There is deliberately no `--coverage FILE.scad` mode. Coverage of a single
-run answers a question the GUI already answers better -- Design > Render
-with Coverage paints it onto the source -- and a script that wants it
-headlessly can be wrapped in a one-line .scadtest.
+There is deliberately no coverage of a single run, from the CLI or the GUI.
+Coverage answers "what does my test suite miss", which needs a suite; one
+run of one script says very little. A script that wants measuring anyway can
+be wrapped in a one-line .scadtest.
 """
 from __future__ import annotations
 
@@ -82,11 +83,20 @@ class CoverageReport:
         return report
 
     def merge_spans(self, spans) -> None:
+        # Normalise the origin before keying on it. Two suites in different
+        # directories reach one library by different relative paths
+        # (`lib.scad` from beside it, `../lib.scad` from a subdirectory), and
+        # keying on the raw string filed those as two separate files --
+        # duplicate rows in the report and every percentage roughly halved.
+        # Running a whole directory tree at once (the Testing pane) makes
+        # that the normal case rather than a curiosity. abspath normalises
+        # away the `..` as well as relative roots.
         for s in spans:
-            key = (s["origin"], s["start"], s["end"], s["kind"])
+            origin = os.path.abspath(s["origin"])
+            key = (origin, s["start"], s["end"], s["kind"])
             have = self.spans.get(key)
             if have is None:
-                self.spans[key] = dict(s)
+                self.spans[key] = dict(s, origin=origin)
             else:
                 have["hits"] += s["hits"]
 

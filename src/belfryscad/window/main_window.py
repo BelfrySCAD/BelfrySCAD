@@ -21,6 +21,7 @@ from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assig
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
+from belfryscad.window.testing import TestingPane
 from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.about import open_documentation, show_about_dialog
 from belfryscad.window.export_options import ask_export_options, export_kwargs
@@ -369,12 +370,11 @@ class _RenderCallback(QObject):
             self._file_tab._last_parse_path = parse_path
             self._file_tab.editor.update_user_names(root_scope)
 
-    @Slot(object, object, float, object, object, object, object, object, object)
+    @Slot(object, object, float, object, object, object, object, object)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,
-                    geometry=None, export_name=None, coverage_result=None):
+                    geometry=None, export_name=None):
         self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
-                                 profile_result=profile_result, geometry=geometry, export_name=export_name,
-                                 coverage_result=coverage_result)
+                                 profile_result=profile_result, geometry=geometry, export_name=export_name)
 
     @Slot()
     def on_done(self):
@@ -389,12 +389,12 @@ class _RenderWorker(QObject):
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
-    finished = Signal(object, object, float, object, object, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry, export_name, coverage_result)
+    finished = Signal(object, object, float, object, object, object, object, object)  # (bodies, id_to_node, elapsed_ms, final_vp, csg_tree, profile_result, geometry, export_name)
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
                  manifold_cache=None, profile: bool = False, hard_warnings: bool = False,
-                 coverage: bool = False, keep_minuend_color: bool = False):
+                 keep_minuend_color: bool = False):
         super().__init__()
         self._source = source
         self._file_path = file_path
@@ -402,7 +402,6 @@ class _RenderWorker(QObject):
         self._viewport_params = viewport_params or {}
         self._manifold_cache = manifold_cache
         self._profile = profile
-        self._coverage = coverage
         self._keep_minuend_color = keep_minuend_color
         self._hard_warnings = hard_warnings
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
@@ -483,7 +482,7 @@ class _RenderWorker(QObject):
 
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile,
-                              coverage=self._coverage, keep_minuend_color=self._keep_minuend_color)
+                              keep_minuend_color=self._keep_minuend_color)
         try:
             # Seeded from the ORIGINAL path, not parse_path -- an unsaved
             # buffer renders through a temp file whose name would otherwise
@@ -533,7 +532,7 @@ class _RenderWorker(QObject):
         # go stale the way a camera value can.
         export_name = resolve_export_name(evaluator.dyn.get("$export_name"), self._file_path)
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
-                            geometry, export_name, evaluator.coverage_result)
+                            geometry, export_name)
 
 
 class _DetachedTabBar(QWidget):
@@ -903,6 +902,24 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._customizer_dock, self._ai_chat_dock)
         self._ai_chat_dock.hide()
 
+        # --- Testing dock (right, bottom — tabbed with the rest) ---
+        # A pane rather than a dialog: a suite takes as long as it takes, and
+        # the editor, console and coverage overlay all have to stay usable
+        # while it runs.
+        self._testing_pane = TestingPane()
+        self._testing_pane.run_requested.connect(self._run_tests)
+        self._testing_pane.pick_dir_requested.connect(lambda: self._open_testing_pane())
+        self._testing_pane.report_requested.connect(self._show_coverage_report)
+        self._testing_pane.overlay_toggled.connect(lambda _on: self._apply_coverage_overlays())
+        self._test_run_job = None
+
+        self._testing_dock = QDockWidget("Testing", self)
+        self._testing_dock.setObjectName("TestingDock")
+        self._testing_dock.setWidget(self._testing_pane)
+        self._testing_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.tabifyDockWidget(self._customizer_dock, self._testing_dock)
+        self._testing_dock.hide()
+
         # --- Docs dock (right, bottom — tabbed with Customizer/Animate/AI Chat) ---
         self._docs_pane = DocsPane()
         self._docs_pane.goto_line.connect(self._goto_source_line)
@@ -1176,13 +1193,10 @@ class MainWindow(QMainWindow):
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
-        # Coverage: session-only toggles, on purpose. A diagnostic like
-        # profiling; one that survived the session would make every later
-        # render pay for it and paint tints nobody asked for that day.
-        self._add_action(design_menu, "Render with Coverage", lambda: self._render(coverage=True))
-        self._act_capture_coverage = self._add_checkable(design_menu, "Capture Coverage", False, None)
-        self._add_action(design_menu, "Show Coverage Report…", self._show_coverage_report)
-        self._add_action(design_menu, "Run Tests with Coverage…", self._run_tests_with_coverage)
+        # Tests are project-wide, not per-file, so this asks for a directory
+        # rather than acting on the current tab. Coverage comes from a test
+        # run or not at all -- see window/testing.py.
+        self._add_action(design_menu, "Run Tests…", self._open_testing_pane)
         design_menu.addSeparator()
         measure_menu = design_menu.addMenu("Measure")
         measure_menu.addAction(self._act_measure_distance)
@@ -1250,8 +1264,9 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act_show_docs)
 
         self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
-        self._act_show_coverage = self._add_checkable(view_menu, "Show Coverage", False,
-                                                      lambda _on: self._apply_coverage_overlays())
+        self._act_show_testing = self._testing_dock.toggleViewAction()
+        self._act_show_testing.setText("Show Testing")
+        view_menu.addAction(self._act_show_testing)
 
         view_menu.addSeparator()
         for label, preset, key in (
@@ -2270,7 +2285,7 @@ class MainWindow(QMainWindow):
             self._viewport.update()
         return changed
 
-    def _render(self, tab=None, profile: bool = False, reframe: bool = False, coverage: bool | None = None):
+    def _render(self, tab=None, profile: bool = False, reframe: bool = False):
         """`reframe` fits the camera to the result when it lands.
 
         Only a tab newly loaded from a file asks for it. Re-fitting after
@@ -2321,11 +2336,8 @@ class MainWindow(QMainWindow):
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        if coverage is None:
-            coverage = self._act_capture_coverage.isChecked()
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
-                               hard_warnings=self._act_stop_on_warning.isChecked(),
-                               profile=profile, coverage=coverage,
+                               hard_warnings=self._act_stop_on_warning.isChecked(), profile=profile,
                                keep_minuend_color=load_preference("viewport/keepMinuendColor", bool))
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
@@ -2389,7 +2401,7 @@ class MainWindow(QMainWindow):
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
                         final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None,
-                        geometry=None, export_name=None, coverage_result=None):
+                        geometry=None, export_name=None):
         if render_id != self._render_id:
             return  # superseded by a later render; discard
         # The script's final $export_name, already sanitised, kept per tab
@@ -2406,9 +2418,6 @@ class MainWindow(QMainWindow):
         self._geometry = geometry
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
-        if coverage_result is not None:
-            from belfryscad.coverage import CoverageReport
-            self._set_coverage(CoverageReport.from_result(coverage_result))
         if profile_result is not None:
             if getattr(self, "_suppress_profile_report", False):
                 self._suppress_profile_report = False
@@ -2504,20 +2513,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _set_coverage(self, report):
-        """A new CoverageReport arrived (a coverage render, or Run Tests with
-        Coverage). Replaces the old one, turns the overlay on, and says how
-        it went in the console."""
+        """A new CoverageReport arrived from a test run -- the only source
+        there is. Replaces the old one and repaints every open tab."""
         self._coverage = report
         total = report.total()
         self.log(f"Coverage: {total.percent:.1f}% of {total.spans} spans "
                  f"({total.statements_hit}/{total.statements} statements, "
                  f"{total.branches_hit}/{total.branches} branches, "
                  f"{total.bodies_hit}/{total.bodies} bodies) over {len(report.files())} files — "
-                 f"Design > Show Coverage Report… for the gaps.")
-        if not self._act_show_coverage.isChecked():
-            self._act_show_coverage.setChecked(True)   # toggled -> _apply_coverage_overlays
-        else:
-            self._apply_coverage_overlays()
+                 f"Report… in the Testing pane for the gaps.")
+        self._apply_coverage_overlays()
 
     def _coverage_spans_for_tab(self, tab) -> list:
         """The report's spans that belong to this tab's document. A rendered
@@ -2535,7 +2540,7 @@ class MainWindow(QMainWindow):
 
     def _apply_coverage_overlays(self, only_tab=None):
         from belfryscad.window.preferences import load_preference
-        show = self._act_show_coverage.isChecked() and self._coverage is not None
+        show = self._testing_pane.overlay_enabled() and self._coverage is not None
         tint = load_preference("coverage/tintCovered", type_=bool)
         tabs = [only_tab] if only_tab is not None else [self._tabs.widget(i) for i in range(self._tabs.count())]
         for tab in tabs:
@@ -2549,34 +2554,72 @@ class MainWindow(QMainWindow):
 
     def _show_coverage_report(self):
         if self._coverage is None:
-            self.log("No coverage yet — Design > Render with Coverage, or Run Tests with Coverage… first.")
+            self.log("No coverage yet — run tests with Collect coverage ticked.")
             return
         from belfryscad.window.coverage_report import CoverageReportDialog
         from belfryscad.window.library_manager import _library_dir
         CoverageReportDialog(self._coverage, base=str(_library_dir()), parent=self).show()
 
-    def _run_tests_with_coverage(self, files=None):
-        """Run .scadtest files with coverage on a worker thread; the merged
-        report becomes the current coverage and lights up every open tab
-        it covers. `files` is only passed by tests, to skip the dialog."""
-        if files is None:
-            files, _ = QFileDialog.getOpenFileNames(
-                self, "Run Tests with Coverage", "", "OpenSCAD tests (*.scadtest);;All Files (*)")
-        if not files:
+    # ------------------------------------------------------------------
+    # Testing pane
+    # ------------------------------------------------------------------
+
+    def _open_testing_pane(self, directory=None):
+        """Design > Run Tests…: pick a directory of .scadtest files and show
+        the Testing pane for it. `directory` is only passed by tests, to skip
+        the dialog."""
+        from belfryscad.window.testing import find_test_files
+        if directory is None:
+            directory = QFileDialog.getExistingDirectory(
+                self, "Choose a directory of .scadtest files",
+                self._testing_pane.directory() or "")
+        if not directory:
             return
-        from belfryscad.window.coverage_report import TestCoverageWorker
-        self.log(f"Running {len(files)} test file(s) with coverage…")
-        worker = TestCoverageWorker(files)
+        files = find_test_files(directory)
+        self._testing_pane.set_directory(directory, len(files))
+        self._testing_dock.show()
+        self._testing_dock.raise_()
+        if not files:
+            self.log(f"No .scadtest files under {directory}")
+
+    def _run_tests(self):
+        """Run (or cancel) the Testing pane's directory on a worker thread."""
+        from belfryscad.window.testing import TestRunWorker, find_test_files
+        if self._testing_pane.is_running():
+            worker, _thread = self._test_run_job
+            worker.cancel()
+            return
+        directory = self._testing_pane.directory()
+        if not directory:
+            return
+        files = find_test_files(directory)
+        if not files:
+            self.log(f"No .scadtest files under {directory}")
+            return
+        coverage = self._testing_pane.coverage_enabled()
+        self._testing_pane.clear_results()
+        self._testing_pane.set_running(True)
+        self.log(f"Running {len(files)} test file(s)"
+                 + (" with coverage…" if coverage else "…"))
+        worker = TestRunWorker(files, coverage=coverage)
         thread = QThread(self)
         worker.moveToThread(thread)
         worker.logged.connect(self.log)
-        worker.finished.connect(lambda report: self._set_coverage(report) if report is not None else None)
+        worker.file_done.connect(
+            lambda result, base=directory: self._testing_pane.add_file_result(result, base))
+        worker.finished.connect(self._on_tests_finished)
         worker.done.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.started.connect(worker.run)
-        self._test_coverage_job = (worker, thread)   # keep both alive until done
+        self._test_run_job = (worker, thread)   # keep both alive until done
         thread.start()
+
+    def _on_tests_finished(self, report):
+        self._testing_pane.set_running(False)
+        self._testing_pane.set_totals(report.total().percent if report is not None else None)
+        if report is not None:
+            self._set_coverage(report)
 
     def _show_profile_report(self):
         """Open a sortable per-call-site profiling report from the last

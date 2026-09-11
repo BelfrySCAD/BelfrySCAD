@@ -1,4 +1,5 @@
-"""Coverage in the GUI: capture, overlay, toggle, and Run Tests with Coverage.
+"""The Testing pane: Design > Run Tests…, the results tree, and the coverage
+overlay it drives.
 
 MainWindow is a widget, so this drives it in a subprocess with scratch
 settings, like the other GUI tests.
@@ -25,74 +26,111 @@ lib = os.path.join(d, "lib.scad")
 open(lib, "w").write("function f(x) = x > 0 ? 1 : 2;\\nmodule used() { cube(1); }\\nmodule unused() { sphere(1); }\\n")
 main = os.path.join(d, "main.scad")
 open(main, "w").write("include <lib.scad>\\na = f(1);\\nif (a == 2) cube(1); else used();\\n")
+# Two suites, in a subdirectory too, so find_test_files' recursion is exercised.
+open(os.path.join(d, "test_f.scadtest"), "w").write(
+    '[[test]]\\nname = "test_f"\\nscript = """\\ninclude <lib.scad>\\nassert(f(-1) == 2);\\n"""\\n')
+os.mkdir(os.path.join(d, "more"))
+# run_test resolves include paths relative to the .scadtest file's own
+# directory (runner.run(lines, tc.script_dir)), so a suite one level down
+# reaches the library with ../.
+open(os.path.join(d, "more", "test_used.scadtest"), "w").write(
+    '[[test]]\\nname = "test_used"\\nscript = """\\ninclude <../lib.scad>\\nused();\\n"""\\n\\n'
+    '[[test]]\\nname = "test_fails"\\nscript = """\\ninclude <../lib.scad>\\nassert(f(1) == 99);\\n"""\\n')
 
-def pump(pred, timeout=60):
+def pump(pred, timeout=120):
     t0 = time.time()
     while not pred() and time.time() - t0 < timeout:
         app.processEvents(); time.sleep(0.01)
     return pred()
 
-w._act_capture_coverage.setChecked(False)
-w.open_file_by_path(main)             # renders on open, without coverage
+w.open_file_by_path(main)             # renders on open
 tab = w._current_tab()
 pump(lambda: not w._render_busy())
-out["no_coverage_after_plain_render"] = w._coverage is None
-out["show_unchecked_initially"] = not w._act_show_coverage.isChecked()
+# A render never collects coverage any more -- there is no way to ask it to.
+out["no_coverage_from_render"] = w._coverage is None
 
-w._render(tab, coverage=True)         # Design > Render with Coverage
-pump(lambda: w._coverage is not None)
+w._open_testing_pane(directory=d)     # Design > Run Tests…
+pane = w._testing_pane
+out["dock_shown"] = not w._testing_dock.isHidden()
+out["dir_label"] = pane._dir_label.toolTip()
+
+logged = []
+w.log = lambda m: logged.append(m)
+w._run_tests()
+pump(lambda: not pane.is_running() and w._coverage is not None)
 out["coverage_arrived"] = w._coverage is not None
-out["show_auto_checked"] = w._act_show_coverage.isChecked()
-sels = tab.editor._coverage_selections
-out["main_tab_selections"] = len(sels)
-colors = {s.format.background().color().name() for s in sels}
-out["two_tints"] = len(colors) == 2   # covered green + the uncovered cube arm red
 
-w.open_file_by_path(lib)              # a library tab lights up from its real path
+# The tree: one top-level row per .scadtest file, expandable to its tests.
+tree = pane._tree
+out["file_rows"] = tree.topLevelItemCount()
+rows = {tree.topLevelItem(i).text(0): tree.topLevelItem(i) for i in range(tree.topLevelItemCount())}
+out["row_names"] = sorted(rows)
+more = rows[os.path.join("more", "test_used.scadtest")]
+out["more_counts"] = more.text(1)
+out["more_pct"] = more.text(2)
+out["more_has_cov"] = more.text(3).endswith("%")
+out["more_children"] = sorted((more.child(i).text(0), more.child(i).text(1)) for i in range(more.childCount()))
+out["failing_file_expanded"] = more.isExpanded()
+out["totals"] = pane._total_label.text()
+
+# Overlay: a library tab lights up from its real path.
+w.open_file_by_path(lib)
 libtab = w._current_tab()
 pump(lambda: not w._render_busy())
 out["lib_tab_selections"] = len(libtab.editor._coverage_selections)
 out["lib_has_uncovered"] = any(s["hits"] == 0 for s in w._coverage_spans_for_tab(libtab))
+colors = {s.format.background().color().name() for s in libtab.editor._coverage_selections}
+out["two_tints"] = len(colors) == 2      # covered green + unused() never called, red
 
-w._act_show_coverage.setChecked(False)
-out["hidden_when_toggled_off"] = (len(tab.editor._coverage_selections), len(libtab.editor._coverage_selections))
-w._act_show_coverage.setChecked(True)
+pane._overlay_box.setChecked(False)      # the pane owns the toggle now
+out["hidden_when_toggled_off"] = len(libtab.editor._coverage_selections)
+pane._overlay_box.setChecked(True)
 out["back_when_toggled_on"] = len(libtab.editor._coverage_selections) > 0
+
 libtab.editor.setReadOnly(False)
 c = libtab.editor.textCursor(); c.setPosition(0); libtab.editor.setTextCursor(c)
 libtab.editor.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_X, Qt.KeyboardModifier.NoModifier, "X"))
 out["cleared_by_edit"] = len(libtab.editor._coverage_selections) == 0
 
-# Run Tests with Coverage: replaces the report with the tests' merged one.
-test = os.path.join(d, "test_lib.scadtest")
-open(test, "w").write('[[test]]\\nname = "test_f"\\nscript = """\\ninclude <lib.scad>\\nassert(f(-1) == 2);\\n"""\\n')
-logged = []
-w.log = lambda m: logged.append(m)
-w._coverage = None
-w._run_tests_with_coverage(files=[test])
-pump(lambda: w._coverage is not None)
-out["tests_ran"] = any("1 of 1 tests passed" in m for m in logged)
-origins = {os.path.basename(o) for (o, *_rest) in w._coverage.spans}
-out["test_origins"] = sorted(origins)
-by = {(s["line"], s["kind"]): s["hits"] for s in w._coverage.spans.values() if os.path.basename(s["origin"]) == "lib.scad"}
+# ../lib.scad from more/ and lib.scad from the root are ONE file: merge_spans
+# normalises the origin, so this is one entry, not two half-covered ones.
+out["origins"] = sorted({os.path.basename(o) for (o, *_rest) in w._coverage.spans})
+out["distinct_origin_paths"] = len({o for (o, *_rest) in w._coverage.spans})
+by = {(s["line"], s["kind"]): s["hits"] for s in w._coverage.spans.values()
+      if os.path.basename(s["origin"]) == "lib.scad"}
 out["false_arm_hit_by_test"] = by.get((1, "branch"), None)
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
 
 
-def test_coverage_capture_overlay_toggle_and_test_run():
+def test_run_tests_pane_reports_results_and_drives_the_overlay():
     proc = subprocess.run([sys.executable, "-c", DRIVER], capture_output=True, text=True,
-                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=180)
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=240)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["no_coverage_after_plain_render"] and out["show_unchecked_initially"]
-    assert out["coverage_arrived"] and out["show_auto_checked"]
-    assert out["main_tab_selections"] > 0 and out["two_tints"]
-    assert out["lib_tab_selections"] > 0 and out["lib_has_uncovered"]
-    assert out["hidden_when_toggled_off"] == [0, 0]   # JSON turns the tuple into a list
+
+    assert out["no_coverage_from_render"], "a plain render must not produce coverage"
+    assert out["dock_shown"], "Run Tests… shows the pane"
+    assert "2 test files" in out["dir_label"], out["dir_label"]
+    assert out["coverage_arrived"]
+
+    # One row per file, recursed into subdirectories, named relative to the root.
+    assert out["file_rows"] == 2
+    assert out["row_names"] == [os.path.join("more", "test_used.scadtest"), "test_f.scadtest"]
+    assert out["more_counts"] == "1/2" and out["more_pct"] == "50.0%"
+    assert out["more_has_cov"]
+    assert out["more_children"] == [["test_fails", "FAIL"], ["test_used", "pass"]]
+    assert out["failing_file_expanded"], "a file with a failure opens itself"
+    assert "2 of 3 tests passed (66.7%)" in out["totals"] and "coverage" in out["totals"]
+
+    # The overlay, driven by the pane's checkbox.
+    assert out["lib_tab_selections"] > 0 and out["lib_has_uncovered"] and out["two_tints"]
+    assert out["hidden_when_toggled_off"] == 0
     assert out["back_when_toggled_on"]
     assert out["cleared_by_edit"]
-    assert out["tests_ran"]
-    assert out["test_origins"] == ["lib.scad"]          # the snippet itself is dropped
-    assert out["false_arm_hit_by_test"] == 1          # f(-1) took the arm the render never did
+
+    assert out["origins"] == ["lib.scad"]        # the tests' own snippets are dropped
+    assert out["distinct_origin_paths"] == 1, \
+        "lib.scad and ../lib.scad are the same file; merge_spans normalises the origin"
+    assert out["false_arm_hit_by_test"] == 1     # f(-1) took the arm main.scad never does

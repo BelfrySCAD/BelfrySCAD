@@ -18,6 +18,11 @@ def _span(origin, line, start, end, kind, hits, arm=False):
             "kind": kind, "arm": arm, "hits": hits}
 
 
+def _abs(*parts):
+    """The key merge_spans will file a span under (it normalises origins)."""
+    return os.path.abspath(os.path.join(*parts))
+
+
 def test_format_report_lists_files_then_every_gap():
     r = CoverageReport.from_result({"spans": [
         _span("/w/lib.scad", 1, 0, 5, "statement", 1),
@@ -25,13 +30,13 @@ def test_format_report_lists_files_then_every_gap():
         _span("/w/lib.scad", 3, 10, 14, "branch", 0, arm=True),
         _span("/w/s.scad", 1, 0, 5, "statement", 1),
     ]})
-    text = format_report(r, base="/w")
+    text = format_report(r, base=_abs("/w"))
     assert text.splitlines()[0].startswith("lib.scad")     # worst is not sorted first by default
     assert "s.scad" in text and "TOTAL" in text
     assert "Not covered (2):" in text
     assert "lib.scad:2:1  body" in text
     assert "lib.scad:3:1  branch (if/else arm)" in text    # arms say so
-    assert "Not covered" not in format_report(r, base="/w", uncovered=False)
+    assert "Not covered" not in format_report(r, base=_abs("/w"), uncovered=False)
 
 
 def test_merge_sums_hits_and_drop_origins_filters():
@@ -44,10 +49,10 @@ def test_merge_sums_hits_and_drop_origins_filters():
         {"origin": "/x.scad", "line": 2, "column": 1, "start": 6, "end": 9, "kind": "body", "arm": False, "hits": 0},
     ]})
     a.merge(b)
-    assert a.spans[("/x.scad", 0, 5, "statement")]["hits"] == 3
+    assert a.spans[(_abs("/x.scad"), 0, 5, "statement")]["hits"] == 3
     assert len(a.spans) == 3
     a.drop_origins(lambda o: os.path.basename(o).startswith("tmp_docsgen_"))
-    assert {k[0] for k in a.spans} == {"/x.scad"}
+    assert {k[0] for k in a.spans} == {_abs("/x.scad")}
     (f,) = a.files()
     assert (f.spans, f.spans_hit, f.bodies, f.bodies_hit) == (2, 1, 1, 0)
     assert CoverageReport.from_json(a.to_json()).spans == a.spans
