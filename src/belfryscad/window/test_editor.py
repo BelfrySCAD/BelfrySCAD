@@ -64,10 +64,16 @@ class TestEditDialog(QDialog):
 
         self._source = QComboBox()
         self._source.addItems(["Inline script", "Script file"])
+        # Fixed at 15 characters. Measured from the font rather than set in
+        # pixels: Aqua clips a combo sized by AdjustToContents, and a
+        # hard-coded width is wrong on the next font.
+        self._source.setFixedWidth(
+            self._source.fontMetrics().horizontalAdvance("0" * 15) + 34)   # + the arrow
         source_row = QWidget()
         source_layout = QHBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 0)
-        source_layout.addWidget(self._source, 1)
+        source_layout.addWidget(self._source)
+        source_layout.addStretch(1)
         source_layout.addWidget(QLabel("Timeout"))
         source_layout.addWidget(self._timeout)
         form.addRow("Source", source_row)
