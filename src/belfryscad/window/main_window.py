@@ -2548,9 +2548,24 @@ class MainWindow(QMainWindow):
                 continue
             spans = self._coverage_spans_for_tab(tab) if show else []
             if spans:
-                tab.editor.set_coverage(spans, tint_covered=tint)
+                tab.editor.set_coverage(spans, tint_covered=tint,
+                                        to_char=self._coverage_offset_map(tab))
             else:
                 tab.editor.clear_coverage()
+
+    def _coverage_offset_map(self, tab):
+        """Byte->character mapping for this tab's spans, from the bytes the
+        evaluator actually parsed. OpenSCAD source is UTF-8, so a comment
+        with an em dash in it is enough to put every tint below it out of
+        place; see coverage.document_offset_map."""
+        from belfryscad.coverage import document_offset_map
+        path = tab.file_path or getattr(tab, "_last_parse_path", None)
+        if path:
+            try:
+                return document_offset_map(Path(path).read_bytes())
+            except OSError:
+                pass    # temp copy already unlinked; the buffer is the same text
+        return document_offset_map(tab.editor.toPlainText().encode("utf-8"))
 
     def _show_coverage_report(self):
         if self._coverage is None:

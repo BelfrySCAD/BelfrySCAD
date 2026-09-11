@@ -135,6 +135,64 @@ class CoverageReport:
         return cls.from_result(json.loads(text))
 
 
+def document_offset_map(source: bytes):
+    """Map the evaluator's BYTE offsets into `source` onto CHARACTER offsets
+    in the editor's document, or return None when they are the same thing.
+
+    The evaluator reports `start`/`end` as byte offsets into the file it
+    parsed. A QTextDocument is indexed by character, and the editor loads a
+    file with `read_text(encoding="utf-8")`, so two things shift the two
+    apart:
+
+      * any non-ASCII character -- an em dash in a comment is three bytes
+        and one character, so everything after it is off by two;
+      * CRLF line endings -- universal newlines turn "\r\n" into one "\n",
+        so every line after the first is off by one more.
+
+    Both are silent: the tint just sits a few characters to the right of the
+    code it describes, further and further down the file.
+
+    Returns a callable, or None for the overwhelmingly common case (ASCII
+    with LF endings) where no mapping is needed at all -- that check is two
+    C-speed scans, against a per-character Python loop.
+    """
+    if source.isascii() and b"\r" not in source:
+        return None
+    text = source.decode("utf-8", errors="replace")
+    starts = []          # byte offset of each document character
+    byte_pos = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            # read_text folds "\r\n" and a lone "\r" alike into one "\n".
+            width = 2 if i + 1 < n and text[i + 1] == "\n" else 1
+            starts.append(byte_pos)
+            byte_pos += width
+            i += width
+            continue
+        starts.append(byte_pos)
+        byte_pos += len(ch.encode("utf-8"))
+        i += 1
+    starts.append(byte_pos)
+
+    def to_char(offset: int) -> int:
+        # bisect_right - 1 lands on the character containing this byte; an
+        # offset inside a multi-byte character (never emitted, but cheap to
+        # survive) snaps to that character's start.
+        lo, hi = 0, len(starts) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if starts[mid] <= offset:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    return to_char
+
+
 def _rel(origin: str, base: str | None) -> str:
     if base:
         try:

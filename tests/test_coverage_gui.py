@@ -134,3 +134,95 @@ def test_run_tests_pane_reports_results_and_drives_the_overlay():
     assert out["distinct_origin_paths"] == 1, \
         "lib.scad and ../lib.scad are the same file; merge_spans normalises the origin"
     assert out["false_arm_hit_by_test"] == 1     # f(-1) took the arm main.scad never does
+
+
+# The tints sat a few characters right of the code they described, further
+# and further down the file, and nested spans stacked into a muddy third
+# colour. OpenSCAD source is UTF-8, so an em dash in a comment is enough.
+UTF8_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+out = {}
+w = MainWindow(); w.skip_unsaved_prompts = True
+d = tempfile.mkdtemp()
+lib = os.path.join(d, "lib.scad")
+# An em dash (3 bytes) and an accented letter (2 bytes) before any code:
+# byte offsets run 3 characters ahead of document positions from here down.
+open(lib, "w", encoding="utf-8").write(
+    "// caf\\u00e9 \\u2014 a comment\\n"
+    "module outer() {\\n"
+    "    cube(1);\\n"
+    "    if (false) { sphere(2); }\\n"
+    "}\\n")
+open(os.path.join(d, "t.scadtest"), "w").write(
+    '[[test]]\\nname = "t"\\nscript = """\\ninclude <lib.scad>\\nouter();\\n"""\\n')
+
+def pump(pred, timeout=120):
+    t0 = time.time()
+    while not pred() and time.time() - t0 < timeout:
+        app.processEvents(); time.sleep(0.01)
+    return pred()
+
+w._open_testing_pane(directory=d)
+w._run_tests()
+pump(lambda: not w._testing_pane.is_running() and w._coverage is not None)
+w.open_file_by_path(lib)
+tab = w._current_tab()
+pump(lambda: not w._render_busy())
+text = tab.editor.toPlainText()
+sels = tab.editor._coverage_selections
+out["n_selections"] = len(sels)
+
+# Every selection must be disjoint from the others -- nesting is flattened.
+ranges = sorted((min(s.cursor.position(), s.cursor.anchor()),
+                 max(s.cursor.position(), s.cursor.anchor())) for s in sels)
+out["disjoint"] = all(a[1] <= b[0] for a, b in zip(ranges, ranges[1:]))
+
+# And they must land on real code, not three characters to its right.
+covered_text = "".join(text[a:b] for a, b in ranges)
+
+# The invariant the mapping exists for: the characters a mapped span covers
+# are the same text as the bytes the evaluator reported.
+raw = open(lib, "rb").read()
+m = w._coverage_offset_map(tab)
+out["n_spans"] = 0
+out["all_spans_map_exactly"] = True
+for s in w._coverage_spans_for_tab(tab):
+    a, b = int(s["start"]), int(s["end"])
+    ca, cb = (m(a), m(b)) if m is not None else (a, b)
+    out["n_spans"] += 1
+    if raw[a:b].decode("utf-8") != text[ca:cb]:
+        out["all_spans_map_exactly"] = False
+        out.setdefault("first_mismatch", [raw[a:b].decode("utf-8"), text[ca:cb]])
+out["map_was_needed"] = m is not None
+
+out["sphere_is_uncovered"] = False
+for s in sels:
+    a, b = sorted((s.cursor.position(), s.cursor.anchor()))
+    frag = text[a:b]
+    if "sphere" in frag:
+        # red == the uncovered format; alpha 70 red vs alpha 55 green
+        out["sphere_is_uncovered"] = s.format.background().color().red() > 200
+out["cube_present"] = "cube(1);" in covered_text
+print(json.dumps(out)); sys.stdout.flush()
+os._exit(0)
+'''
+
+
+def test_overlay_lands_on_the_code_and_does_not_stack():
+    proc = subprocess.run([sys.executable, "-c", UTF8_DRIVER], capture_output=True, text=True,
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=240)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["n_selections"] > 0
+    assert out["disjoint"], "nested spans must be flattened, not stacked"
+    assert out["cube_present"], "a tint must cover the code it describes, not the text beside it"
+    assert out["map_was_needed"], "the fixture is meant to be non-ASCII"
+    assert out["n_spans"] > 3
+    assert out["all_spans_map_exactly"], out.get("first_mismatch")
+    assert out["sphere_is_uncovered"], "the never-taken if body is red"
