@@ -91,10 +91,13 @@ installer_type = "msi"
 
 [tool.briefcase.app.belfryscad.linux.appimage]
 manylinux = "manylinux_2_28"
-# briefcase 0.4.5's own AppImage template (branch v0.4.5) reads
-# cookiecutter.host_arch in briefcase.toml without declaring it in its
-# cookiecutter.json, so cookiecutter drops the value briefcase passes and
-# `briefcase create linux appimage` fails with "'OrderedDict object' has no
-# attribute 'host_arch'". The v0.4.4 template does not use it. Drop this
-# once a fixed template branch ships.
-template_branch = "v0.4.4"
+# The AppImage template's v0.4.5 branch reads cookiecutter.host_arch in
+# briefcase.toml without declaring it in cookiecutter.json (upstream
+# 9cfe6a7, 2026-09-08). cookiecutter -- 2.7.1, the latest -- silently drops
+# an extra_context key the template does not declare, so `briefcase create
+# linux appimage` dies with "'OrderedDict object' has no attribute
+# 'host_arch'". Pinned to the commit before that one: same branch lineage
+# and the same target_version, just without the undeclared key. The v0.4.4
+# branch is NOT a workaround -- its older support package leaves the
+# container with no pip. Drop this once upstream declares the key.
+template_branch = "7f4202ff08129a086ac76a171826c71b54e9e679"
