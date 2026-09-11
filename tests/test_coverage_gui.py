@@ -570,8 +570,14 @@ def actions_of(item):
     menu = pane.context_menu_for(item)
     return None if menu is None else [a.text() for a in menu.actions() if a.text()]
 
+def raw_actions_of(item):
+    """Separators included, as "|" -- their text is empty."""
+    menu = pane.context_menu_for(item)
+    return [a.text() or "|" for a in menu.actions()]
+
 file_item = tree.topLevelItem(0)
 out["file_menu"] = actions_of(file_item)
+out["file_menu_raw"] = raw_actions_of(file_item)
 out["test_menu"] = actions_of(file_item.child(0))
 out["empty_space_no_menu"] = actions_of(None) is None
 
@@ -599,7 +605,9 @@ def test_pane_context_menus_and_single_file_run():
                           env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=180)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["file_menu"] == ["Add Test", "Run Tests in this File"]
+    assert out["file_menu"] == ["Run Tests in this File", "Add Test"]
+    assert out["file_menu_raw"] == ["Run Tests in this File", "|", "Add Test"], \
+        "running the file comes first, then a separator"
     assert out["test_menu"] == ["Add Test Before", "Add Test After", "Delete Test"]
     assert out["empty_space_no_menu"], "right-clicking blank space offers nothing"
     assert out["new_file_enabled"]

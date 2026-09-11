@@ -300,10 +300,11 @@ class TestingPane(QWidget):
             path = item.data(0, Qt.ItemDataRole.UserRole)
             if not path:
                 return None
-            menu.addAction("Add Test").triggered.connect(
-                lambda _=False: self.add_requested.emit(path, None, "end"))
             menu.addAction("Run Tests in this File").triggered.connect(
                 lambda _=False: self.run_file_requested.emit(path))
+            menu.addSeparator()
+            menu.addAction("Add Test").triggered.connect(
+                lambda _=False: self.add_requested.emit(path, None, "end"))
         else:
             path = parent.data(0, Qt.ItemDataRole.UserRole)
             if not path:
