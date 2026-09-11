@@ -333,28 +333,33 @@ def add_exec(self):
     self._accept()
     return QDialog.DialogCode.Accepted if self.result_test() else QDialog.DialogCode.Rejected
 test_editor.TestEditDialog.exec = add_exec
-tree.setCurrentItem(tree.topLevelItem(0))
-w._testing_pane._request_add()
+w._add_test(suite)                                 # file row > Add Test
 app.processEvents()
 out["names_after_add"] = sorted(t.name for t in parse_scadtest_file(suite))
 
+# Add Test Before / After put the new block where they say.
+def named(n):
+    def ex(self):
+        self._name.setText(n)
+        self._script.setPlainText("include <lib.scad>\\nused();")
+        self._accept()
+        return QDialog.DialogCode.Accepted if self.result_test() else QDialog.DialogCode.Rejected
+    return ex
+test_editor.TestEditDialog.exec = named("first")
+w._add_test(suite, "alpha", "before")
+test_editor.TestEditDialog.exec = named("second")
+w._add_test(suite, "alpha", "after")
+app.processEvents()
+out["order_after_positional"] = [t.name for t in parse_scadtest_file(suite)]
+
 # Delete: only enabled for a TEST row, confirmed, and it removes just that
 # one block.
-tree.setCurrentItem(tree.topLevelItem(0))          # a file row
-out["delete_off_for_file_row"] = not w._testing_pane._delete_btn.isEnabled()
-file_item = tree.topLevelItem(0)
-alpha = next(file_item.child(i) for i in range(file_item.childCount())
-             if file_item.child(i).text(0) == "alpha")
-tree.setCurrentItem(alpha)
-out["delete_on_for_test_row"] = w._testing_pane._delete_btn.isEnabled()
-
 answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
 QMessageBox.question = staticmethod(lambda *a, **k: answers.pop(0))
-w._testing_pane._request_delete()                  # answered No
+w._delete_test(suite, "alpha")                     # answered No
 app.processEvents()
 out["names_after_refusing"] = sorted(t.name for t in parse_scadtest_file(suite))
-tree.setCurrentItem(alpha)
-w._testing_pane._request_delete()                  # answered Yes
+w._delete_test(suite, "alpha")                     # answered Yes
 app.processEvents()
 out["names_after_deleting"] = sorted(t.name for t in parse_scadtest_file(suite))
 out["comment_still_there"] = "a comment that must survive" in open(suite).read()
@@ -389,9 +394,11 @@ def test_test_editor_round_trips_through_the_file():
     assert out["renamed_vars"] == {"size": 10, "label": "cap"}
     assert out["renamed_script_lines"] == ["include <lib.scad>", "used();", "used();"]
     assert out["names_after_add"] == ["alpha", "beta_renamed", "gamma"]
-    assert out["delete_off_for_file_row"] and out["delete_on_for_test_row"]
-    assert out["names_after_refusing"] == ["alpha", "beta_renamed", "gamma"], "No means no"
-    assert out["names_after_deleting"] == ["beta_renamed", "gamma"]
+    assert out["order_after_positional"] == ["first", "alpha", "second", "beta_renamed", "gamma"], \
+        "Add Test Before/After must land either side of the anchor, in file order"
+    assert out["names_after_refusing"] == sorted(["first", "alpha", "second", "beta_renamed", "gamma"]), \
+        "No means no"
+    assert "alpha" not in out["names_after_deleting"]
     assert out["comment_still_there"], "deleting a block leaves the rest of the file alone"
     assert out["duplicate_refused"] and out["duplicate_complained"]
 
@@ -525,3 +532,76 @@ def test_editor_is_tabbed_and_still_round_trips():
     assert all(out["results_tab_has"])
     # Splitting the dialog across tabs must not lose a field on the way out.
     assert out["round_trip"] == ["t", "x();", 30, {"size": 10}, ["ready"], False]
+
+
+# The pane's context menus: what each row offers, and that Run Tests in this
+# File runs only that suite.
+MENU_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+USER_ROLE = Qt.ItemDataRole.UserRole
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+out = {}
+w = MainWindow(); w.skip_unsaved_prompts = True
+d = tempfile.mkdtemp()
+open(os.path.join(d, "lib.scad"), "w").write("module used() { cube(1); }\\n")
+for suite, names in (("one.scadtest", ["a1"]), ("two.scadtest", ["b1", "b2"])):
+    open(os.path.join(d, suite), "w").write("".join(
+        '[[test]]\\nname = "%s"\\nscript = \\'\\'\\'\\ninclude <lib.scad>\\nused();\\n\\'\\'\\'\\n\\n' % n
+        for n in names))
+
+def pump(pred, timeout=60):
+    t0 = time.time()
+    while not pred() and time.time() - t0 < timeout:
+        app.processEvents(); time.sleep(0.01)
+    return pred()
+
+w._open_testing_pane(directory=d)
+pane, tree = w._testing_pane, w._testing_pane._tree
+
+# context_menu_for builds without showing: QMenu.exec is a C++ method, it
+# cannot be monkeypatched, and a shown menu blocks the test forever.
+def actions_of(item):
+    menu = pane.context_menu_for(item)
+    return None if menu is None else [a.text() for a in menu.actions() if a.text()]
+
+file_item = tree.topLevelItem(0)
+out["file_menu"] = actions_of(file_item)
+out["test_menu"] = actions_of(file_item.child(0))
+out["empty_space_no_menu"] = actions_of(None) is None
+
+# New File… sits under the table, beside the totals.
+out["new_file_enabled"] = pane._new_file_btn.isEnabled()
+
+# Run Tests in this File runs only that suite.
+paths = sorted(tree.topLevelItem(i).data(0, USER_ROLE) for i in range(tree.topLevelItemCount()))
+one = [p for p in paths if p.endswith("one.scadtest")][0]
+w.log = lambda m: None
+w._run_tests(files=[one])
+pump(lambda: not pane.is_running())
+ran = {}
+for i in range(tree.topLevelItemCount()):
+    it = tree.topLevelItem(i)
+    ran[os.path.basename(it.data(0, USER_ROLE))] = it.text(1)
+out["per_file_counts"] = ran
+print(json.dumps(out)); sys.stdout.flush()
+os._exit(0)
+'''
+
+
+def test_pane_context_menus_and_single_file_run():
+    proc = subprocess.run([sys.executable, "-c", MENU_DRIVER], capture_output=True, text=True,
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=180)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["file_menu"] == ["Add Test", "Run Tests in this File"]
+    assert out["test_menu"] == ["Add Test Before", "Add Test After", "Delete Test"]
+    assert out["empty_space_no_menu"], "right-clicking blank space offers nothing"
+    assert out["new_file_enabled"]
+    # Only the suite that was asked for ran; the other keeps its blank row.
+    assert out["per_file_counts"] == {"one.scadtest": "1/1", "two.scadtest": ""}

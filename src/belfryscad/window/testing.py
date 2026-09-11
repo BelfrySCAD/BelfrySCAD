@@ -21,7 +21,7 @@ import os
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTreeWidget,
+    QCheckBox, QMenu, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -121,8 +121,10 @@ class TestingPane(QWidget):
     pick_dir_requested = Signal()
     overlay_toggled = Signal(bool)
     report_requested = Signal()
-    edit_requested = Signal(str, object)   # (.scadtest path, test name or None for a new one)
+    edit_requested = Signal(str, str)      # (.scadtest path, test name) -- edit an existing one
+    add_requested = Signal(str, object, str)   # (path, anchor test or None, "end"/"before"/"after")
     delete_requested = Signal(str, str)    # (.scadtest path, test name)
+    run_file_requested = Signal(str)       # run just this .scadtest
     new_file_requested = Signal()
 
     _COLUMNS = ("Tests", "Passed", "Passed %", "Coverage %")
@@ -155,21 +157,6 @@ class TestingPane(QWidget):
         self._overlay_box.toggled.connect(self.overlay_toggled)
         controls.addWidget(self._overlay_box)
         controls.addStretch(1)
-        self._new_file_btn = QPushButton("New File…")
-        self._new_file_btn.setToolTip("Create a new .scadtest file in this directory")
-        self._new_file_btn.clicked.connect(self.new_file_requested)
-        self._new_file_btn.setEnabled(False)
-        controls.addWidget(self._new_file_btn)
-        self._add_btn = QPushButton("Add Test…")
-        self._add_btn.setToolTip("Add a test to the selected .scadtest file")
-        self._add_btn.clicked.connect(lambda: self._request_add())
-        self._add_btn.setEnabled(False)
-        controls.addWidget(self._add_btn)
-        self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setToolTip("Delete the selected test from its .scadtest file")
-        self._delete_btn.clicked.connect(self._request_delete)
-        self._delete_btn.setEnabled(False)
-        controls.addWidget(self._delete_btn)
         self._report_btn = QPushButton("Report…")
         self._report_btn.setToolTip("The per-file report, with every uncovered span")
         self._report_btn.clicked.connect(self.report_requested)
@@ -189,15 +176,23 @@ class TestingPane(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self._tree.currentItemChanged.connect(self._sync_delete_enabled)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_context_menu)
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i in range(1, len(self._COLUMNS)):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._tree, 1)
 
+        bottom = QHBoxLayout()
+        self._new_file_btn = QPushButton("New File…")
+        self._new_file_btn.setToolTip("Create a new .scadtest file in this directory")
+        self._new_file_btn.clicked.connect(self.new_file_requested)
+        self._new_file_btn.setEnabled(False)
+        bottom.addWidget(self._new_file_btn)
         self._total_label = QLabel("")
-        layout.addWidget(self._total_label)
+        bottom.addWidget(self._total_label, 1)
+        layout.addLayout(bottom)
 
         self._totals = [0, 0]   # passed, total
 
@@ -226,7 +221,6 @@ class TestingPane(QWidget):
             for name in _test_names(file_path):
                 item.addChild(QTreeWidgetItem([name, "", "", ""]))
             self._tree.addTopLevelItem(item)
-        self._add_btn.setEnabled(bool(files))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -251,11 +245,6 @@ class TestingPane(QWidget):
     def overlay_enabled(self) -> bool:
         return self._overlay_box.isChecked()
 
-    def _request_add(self):
-        path = self.selected_file()
-        if path:
-            self.edit_requested.emit(path, None)
-
     def set_running(self, running: bool):
         self._run_btn.setText("Cancel" if running else "Run Tests")
         self._choose_btn.setEnabled(not running)
@@ -271,8 +260,6 @@ class TestingPane(QWidget):
         self._total_label.setText("")
         self._totals = [0, 0]
         self._report_btn.setEnabled(False)
-        self._add_btn.setEnabled(False)
-        self._delete_btn.setEnabled(False)
 
     def _on_item_double_clicked(self, item, _column):
         """Double-clicking a TEST opens it for editing. Double-clicking a
@@ -294,13 +281,42 @@ class TestingPane(QWidget):
         path = item.parent().data(0, Qt.ItemDataRole.UserRole)
         return (path, item.text(0)) if path else None
 
-    def _sync_delete_enabled(self, *_args):
-        self._delete_btn.setEnabled(self.selected_test() is not None)
+    def _show_context_menu(self, point):
+        menu = self.context_menu_for(self._tree.itemAt(point))
+        if menu is not None:
+            menu.exec(self._tree.viewport().mapToGlobal(point))
 
-    def _request_delete(self):
-        found = self.selected_test()
-        if found:
-            self.delete_requested.emit(*found)
+    def context_menu_for(self, item):
+        """The menu for a row, or None for empty space. Built separately from
+        showing it so it can be inspected without exec() -- a QMenu's exec is
+        a C++ method and cannot be monkeypatched, so a test that shows one
+        just hangs."""
+        if item is None:
+            return None
+        self._tree.setCurrentItem(item)
+        parent = item.parent()
+        menu = QMenu(self._tree)
+        if parent is None:
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if not path:
+                return None
+            menu.addAction("Add Test").triggered.connect(
+                lambda _=False: self.add_requested.emit(path, None, "end"))
+            menu.addAction("Run Tests in this File").triggered.connect(
+                lambda _=False: self.run_file_requested.emit(path))
+        else:
+            path = parent.data(0, Qt.ItemDataRole.UserRole)
+            if not path:
+                return None
+            name = item.text(0)
+            menu.addAction("Add Test Before").triggered.connect(
+                lambda _=False: self.add_requested.emit(path, name, "before"))
+            menu.addAction("Add Test After").triggered.connect(
+                lambda _=False: self.add_requested.emit(path, name, "after"))
+            menu.addSeparator()
+            menu.addAction("Delete Test").triggered.connect(
+                lambda _=False: self.delete_requested.emit(path, name))
+        return menu
 
     def selected_file(self):
         """The .scadtest of whichever row is selected, or the only one in the
@@ -345,7 +361,6 @@ class TestingPane(QWidget):
             if not ok:
                 child.setToolTip(0, "\n".join(messages) or "failed")
             item.addChild(child)
-        self._add_btn.setEnabled(True)
         # Open a file that has something to look at, and only that one.
         # setExpanded is ignored on an item that is not in a tree yet, so
         # this has to come after addTopLevelItem.

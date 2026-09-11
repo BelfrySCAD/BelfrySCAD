@@ -422,3 +422,20 @@ def delete_test_block(text: str, name: str) -> str:
                 stop += 1
             return "\n".join(lines[:start] + lines[stop:]).rstrip("\n") + "\n"
     return text
+
+
+def insert_test_block(text: str, block: str, anchor: str, after: bool) -> str:
+    """Put `block` immediately before or after the `[[test]]` block called
+    `anchor`. Appends if there is no such block."""
+    lines = text.splitlines()
+    for found, start, stop in _test_block_ranges(text):
+        if found != anchor:
+            continue
+        body = block.rstrip("\n").split("\n")
+        # The blank line goes on the side facing the anchor: a range stops
+        # before its trailing blanks, so appending one when inserting after
+        # would leave the new block jammed against the previous test and two
+        # blanks below it.
+        at, piece = (stop, [""] + body) if after else (start, body + [""])
+        return "\n".join(lines[:at] + piece + lines[at:]).rstrip("\n") + "\n"
+    return replace_test_block(text, "\0no such test\0", block)

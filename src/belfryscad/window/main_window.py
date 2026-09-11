@@ -911,7 +911,10 @@ class MainWindow(QMainWindow):
         self._testing_pane.pick_dir_requested.connect(lambda: self._open_testing_pane())
         self._testing_pane.report_requested.connect(self._show_coverage_report)
         self._testing_pane.edit_requested.connect(self._edit_test)
+        self._testing_pane.add_requested.connect(self._add_test)
         self._testing_pane.delete_requested.connect(self._delete_test)
+        self._testing_pane.run_file_requested.connect(
+            lambda path: self._run_tests(files=[path]))
         self._testing_pane.new_file_requested.connect(self._new_test_file)
         self._testing_pane.overlay_toggled.connect(lambda _on: self._apply_coverage_overlays())
         self._test_run_job = None
@@ -2600,40 +2603,62 @@ class MainWindow(QMainWindow):
         if not files:
             self.log(f"No .scadtest files under {directory}")
 
-    def _edit_test(self, path: str, test_name=None):
-        """Open the test editor on `test_name` in `path`, or on a new test
-        when it is None, and splice the result back into the file."""
-        from belfryscad.scadtest import (TestCase, format_test_block, parse_scadtest_file,
-                                         replace_test_block)
-        from belfryscad.window.test_editor import TestEditDialog
+    def _read_suite(self, path: str):
+        """(text, tests) for a .scadtest, or (None, None) after complaining."""
+        from belfryscad.scadtest import parse_scadtest_file
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
-            tests = parse_scadtest_file(path)
+            return text, parse_scadtest_file(path)
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, "Test", f"Could not read {os.path.basename(path)}:\n{e}")
+            return None, None
+
+    def _edit_test(self, path: str, test_name: str):
+        """Edit one test in place, splicing the result back into the file."""
+        from belfryscad.scadtest import (delete_test_block, format_test_block,
+                                         replace_test_block)
+        from belfryscad.window.test_editor import TestEditDialog
+        text, tests = self._read_suite(path)
+        if text is None:
             return
-        names = [t.name for t in tests]
         existing = next((t for t in tests if t.name == test_name), None)
-        if test_name and existing is None:
+        if existing is None:
             self.log(f"{test_name!r} is no longer in {os.path.basename(path)} — re-run to refresh.")
             return
-
-        dialog = TestEditDialog(existing, existing_names=names, parent=self)
+        dialog = TestEditDialog(existing, existing_names=[t.name for t in tests], parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         edited = dialog.result_test()
-        # replace_test_block appends when the name is not found, which is
-        # exactly what a new test needs -- and what a RENAME needs too, so
-        # the old block has to go first.
-        if existing is not None and existing.name != edited.name:
-            from belfryscad.scadtest import delete_test_block
+        # A rename has to delete the old block first: replace_test_block
+        # appends when it cannot find the name, so it would leave both.
+        if existing.name != edited.name:
             text = delete_test_block(text, existing.name)
         new_text = replace_test_block(text, edited.name, format_test_block(edited))
         if not self._write_test_file(path, new_text):
             return
-        self.log(f"{'Added' if existing is None else 'Updated'} test {edited.name!r} "
-                 f"in {os.path.basename(path)}")
+        self.log(f"Updated test {edited.name!r} in {os.path.basename(path)}")
+        self._open_testing_pane(directory=self._testing_pane.directory())
+
+    def _add_test(self, path: str, anchor=None, position: str = "end"):
+        """New test in `path`: at the end, or either side of `anchor`."""
+        from belfryscad.scadtest import format_test_block, insert_test_block, replace_test_block
+        from belfryscad.window.test_editor import TestEditDialog
+        text, tests = self._read_suite(path)
+        if text is None:
+            return
+        dialog = TestEditDialog(None, existing_names=[t.name for t in tests], parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        added = dialog.result_test()
+        block = format_test_block(added)
+        if position in ("before", "after") and anchor:
+            new_text = insert_test_block(text, block, anchor, after=(position == "after"))
+        else:
+            new_text = replace_test_block(text, added.name, block)
+        if not self._write_test_file(path, new_text):
+            return
+        self.log(f"Added test {added.name!r} to {os.path.basename(path)}")
         self._open_testing_pane(directory=self._testing_pane.directory())
 
     def _delete_test(self, path: str, test_name: str):
@@ -2682,7 +2707,7 @@ class MainWindow(QMainWindow):
             return
         self.log(f"Created {os.path.basename(path)}")
         self._open_testing_pane(directory=directory)
-        self._edit_test(path, None)      # a file with no tests in it is not useful
+        self._add_test(path)             # a file with no tests in it is not useful
 
     def _write_test_file(self, path: str, text: str) -> bool:
         """Write a .scadtest, keeping any open tab of it in step."""
@@ -2701,8 +2726,9 @@ class MainWindow(QMainWindow):
                 self._sync_tab_label(i, tab)
         return True
 
-    def _run_tests(self):
-        """Run (or cancel) the Testing pane's directory on a worker thread."""
+    def _run_tests(self, files=None):
+        """Run (or cancel) tests on a worker thread. `files` runs just those
+        suites -- Run Tests in this File -- otherwise the whole directory."""
         from belfryscad.window.testing import TestRunWorker, find_test_files
         if self._testing_pane.is_running():
             worker, _thread = self._test_run_job
@@ -2711,12 +2737,15 @@ class MainWindow(QMainWindow):
         directory = self._testing_pane.directory()
         if not directory:
             return
-        files = find_test_files(directory)
+        files = list(files) if files else find_test_files(directory)
         if not files:
             self.log(f"No .scadtest files under {directory}")
             return
         coverage = self._testing_pane.coverage_enabled()
-        self._testing_pane.set_directory(directory, files)   # refresh the file list
+        # Refresh with EVERY suite, not just the ones about to run: Run Tests
+        # in this File passes one, and listing only that would drop the rest
+        # of the directory out of the tree.
+        self._testing_pane.set_directory(directory, find_test_files(directory))
         self._testing_pane.set_running(True)
         self.log(f"Running {len(files)} test file(s)"
                  + (" with coverage…" if coverage else "…"))
