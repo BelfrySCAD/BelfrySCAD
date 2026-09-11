@@ -1202,6 +1202,23 @@ class FindBar(QWidget):
 
 
 
+
+def _line_segments(text, a, b):
+    """Each line of `text[a:b]`, trimmed of leading and trailing whitespace,
+    skipping any that is blank."""
+    i = a
+    while i < b:
+        nl = text.find("\n", i, b)
+        stop = b if nl == -1 else nl
+        x, y = i, stop
+        while x < y and text[x].isspace():
+            x += 1
+        while y > x and text[y - 1].isspace():
+            y -= 1
+        if y > x:
+            yield x, y
+        i = stop + 1
+
 def _flatten_spans(items):
     """Disjoint runs from possibly-nested (start, end, flag) intervals, the
     innermost interval deciding each run's flag. Adjacent runs that agree
@@ -1545,17 +1562,26 @@ class CodeEditor(QPlainTextEdit):
             if b > a:
                 items.append((a, b, s["hits"] == 0))
 
+        text = doc.toPlainText()
         sels = []
         for a, b, is_uncovered in _flatten_spans(items):
             if not is_uncovered and not tint_covered:
                 continue
-            sel = QTextEdit.ExtraSelection()
-            sel.format = uncovered if is_uncovered else covered
-            c = QTextCursor(doc)
-            c.setPosition(a)
-            c.setPosition(b, QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
-            sels.append(sel)
+            # Tint code, not the whitespace around it -- one selection per
+            # LINE, from its first non-space character to its last. Trimming
+            # only the run's two ends is not enough: a run covering a whole
+            # covered module has every newline and indent INSIDE it, which
+            # is what painted a bar of colour down the indent column.
+            # Whitespace within a line stays tinted, or the tint breaks up
+            # into one stripe per token.
+            for x, y in _line_segments(text, a, b):
+                sel = QTextEdit.ExtraSelection()
+                sel.format = uncovered if is_uncovered else covered
+                c = QTextCursor(doc)
+                c.setPosition(x)
+                c.setPosition(y, QTextCursor.MoveMode.KeepAnchor)
+                sel.cursor = c
+                sels.append(sel)
         self._coverage_selections = sels
         self._refresh_extra_selections()
 

@@ -182,6 +182,14 @@ out["n_selections"] = len(sels)
 ranges = sorted((min(s.cursor.position(), s.cursor.anchor()),
                  max(s.cursor.position(), s.cursor.anchor())) for s in sels)
 out["disjoint"] = all(a[1] <= b[0] for a, b in zip(ranges, ranges[1:]))
+# Whitespace between statements is untinted: no selection may start or end
+# on it, and none may be blank.
+out["no_edge_whitespace"] = all(
+    text[a:b].strip() and not text[a].isspace() and not text[b - 1].isspace()
+    for a, b in ranges)
+# One selection per line: indentation and blank lines are never tinted, so
+# no selection may span a line break.
+out["no_newline_inside"] = all("\\n" not in text[a:b] for a, b in ranges)
 
 # And they must land on real code, not three characters to its right.
 covered_text = "".join(text[a:b] for a, b in ranges)
@@ -221,6 +229,8 @@ def test_overlay_lands_on_the_code_and_does_not_stack():
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["n_selections"] > 0
     assert out["disjoint"], "nested spans must be flattened, not stacked"
+    assert out["no_edge_whitespace"], "whitespace between statements stays untinted"
+    assert out["no_newline_inside"], "a selection spanning a line break tints the indent column"
     assert out["cube_present"], "a tint must cover the code it describes, not the text beside it"
     assert out["map_was_needed"], "the fixture is meant to be non-ASCII"
     assert out["n_spans"] > 3
