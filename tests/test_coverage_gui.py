@@ -469,7 +469,7 @@ def test_variable_overrides_table():
     assert out["bad_toml_refused"] and out["bad_toml_complained"]
 
 
-SASH_DRIVER = '''
+TABS_DRIVER = '''
 import json, os, sys, tempfile, time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
@@ -479,31 +479,38 @@ use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.test_editor import TestEditDialog
 from belfryscad.scadtest import TestCase
 out = {}
-# Several overrides on purpose: the table's width demand is what pinned
-# Echoes to its size hint, so a dialog without one cannot show the bug.
-dlg = TestEditDialog(TestCase(name="t", script="x();",
-                              set_vars={"size": 10, "label": "cap", "flags": [1, 2]}))
+tc = TestCase(name="t", script="x();", timeout=30,
+              set_vars={"size": 10}, assert_echoes=["ready"], assert_no_warnings=False)
+dlg = TestEditDialog(tc)
 dlg.show()
 for _ in range(25): app.processEvents(); time.sleep(0.01)
-out["panes"] = dlg._split.count()
-before = dlg._split.sizes()
-out["slack"] = before[1] - dlg._split.widget(1).minimumSizeHint().height()
-dlg._split.setSizes([before[0] - 40, before[1] + 40])
-for _ in range(20): app.processEvents(); time.sleep(0.01)
-out["moved"] = dlg._split.sizes() != before
-out["gave_room_to_vars"] = dlg._split.sizes()[1] > before[1]
+out["tabs"] = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
+# Name is outside the tabs -- it identifies what you are editing.
+out["name_outside_tabs"] = not dlg._tabs.isAncestorOf(dlg._name)
+out["source_tab_has"] = [dlg._tabs.widget(0).isAncestorOf(w)
+                         for w in (dlg._source, dlg._timeout, dlg._script)]
+out["overrides_tab_has_table"] = dlg._tabs.widget(1).isAncestorOf(dlg._vars)
+out["results_tab_has"] = [dlg._tabs.widget(2).isAncestorOf(w)
+                          for w in (dlg._echoes, dlg._warnings, dlg._expect_success)]
+# Every field still round-trips, from whichever tab it now lives on.
+dlg._accept()
+r = dlg.result_test()
+out["round_trip"] = [r.name, r.script, r.timeout, r.set_vars,
+                     r.assert_echoes, r.assert_no_warnings]
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
 
 
-def test_script_and_vars_have_a_working_sash():
-    proc = subprocess.run([sys.executable, "-c", SASH_DRIVER], capture_output=True, text=True,
+def test_editor_is_tabbed_and_still_round_trips():
+    proc = subprocess.run([sys.executable, "-c", TABS_DRIVER], capture_output=True, text=True,
                           env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=120)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["panes"] == 2
-    # A minimum equal to the starting size pins the splitter: the handle is
-    # drawn, dragging does nothing. That is how this shipped the first time.
-    assert out["slack"] > 20, f"the sash has nowhere to go (slack {out['slack']}px)"
-    assert out["moved"] and out["gave_room_to_vars"]
+    assert out["tabs"] == ["Source", "Overrides", "Results"]
+    assert out["name_outside_tabs"]
+    assert all(out["source_tab_has"]), "Source, Timeout and the script share the Source tab"
+    assert out["overrides_tab_has_table"]
+    assert all(out["results_tab_has"])
+    # Splitting the dialog across tabs must not lose a field on the way out.
+    assert out["round_trip"] == ["t", "x();", 30, {"size": 10}, ["ready"], False]

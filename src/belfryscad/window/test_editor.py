@@ -18,9 +18,9 @@ import tomllib
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QPushButton, QSpinBox, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -42,16 +42,37 @@ class TestEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Test" if test else "New Test")
         self.setModal(True)
-        self.resize(640, 700)
+        self.resize(620, 520)
         self._existing = {n for n in existing_names if not (test and n == test.name)}
         self._result = None
 
         layout = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
+        # Name stays outside the tabs: it is the test's identity, and which
+        # tab you are on should not hide what you are editing.
+        name_row = QFormLayout()
+        name_row.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._name = QLineEdit(test.name if test else "")
-        form.addRow("Name", self._name)
+        name_row.addRow("Name", self._name)
+        layout.addLayout(name_row)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._build_source_tab(test), "Source")
+        self._tabs.addTab(self._build_overrides_tab(test), "Overrides")
+        self._tabs.addTab(self._build_results_tab(test), "Results")
+        layout.addWidget(self._tabs, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._name.setFocus()
+
+    def _build_source_tab(self, test) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._timeout = QSpinBox()
         self._timeout.setRange(1, 86400)
@@ -59,16 +80,16 @@ class TestEditDialog(QDialog):
         self._timeout.setValue(test.timeout if test else 60)
         # Eight digits at most: the range tops out at five, and a spin box
         # left to its own devices claims a whole column for nothing.
-        digits = self._timeout.fontMetrics().horizontalAdvance("0" * 8 + " s")
-        self._timeout.setMaximumWidth(digits + 28)      # + the spin arrows
+        self._timeout.setMaximumWidth(
+            self._timeout.fontMetrics().horizontalAdvance("0" * 8 + " s") + 28)
 
         self._source = QComboBox()
         self._source.addItems(["Inline script", "Script file"])
-        # Fixed at 15 characters. Measured from the font rather than set in
+        # Fixed at 15 characters, measured from the font rather than set in
         # pixels: Aqua clips a combo sized by AdjustToContents, and a
         # hard-coded width is wrong on the next font.
         self._source.setFixedWidth(
-            self._source.fontMetrics().horizontalAdvance("0" * 15) + 34)   # + the arrow
+            self._source.fontMetrics().horizontalAdvance("0" * 15) + 34)
         source_row = QWidget()
         source_layout = QHBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -89,12 +110,17 @@ class TestEditDialog(QDialog):
         self._script_file.setPlaceholderText("relative to the .scadtest file")
         file_row.addWidget(QLabel("File"))
         file_row.addWidget(self._script_file, 1)
+        file_row.addStretch(0)
         self._stack.addWidget(file_page)
         self._source.currentIndexChanged.connect(self._stack.setCurrentIndex)
         if test and test.script_file:
             self._source.setCurrentIndex(1)
-        vars_box = QGroupBox("Variable overrides")
-        vars_layout = QHBoxLayout(vars_box)
+        form.addRow("", self._stack)        # indented under the Source dropdown
+        return page
+
+    def _build_overrides_tab(self, test) -> QWidget:
+        page = QWidget()
+        vars_layout = QHBoxLayout(page)
         self._vars = QTableWidget(0, 2)
         self._vars.setHorizontalHeaderLabels(["Name", "Value (TOML)"])
         self._vars.verticalHeader().setVisible(False)
@@ -102,9 +128,6 @@ class TestEditDialog(QDialog):
             0, QHeaderView.ResizeMode.ResizeToContents)
         self._vars.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
-        # Low enough that the sash has somewhere to go: a minimum equal to
-        # the starting size pins the splitter and the handle does nothing.
-        self._vars.setMinimumHeight(64)
         _mono(self._vars)
         vars_layout.addWidget(self._vars, 1)
         var_buttons = QVBoxLayout()
@@ -120,53 +143,30 @@ class TestEditDialog(QDialog):
         var_buttons.addWidget(remove_var)
         var_buttons.addStretch(1)
         vars_layout.addLayout(var_buttons)
-
-        # A draggable sash between the script and the overrides: which of the
-        # two needs the room depends entirely on the test.
-        self._split = QSplitter(Qt.Orientation.Vertical)
-        self._split.addWidget(self._stack)
-        self._split.addWidget(vars_box)
-        self._split.setChildrenCollapsible(False)
-        self._split.setStretchFactor(0, 3)
-        self._split.setStretchFactor(1, 2)
-        self._split.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._script.setMinimumHeight(60)
-        form.addRow("", self._split)        # indented under the Source dropdown
-        layout.addLayout(form, 1)
         for name, value in (test.set_vars if test else {}).items():
             self._add_var_row(name, _toml_literal(value))
+        return page
 
-        expect = QGroupBox("Expectations")
-        ex = QFormLayout(expect)
-        # Already the default under this style, but the default varies by
-        # platform and these two fields are the width of the dialog on
-        # purpose -- say so rather than inherit it.
+    def _build_results_tab(self, test) -> QWidget:
+        page = QWidget()
+        ex = QFormLayout(page)
         ex.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._expect_success = QCheckBox("The script must evaluate without error")
         self._expect_success.setChecked(test.expect_success if test else True)
         ex.addRow(self._expect_success)
         self._echoes = _mono(QPlainTextEdit("\n".join(test.assert_echoes) if test else ""))
         self._echoes.setPlaceholderText("one expected ECHO per line")
-        self._echoes.setMaximumHeight(70)
         ex.addRow("Echoes", self._echoes)
         self._no_echoes = QCheckBox("…and no others")
         self._no_echoes.setChecked(test.assert_no_echoes if test else True)
         ex.addRow("", self._no_echoes)      # field column, under the Echoes box
         self._warnings = _mono(QPlainTextEdit("\n".join(test.assert_warnings) if test else ""))
         self._warnings.setPlaceholderText("one expected WARNING per line")
-        self._warnings.setMaximumHeight(70)
         ex.addRow("Warnings", self._warnings)
         self._no_warnings = QCheckBox("…and no others")
         self._no_warnings.setChecked(test.assert_no_warnings if test else True)
         ex.addRow("", self._no_warnings)
-        layout.addWidget(expect)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                   | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self._name.setFocus()
+        return page
 
     def result_test(self) -> TestCase | None:
         return self._result
