@@ -157,16 +157,6 @@ class TestingPane(QWidget):
         self._overlay_box.toggled.connect(self.overlay_toggled)
         controls.addWidget(self._overlay_box)
         controls.addStretch(1)
-        self._report_btn = QPushButton("Report…")
-        self._report_btn.setToolTip("The per-file report, with every uncovered span")
-        self._report_btn.clicked.connect(self.report_requested)
-        self._report_btn.setEnabled(False)
-        controls.addWidget(self._report_btn)
-        self._run_btn = QPushButton("Run Tests")
-        self._run_btn.setDefault(True)
-        self._run_btn.clicked.connect(self.run_requested)
-        self._run_btn.setEnabled(False)
-        controls.addWidget(self._run_btn)
         layout.addLayout(controls)
 
         self._tree = QTreeWidget()
@@ -184,6 +174,8 @@ class TestingPane(QWidget):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._tree, 1)
 
+        # One button row under the table: New File on the left, the totals
+        # beside it, and the two that act on the whole run pushed right.
         bottom = QHBoxLayout()
         self._new_file_btn = QPushButton("New File…")
         self._new_file_btn.setToolTip("Create a new .scadtest file in this directory")
@@ -191,7 +183,20 @@ class TestingPane(QWidget):
         self._new_file_btn.setEnabled(False)
         bottom.addWidget(self._new_file_btn)
         self._total_label = QLabel("")
+        # The label takes the slack, which is what keeps the two buttons hard
+        # right; a bare addStretch would leave it at its text width and clip.
+        self._total_label.setMinimumWidth(0)
         bottom.addWidget(self._total_label, 1)
+        self._report_btn = QPushButton("Report…")
+        self._report_btn.setToolTip("The per-file report, with every uncovered span")
+        self._report_btn.clicked.connect(self.report_requested)
+        self._report_btn.setEnabled(False)
+        bottom.addWidget(self._report_btn)
+        self._run_btn = QPushButton("Run Tests")
+        self._run_btn.setDefault(True)
+        self._run_btn.clicked.connect(self.run_requested)
+        self._run_btn.setEnabled(False)
+        bottom.addWidget(self._run_btn)
         layout.addLayout(bottom)
 
         self._totals = [0, 0]   # passed, total
