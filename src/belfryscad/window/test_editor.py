@@ -57,11 +57,20 @@ class TestEditDialog(QDialog):
         self._timeout.setRange(1, 86400)
         self._timeout.setSuffix(" s")
         self._timeout.setValue(test.timeout if test else 60)
-        form.addRow("Timeout", self._timeout)
+        # Eight digits at most: the range tops out at five, and a spin box
+        # left to its own devices claims a whole column for nothing.
+        digits = self._timeout.fontMetrics().horizontalAdvance("0" * 8 + " s")
+        self._timeout.setMaximumWidth(digits + 28)      # + the spin arrows
 
         self._source = QComboBox()
         self._source.addItems(["Inline script", "Script file"])
-        form.addRow("Source", self._source)
+        source_row = QWidget()
+        source_layout = QHBoxLayout(source_row)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.addWidget(self._source, 1)
+        source_layout.addWidget(QLabel("Timeout"))
+        source_layout.addWidget(self._timeout)
+        form.addRow("Source", source_row)
 
         self._stack = QStackedWidget()
         self._script = _mono(QPlainTextEdit(test.script if test and test.script else ""))
