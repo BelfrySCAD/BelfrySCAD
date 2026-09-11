@@ -628,6 +628,33 @@ class _DetachedTabBar(QWidget):
         return self.tab_bar
 
 
+
+def _scadtest_line(text: str, name: str):
+    """1-based line of the `[[test]]` header whose block names `name`.
+
+    A .scadtest is TOML, but reading it with tomllib loses the line numbers,
+    and the file on screen is what has to be scrolled. Tracking the most
+    recent `[[test]]` header is also what keeps a `name` in `[config]` from
+    matching.
+    """
+    header = None
+    for i, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if line.startswith("[[") and line.rstrip().endswith("]]"):
+            header = i if line.replace(" ", "") == "[[test]]" else None
+            continue
+        if header is None or not line.startswith("name"):
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() != "name":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if value == name:
+            return header
+    return None
+
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
@@ -910,6 +937,7 @@ class MainWindow(QMainWindow):
         self._testing_pane.run_requested.connect(self._run_tests)
         self._testing_pane.pick_dir_requested.connect(lambda: self._open_testing_pane())
         self._testing_pane.report_requested.connect(self._show_coverage_report)
+        self._testing_pane.open_requested.connect(self._open_test_file)
         self._testing_pane.overlay_toggled.connect(lambda _on: self._apply_coverage_overlays())
         self._test_run_job = None
 
@@ -1797,7 +1825,11 @@ class MainWindow(QMainWindow):
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        self._render(tab, reframe=True)      # a new tab from a file
+        # A .scadtest is TOML, not OpenSCAD -- rendering one squiggles the
+        # whole file and logs a parse error. Opening one is a normal thing to
+        # do now that the Testing pane links to them.
+        if Path(path).suffix.lower() != ".scadtest":
+            self._render(tab, reframe=True)      # a new tab from a file
 
     def _save_file(self):
         tab = self._current_tab()
@@ -2596,6 +2628,24 @@ class MainWindow(QMainWindow):
         self._testing_dock.raise_()
         if not files:
             self.log(f"No .scadtest files under {directory}")
+
+    def _open_test_file(self, path: str, test_name=None):
+        """Double-click in the Testing pane: open the .scadtest in a tab, and
+        for a test row put the cursor on its `[[test]]` block."""
+        if not os.path.isfile(path):
+            self.log(f"{path}: no longer there — re-run to refresh the list.")
+            return
+        self.open_file_by_path(path)
+        if not test_name:
+            return
+        editor = self._current_editor()
+        if editor is None:
+            return
+        line = _scadtest_line(editor.toPlainText(), test_name)
+        if line is None:
+            self.log(f"Could not find test {test_name!r} in {os.path.basename(path)}")
+            return
+        self._goto_source_line(line)
 
     def _run_tests(self):
         """Run (or cancel) the Testing pane's directory on a worker thread."""

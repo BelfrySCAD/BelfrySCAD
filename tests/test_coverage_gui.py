@@ -236,3 +236,89 @@ def test_overlay_lands_on_the_code_and_does_not_stack():
     assert out["n_spans"] > 3
     assert out["all_spans_map_exactly"], out.get("first_mismatch")
     assert out["sphere_is_uncovered"], "the never-taken if body is red"
+
+
+# Double-click in the results tree: a file row opens the .scadtest, a test
+# row opens it and scrolls to that test's [[test]] block.
+OPEN_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+out = {}
+w = MainWindow(); w.skip_unsaved_prompts = True
+d = tempfile.mkdtemp()
+open(os.path.join(d, "lib.scad"), "w").write("module used() { cube(1); }\\n")
+suite = os.path.join(d, "t.scadtest")
+open(suite, "w").write(
+    '[config]\\nname = "decoy"\\n\\n'
+    '[[test]]\\nname = "alpha"\\nscript = """\\ninclude <lib.scad>\\nused();\\n"""\\n\\n'
+    '[[test]]\\nname = "beta"\\nscript = """\\ninclude <lib.scad>\\nused();\\n"""\\n')
+
+def pump(pred, timeout=120):
+    t0 = time.time()
+    while not pred() and time.time() - t0 < timeout:
+        app.processEvents(); time.sleep(0.01)
+    return pred()
+
+logged = []
+w.log = lambda m: logged.append(m)
+w._open_testing_pane(directory=d)
+w._run_tests()
+pump(lambda: not w._testing_pane.is_running() and w._coverage is not None)
+
+tree = w._testing_pane._tree
+file_item = tree.topLevelItem(0)
+tree.itemDoubleClicked.emit(file_item, 0)          # double-click the FILE row
+app.processEvents()
+tab = w._current_tab()
+out["opened_path"] = os.path.basename(tab.file_path or "")
+out["is_the_toml"] = tab.editor.toPlainText().startswith("[config]")
+# A .scadtest is TOML: it must not be rendered as OpenSCAD. A parse error
+# does NOT go through w.log -- it reaches the console widget directly and
+# squiggles the editor -- so watch the squiggle. The render is threaded, so
+# give a failure real time to arrive instead of checking on the next
+# event-loop turn and always seeing a clean editor.
+pump(lambda: tab.editor._error_selections, timeout=3)
+out["no_parse_error"] = not tab.editor._error_selections
+out["never_parsed"] = getattr(tab, "_last_parse_path", None) is None
+out["tabs_after_file"] = w._tabs.count()
+
+def cursor_line():
+    c = w._current_editor().textCursor()
+    return c.blockNumber() + 1
+
+beta = None
+for i in range(file_item.childCount()):
+    if file_item.child(i).text(0) == "beta":
+        beta = file_item.child(i)
+tree.itemDoubleClicked.emit(beta, 0)               # double-click the TEST row
+app.processEvents()
+out["beta_line"] = cursor_line()
+out["beta_line_text"] = w._current_editor().toPlainText().splitlines()[cursor_line() - 1].strip()
+out["tabs_after_test"] = w._tabs.count()           # reuses the tab, does not stack
+
+alpha = file_item.child(0)
+tree.itemDoubleClicked.emit(alpha, 0)
+app.processEvents()
+out["alpha_line_text"] = w._current_editor().toPlainText().splitlines()[cursor_line() - 1].strip()
+print(json.dumps(out)); sys.stdout.flush()
+os._exit(0)
+'''
+
+
+def test_double_click_opens_the_test_file_and_scrolls_to_the_test():
+    proc = subprocess.run([sys.executable, "-c", OPEN_DRIVER], capture_output=True, text=True,
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=240)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["opened_path"] == "t.scadtest" and out["is_the_toml"]
+    assert out["no_parse_error"] and out["never_parsed"], "TOML must not be rendered as OpenSCAD"
+    # Both test rows land on their own [[test]] header, not on [config]'s name.
+    assert out["beta_line_text"] == "[[test]]"
+    assert out["alpha_line_text"] == "[[test]]"
+    assert out["beta_line"] > 4, "beta is the second block, not the first"
+    assert out["tabs_after_test"] == out["tabs_after_file"], "one tab, reused"

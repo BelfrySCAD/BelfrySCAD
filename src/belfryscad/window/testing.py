@@ -110,6 +110,7 @@ class TestingPane(QWidget):
     pick_dir_requested = Signal()
     overlay_toggled = Signal(bool)
     report_requested = Signal()
+    open_requested = Signal(str, object)   # (.scadtest path, test name or None)
 
     _COLUMNS = ("Tests", "Passed", "Passed %", "Coverage %")
 
@@ -159,6 +160,7 @@ class TestingPane(QWidget):
         self._tree.setRootIsDecorated(True)
         self._tree.setUniformRowHeights(True)
         self._tree.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i in range(1, len(self._COLUMNS)):
@@ -221,6 +223,16 @@ class TestingPane(QWidget):
         self._totals = [0, 0]
         self._report_btn.setEnabled(False)
 
+    def _on_item_double_clicked(self, item, _column):
+        """A file row opens its .scadtest; a test row opens it and scrolls to
+        that test. The path lives on the top-level item, the test name on the
+        child."""
+        parent = item.parent()
+        top = parent if parent is not None else item
+        path = top.data(0, Qt.ItemDataRole.UserRole)
+        if path:
+            self.open_requested.emit(path, item.text(0) if parent is not None else None)
+
     def add_file_result(self, result: dict, base: str | None = None):
         path = result["path"]
         rows = result["tests"]
@@ -228,6 +240,7 @@ class TestingPane(QWidget):
         total = len(rows)
         name = os.path.relpath(path, base) if base else os.path.basename(path)
         item = QTreeWidgetItem([name, f"{passed}/{total}", _pct(passed, total), ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, path)
         if result.get("coverage") is not None:
             item.setText(3, f"{result['coverage'].total().percent:.1f}%")
         if result.get("error"):
