@@ -1201,6 +1201,53 @@ class FindBar(QWidget):
         # _on_doc_changed will re-run the search
 
 
+
+
+def _line_segments(text, a, b):
+    """Each line of `text[a:b]`, trimmed of leading and trailing whitespace,
+    skipping any that is blank."""
+    i = a
+    while i < b:
+        nl = text.find("\n", i, b)
+        stop = b if nl == -1 else nl
+        x, y = i, stop
+        while x < y and text[x].isspace():
+            x += 1
+        while y > x and text[y - 1].isspace():
+            y -= 1
+        if y > x:
+            yield x, y
+        i = stop + 1
+
+def _flatten_spans(items):
+    """Disjoint runs from possibly-nested (start, end, flag) intervals, the
+    innermost interval deciding each run's flag. Adjacent runs that agree
+    are merged, so the common case is one selection per contiguous region
+    rather than one per span.
+    """
+    if not items:
+        return []
+    bounds = sorted({p for a, b, _ in items for p in (a, b)})
+    by_start = sorted(items, key=lambda t: t[0])
+    runs = []
+    active = []
+    nxt = 0
+    for p, q in zip(bounds, bounds[1:]):
+        while nxt < len(by_start) and by_start[nxt][0] <= p:
+            active.append(by_start[nxt])
+            nxt += 1
+        active = [t for t in active if t[1] > p]
+        if not active:
+            continue
+        # Innermost: latest start, and among equal starts the tightest end.
+        # AST spans nest properly, so this is the containing span.
+        flag = max(active, key=lambda t: (t[0], -t[1]))[2]
+        if runs and runs[-1][1] == p and runs[-1][2] == flag:
+            runs[-1] = (runs[-1][0], q, flag)
+        else:
+            runs.append((p, q, flag))
+    return runs
+
 class CodeEditor(QPlainTextEdit):
     #: See set_append_line_on_down(). Off unless a preference turns it on,
     #: so an editor built without one behaves the way the platform does.
@@ -1482,35 +1529,59 @@ class CodeEditor(QPlainTextEdit):
         self._error_selections = []
         self._refresh_extra_selections()
 
-    def set_coverage(self, spans, tint_covered: bool = True):
+    def set_coverage(self, spans, tint_covered: bool = True, to_char=None):
         """Tint each coverage span: red where it never ran, green where it
-        did (or nothing, with tint_covered off). `spans` are the coverage
-        dicts for THIS document (start/end are document offsets)."""
+        did (or nothing, with tint_covered off).
+
+        `spans` carry the evaluator's BYTE offsets into the file it parsed;
+        `to_char` maps one onto a document position, and is None when the
+        two coincide (ASCII, LF) -- see coverage.document_offset_map.
+
+        Nested spans are flattened to DISJOINT runs, innermost winning. The
+        evaluator emits a span per statement, per body and per branch arm,
+        so a module body encloses everything inside it; painting each as its
+        own translucent selection stacked the alpha, and deeply nested code
+        came out as a muddy brown that meant nothing. Innermost is also the
+        right answer semantically: an uncovered statement inside a covered
+        body is uncovered.
+        """
         uncovered = QTextCharFormat()
         uncovered.setBackground(QColor(255, 120, 120, 70))
         covered = QTextCharFormat()
         covered.setBackground(QColor(120, 220, 120, 55))
         doc = self.document()
         length = doc.characterCount() - 1
-        sels = []
+
+        items = []
         for s in spans:
-            if s["hits"] == 0:
-                fmt = uncovered
-            elif tint_covered:
-                fmt = covered
-            else:
+            a, b = int(s["start"]), int(s["end"])
+            if to_char is not None:
+                a, b = to_char(a), to_char(b)
+            a = max(0, min(a, length))
+            b = max(a, min(b, length))
+            if b > a:
+                items.append((a, b, s["hits"] == 0))
+
+        text = doc.toPlainText()
+        sels = []
+        for a, b, is_uncovered in _flatten_spans(items):
+            if not is_uncovered and not tint_covered:
                 continue
-            start = max(0, min(int(s["start"]), length))
-            end = max(start, min(int(s["end"]), length))
-            if end == start:
-                continue
-            sel = QTextEdit.ExtraSelection()
-            sel.format = fmt
-            c = QTextCursor(doc)
-            c.setPosition(start)
-            c.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
-            sels.append(sel)
+            # Tint code, not the whitespace around it -- one selection per
+            # LINE, from its first non-space character to its last. Trimming
+            # only the run's two ends is not enough: a run covering a whole
+            # covered module has every newline and indent INSIDE it, which
+            # is what painted a bar of colour down the indent column.
+            # Whitespace within a line stays tinted, or the tint breaks up
+            # into one stripe per token.
+            for x, y in _line_segments(text, a, b):
+                sel = QTextEdit.ExtraSelection()
+                sel.format = uncovered if is_uncovered else covered
+                c = QTextCursor(doc)
+                c.setPosition(x)
+                c.setPosition(y, QTextCursor.MoveMode.KeepAnchor)
+                sel.cursor = c
+                sels.append(sel)
         self._coverage_selections = sels
         self._refresh_extra_selections()
 

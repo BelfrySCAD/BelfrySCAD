@@ -1,20 +1,24 @@
 """Coverage reports: what ran, per file, and where the gaps are.
 
-`belfryscad --coverage FILE.scad` runs the script (resolve pass only -- the
-geometry pass runs no script code) with the evaluator's coverage on and
-prints one line per file plus every uncovered span. `belfryscad --test
---coverage` does the same over every test's evaluation, merged. Both share
-this module: the evaluator hands back `{spans, files, total}` (see
-openscad_cpp_evaluator's coverage.hpp), and this file merges, filters,
-summarises and formats it. No Qt here: the GUI's overlay reads the same
-CoverageReport.
+`belfryscad --test --coverage` runs every test with the evaluator's coverage
+on (resolve pass only -- the geometry pass runs no script code) and merges
+the result; the GUI's Testing pane (Design > Run Tests…) runs the same code
+on a worker thread. Both share this module: the evaluator hands back
+`{spans, files, total}`
+(see openscad_cpp_evaluator's coverage.hpp), and this file merges, filters,
+summarises and formats it. No Qt here, so the GUI's overlay and the test
+runner read the same CoverageReport.
+
+There is deliberately no coverage of a single run, from the CLI or the GUI.
+Coverage answers "what does my test suite miss", which needs a suite; one
+run of one script says very little. A script that wants measuring anyway can
+be wrapped in a one-line .scadtest.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import os
-import sys
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -81,16 +85,72 @@ class CoverageReport:
         return report
 
     def merge_spans(self, spans) -> None:
+        # Normalise the origin before keying on it. Two suites in different
+        # directories reach one library by different relative paths
+        # (`lib.scad` from beside it, `../lib.scad` from a subdirectory), and
+        # keying on the raw string filed those as two separate files --
+        # duplicate rows in the report and every percentage roughly halved.
+        # Running a whole directory tree at once (the Testing pane) makes
+        # that the normal case rather than a curiosity. abspath normalises
+        # away the `..` as well as relative roots.
         for s in spans:
-            key = (s["origin"], s["start"], s["end"], s["kind"])
+            origin = os.path.abspath(s["origin"])
+            key = (origin, s["start"], s["end"], s["kind"])
             have = self.spans.get(key)
             if have is None:
-                self.spans[key] = dict(s)
+                self.spans[key] = dict(s, origin=origin)
             else:
                 have["hits"] += s["hits"]
 
     def merge(self, other: "CoverageReport") -> None:
         self.merge_spans(other.spans.values())
+
+    def drop_nocov(self, read_source=None) -> int:
+        """Forget every span excluded by a `/* nocov */` marker, and every
+        span nested inside one. Returns how many were dropped.
+
+        The marker attaches to the LARGEST span starting on its line, which
+        is what makes it a block exclusion: putting one on an `if (...) {`
+        line takes the branch and both arms with it, and on a plain
+        statement takes just that statement. Dropping rather than
+        zero-weighting is deliberate -- excluded code should leave the
+        percentage alone, not count as covered.
+
+        The evaluator never sees these: the lexer skips comments, so this
+        reads the source itself. `read_source(origin) -> str | None`
+        defaults to reading the file.
+        """
+        if read_source is None:
+            def read_source(origin):
+                try:
+                    with open(origin, "r", encoding="utf-8") as f:
+                        return f.read()
+                except OSError:
+                    return None
+
+        by_origin: dict[str, list] = defaultdict(list)
+        for key, span in self.spans.items():
+            by_origin[key[0]].append((key, span))
+
+        dropped = 0
+        for origin, items in by_origin.items():
+            text = read_source(origin)
+            if not text:
+                continue
+            marked = nocov_lines(text)
+            if not marked:
+                continue
+            for line in marked:
+                on_line = [sp for _k, sp in items if sp["line"] == line]
+                if not on_line:
+                    continue
+                victim = max(on_line, key=lambda sp: sp["end"] - sp["start"])
+                lo, hi = victim["start"], victim["end"]
+                for key, span in items:
+                    if span["start"] >= lo and span["end"] <= hi:
+                        if self.spans.pop(key, None) is not None:
+                            dropped += 1
+        return dropped
 
     def drop_origins(self, predicate) -> None:
         """Forget every span whose origin `predicate` accepts -- the test
@@ -122,6 +182,75 @@ class CoverageReport:
     @classmethod
     def from_json(cls, text: str) -> "CoverageReport":
         return cls.from_result(json.loads(text))
+
+
+# A marker excluding its statement or branch arm from coverage, and
+# everything nested inside it. `/*nocov*/` and `/* NoCov */` both count.
+_NOCOV_RE = re.compile(r"/\*\s*nocov\s*\*/", re.IGNORECASE)
+
+
+def nocov_lines(text: str) -> set[int]:
+    """1-based line numbers carrying a `/* nocov */` marker."""
+    return {i for i, line in enumerate(text.splitlines(), start=1)
+            if _NOCOV_RE.search(line)}
+
+
+def document_offset_map(source: bytes):
+    """Map the evaluator's BYTE offsets into `source` onto CHARACTER offsets
+    in the editor's document, or return None when they are the same thing.
+
+    The evaluator reports `start`/`end` as byte offsets into the file it
+    parsed. A QTextDocument is indexed by character, and the editor loads a
+    file with `read_text(encoding="utf-8")`, so two things shift the two
+    apart:
+
+      * any non-ASCII character -- an em dash in a comment is three bytes
+        and one character, so everything after it is off by two;
+      * CRLF line endings -- universal newlines turn "\r\n" into one "\n",
+        so every line after the first is off by one more.
+
+    Both are silent: the tint just sits a few characters to the right of the
+    code it describes, further and further down the file.
+
+    Returns a callable, or None for the overwhelmingly common case (ASCII
+    with LF endings) where no mapping is needed at all -- that check is two
+    C-speed scans, against a per-character Python loop.
+    """
+    if source.isascii() and b"\r" not in source:
+        return None
+    text = source.decode("utf-8", errors="replace")
+    starts = []          # byte offset of each document character
+    byte_pos = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            # read_text folds "\r\n" and a lone "\r" alike into one "\n".
+            width = 2 if i + 1 < n and text[i + 1] == "\n" else 1
+            starts.append(byte_pos)
+            byte_pos += width
+            i += width
+            continue
+        starts.append(byte_pos)
+        byte_pos += len(ch.encode("utf-8"))
+        i += 1
+    starts.append(byte_pos)
+
+    def to_char(offset: int) -> int:
+        # bisect_right - 1 lands on the character containing this byte; an
+        # offset inside a multi-byte character (never emitted, but cheap to
+        # survive) snaps to that character's start.
+        lo, hi = 0, len(starts) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if starts[mid] <= offset:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    return to_char
 
 
 def _rel(origin: str, base: str | None) -> str:
@@ -160,74 +289,3 @@ def format_report(report: CoverageReport, base: str | None = None, uncovered: bo
                 kind = s["kind"] + (" (if/else arm)" if s["arm"] else "")
                 out.append(f"  {_rel(s['origin'], base)}:{s['line']}:{s['column']}  {kind}")
     return "\n".join(out)
-
-
-def run_coverage(source_path: str, defines: list[str] = (), strict_commas: bool = False,
-                 echo_fn=None) -> CoverageReport | None:
-    """Evaluate `source_path` with coverage on (resolve pass only) and return
-    the report, or None after printing the error -- the same evaluate path
-    the headless exporter uses, minus the geometry."""
-    from belfryscad.headless import _prepare_source, _print_error
-    from belfryscad.export_name import seed_params
-    from openscad_cpp_evaluator import Evaluator, EvalError, ParseError, parse as _oce_parse
-    parse_path, tmp_path = _prepare_source(source_path, list(defines))
-    if parse_path is None:
-        return None
-    try:
-        try:
-            _oce_parse(parse_path)
-        except ParseError as e:
-            _print_error(e)
-            return None
-        ev = Evaluator(echo_fn=echo_fn or (lambda m: print(m, file=sys.stderr)), coverage=True)
-        try:
-            ev.evaluate(parse_path, seed_params({}, source_path), generate=False, strict_commas=strict_commas)
-        except EvalError as e:
-            _print_error(e)
-            return None
-        report = CoverageReport.from_result(ev.coverage_result)
-        if tmp_path:
-            # -D rewrote the script into a temp copy; report it under its real name.
-            for key in list(report.spans):
-                if key[0] == parse_path:
-                    s = report.spans.pop(key)
-                    s["origin"] = os.path.abspath(source_path)
-                    report.spans[(s["origin"],) + key[1:]] = s
-        return report
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="belfryscad --coverage",
-        description="Run a script with coverage on and report which statements, branch arms "
-                    "and function/module bodies ran, per file. The geometry pass is skipped: "
-                    "it runs no script code.")
-    parser.add_argument("file", metavar="FILE.scad")
-    parser.add_argument("-D", dest="defines", action="append", default=[], metavar="var=value",
-                        help="Override a top-level variable (repeatable), as with -o")
-    parser.add_argument("--json", metavar="PATH", help="Also write the full report as JSON")
-    parser.add_argument("--min", type=float, metavar="PERCENT",
-                        help="Exit 1 if overall coverage is below this (for CI)")
-    parser.add_argument("--no-gaps", action="store_true", help="Print only the per-file lines")
-    parser.add_argument("--strict-commas", action="store_true")
-    args = parser.parse_args(argv)
-    if not os.path.isfile(args.file):
-        print(f"belfryscad: {args.file}: no such file", file=sys.stderr)
-        return 2
-    report = run_coverage(args.file, args.defines, strict_commas=args.strict_commas)
-    if report is None:
-        return 1
-    print(format_report(report, base=os.getcwd(), uncovered=not args.no_gaps))
-    if args.json:
-        with open(args.json, "w", encoding="utf-8") as f:
-            f.write(report.to_json())
-    if args.min is not None and report.total().percent < args.min:
-        print(f"belfryscad: coverage {report.total().percent:.1f}% is below --min {args.min}", file=sys.stderr)
-        return 1
-    return 0

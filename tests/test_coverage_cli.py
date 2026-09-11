@@ -1,8 +1,9 @@
-"""belfryscad --coverage and --test --coverage (no Qt: pure CLI)."""
+"""belfryscad --test --coverage, and the report types it shares with the
+GUI overlay (no Qt: pure CLI)."""
 import json
 import os
 
-from belfryscad import coverage, scadtest
+from belfryscad import scadtest
 from belfryscad.coverage import CoverageReport, FileSummary, format_report
 
 LIB = """\
@@ -12,35 +13,30 @@ module unused() { sphere(1); }
 """
 
 
-def _report_for(tmp_path, script):
-    p = tmp_path / "s.scad"
-    p.write_text(script)
-    return coverage.run_coverage(str(p))
+def _span(origin, line, start, end, kind, hits, arm=False):
+    return {"origin": origin, "line": line, "column": 1, "start": start, "end": end,
+            "kind": kind, "arm": arm, "hits": hits}
 
 
-def test_run_coverage_reports_per_file_and_gaps(tmp_path):
-    (tmp_path / "lib.scad").write_text(LIB)
-    r = _report_for(tmp_path, "include <lib.scad>\na = f(1);\nused();\n")
-    files = {os.path.basename(f.origin): f for f in r.files()}
-    assert set(files) == {"lib.scad", "s.scad"}
-    lib = files["lib.scad"]
-    assert (lib.bodies, lib.bodies_hit) == (3, 2)
-    assert (lib.branches, lib.branches_hit) == (2, 1)
-    assert files["s.scad"].percent == 100.0
-    gaps = r.uncovered()
-    assert {(os.path.basename(g["origin"]), g["kind"]) for g in gaps} == {("lib.scad", "branch"), ("lib.scad", "body"), ("lib.scad", "statement")}
-    text = format_report(r, base=str(tmp_path))
-    assert text.splitlines()[0].startswith("lib.scad")
-    assert "TOTAL" in text and "Not covered (3):" in text and "lib.scad:3:" in text
+def _abs(*parts):
+    """The key merge_spans will file a span under (it normalises origins)."""
+    return os.path.abspath(os.path.join(*parts))
 
 
-def test_defines_keep_the_real_origin(tmp_path):
-    r = _report_for(tmp_path, "a = 1;\nif (a == 2) cube(1);\n")
-    p = tmp_path / "s.scad"
-    r2 = coverage.run_coverage(str(p), defines=["a=2"])
-    assert all(os.path.basename(s["origin"]) == "s.scad" for s in r2.spans.values())
-    hit = lambda rep: sum(s["hits"] > 0 for s in rep.spans.values() if s["arm"])
-    assert hit(r) == 0 and hit(r2) == 1         # -D a=2 takes the arm
+def test_format_report_lists_files_then_every_gap():
+    r = CoverageReport.from_result({"spans": [
+        _span("/w/lib.scad", 1, 0, 5, "statement", 1),
+        _span("/w/lib.scad", 2, 6, 9, "body", 0),
+        _span("/w/lib.scad", 3, 10, 14, "branch", 0, arm=True),
+        _span("/w/s.scad", 1, 0, 5, "statement", 1),
+    ]})
+    text = format_report(r, base=_abs("/w"))
+    assert text.splitlines()[0].startswith("lib.scad")     # worst is not sorted first by default
+    assert "s.scad" in text and "TOTAL" in text
+    assert "Not covered (2):" in text
+    assert "lib.scad:2:1  body" in text
+    assert "lib.scad:3:1  branch (if/else arm)" in text    # arms say so
+    assert "Not covered" not in format_report(r, base=_abs("/w"), uncovered=False)
 
 
 def test_merge_sums_hits_and_drop_origins_filters():
@@ -53,29 +49,14 @@ def test_merge_sums_hits_and_drop_origins_filters():
         {"origin": "/x.scad", "line": 2, "column": 1, "start": 6, "end": 9, "kind": "body", "arm": False, "hits": 0},
     ]})
     a.merge(b)
-    assert a.spans[("/x.scad", 0, 5, "statement")]["hits"] == 3
+    assert a.spans[(_abs("/x.scad"), 0, 5, "statement")]["hits"] == 3
     assert len(a.spans) == 3
     a.drop_origins(lambda o: os.path.basename(o).startswith("tmp_docsgen_"))
-    assert {k[0] for k in a.spans} == {"/x.scad"}
+    assert {k[0] for k in a.spans} == {_abs("/x.scad")}
     (f,) = a.files()
     assert (f.spans, f.spans_hit, f.bodies, f.bodies_hit) == (2, 1, 1, 0)
     assert CoverageReport.from_json(a.to_json()).spans == a.spans
     assert FileSummary("").percent == 100.0
-
-
-def test_cli_main_exit_codes_and_json(tmp_path, capsys):
-    p = tmp_path / "s.scad"
-    p.write_text("function f(x) = x > 0 ? 1 : 2;\na = f(1);\n")
-    out_json = tmp_path / "cov.json"
-    assert coverage.main([str(p), "--json", str(out_json)]) == 0
-    text = capsys.readouterr().out
-    assert "TOTAL" in text and "Not covered (1):" in text
-    d = json.loads(out_json.read_text())
-    assert d["total"]["spans"] == 4 and d["total"]["spans_hit"] == 3
-    assert coverage.main([str(p), "--min", "90"]) == 1
-    assert coverage.main([str(p), "--min", "50", "--no-gaps"]) == 0
-    assert "Not covered" not in capsys.readouterr().out.split("TOTAL")[-1]
-    assert coverage.main([str(tmp_path / "missing.scad")]) == 2
 
 
 def test_test_runner_merges_library_coverage_and_drops_snippets(tmp_path, capsys, monkeypatch):
@@ -106,3 +87,47 @@ def test_rel_paths_outside_base_stay_absolute(tmp_path):
     outside = str(tmp_path.parent / "elsewhere.scad")
     assert _rel(inside, str(tmp_path)) == os.path.join("lib", "a.scad")
     assert _rel(outside, str(tmp_path)) == outside
+
+
+def test_nocov_excludes_the_marked_span_and_everything_in_it(tmp_path):
+    """A /* nocov */ marker attaches to the LARGEST span starting on its
+    line, so marking a block takes the block."""
+    src = tmp_path / "lib.scad"
+    src.write_text(
+        "module used() { cube(1); }\n"                 # 1
+        "module debug_only() {        /* nocov */\n"   # 2
+        "    echo(\"tracing\");\n"                     # 3
+        "    if (true) { sphere(1); }\n"               # 4
+        "}\n"                                          # 5
+        "module untested() { cube(3); }\n")            # 6
+    origin = str(src)
+
+    def span(line, start, end, kind, hits, arm=False):
+        return _span(origin, line, start, end, kind, hits, arm)
+
+    # The module on line 2 spans the whole block; its contents nest inside.
+    r = CoverageReport.from_result({"spans": [
+        span(1, 0, 26, "statement", 1),
+        span(2, 27, 120, "statement", 0),     # module debug_only() { ... }
+        span(2, 48, 119, "body", 0),          # its body, same line
+        span(3, 70, 86, "statement", 0),      # echo, nested
+        span(4, 91, 115, "branch", 0, arm=True),
+        span(6, 130, 160, "statement", 0),    # untested, unmarked
+    ]})
+    assert len(r.spans) == 6
+    dropped = r.drop_nocov(read_source=lambda o: src.read_text())
+    assert dropped == 4, "the module, its body, the echo and the branch arm"
+    kinds = sorted((s["line"], s["kind"]) for s in r.spans.values())
+    assert kinds == [(1, "statement"), (6, "statement")]
+    # Excluded code leaves the percentage alone rather than counting as run.
+    assert r.total().spans == 2 and r.total().spans_hit == 1
+
+
+def test_nocov_marker_spellings(tmp_path):
+    from belfryscad.coverage import nocov_lines
+    text = ("a();  /* nocov */\n"
+            "b();  /*nocov*/\n"
+            "c();  /*  NoCov  */\n"
+            "d();  // nocov\n"          # line comment: not a marker
+            "e();\n")
+    assert nocov_lines(text) == {1, 2, 3}

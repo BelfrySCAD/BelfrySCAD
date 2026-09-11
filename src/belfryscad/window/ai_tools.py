@@ -217,6 +217,15 @@ class AIToolContext:
     # stateful and a tool call is not, so "step and tell me where I am" has
     # to be a single call.
     debug_control: Callable[[str, object], dict] | None = None
+    # The tests directory the user chose in the Testing pane, or None. The
+    # test tools read and run inside it and nowhere else.
+    tests_dir: Callable[[], "str | None"] | None = None
+    # The pane's current CoverageReport, so the model can read gaps from a
+    # run the USER did rather than having to re-run everything itself.
+    gui_coverage: Callable[[], object] | None = None
+    # Set by run_tests: the report from the model's own last run. Not a
+    # callable -- it is this turn's own state, not the GUI's.
+    last_test_coverage: object = None
 
 
 def is_path_within(root: Path, path: Path) -> bool:
@@ -1693,6 +1702,10 @@ TOOLS: list[dict] = [
         "handler": ask_user,
     },
 ]
+
+from belfryscad.window.ai_test_tools import TEST_TOOLS   # noqa: E402 -- needs TOOLS' types
+
+TOOLS.extend(TEST_TOOLS)
 
 _HANDLERS = {t["name"]: t["handler"] for t in TOOLS}
 

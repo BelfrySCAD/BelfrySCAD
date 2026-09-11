@@ -112,10 +112,6 @@ def _parse_args(argv):
                         help="Run .scadtest files. Takes over the rest of "
                              "the command line; run `belfryscad --test -h` "
                              "(--test --coverage reports what the tests exercised)")
-    parser.add_argument("--coverage", action="store_true",
-                        help="Run a script and report which statements, branch "
-                             "arms and bodies ran, per file. Takes over the rest "
-                             "of the command line; run `belfryscad --coverage -h`")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print build/environment information and exit")
     parser.add_argument("-h", "--help", action="store_true")
@@ -469,8 +465,6 @@ def _proc_name(argv) -> str:
         return PROC_NAME + "-mdimggen"
     if "--test" in argv:
         return PROC_NAME + "-test"
-    if "--coverage" in argv:
-        return PROC_NAME + "-coverage"
     if "-o" in argv or "--output" in argv or any(a.startswith("--output=") for a in argv):
         return PROC_NAME + "-headless"
     return PROC_NAME
@@ -501,9 +495,16 @@ def main():
         from belfryscad import scadtest
         raise SystemExit(scadtest.main(sys.argv[idx + 1:]))
     if "--coverage" in sys.argv[1:]:
-        idx = sys.argv.index("--coverage")
-        from belfryscad import coverage
-        raise SystemExit(coverage.main(sys.argv[idx + 1:]))
+        # Removed: coverage of a single run is what the GUI's Design > Render
+        # with Coverage already paints onto the source. Say so rather than
+        # falling through -- an unknown argument is TOLERATED here (see
+        # _parse_args) so this would otherwise open the GUI on the .scad file
+        # and look like the flag had silently stopped working.
+        print("belfryscad: --coverage now only applies to --test; use "
+              "`belfryscad --test --coverage`.\n"
+              "  In the GUI, use Design > Run Tests… and tick Collect coverage.",
+              file=sys.stderr)
+        raise SystemExit(2)
 
     args = _parse_args(sys.argv[1:])
 
