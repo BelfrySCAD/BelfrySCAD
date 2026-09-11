@@ -34,7 +34,7 @@ It also unlocks the GUI case, which upstream cannot do at all: previewing
 ## What is vendored and what is not
 
 `src/belfryscad/docsgen/` holds `openscad_docsgen`'s own modules, copied
-unchanged:
+unchanged but for one line:
 
     parser.py  blocks.py  errorlog.py  filehashes.py  utils.py
     target.py  target_wiki.py  target_githubwiki.py
@@ -44,6 +44,12 @@ rules and the generated markdown stay exactly what `openscad-docsgen`
 produces, so a preview cannot disagree with a real docs build. Verified by
 running both tools over identical trees and diffing: byte-identical
 markdown, same errors. See "Measured against the real thing" below.
+
+The one line is `parse_lines`' call to `strip_block_comments`
+(`block_comments.py`, ours) — see "Block comments" below. It is a fix for a
+bug upstream shares, so the two still agree on every file where upstream is
+right; measured over all 58 BOSL2 library files, the set of documented
+items is identical with it and without.
 
 Only the two modules that shelled out to OpenSCAD are ours. They keep the
 upstream module names, class names and method signatures, which is why the
@@ -142,6 +148,23 @@ for what is already a 24-bit render, so `Options.png_animation` is
 hard-wired to `True` and a `UsePNGAnimations: No` in an rc file is reported
 and ignored. Frame 0 is the plain `IDAT`, so a viewer with no APNG support
 still shows a still image.
+
+### Block comments
+
+A documentation comment inside `/* ... */` is not documentation
+(BelfrySCAD #415). The parser recognises a doc comment by the `//` that
+starts its line and has no idea block comments exist, so commenting a chunk
+of a library out left every `// Function:` in it still documented, still
+validated, and still rendering example images.
+`block_comments.strip_block_comments` replaces the contents of each block
+comment with spaces before `parse_lines` looks at them, which covers both
+entry points at once — the CLI's `parse_file` and the Docs pane's live
+buffer. Three things decide whether a `/*` really opens one, and it follows
+all three: it is inert inside a string literal and inside a `//` comment,
+and the first `*/` closes it, because OpenSCAD's block comments do not nest.
+Blanking rather than deleting keeps every line, so the line numbers in error
+messages still point at the source. Upstream `openscad_docsgen` has the same
+gap.
 
 ### Deliberate differences from upstream
 
