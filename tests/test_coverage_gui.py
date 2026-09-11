@@ -73,6 +73,18 @@ out["more_children"] = sorted((more.child(i).text(0), more.child(i).text(1)) for
 out["failing_file_expanded"] = more.isExpanded()
 out["totals"] = pane._total_label.text()
 
+# A second run reuses the same rows rather than swapping fresh items in --
+# destroying an item the view still points at dangles its current-item
+# pointer, and a later setCurrentItem segfaults.
+pane._tree.setCurrentItem(more.child(0))
+w._run_tests()
+pump(lambda: not pane.is_running())
+out["file_rows_after_rerun"] = tree.topLevelItemCount()
+again = {tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())}
+out["row_names_after_rerun"] = sorted(again)
+pane._tree.setCurrentItem(tree.topLevelItem(0).child(0))   # must not crash
+out["survived_reselect"] = True
+
 # Overlay: a library tab lights up from its real path.
 w.open_file_by_path(lib)
 libtab = w._current_tab()
@@ -123,6 +135,9 @@ def test_run_tests_pane_reports_results_and_drives_the_overlay():
     assert out["more_children"] == [["test_fails", "FAIL"], ["test_used", "pass"]]
     assert out["failing_file_expanded"], "a file with a failure opens itself"
     assert "2 of 3 tests passed (66.7%)" in out["totals"] and "coverage" in out["totals"]
+    assert out["file_rows_after_rerun"] == 2, "a re-run reuses rows, it does not duplicate them"
+    assert out["row_names_after_rerun"] == out["row_names"]
+    assert out["survived_reselect"]
 
     # The overlay, driven by the pane's checkbox.
     assert out["lib_tab_selections"] > 0 and out["lib_has_uncovered"] and out["two_tints"]
@@ -322,6 +337,27 @@ w._testing_pane._request_add()
 app.processEvents()
 out["names_after_add"] = sorted(t.name for t in parse_scadtest_file(suite))
 
+# Delete: only enabled for a TEST row, confirmed, and it removes just that
+# one block.
+tree.setCurrentItem(tree.topLevelItem(0))          # a file row
+out["delete_off_for_file_row"] = not w._testing_pane._delete_btn.isEnabled()
+file_item = tree.topLevelItem(0)
+alpha = next(file_item.child(i) for i in range(file_item.childCount())
+             if file_item.child(i).text(0) == "alpha")
+tree.setCurrentItem(alpha)
+out["delete_on_for_test_row"] = w._testing_pane._delete_btn.isEnabled()
+
+answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+QMessageBox.question = staticmethod(lambda *a, **k: answers.pop(0))
+w._testing_pane._request_delete()                  # answered No
+app.processEvents()
+out["names_after_refusing"] = sorted(t.name for t in parse_scadtest_file(suite))
+tree.setCurrentItem(alpha)
+w._testing_pane._request_delete()                  # answered Yes
+app.processEvents()
+out["names_after_deleting"] = sorted(t.name for t in parse_scadtest_file(suite))
+out["comment_still_there"] = "a comment that must survive" in open(suite).read()
+
 # A duplicate name is refused rather than silently overwriting.
 dlg = test_editor.TestEditDialog(None, existing_names=["alpha"])
 dlg._name.setText("alpha"); dlg._script.setPlainText("x();")
@@ -352,4 +388,8 @@ def test_test_editor_round_trips_through_the_file():
     assert out["renamed_vars"] == {"size": 10, "label": "cap"}
     assert out["renamed_script_lines"] == ["include <lib.scad>", "used();", "used();"]
     assert out["names_after_add"] == ["alpha", "beta_renamed", "gamma"]
+    assert out["delete_off_for_file_row"] and out["delete_on_for_test_row"]
+    assert out["names_after_refusing"] == ["alpha", "beta_renamed", "gamma"], "No means no"
+    assert out["names_after_deleting"] == ["beta_renamed", "gamma"]
+    assert out["comment_still_there"], "deleting a block leaves the rest of the file alone"
     assert out["duplicate_refused"] and out["duplicate_complained"]

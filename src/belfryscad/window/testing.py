@@ -28,6 +28,16 @@ from PySide6.QtWidgets import (
 from belfryscad.coverage import CoverageReport
 
 
+def _test_names(path: str) -> list[str]:
+    """The test names in one .scadtest, or nothing if it will not parse --
+    listing a broken file with no children beats refusing to list it."""
+    from belfryscad.scadtest import parse_scadtest_file
+    try:
+        return [t.name for t in parse_scadtest_file(path)]
+    except Exception:   # noqa: BLE001 -- a malformed suite is the run's problem
+        return []
+
+
 def find_test_files(directory: str) -> list[str]:
     """Every .scadtest under `directory`, recursively, in a stable order."""
     found = []
@@ -112,6 +122,7 @@ class TestingPane(QWidget):
     overlay_toggled = Signal(bool)
     report_requested = Signal()
     edit_requested = Signal(str, object)   # (.scadtest path, test name or None for a new one)
+    delete_requested = Signal(str, str)    # (.scadtest path, test name)
     new_file_requested = Signal()
 
     _COLUMNS = ("Tests", "Passed", "Passed %", "Coverage %")
@@ -154,6 +165,11 @@ class TestingPane(QWidget):
         self._add_btn.clicked.connect(lambda: self._request_add())
         self._add_btn.setEnabled(False)
         controls.addWidget(self._add_btn)
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setToolTip("Delete the selected test from its .scadtest file")
+        self._delete_btn.clicked.connect(self._request_delete)
+        self._delete_btn.setEnabled(False)
+        controls.addWidget(self._delete_btn)
         self._report_btn = QPushButton("Report…")
         self._report_btn.setToolTip("The per-file report, with every uncovered span")
         self._report_btn.clicked.connect(self.report_requested)
@@ -173,6 +189,7 @@ class TestingPane(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._tree.currentItemChanged.connect(self._sync_delete_enabled)
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i in range(1, len(self._COLUMNS)):
@@ -202,6 +219,12 @@ class TestingPane(QWidget):
         for file_path in files:
             item = QTreeWidgetItem([os.path.relpath(file_path, path), "", "", ""])
             item.setData(0, Qt.ItemDataRole.UserRole, file_path)
+            # The tests themselves too, not just the file: the tree is a view
+            # of the suite, and a run fills in the results. Without this,
+            # editing or deleting a test would need a run first, and every
+            # edit resets the tree.
+            for name in _test_names(file_path):
+                item.addChild(QTreeWidgetItem([name, "", "", ""]))
             self._tree.addTopLevelItem(item)
         self._add_btn.setEnabled(bool(files))
 
@@ -249,6 +272,7 @@ class TestingPane(QWidget):
         self._totals = [0, 0]
         self._report_btn.setEnabled(False)
         self._add_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
 
     def _on_item_double_clicked(self, item, _column):
         """Double-clicking a TEST opens it for editing. Double-clicking a
@@ -260,6 +284,23 @@ class TestingPane(QWidget):
         path = parent.data(0, Qt.ItemDataRole.UserRole)
         if path:
             self.edit_requested.emit(path, item.text(0))
+
+    def selected_test(self):
+        """(path, name) of the selected TEST row, or None -- a file row is
+        not a test, and Delete only ever removes one test."""
+        item = self._tree.currentItem()
+        if item is None or item.parent() is None:
+            return None
+        path = item.parent().data(0, Qt.ItemDataRole.UserRole)
+        return (path, item.text(0)) if path else None
+
+    def _sync_delete_enabled(self, *_args):
+        self._delete_btn.setEnabled(self.selected_test() is not None)
+
+    def _request_delete(self):
+        found = self.selected_test()
+        if found:
+            self.delete_requested.emit(*found)
 
     def selected_file(self):
         """The .scadtest of whichever row is selected, or the only one in the
@@ -278,7 +319,21 @@ class TestingPane(QWidget):
         passed = sum(1 for _, ok, _ in rows if ok)
         total = len(rows)
         name = os.path.relpath(path, base) if base else os.path.basename(path)
-        item = QTreeWidgetItem([name, f"{passed}/{total}", _pct(passed, total), ""])
+        # Update the row in place rather than swapping a fresh item in.
+        # takeTopLevelItem destroys the old item and its children, and if the
+        # view's current item is anywhere in that subtree the pointer is left
+        # dangling -- a later setCurrentItem then segfaults. Reproduced.
+        item = None
+        for i in range(self._tree.topLevelItemCount()):
+            if self._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == path:
+                item = self._tree.topLevelItem(i)
+                item.takeChildren()
+                break
+        if item is None:
+            item = QTreeWidgetItem()
+            self._tree.addTopLevelItem(item)
+        for column, value in enumerate((name, f"{passed}/{total}", _pct(passed, total), "")):
+            item.setText(column, value)
         item.setData(0, Qt.ItemDataRole.UserRole, path)
         if result.get("coverage") is not None:
             item.setText(3, f"{result['coverage'].total().percent:.1f}%")
@@ -290,13 +345,6 @@ class TestingPane(QWidget):
             if not ok:
                 child.setToolTip(0, "\n".join(messages) or "failed")
             item.addChild(child)
-        for i in range(self._tree.topLevelItemCount()):
-            if self._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == path:
-                self._tree.takeTopLevelItem(i)      # replace the placeholder row
-                self._tree.insertTopLevelItem(i, item)
-                break
-        else:
-            self._tree.addTopLevelItem(item)
         self._add_btn.setEnabled(True)
         # Open a file that has something to look at, and only that one.
         # setExpanded is ignored on an item that is not in a tree yet, so

@@ -911,6 +911,7 @@ class MainWindow(QMainWindow):
         self._testing_pane.pick_dir_requested.connect(lambda: self._open_testing_pane())
         self._testing_pane.report_requested.connect(self._show_coverage_report)
         self._testing_pane.edit_requested.connect(self._edit_test)
+        self._testing_pane.delete_requested.connect(self._delete_test)
         self._testing_pane.new_file_requested.connect(self._new_test_file)
         self._testing_pane.overlay_toggled.connect(lambda _on: self._apply_coverage_overlays())
         self._test_run_job = None
@@ -2635,6 +2636,31 @@ class MainWindow(QMainWindow):
                  f"in {os.path.basename(path)}")
         self._open_testing_pane(directory=self._testing_pane.directory())
 
+    def _delete_test(self, path: str, test_name: str):
+        """Remove one `[[test]]` block. Confirmed first: it rewrites a file
+        on disk, and the tree row it was picked from may be stale."""
+        from belfryscad.scadtest import delete_test_block
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.critical(self, "Test", f"Could not read {os.path.basename(path)}:\n{e}")
+            return
+        new_text = delete_test_block(text, test_name)
+        if new_text == text:
+            self.log(f"{test_name!r} is no longer in {os.path.basename(path)} — re-run to refresh.")
+            return
+        if QMessageBox.question(
+                self, "Delete Test",
+                f"Delete {test_name!r} from {os.path.basename(path)}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        if not self._write_test_file(path, new_text):
+            return
+        self.log(f"Deleted test {test_name!r} from {os.path.basename(path)}")
+        self._open_testing_pane(directory=self._testing_pane.directory())
+
     def _new_test_file(self):
         """Create an empty .scadtest in the tests directory."""
         from belfryscad.scadtest import new_scadtest_text
@@ -2698,8 +2724,12 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker.moveToThread(thread)
         worker.logged.connect(self.log)
-        worker.file_done.connect(
-            lambda result, base=directory: self._testing_pane.add_file_result(result, base))
+        # A bound method, NOT a lambda: a plain Python callable has no thread
+        # affinity, so Qt connects it DIRECTLY and the slot runs on the worker
+        # thread -- which here means touching the tree from off the GUI thread
+        # ("QBasicTimer::start: Timers cannot be started from another thread",
+        # and worse if it ever raced a repaint).
+        worker.file_done.connect(self._on_test_file_done, Qt.ConnectionType.QueuedConnection)
         worker.finished.connect(self._on_tests_finished)
         worker.done.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
@@ -2707,6 +2737,9 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         self._test_run_job = (worker, thread)   # keep both alive until done
         thread.start()
+
+    def _on_test_file_done(self, result):
+        self._testing_pane.add_file_result(result, self._testing_pane.directory())
 
     def _on_tests_finished(self, report):
         self._testing_pane.set_running(False)
