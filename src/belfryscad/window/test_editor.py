@@ -20,7 +20,7 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QPushButton, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -42,7 +42,7 @@ class TestEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Test" if test else "New Test")
         self.setModal(True)
-        self.resize(640, 620)
+        self.resize(640, 700)
         self._existing = {n for n in existing_names if not (test and n == test.name)}
         self._result = None
 
@@ -93,9 +93,6 @@ class TestEditDialog(QDialog):
         self._source.currentIndexChanged.connect(self._stack.setCurrentIndex)
         if test and test.script_file:
             self._source.setCurrentIndex(1)
-        form.addRow("", self._stack)        # indented under the Source dropdown
-        layout.addLayout(form, 1)
-
         vars_box = QGroupBox("Variable overrides")
         vars_layout = QHBoxLayout(vars_box)
         self._vars = QTableWidget(0, 2)
@@ -105,8 +102,9 @@ class TestEditDialog(QDialog):
             0, QHeaderView.ResizeMode.ResizeToContents)
         self._vars.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
-        self._vars.setMinimumHeight(110)
-        self._vars.setMaximumHeight(170)
+        # Low enough that the sash has somewhere to go: a minimum equal to
+        # the starting size pins the splitter and the handle does nothing.
+        self._vars.setMinimumHeight(64)
         _mono(self._vars)
         vars_layout.addWidget(self._vars, 1)
         var_buttons = QVBoxLayout()
@@ -122,12 +120,28 @@ class TestEditDialog(QDialog):
         var_buttons.addWidget(remove_var)
         var_buttons.addStretch(1)
         vars_layout.addLayout(var_buttons)
-        layout.addWidget(vars_box)
+
+        # A draggable sash between the script and the overrides: which of the
+        # two needs the room depends entirely on the test.
+        self._split = QSplitter(Qt.Orientation.Vertical)
+        self._split.addWidget(self._stack)
+        self._split.addWidget(vars_box)
+        self._split.setChildrenCollapsible(False)
+        self._split.setStretchFactor(0, 3)
+        self._split.setStretchFactor(1, 2)
+        self._split.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._script.setMinimumHeight(60)
+        form.addRow("", self._split)        # indented under the Source dropdown
+        layout.addLayout(form, 1)
         for name, value in (test.set_vars if test else {}).items():
             self._add_var_row(name, _toml_literal(value))
 
         expect = QGroupBox("Expectations")
         ex = QFormLayout(expect)
+        # Already the default under this style, but the default varies by
+        # platform and these two fields are the width of the dialog on
+        # purpose -- say so rather than inherit it.
+        ex.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._expect_success = QCheckBox("The script must evaluate without error")
         self._expect_success.setChecked(test.expect_success if test else True)
         ex.addRow(self._expect_success)

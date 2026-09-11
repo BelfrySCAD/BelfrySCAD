@@ -467,3 +467,43 @@ def test_variable_overrides_table():
     assert "no value" in out["name_without_value"]
     assert "no variable name" in out["value_without_name"]
     assert out["bad_toml_refused"] and out["bad_toml_complained"]
+
+
+SASH_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.test_editor import TestEditDialog
+from belfryscad.scadtest import TestCase
+out = {}
+# Several overrides on purpose: the table's width demand is what pinned
+# Echoes to its size hint, so a dialog without one cannot show the bug.
+dlg = TestEditDialog(TestCase(name="t", script="x();",
+                              set_vars={"size": 10, "label": "cap", "flags": [1, 2]}))
+dlg.show()
+for _ in range(25): app.processEvents(); time.sleep(0.01)
+out["panes"] = dlg._split.count()
+before = dlg._split.sizes()
+out["slack"] = before[1] - dlg._split.widget(1).minimumSizeHint().height()
+dlg._split.setSizes([before[0] - 40, before[1] + 40])
+for _ in range(20): app.processEvents(); time.sleep(0.01)
+out["moved"] = dlg._split.sizes() != before
+out["gave_room_to_vars"] = dlg._split.sizes()[1] > before[1]
+print(json.dumps(out)); sys.stdout.flush()
+os._exit(0)
+'''
+
+
+def test_script_and_vars_have_a_working_sash():
+    proc = subprocess.run([sys.executable, "-c", SASH_DRIVER], capture_output=True, text=True,
+                          env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=120)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["panes"] == 2
+    # A minimum equal to the starting size pins the splitter: the handle is
+    # drawn, dragging does nothing. That is how this shipped the first time.
+    assert out["slack"] > 20, f"the sash has nowhere to go (slack {out['slack']}px)"
+    assert out["moved"] and out["gave_room_to_vars"]
