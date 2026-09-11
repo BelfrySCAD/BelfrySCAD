@@ -65,11 +65,30 @@ jobs:
 
       - run: uv sync --frozen --python 3.12
 
+      # briefcase 0.4.5 cannot build an AppImage at all right now: its
+      # template's v0.4.5 branch reads cookiecutter.host_arch without
+      # declaring it in cookiecutter.json (upstream 9cfe6a7, 2026-09-08), and
+      # cookiecutter silently drops an undeclared key, so `create` dies with
+      # "'OrderedDict object' has no attribute 'host_arch'". Pointing at the
+      # older v0.4.4 branch is not a way out either -- its support package
+      # leaves the build container with no pip -- and briefcase takes a branch
+      # name, not the commit before the break.
+      #
+      # The Windows job needs 0.4.5 (its template is the first with
+      # MajorUpgrade, so the MSI upgrades in place instead of stacking up);
+      # this job does not. So install the last briefcase that builds an
+      # AppImage, here only. Delete this step once upstream declares the key.
+      - name: Pin briefcase for the AppImage build
+        run: uv pip install "briefcase==0.4.2"
+
+      # --no-sync, or `uv run` re-syncs from the lock file on every call and
+      # puts 0.4.5 straight back -- which is exactly what happened the first
+      # time this step was written without it.
       - name: Build Linux AppImage
         run: |
-          uv run --python 3.12 briefcase create linux appimage
-          uv run --python 3.12 briefcase build linux appimage
-          uv run --python 3.12 briefcase package linux appimage
+          uv run --no-sync --python 3.12 briefcase create linux appimage
+          uv run --no-sync --python 3.12 briefcase build linux appimage
+          uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5

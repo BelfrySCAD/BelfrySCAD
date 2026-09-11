@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "belfryscad"
-version = "1.17.0"
+version = "1.17.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -66,7 +66,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "briefcase", specifier = ">=0.4.2" },
+    { name = "briefcase", specifier = ">=0.4.5" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
 ]
@@ -85,10 +85,9 @@ wheels = [
 
 [[package]]
 name = "briefcase"
-version = "0.4.2"
+version = "0.4.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "binaryornot" },
     { name = "build" },
     { name = "chardet" },
     { name = "cookiecutter" },
@@ -107,9 +106,9 @@ dependencies = [
     { name = "truststore" },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/0b/3be6503a193db8439afbbdf15e2622b22aeeacd11d42ee2d8a41d225823e/briefcase-0.4.2.tar.gz", hash = "sha256:e1026ad9502760d6f296bc2c68f32a3279f3af7a0560032356379c9b5860ed4f", size = 2657584, upload-time = "2026-05-06T03:27:31.56Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/3d/58c3e032dc71d1b82cedf49cd8fe7ae3173aef630a4c078961d4a117fc1c/briefcase-0.4.5.tar.gz", hash = "sha256:b3c9e2f781ad6ca9e241a73ca80660624fed86db5b3e65a80b7a5bb697d54741", size = 2727138, upload-time = "2026-09-08T08:38:29.88Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/48/b9fac2c98a3439d65d63f5c828ab03540fbd31eda4d2ed120f982c8b7d18/briefcase-0.4.2-py3-none-any.whl", hash = "sha256:daf921b4520915e002b0a0f8e4abc82f046bddedcc4a52e9cbb2a8c444ff3cd1", size = 279029, upload-time = "2026-05-06T03:27:28.216Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/eb/18b21088b380242820ec065e3ed32c65cf98ffeb2797012d7f2e37b60029/briefcase-0.4.5-py3-none-any.whl", hash = "sha256:0fd06503b03bfbb52fb13137d49791e0c686bb3c39c9bd901e35ebf3de37aa2a", size = 303995, upload-time = "2026-09-08T08:38:27.362Z" },
 ]
 
 [[package]]
