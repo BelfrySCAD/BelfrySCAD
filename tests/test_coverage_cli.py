@@ -1,8 +1,9 @@
-"""belfryscad --coverage and --test --coverage (no Qt: pure CLI)."""
+"""belfryscad --test --coverage, and the report types it shares with the
+GUI overlay (no Qt: pure CLI)."""
 import json
 import os
 
-from belfryscad import coverage, scadtest
+from belfryscad import scadtest
 from belfryscad.coverage import CoverageReport, FileSummary, format_report
 
 LIB = """\
@@ -12,35 +13,25 @@ module unused() { sphere(1); }
 """
 
 
-def _report_for(tmp_path, script):
-    p = tmp_path / "s.scad"
-    p.write_text(script)
-    return coverage.run_coverage(str(p))
+def _span(origin, line, start, end, kind, hits, arm=False):
+    return {"origin": origin, "line": line, "column": 1, "start": start, "end": end,
+            "kind": kind, "arm": arm, "hits": hits}
 
 
-def test_run_coverage_reports_per_file_and_gaps(tmp_path):
-    (tmp_path / "lib.scad").write_text(LIB)
-    r = _report_for(tmp_path, "include <lib.scad>\na = f(1);\nused();\n")
-    files = {os.path.basename(f.origin): f for f in r.files()}
-    assert set(files) == {"lib.scad", "s.scad"}
-    lib = files["lib.scad"]
-    assert (lib.bodies, lib.bodies_hit) == (3, 2)
-    assert (lib.branches, lib.branches_hit) == (2, 1)
-    assert files["s.scad"].percent == 100.0
-    gaps = r.uncovered()
-    assert {(os.path.basename(g["origin"]), g["kind"]) for g in gaps} == {("lib.scad", "branch"), ("lib.scad", "body"), ("lib.scad", "statement")}
-    text = format_report(r, base=str(tmp_path))
-    assert text.splitlines()[0].startswith("lib.scad")
-    assert "TOTAL" in text and "Not covered (3):" in text and "lib.scad:3:" in text
-
-
-def test_defines_keep_the_real_origin(tmp_path):
-    r = _report_for(tmp_path, "a = 1;\nif (a == 2) cube(1);\n")
-    p = tmp_path / "s.scad"
-    r2 = coverage.run_coverage(str(p), defines=["a=2"])
-    assert all(os.path.basename(s["origin"]) == "s.scad" for s in r2.spans.values())
-    hit = lambda rep: sum(s["hits"] > 0 for s in rep.spans.values() if s["arm"])
-    assert hit(r) == 0 and hit(r2) == 1         # -D a=2 takes the arm
+def test_format_report_lists_files_then_every_gap():
+    r = CoverageReport.from_result({"spans": [
+        _span("/w/lib.scad", 1, 0, 5, "statement", 1),
+        _span("/w/lib.scad", 2, 6, 9, "body", 0),
+        _span("/w/lib.scad", 3, 10, 14, "branch", 0, arm=True),
+        _span("/w/s.scad", 1, 0, 5, "statement", 1),
+    ]})
+    text = format_report(r, base="/w")
+    assert text.splitlines()[0].startswith("lib.scad")     # worst is not sorted first by default
+    assert "s.scad" in text and "TOTAL" in text
+    assert "Not covered (2):" in text
+    assert "lib.scad:2:1  body" in text
+    assert "lib.scad:3:1  branch (if/else arm)" in text    # arms say so
+    assert "Not covered" not in format_report(r, base="/w", uncovered=False)
 
 
 def test_merge_sums_hits_and_drop_origins_filters():
@@ -61,21 +52,6 @@ def test_merge_sums_hits_and_drop_origins_filters():
     assert (f.spans, f.spans_hit, f.bodies, f.bodies_hit) == (2, 1, 1, 0)
     assert CoverageReport.from_json(a.to_json()).spans == a.spans
     assert FileSummary("").percent == 100.0
-
-
-def test_cli_main_exit_codes_and_json(tmp_path, capsys):
-    p = tmp_path / "s.scad"
-    p.write_text("function f(x) = x > 0 ? 1 : 2;\na = f(1);\n")
-    out_json = tmp_path / "cov.json"
-    assert coverage.main([str(p), "--json", str(out_json)]) == 0
-    text = capsys.readouterr().out
-    assert "TOTAL" in text and "Not covered (1):" in text
-    d = json.loads(out_json.read_text())
-    assert d["total"]["spans"] == 4 and d["total"]["spans_hit"] == 3
-    assert coverage.main([str(p), "--min", "90"]) == 1
-    assert coverage.main([str(p), "--min", "50", "--no-gaps"]) == 0
-    assert "Not covered" not in capsys.readouterr().out.split("TOTAL")[-1]
-    assert coverage.main([str(tmp_path / "missing.scad")]) == 2
 
 
 def test_test_runner_merges_library_coverage_and_drops_snippets(tmp_path, capsys, monkeypatch):

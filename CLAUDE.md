@@ -210,19 +210,24 @@ support, in `docs/docsgen.md`.
 
 ## Coverage
 
-`belfryscad --coverage FILE.scad [-D var=value] [--json PATH] [--min PERCENT] [--no-gaps]` runs
-the script with the evaluator's coverage on (resolve pass only: the geometry pass runs no script
-code) and prints one line per file (`percent`, statements, branches, bodies hit/total), a TOTAL
-line, then every uncovered span as `file:line:col  kind`. `belfryscad --test --coverage
-[--coverage-json PATH] [--coverage-min PERCENT]` does the same over every test's evaluation,
-merged in the main thread after the run, worst file first, with the tests' own temp snippets
-dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. Both live in
+`belfryscad --test --coverage [--coverage-json PATH] [--coverage-min PERCENT]` runs every test
+with the evaluator's coverage on (resolve pass only: the geometry pass runs no script code) and
+merges the results in the main thread after the run — one line per file (`percent`, statements,
+branches, bodies hit/total), a TOTAL line, worst file first, with the tests' own temp snippets
+dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. It lives in
 `belfryscad/coverage.py` (`CoverageReport`: merge by `(origin, start, end, kind)`, per-file
 `FileSummary`, JSON round-trip, `format_report`) on top of openscad_cpp_evaluator ≥1.19.1's
 `Evaluator(coverage=True).coverage_result`; the vocabulary (statement / branch arm / body) is the
-evaluator's, see its `CLAUDE.md`. `--min`/`--coverage-min` are the CI hooks: exit 1 below the
-threshold even when everything passed. The GUI overlay (View ▸ Show Coverage) reads the same
-`CoverageReport`; see `docs/editor.md`.
+evaluator's, see its `CLAUDE.md`. `--coverage-min` is the CI hook: exit 1 below the threshold even
+when everything passed. The GUI overlay (View ▸ Show Coverage) reads the same `CoverageReport`;
+see `docs/editor.md`.
+
+**There is no `--coverage FILE.scad`.** It existed, and was removed as redundant: coverage of one
+run is what Design ▸ Render with Coverage already paints onto the source, far more usefully than a
+list of spans, and a script that wants it headlessly can be wrapped in a one-line `.scadtest`.
+`--coverage` without `--test` now exits 2 with that advice rather than falling through to the GUI
+(`_parse_args` tolerates unknown arguments, so it otherwise opened a window and looked like the
+flag had silently broken).
 
 ## Further Documentation
 
