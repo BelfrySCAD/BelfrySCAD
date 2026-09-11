@@ -197,11 +197,14 @@ so a library author sees the formatted docs, the validation errors and the
 rendered example images without saving or leaving the app.
 
 `openscad_docsgen`'s parser, blocks, error log and output targets are
-vendored **unchanged** under `src/belfryscad/docsgen/` — only its two
-OpenSCAD-launching modules (`imagemanager.py`, `logmanager.py`) are
-reimplemented, keeping the upstream names so nothing else needed editing.
-Keeping the parser byte-identical is what makes the pane's verdict
-trustworthy: it is the same validation a real docs build performs. Full
+vendored **very nearly unchanged** under `src/belfryscad/docsgen/` — only its
+two OpenSCAD-launching modules (`imagemanager.py`, `logmanager.py`) are
+reimplemented, keeping the upstream names so nothing else needed editing, and
+the parser carries exactly one added line: `parse_lines` blanks `/* ... */`
+block comments first (`block_comments.py`), because a `//` inside one is not
+a documentation comment and upstream documents it anyway (#415). Keeping the
+parser otherwise byte-identical is what makes the pane's verdict trustworthy:
+it is the same validation a real docs build performs. Full
 details, including the camera/`--viewall` semantics and the APNG animation
 support, in `docs/docsgen.md`.
 

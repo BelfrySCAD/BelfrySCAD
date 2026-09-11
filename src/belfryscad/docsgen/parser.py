@@ -25,6 +25,9 @@ class OriginInfo:
         return self.file
 
 
+from belfryscad.docsgen.block_comments import strip_block_comments
+
+
 class DocsGenParser(object):
     _header_pat = re.compile(r"^// ([A-Z][A-Za-z0-9_&-]*( ?[A-Z][A-Za-z0-9_&-]*)?)(\([^)]*\))?:( .*)?$")
     RCFILE = ".openscad_docsgen_rc"
@@ -668,6 +671,13 @@ class DocsGenParser(object):
             The name of the source file that this is from.  This is used just for error reporting.
             If true, generates images for example scripts, by running them in OpenSCAD.
         """
+        # The one change to this vendored file: a `//` inside a `/* ... */`
+        # is not a documentation comment, and upstream has no idea block
+        # comments exist (BelfrySCAD #415). Blanking here rather than in
+        # each caller covers parse_file and the Docs pane's live buffer
+        # both, and keeps every line, so reported line numbers still line
+        # up with the source.
+        lines = strip_block_comments(lines)
         while line_num < len(lines):
             line_num = self._parse_block(lines, line_num, src_file=src_file)
 
