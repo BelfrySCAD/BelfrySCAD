@@ -3117,7 +3117,9 @@ class MainWindow(QMainWindow):
                             live_tabs=self._live_tabs_threadsafe,
                             project_dirs=self._project_dirs_threadsafe,
                             profile_report=self._profile_report_threadsafe,
-                            debug_control=self._debug_threadsafe)
+                            debug_control=self._debug_threadsafe,
+                            tests_dir=self._testing_pane.directory,
+                            gui_coverage=lambda: self._coverage)
         self._ai_chat_pane.start_turn(text, ctx)
 
     _AI_CONSOLE_LINES = 200
@@ -3978,6 +3980,16 @@ class MainWindow(QMainWindow):
         Goes through replace_span + source_edited_externally, the same path
         "Edit as..."/"Reformat Selection" use, so it lands as one clean undo
         step and triggers a re-render."""
+        if proposal.kind == "test_edit":
+            # A .scadtest on disk rather than an open buffer. Accepting is
+            # the prompt, so writing here does not break "never write to
+            # disk unprompted".
+            if not self._write_test_file(proposal.filename, proposal.new_content):
+                return
+            self.log(f"AI: updated {os.path.basename(proposal.filename)}")
+            if self._testing_pane.directory():
+                self._open_testing_pane(directory=self._testing_pane.directory())
+            return
         if proposal.kind == "edit":
             tab = self._tab_by_chat_id(proposal.tab_id)
             if tab is None:

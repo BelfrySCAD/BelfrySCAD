@@ -322,7 +322,9 @@ class DiffReviewDialog(QDialog):
         layout.setSpacing(8)
 
         target = proposal.filename or "script"
-        what = "New file" if proposal.kind == "new_file" else "Edit"
+        what = {"new_file": "New file", "test_edit": "Test suite"}.get(proposal.kind, "Edit")
+        if proposal.kind == "test_edit":
+            target = os.path.basename(target)   # the full path is noise in a one-line header
         header = QLabel(f"<b>{escape(proposal.summary)}</b><br>"
                         f"{what} — {escape(target)}")
         header.setWordWrap(True)
