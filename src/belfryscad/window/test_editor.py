@@ -122,12 +122,20 @@ class TestEditDialog(QDialog):
         page = QWidget()
         vars_layout = QHBoxLayout(page)
         self._vars = QTableWidget(0, 2)
-        self._vars.setHorizontalHeaderLabels(["Name", "Value (TOML)"])
+        self._vars.setHorizontalHeaderLabels(["Variable", "Value"])
+        # The values are TOML literals, but that belongs in a tooltip rather
+        # than in a column heading the user reads on every visit.
+        self._vars.horizontalHeaderItem(1).setToolTip(
+            'A TOML value: 10, "cap", true, [1, 2]')
         self._vars.verticalHeader().setVisible(False)
-        self._vars.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents)
-        self._vars.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch)
+        header = self._vars.horizontalHeader()
+        # Interactive, so the divider can be dragged. The last section still
+        # stretches to fill, which is what stops a gap opening on the right
+        # when the dialog is widened.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        header.resizeSection(0, self._vars.fontMetrics().horizontalAdvance("0" * 14))
         _mono(self._vars)
         vars_layout.addWidget(self._vars, 1)
         var_buttons = QVBoxLayout()

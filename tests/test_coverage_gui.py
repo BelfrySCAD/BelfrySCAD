@@ -416,6 +416,14 @@ dlg = TestEditDialog(tc)
 out["rows"] = dlg._vars.rowCount()
 out["cells"] = [[dlg._vars.item(r, 0).text(), dlg._vars.item(r, 1).text()]
                 for r in range(dlg._vars.rowCount())]
+out["headers"] = [dlg._vars.horizontalHeaderItem(i).text() for i in range(2)]
+# Both columns draggable: ResizeToContents/Stretch look fine and cannot be
+# resized at all.
+_h = dlg._vars.horizontalHeader()
+_before = [_h.sectionSize(0), _h.sectionSize(1)]
+_h.resizeSection(0, _before[0] + 60)
+out["columns_resizable"] = [_h.sectionSize(0), _h.sectionSize(1)] != _before
+out["no_gap_after_resize"] = _h.sectionSize(0) + _h.sectionSize(1) == sum(_before)
 
 # "+" appends an empty row; a wholly blank row is ignored, not an error.
 dlg._add_var_row("", "")
@@ -459,6 +467,9 @@ def test_variable_overrides_table():
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["rows"] == 3
     assert out["cells"] == [["size", "10"], ["label", '"cap"'], ["flags", "[1, 2]"]]
+    assert out["headers"] == ["Variable", "Value"]
+    assert out["columns_resizable"], "the header divider must be draggable"
+    assert out["no_gap_after_resize"], "the last column stretches, so no gap opens on the right"
     assert out["rows_after_plus"] == 4
     # A blank row left over from clicking "+" is not an error.
     assert out["collected_ignoring_blank"] == {"size": 10, "label": "cap", "flags": [1, 2]}
