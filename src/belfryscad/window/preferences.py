@@ -62,6 +62,7 @@ _DEFAULTS = {
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
+    "viewport/keepMinuendColor": False,  # difference() cut faces keep the minuend's colour
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
     "ai/claudeCliPath": "",   # empty -> look on PATH
@@ -291,6 +292,19 @@ class PreferencesDialog(QDialog):
         self._reload_theme_items(current_theme)
         self._color_theme.currentTextChanged.connect(self._on_theme_combo_changed)
         vp_form.addRow("Color theme:", self._color_theme)
+
+        # difference() cut faces: the tool's colour (OpenSCAD's rule) or the
+        # cut object's. A viewer option rather than a language one: it is
+        # honest for every existing script, and a cross-section of a
+        # multi-colour model is the case it exists for (#412).
+        self._keep_minuend_color = QCheckBox("Faces cut by difference() keep the colour of the object they were cut from")
+        self._keep_minuend_color.setChecked(
+            s.value("viewport/keepMinuendColor", _DEFAULTS["viewport/keepMinuendColor"], type=bool))
+        self._keep_minuend_color.setToolTip(
+            "Off (the default) paints a cut face with the cutting object's colour, or green\n"
+            "when it has none, as OpenSCAD does. On re-renders the current design.")
+        self._keep_minuend_color.toggled.connect(lambda v: self._emit("viewport/keepMinuendColor", bool(v)))
+        vp_form.addRow("Cut faces:", self._keep_minuend_color)
 
         tabs.addTab(viewport_tab, "Viewport")
 

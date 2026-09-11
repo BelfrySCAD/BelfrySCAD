@@ -394,7 +394,7 @@ class _RenderWorker(QObject):
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
                  manifold_cache=None, profile: bool = False, hard_warnings: bool = False,
-                 coverage: bool = False):
+                 coverage: bool = False, keep_minuend_color: bool = False):
         super().__init__()
         self._source = source
         self._file_path = file_path
@@ -403,6 +403,7 @@ class _RenderWorker(QObject):
         self._manifold_cache = manifold_cache
         self._profile = profile
         self._coverage = coverage
+        self._keep_minuend_color = keep_minuend_color
         self._hard_warnings = hard_warnings
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
 
@@ -482,7 +483,7 @@ class _RenderWorker(QObject):
 
         # --- Evaluate ---
         evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile,
-                              coverage=self._coverage)
+                              coverage=self._coverage, keep_minuend_color=self._keep_minuend_color)
         try:
             # Seeded from the ORIGINAL path, not parse_path -- an unsaved
             # buffer renders through a temp file whose name would otherwise
@@ -2312,8 +2313,9 @@ class MainWindow(QMainWindow):
         if coverage is None:
             coverage = self._act_capture_coverage.isChecked()
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
-                                hard_warnings=self._act_stop_on_warning.isChecked(),
-                               profile=profile, coverage=coverage)
+                               hard_warnings=self._act_stop_on_warning.isChecked(),
+                               profile=profile, coverage=coverage,
+                               keep_minuend_color=load_preference("viewport/keepMinuendColor", bool))
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -4326,6 +4328,14 @@ class MainWindow(QMainWindow):
         self._preferences_dialog.activateWindow()
 
     def _apply_preferences(self):
+        # The cut-face rule is baked into the geometry at render time, so a
+        # change re-renders the current design; the first call (startup)
+        # only records it.
+        keep = load_preference("viewport/keepMinuendColor", bool)
+        rerender = getattr(self, "_keep_minuend_color", None) is not None and keep != self._keep_minuend_color
+        self._keep_minuend_color = keep
+        if rerender and self._current_tab() is not None:
+            self._render()
         family = load_preference("editor/fontFamily")
         size = load_preference("editor/fontSize", int)
         indent = load_preference("editor/indentSize", int)
