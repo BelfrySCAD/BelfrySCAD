@@ -219,7 +219,7 @@ dropped (`docsgen.runner._TEMP_PREFIX`) so the report is about the library. It l
 `FileSummary`, JSON round-trip, `format_report`) on top of openscad_cpp_evaluator ≥1.19.1's
 `Evaluator(coverage=True).coverage_result`; the vocabulary (statement / branch arm / body) is the
 evaluator's, see its `CLAUDE.md`. `--coverage-min` is the CI hook: exit 1 below the threshold even
-when everything passed. The GUI's Testing pane (Design ▸ Run Tests…) runs the same code on a
+when everything passed. **`/* nocov */`** in a `.scad` source excludes the largest span starting on its line and every span nested inside it — putting one on an `if (...) {` line takes the branch and both arms, on a plain statement takes that statement. Excluded spans are *dropped* rather than counted as covered, so they leave the percentage alone. The evaluator never sees the marker (its lexer skips comments), so `CoverageReport.drop_nocov` reads the source itself, after the test snippets are dropped. The GUI's Testing pane (Design ▸ Run Tests…) runs the same code on a
 worker thread over a directory of suites, and its overlay reads the same `CoverageReport`; see
 `docs/editor.md`. `merge_spans` abspaths every origin, so one library reached as `lib.scad` from
 beside it and `../lib.scad` from a subdirectory is one file, not two half-covered ones.

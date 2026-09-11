@@ -92,6 +92,7 @@ class TestRunWorker(QObject):
                             self.logged.emit(f"    {msg}")
                 if per_file is not None:
                     per_file.drop_origins(lambda o: os.path.basename(o).startswith(_TEMP_PREFIX))
+                    per_file.drop_nocov()   # /* nocov */ in the source
                     merged.merge(per_file)
                 self.file_done.emit({"path": path, "tests": rows, "coverage": per_file})
             self.finished.emit(merged)
@@ -110,7 +111,8 @@ class TestingPane(QWidget):
     pick_dir_requested = Signal()
     overlay_toggled = Signal(bool)
     report_requested = Signal()
-    open_requested = Signal(str, object)   # (.scadtest path, test name or None)
+    edit_requested = Signal(str, object)   # (.scadtest path, test name or None for a new one)
+    new_file_requested = Signal()
 
     _COLUMNS = ("Tests", "Passed", "Passed %", "Coverage %")
 
@@ -142,6 +144,16 @@ class TestingPane(QWidget):
         self._overlay_box.toggled.connect(self.overlay_toggled)
         controls.addWidget(self._overlay_box)
         controls.addStretch(1)
+        self._new_file_btn = QPushButton("New File…")
+        self._new_file_btn.setToolTip("Create a new .scadtest file in this directory")
+        self._new_file_btn.clicked.connect(self.new_file_requested)
+        self._new_file_btn.setEnabled(False)
+        controls.addWidget(self._new_file_btn)
+        self._add_btn = QPushButton("Add Test…")
+        self._add_btn.setToolTip("Add a test to the selected .scadtest file")
+        self._add_btn.clicked.connect(lambda: self._request_add())
+        self._add_btn.setEnabled(False)
+        controls.addWidget(self._add_btn)
         self._report_btn = QPushButton("Report…")
         self._report_btn.setToolTip("The per-file report, with every uncovered span")
         self._report_btn.clicked.connect(self.report_requested)
@@ -177,12 +189,21 @@ class TestingPane(QWidget):
     def directory(self) -> str | None:
         return self._directory
 
-    def set_directory(self, path: str, count: int):
+    def set_directory(self, path: str, files):
+        """Show `path` and list its suites straight away, before any run --
+        Add Test needs a file to aim at, and an empty tree gives it none."""
+        files = list(files)
         self._directory = path
-        self._dir_count = count
+        self._dir_count = len(files)
         self._relabel_dir()
-        self._run_btn.setEnabled(count > 0)
+        self._run_btn.setEnabled(bool(files))
+        self._new_file_btn.setEnabled(True)
         self.clear_results()
+        for file_path in files:
+            item = QTreeWidgetItem([os.path.relpath(file_path, path), "", "", ""])
+            item.setData(0, Qt.ItemDataRole.UserRole, file_path)
+            self._tree.addTopLevelItem(item)
+        self._add_btn.setEnabled(bool(files))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -207,6 +228,11 @@ class TestingPane(QWidget):
     def overlay_enabled(self) -> bool:
         return self._overlay_box.isChecked()
 
+    def _request_add(self):
+        path = self.selected_file()
+        if path:
+            self.edit_requested.emit(path, None)
+
     def set_running(self, running: bool):
         self._run_btn.setText("Cancel" if running else "Run Tests")
         self._choose_btn.setEnabled(not running)
@@ -222,16 +248,29 @@ class TestingPane(QWidget):
         self._total_label.setText("")
         self._totals = [0, 0]
         self._report_btn.setEnabled(False)
+        self._add_btn.setEnabled(False)
 
     def _on_item_double_clicked(self, item, _column):
-        """A file row opens its .scadtest; a test row opens it and scrolls to
-        that test. The path lives on the top-level item, the test name on the
-        child."""
+        """Double-clicking a TEST opens it for editing. Double-clicking a
+        file row does nothing -- the file is TOML scaffolding, and the thing
+        worth editing is a test inside it."""
         parent = item.parent()
-        top = parent if parent is not None else item
-        path = top.data(0, Qt.ItemDataRole.UserRole)
+        if parent is None:
+            return
+        path = parent.data(0, Qt.ItemDataRole.UserRole)
         if path:
-            self.open_requested.emit(path, item.text(0) if parent is not None else None)
+            self.edit_requested.emit(path, item.text(0))
+
+    def selected_file(self):
+        """The .scadtest of whichever row is selected, or the only one in the
+        tree when nothing is selected."""
+        item = self._tree.currentItem()
+        if item is not None:
+            top = item.parent() or item
+            return top.data(0, Qt.ItemDataRole.UserRole)
+        if self._tree.topLevelItemCount() == 1:
+            return self._tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole)
+        return None
 
     def add_file_result(self, result: dict, base: str | None = None):
         path = result["path"]
@@ -251,7 +290,14 @@ class TestingPane(QWidget):
             if not ok:
                 child.setToolTip(0, "\n".join(messages) or "failed")
             item.addChild(child)
-        self._tree.addTopLevelItem(item)
+        for i in range(self._tree.topLevelItemCount()):
+            if self._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == path:
+                self._tree.takeTopLevelItem(i)      # replace the placeholder row
+                self._tree.insertTopLevelItem(i, item)
+                break
+        else:
+            self._tree.addTopLevelItem(item)
+        self._add_btn.setEnabled(True)
         # Open a file that has something to look at, and only that one.
         # setExpanded is ignored on an item that is not in a tree yet, so
         # this has to come after addTopLevelItem.

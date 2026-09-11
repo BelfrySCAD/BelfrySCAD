@@ -87,3 +87,47 @@ def test_rel_paths_outside_base_stay_absolute(tmp_path):
     outside = str(tmp_path.parent / "elsewhere.scad")
     assert _rel(inside, str(tmp_path)) == os.path.join("lib", "a.scad")
     assert _rel(outside, str(tmp_path)) == outside
+
+
+def test_nocov_excludes_the_marked_span_and_everything_in_it(tmp_path):
+    """A /* nocov */ marker attaches to the LARGEST span starting on its
+    line, so marking a block takes the block."""
+    src = tmp_path / "lib.scad"
+    src.write_text(
+        "module used() { cube(1); }\n"                 # 1
+        "module debug_only() {        /* nocov */\n"   # 2
+        "    echo(\"tracing\");\n"                     # 3
+        "    if (true) { sphere(1); }\n"               # 4
+        "}\n"                                          # 5
+        "module untested() { cube(3); }\n")            # 6
+    origin = str(src)
+
+    def span(line, start, end, kind, hits, arm=False):
+        return _span(origin, line, start, end, kind, hits, arm)
+
+    # The module on line 2 spans the whole block; its contents nest inside.
+    r = CoverageReport.from_result({"spans": [
+        span(1, 0, 26, "statement", 1),
+        span(2, 27, 120, "statement", 0),     # module debug_only() { ... }
+        span(2, 48, 119, "body", 0),          # its body, same line
+        span(3, 70, 86, "statement", 0),      # echo, nested
+        span(4, 91, 115, "branch", 0, arm=True),
+        span(6, 130, 160, "statement", 0),    # untested, unmarked
+    ]})
+    assert len(r.spans) == 6
+    dropped = r.drop_nocov(read_source=lambda o: src.read_text())
+    assert dropped == 4, "the module, its body, the echo and the branch arm"
+    kinds = sorted((s["line"], s["kind"]) for s in r.spans.values())
+    assert kinds == [(1, "statement"), (6, "statement")]
+    # Excluded code leaves the percentage alone rather than counting as run.
+    assert r.total().spans == 2 and r.total().spans_hit == 1
+
+
+def test_nocov_marker_spellings(tmp_path):
+    from belfryscad.coverage import nocov_lines
+    text = ("a();  /* nocov */\n"
+            "b();  /*nocov*/\n"
+            "c();  /*  NoCov  */\n"
+            "d();  // nocov\n"          # line comment: not a marker
+            "e();\n")
+    assert nocov_lines(text) == {1, 2, 3}

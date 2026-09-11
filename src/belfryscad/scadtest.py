@@ -28,6 +28,8 @@ from pathlib import Path
 class TestCase:
     """One `[[test]]` block. Mirrors openscad_test.parser.TestCase, whose
     field names are the .scadtest format's own keys."""
+    __test__ = False        # not a pytest class, despite the name
+
     name: str
     script: str | None = None
     script_file: str | None = None
@@ -285,6 +287,7 @@ def main(argv=None) -> int:
         # The snippets the runner wrote for each test are not the subject.
         from belfryscad.docsgen.runner import _TEMP_PREFIX
         merged.drop_origins(lambda origin: os.path.basename(origin).startswith(_TEMP_PREFIX))
+        merged.drop_nocov()      # /* nocov */ in the source, after the snippets go
         print("\nCoverage (worst first):")
         print(format_report(merged, base=os.getcwd(), uncovered=False, worst_first=True))
         if args.coverage_json:
@@ -295,3 +298,127 @@ def main(argv=None) -> int:
                   file=sys.stderr)
             return 1
     return 1 if failed > 0 else 0
+
+
+# -- Writing .scadtest files (the GUI's test editor) ----------------------
+#
+# One block is spliced in or out rather than the file being round-tripped
+# through tomllib and re-serialised: tomllib is read-only, and a rewrite
+# would throw away every comment and the [config] table's own formatting.
+
+_NEW_FILE_TEMPLATE = '''\
+# OpenSCAD test suite. Run with: belfryscad --test %s
+# or from the GUI: Design > Run Tests…
+
+[config]
+timeout = 60
+'''
+
+
+def new_scadtest_text(filename: str) -> str:
+    """The contents of a freshly created .scadtest file."""
+    return _NEW_FILE_TEMPLATE % filename
+
+
+def _toml_literal(v) -> str:
+    """A Python value as TOML source. bool before int, as in _scad_literal."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_literal(x) for x in v) + "]"
+    raise ValueError(f"cannot express {v!r} as TOML")
+
+
+def _toml_script(script: str) -> str:
+    """A script as a TOML multi-line string.
+
+    Literal (''') by preference, because it processes NO escapes -- OpenSCAD
+    source is full of backslashes (`"a\\nb"`), and a basic (\"\"\") string
+    would silently turn them into real control characters.
+    """
+    body = script if script.startswith("\n") else "\n" + script
+    if not body.endswith("\n"):
+        body += "\n"
+    if "'''" not in body:
+        return "'''" + body + "'''"
+    escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    return '"""' + escaped + '"""'
+
+
+def format_test_block(tc: TestCase) -> str:
+    """One `[[test]]` block. Only non-default fields are written, so a
+    simple test stays a simple three-line block."""
+    out = ["[[test]]", f"name = {_toml_literal(tc.name)}"]
+    if tc.script_file is not None:
+        out.append(f"script_file = {_toml_literal(Path(tc.script_file).name)}")
+    else:
+        out.append(f"script = {_toml_script(tc.script or '')}")
+    if tc.timeout != 60:
+        out.append(f"timeout = {tc.timeout}")
+    if tc.set_vars:
+        inner = ", ".join(f"{k} = {_toml_literal(v)}" for k, v in tc.set_vars.items())
+        out.append("set_vars = { " + inner + " }")
+    if not tc.expect_success:
+        out.append("expect_success = false")
+    if tc.assert_echoes:
+        out.append(f"assert_echoes = {_toml_literal(list(tc.assert_echoes))}")
+    if not tc.assert_no_echoes:
+        out.append("assert_no_echoes = false")
+    if tc.assert_warnings:
+        out.append(f"assert_warnings = {_toml_literal(list(tc.assert_warnings))}")
+    if not tc.assert_no_warnings:
+        out.append("assert_no_warnings = false")
+    return "\n".join(out) + "\n"
+
+
+def _test_block_ranges(text: str):
+    """(name, first_line, last_line) per `[[test]]` block, 0-based and
+    end-exclusive, in file order. A block runs to the next top-level table
+    header, trailing blank lines excluded."""
+    lines = text.splitlines()
+    heads = [i for i, ln in enumerate(lines) if ln.lstrip().startswith("[")]
+    out = []
+    for pos, i in enumerate(heads):
+        if lines[i].strip().replace(" ", "") != "[[test]]":
+            continue
+        stop = heads[pos + 1] if pos + 1 < len(heads) else len(lines)
+        while stop > i + 1 and not lines[stop - 1].strip():
+            stop -= 1
+        name = None
+        for ln in lines[i + 1:stop]:
+            key, sep, value = ln.partition("=")
+            if sep and key.strip() == "name":
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    name = value[1:-1]
+                break
+        out.append((name, i, stop))
+    return out
+
+
+def replace_test_block(text: str, name: str, block: str) -> str:
+    """Swap the `[[test]]` block called `name` for `block`. Appends instead
+    if there is no such block, which is how a new test is added."""
+    lines = text.splitlines()
+    for found, start, stop in _test_block_ranges(text):
+        if found == name:
+            new = lines[:start] + block.rstrip("\n").split("\n") + lines[stop:]
+            return "\n".join(new) + "\n"
+    body = text if text.endswith("\n") else text + "\n"
+    if body.strip():
+        body += "\n"
+    return body + block
+
+
+def delete_test_block(text: str, name: str) -> str:
+    lines = text.splitlines()
+    for found, start, stop in _test_block_ranges(text):
+        if found == name:
+            while stop < len(lines) and not lines[stop].strip():
+                stop += 1
+            return "\n".join(lines[:start] + lines[stop:]).rstrip("\n") + "\n"
+    return text

@@ -238,87 +238,118 @@ def test_overlay_lands_on_the_code_and_does_not_stack():
     assert out["sphere_is_uncovered"], "the never-taken if body is red"
 
 
-# Double-click in the results tree: a file row opens the .scadtest, a test
-# row opens it and scrolls to that test's [[test]] block.
-OPEN_DRIVER = '''
+# Double-click a TEST to edit it; Add Test… writes a new one with the same
+# dialog; New File… makes a .scadtest. Double-clicking a FILE does nothing.
+EDIT_DRIVER = '''
 import json, os, sys, tempfile, time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.main_window import MainWindow
+from belfryscad.window import test_editor
+from belfryscad.scadtest import parse_scadtest_file
+# A modal QMessageBox blocks forever offscreen, and the duplicate-name case
+# below raises one on purpose.
+from PySide6.QtWidgets import QMessageBox
+_boxes = []
+QMessageBox.warning = staticmethod(lambda *a, **k: _boxes.append(a[-1] if a else ""))
+QMessageBox.critical = staticmethod(lambda *a, **k: _boxes.append(a[-1] if a else ""))
 out = {}
 w = MainWindow(); w.skip_unsaved_prompts = True
 d = tempfile.mkdtemp()
 open(os.path.join(d, "lib.scad"), "w").write("module used() { cube(1); }\\n")
 suite = os.path.join(d, "t.scadtest")
 open(suite, "w").write(
-    '[config]\\nname = "decoy"\\n\\n'
-    '[[test]]\\nname = "alpha"\\nscript = """\\ninclude <lib.scad>\\nused();\\n"""\\n\\n'
-    '[[test]]\\nname = "beta"\\nscript = """\\ninclude <lib.scad>\\nused();\\n"""\\n')
+    "# a comment that must survive\\n[config]\\ntimeout = 30\\n\\n"
+    '[[test]]\\nname = "alpha"\\nscript = \\'\\'\\'\\ninclude <lib.scad>\\nused();\\n\\'\\'\\'\\n\\n'
+    '[[test]]\\nname = "beta"\\nscript = \\'\\'\\'\\ninclude <lib.scad>\\nused();\\n\\'\\'\\'\\n')
 
-def pump(pred, timeout=120):
+def pump(pred, timeout=60):
     t0 = time.time()
     while not pred() and time.time() - t0 < timeout:
         app.processEvents(); time.sleep(0.01)
     return pred()
 
-logged = []
-w.log = lambda m: logged.append(m)
 w._open_testing_pane(directory=d)
-w._run_tests()
-pump(lambda: not w._testing_pane.is_running() and w._coverage is not None)
-
 tree = w._testing_pane._tree
+out["rows_before_running"] = tree.topLevelItemCount()      # listed without a run
+
+# Double-clicking the FILE row does nothing.
+fired = []
+w._testing_pane.edit_requested.connect(lambda p, n: fired.append((p, n)))
+tree.itemDoubleClicked.emit(tree.topLevelItem(0), 0)
+app.processEvents()
+out["file_row_inert"] = fired == []
+
+w._run_tests()
+pump(lambda: not w._testing_pane.is_running())
 file_item = tree.topLevelItem(0)
-tree.itemDoubleClicked.emit(file_item, 0)          # double-click the FILE row
-app.processEvents()
-tab = w._current_tab()
-out["opened_path"] = os.path.basename(tab.file_path or "")
-out["is_the_toml"] = tab.editor.toPlainText().startswith("[config]")
-# A .scadtest is TOML: it must not be rendered as OpenSCAD. A parse error
-# does NOT go through w.log -- it reaches the console widget directly and
-# squiggles the editor -- so watch the squiggle. The render is threaded, so
-# give a failure real time to arrive instead of checking on the next
-# event-loop turn and always seeing a clean editor.
-pump(lambda: tab.editor._error_selections, timeout=3)
-out["no_parse_error"] = not tab.editor._error_selections
-out["never_parsed"] = getattr(tab, "_last_parse_path", None) is None
-out["tabs_after_file"] = w._tabs.count()
+beta = next(file_item.child(i) for i in range(file_item.childCount())
+            if file_item.child(i).text(0) == "beta")
 
-def cursor_line():
-    c = w._current_editor().textCursor()
-    return c.blockNumber() + 1
-
-beta = None
-for i in range(file_item.childCount()):
-    if file_item.child(i).text(0) == "beta":
-        beta = file_item.child(i)
-tree.itemDoubleClicked.emit(beta, 0)               # double-click the TEST row
+# Edit beta: rename it and change the script, accepting the dialog headlessly.
+def fake_exec(self):
+    self._name.setText("beta_renamed")
+    self._script.setPlainText("include <lib.scad>\\nused();\\nused();")
+    self._timeout.setValue(99)
+    self._set_vars.setPlainText('size = 10\\nlabel = "cap"')
+    self._accept()
+    return QDialog.DialogCode.Accepted if self.result_test() else QDialog.DialogCode.Rejected
+test_editor.TestEditDialog.exec = fake_exec
+tree.itemDoubleClicked.emit(beta, 0)
 app.processEvents()
-out["beta_line"] = cursor_line()
-out["beta_line_text"] = w._current_editor().toPlainText().splitlines()[cursor_line() - 1].strip()
-out["tabs_after_test"] = w._tabs.count()           # reuses the tab, does not stack
+text = open(suite).read()
+out["comment_survived"] = "a comment that must survive" in text
+out["config_survived"] = "timeout = 30" in text
+tests = {t.name: t for t in parse_scadtest_file(suite)}
+out["names_after_edit"] = sorted(tests)
+out["renamed_timeout"] = tests["beta_renamed"].timeout
+out["renamed_vars"] = tests["beta_renamed"].set_vars
+out["renamed_script_lines"] = tests["beta_renamed"].script.strip().splitlines()
+out["alpha_untouched"] = tests["alpha"].script.strip().splitlines()
 
-alpha = file_item.child(0)
-tree.itemDoubleClicked.emit(alpha, 0)
+# Add Test… on the same file.
+def add_exec(self):
+    self._name.setText("gamma")
+    self._script.setPlainText("include <lib.scad>\\nused();")
+    self._accept()
+    return QDialog.DialogCode.Accepted if self.result_test() else QDialog.DialogCode.Rejected
+test_editor.TestEditDialog.exec = add_exec
+tree.setCurrentItem(tree.topLevelItem(0))
+w._testing_pane._request_add()
 app.processEvents()
-out["alpha_line_text"] = w._current_editor().toPlainText().splitlines()[cursor_line() - 1].strip()
+out["names_after_add"] = sorted(t.name for t in parse_scadtest_file(suite))
+
+# A duplicate name is refused rather than silently overwriting.
+dlg = test_editor.TestEditDialog(None, existing_names=["alpha"])
+dlg._name.setText("alpha"); dlg._script.setPlainText("x();")
+dlg._result = None
+try:
+    dlg._accept()
+except Exception:
+    pass
+out["duplicate_refused"] = dlg.result_test() is None
+out["duplicate_complained"] = any("already a test" in str(b) for b in _boxes)
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
 
 
-def test_double_click_opens_the_test_file_and_scrolls_to_the_test():
-    proc = subprocess.run([sys.executable, "-c", OPEN_DRIVER], capture_output=True, text=True,
+def test_test_editor_round_trips_through_the_file():
+    proc = subprocess.run([sys.executable, "-c", EDIT_DRIVER], capture_output=True, text=True,
                           env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=240)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["opened_path"] == "t.scadtest" and out["is_the_toml"]
-    assert out["no_parse_error"] and out["never_parsed"], "TOML must not be rendered as OpenSCAD"
-    # Both test rows land on their own [[test]] header, not on [config]'s name.
-    assert out["beta_line_text"] == "[[test]]"
-    assert out["alpha_line_text"] == "[[test]]"
-    assert out["beta_line"] > 4, "beta is the second block, not the first"
-    assert out["tabs_after_test"] == out["tabs_after_file"], "one tab, reused"
+    assert out["rows_before_running"] == 1, "suites are listed before any run, so Add Test has a target"
+    assert out["file_row_inert"], "double-clicking a file row does nothing"
+    # Splicing one block leaves the rest of the file alone.
+    assert out["comment_survived"] and out["config_survived"]
+    assert out["alpha_untouched"] == ["include <lib.scad>", "used();"]
+    assert out["names_after_edit"] == ["alpha", "beta_renamed"], "a rename replaces, not duplicates"
+    assert out["renamed_timeout"] == 99
+    assert out["renamed_vars"] == {"size": 10, "label": "cap"}
+    assert out["renamed_script_lines"] == ["include <lib.scad>", "used();", "used();"]
+    assert out["names_after_add"] == ["alpha", "beta_renamed", "gamma"]
+    assert out["duplicate_refused"] and out["duplicate_complained"]

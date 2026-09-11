@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 KINDS = ("statement", "branch", "body")
@@ -103,6 +105,53 @@ class CoverageReport:
     def merge(self, other: "CoverageReport") -> None:
         self.merge_spans(other.spans.values())
 
+    def drop_nocov(self, read_source=None) -> int:
+        """Forget every span excluded by a `/* nocov */` marker, and every
+        span nested inside one. Returns how many were dropped.
+
+        The marker attaches to the LARGEST span starting on its line, which
+        is what makes it a block exclusion: putting one on an `if (...) {`
+        line takes the branch and both arms with it, and on a plain
+        statement takes just that statement. Dropping rather than
+        zero-weighting is deliberate -- excluded code should leave the
+        percentage alone, not count as covered.
+
+        The evaluator never sees these: the lexer skips comments, so this
+        reads the source itself. `read_source(origin) -> str | None`
+        defaults to reading the file.
+        """
+        if read_source is None:
+            def read_source(origin):
+                try:
+                    with open(origin, "r", encoding="utf-8") as f:
+                        return f.read()
+                except OSError:
+                    return None
+
+        by_origin: dict[str, list] = defaultdict(list)
+        for key, span in self.spans.items():
+            by_origin[key[0]].append((key, span))
+
+        dropped = 0
+        for origin, items in by_origin.items():
+            text = read_source(origin)
+            if not text:
+                continue
+            marked = nocov_lines(text)
+            if not marked:
+                continue
+            for line in marked:
+                on_line = [sp for _k, sp in items if sp["line"] == line]
+                if not on_line:
+                    continue
+                victim = max(on_line, key=lambda sp: sp["end"] - sp["start"])
+                lo, hi = victim["start"], victim["end"]
+                for key, span in items:
+                    if span["start"] >= lo and span["end"] <= hi:
+                        if self.spans.pop(key, None) is not None:
+                            dropped += 1
+        return dropped
+
     def drop_origins(self, predicate) -> None:
         """Forget every span whose origin `predicate` accepts -- the test
         snippets themselves under --test --coverage."""
@@ -133,6 +182,17 @@ class CoverageReport:
     @classmethod
     def from_json(cls, text: str) -> "CoverageReport":
         return cls.from_result(json.loads(text))
+
+
+# A marker excluding its statement or branch arm from coverage, and
+# everything nested inside it. `/*nocov*/` and `/* NoCov */` both count.
+_NOCOV_RE = re.compile(r"/\*\s*nocov\s*\*/", re.IGNORECASE)
+
+
+def nocov_lines(text: str) -> set[int]:
+    """1-based line numbers carrying a `/* nocov */` marker."""
+    return {i for i, line in enumerate(text.splitlines(), start=1)
+            if _NOCOV_RE.search(line)}
 
 
 def document_offset_map(source: bytes):

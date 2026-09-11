@@ -628,33 +628,6 @@ class _DetachedTabBar(QWidget):
         return self.tab_bar
 
 
-
-def _scadtest_line(text: str, name: str):
-    """1-based line of the `[[test]]` header whose block names `name`.
-
-    A .scadtest is TOML, but reading it with tomllib loses the line numbers,
-    and the file on screen is what has to be scrolled. Tracking the most
-    recent `[[test]]` header is also what keeps a `name` in `[config]` from
-    matching.
-    """
-    header = None
-    for i, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if line.startswith("[[") and line.rstrip().endswith("]]"):
-            header = i if line.replace(" ", "") == "[[test]]" else None
-            continue
-        if header is None or not line.startswith("name"):
-            continue
-        key, _, value = line.partition("=")
-        if key.strip() != "name":
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        if value == name:
-            return header
-    return None
-
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
@@ -937,7 +910,8 @@ class MainWindow(QMainWindow):
         self._testing_pane.run_requested.connect(self._run_tests)
         self._testing_pane.pick_dir_requested.connect(lambda: self._open_testing_pane())
         self._testing_pane.report_requested.connect(self._show_coverage_report)
-        self._testing_pane.open_requested.connect(self._open_test_file)
+        self._testing_pane.edit_requested.connect(self._edit_test)
+        self._testing_pane.new_file_requested.connect(self._new_test_file)
         self._testing_pane.overlay_toggled.connect(lambda _on: self._apply_coverage_overlays())
         self._test_run_job = None
 
@@ -1825,11 +1799,7 @@ class MainWindow(QMainWindow):
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        # A .scadtest is TOML, not OpenSCAD -- rendering one squiggles the
-        # whole file and logs a parse error. Opening one is a normal thing to
-        # do now that the Testing pane links to them.
-        if Path(path).suffix.lower() != ".scadtest":
-            self._render(tab, reframe=True)      # a new tab from a file
+        self._render(tab, reframe=True)      # a new tab from a file
 
     def _save_file(self):
         tab = self._current_tab()
@@ -2623,29 +2593,87 @@ class MainWindow(QMainWindow):
         if not directory:
             return
         files = find_test_files(directory)
-        self._testing_pane.set_directory(directory, len(files))
+        self._testing_pane.set_directory(directory, files)
         self._testing_dock.show()
         self._testing_dock.raise_()
         if not files:
             self.log(f"No .scadtest files under {directory}")
 
-    def _open_test_file(self, path: str, test_name=None):
-        """Double-click in the Testing pane: open the .scadtest in a tab, and
-        for a test row put the cursor on its `[[test]]` block."""
-        if not os.path.isfile(path):
-            self.log(f"{path}: no longer there — re-run to refresh the list.")
+    def _edit_test(self, path: str, test_name=None):
+        """Open the test editor on `test_name` in `path`, or on a new test
+        when it is None, and splice the result back into the file."""
+        from belfryscad.scadtest import (TestCase, format_test_block, parse_scadtest_file,
+                                         replace_test_block)
+        from belfryscad.window.test_editor import TestEditDialog
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            tests = parse_scadtest_file(path)
+        except (OSError, ValueError) as e:
+            QMessageBox.critical(self, "Test", f"Could not read {os.path.basename(path)}:\n{e}")
             return
-        self.open_file_by_path(path)
-        if not test_name:
+        names = [t.name for t in tests]
+        existing = next((t for t in tests if t.name == test_name), None)
+        if test_name and existing is None:
+            self.log(f"{test_name!r} is no longer in {os.path.basename(path)} — re-run to refresh.")
             return
-        editor = self._current_editor()
-        if editor is None:
+
+        dialog = TestEditDialog(existing, existing_names=names, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        line = _scadtest_line(editor.toPlainText(), test_name)
-        if line is None:
-            self.log(f"Could not find test {test_name!r} in {os.path.basename(path)}")
+        edited = dialog.result_test()
+        # replace_test_block appends when the name is not found, which is
+        # exactly what a new test needs -- and what a RENAME needs too, so
+        # the old block has to go first.
+        if existing is not None and existing.name != edited.name:
+            from belfryscad.scadtest import delete_test_block
+            text = delete_test_block(text, existing.name)
+        new_text = replace_test_block(text, edited.name, format_test_block(edited))
+        if not self._write_test_file(path, new_text):
             return
-        self._goto_source_line(line)
+        self.log(f"{'Added' if existing is None else 'Updated'} test {edited.name!r} "
+                 f"in {os.path.basename(path)}")
+        self._open_testing_pane(directory=self._testing_pane.directory())
+
+    def _new_test_file(self):
+        """Create an empty .scadtest in the tests directory."""
+        from belfryscad.scadtest import new_scadtest_text
+        directory = self._testing_pane.directory()
+        if not directory:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "New Test File", os.path.join(directory, "untitled.scadtest"),
+            "OpenSCAD tests (*.scadtest)")
+        if not path:
+            return
+        if not path.endswith(".scadtest"):
+            path += ".scadtest"
+        if os.path.exists(path):
+            QMessageBox.warning(self, "New Test File",
+                                f"{os.path.basename(path)} already exists.")
+            return
+        if not self._write_test_file(path, new_scadtest_text(os.path.basename(path))):
+            return
+        self.log(f"Created {os.path.basename(path)}")
+        self._open_testing_pane(directory=directory)
+        self._edit_test(path, None)      # a file with no tests in it is not useful
+
+    def _write_test_file(self, path: str, text: str) -> bool:
+        """Write a .scadtest, keeping any open tab of it in step."""
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            QMessageBox.critical(self, "Test", f"Could not write {os.path.basename(path)}:\n{e}")
+            return False
+        resolved = str(Path(path).resolve())
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab and tab.file_path and str(Path(tab.file_path).resolve()) == resolved:
+                tab.editor.setPlainText(text)
+                tab.is_modified = False
+                self._sync_tab_label(i, tab)
+        return True
 
     def _run_tests(self):
         """Run (or cancel) the Testing pane's directory on a worker thread."""
@@ -2662,7 +2690,7 @@ class MainWindow(QMainWindow):
             self.log(f"No .scadtest files under {directory}")
             return
         coverage = self._testing_pane.coverage_enabled()
-        self._testing_pane.clear_results()
+        self._testing_pane.set_directory(directory, files)   # refresh the file list
         self._testing_pane.set_running(True)
         self.log(f"Running {len(files)} test file(s)"
                  + (" with coverage…" if coverage else "…"))
