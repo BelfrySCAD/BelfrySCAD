@@ -124,6 +124,7 @@ No live preview. Full Manifold CSG processing runs when:
 - A **watched file changes on disk**, with **Design ▸ Automatic Reload and Render** on (`_on_watched_file_changed`; skipped for a tab with unsaved edits, which are never overwritten)
 - The user **accepts an AI proposal** in the chat pane (`_on_ai_proposal_accepted` goes through `replace_span` + `source_edited_externally`, the same path "Edit as..." uses)
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
+- **Preferences ▸ Viewport ▸ Cut faces** is toggled (`_apply_preferences`): the rule for which colour a `difference()` cut face takes is baked into the geometry by the evaluator (`keep_minuend_color`), so the current design re-renders to show it (#412; see `docs/rendering.md`)
 
 **"Render with Coverage"** and **"Capture Coverage"** (Design menu) collect which statements, branch arms and bodies ran (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
