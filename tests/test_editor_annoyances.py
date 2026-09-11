@@ -132,6 +132,29 @@ c = ed4.textCursor(); c.setPosition(starts[1] + len("Example")); ed4.setTextCurs
 ed4.insertPlainText("!")
 out["doc_second_line"] = ed4.toPlainText().split("\\n")[1]
 
+# --- #417 follow-up: wrapping, and the count's shape ------------------
+ed5 = CodeEditor()
+ed5.setPlainText("Ex one\\nEx two")
+bar5 = FindBar(ed5)
+bar5.show()
+bar5._find_input.setText("Ex")
+out["label_after_typing"] = bar5._match_label.text()
+labels = []
+for _ in range(4):
+    bar5._find_next()
+    labels.append(bar5._match_label.text())
+out["next_labels"] = labels                      # 1/2, 2/2, wrap, ...
+backwards = []
+for _ in range(2):
+    bar5._find_prev()
+    backwards.append(bar5._match_label.text())
+out["prev_labels"] = backwards
+# The count sits after the arrows, before Close.
+row = bar5._btn_next.parent().layout().itemAt(0).layout()
+out["row_order"] = [row.itemAt(i).widget().__class__.__name__ + ":" +
+                    (row.itemAt(i).widget().text() or "-")
+                    for i in range(row.count())][-3:]
+
 print(json.dumps(out))
 '''
 
@@ -199,3 +222,14 @@ def test_find_next_and_prev_run_from_the_cursor(driven):
     assert driven["next_after_click"] == 3
     assert driven["prev_after_click"] == 2
     assert driven["doc_second_line"] == "Example! two"
+
+
+def test_arrow_stepping_wraps_and_the_count_reads_n_slash_m(driven):
+    assert driven["label_after_typing"] == "1/2"
+    assert driven["next_labels"] == ["1/2", "2/2", "1/2", "2/2"]
+    assert driven["prev_labels"] == ["1/2", "2/2"]
+    # ... ◀ ▶ 2/2 ✕
+    kinds = [x.split(":")[0] for x in driven["row_order"]]
+    assert kinds == ["QPushButton", "QLabel", "QPushButton"]
+    assert driven["row_order"][0].endswith("▶")
+    assert driven["row_order"][2].endswith("✕")

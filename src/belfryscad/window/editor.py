@@ -672,6 +672,10 @@ class FindBar(QWidget):
         self._editor = editor
         self._matches: list[QTextCursor] = []
         self._current: int = -1
+        #: Where _go_to_current parked the caret, so a later step can tell
+        #: "still where I left it" from "the user has moved on". None until
+        #: something has been stepped to.
+        self._caret_after_step: int | None = None
         self._setup_ui()
         self.hide()
 
@@ -740,7 +744,6 @@ class FindBar(QWidget):
         # shrinking -- the buttons stay put either way.
         self._match_label.setMinimumWidth(0)
         self._match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        find_row.addWidget(self._match_label)
 
         self._btn_prev = QPushButton("◀")
         self._btn_next = QPushButton("▶")
@@ -761,14 +764,17 @@ class FindBar(QWidget):
         # and were being clipped at that size, while the single-glyph arrows
         # fit fine. Height stays fixed so the row keeps one baseline.
         fm = self.fontMetrics()
-        # Toggles first, then the arrows, then close: the arrows act on the
-        # search rather than configuring it, so they belong at the end of
-        # the group next to the field's results.
         for btn in (self._btn_case, self._btn_word, self._btn_regex,
                     self._btn_prev, self._btn_next, self._btn_close):
             btn.setFixedSize(max(22, fm.horizontalAdvance(btn.text()) + 12), 22)
             btn.setFlat(True)
-            find_row.addWidget(btn)
+        # Toggles first, then the arrows, then the count, then close: the
+        # arrows act on the search rather than configuring it, and the count
+        # reads as what they just did rather than as part of the field.
+        for w in (self._btn_case, self._btn_word, self._btn_regex,
+                  self._btn_prev, self._btn_next, self._match_label,
+                  self._btn_close):
+            find_row.addWidget(w)
 
         outer.addLayout(find_row)
 
@@ -1074,7 +1080,7 @@ class FindBar(QWidget):
         self._editor._find_selections = sels
         self._editor._refresh_extra_selections()
         n = len(self._matches)
-        self._match_label.setText(f"{self._current + 1} of {n}" if n else "")
+        self._match_label.setText(f"{self._current + 1}/{n}" if n else "")
 
     def _match_at_or_after(self, pos: int) -> int:
         """The first match starting at or after `pos`, wrapping to the top."""
@@ -1109,6 +1115,7 @@ class FindBar(QWidget):
         c.setPosition(self._matches[self._current].selectionEnd())
         self._editor.setTextCursor(c)
         self._editor.ensureCursorVisible()
+        self._caret_after_step = c.position()
 
     def _find_next(self):
         # From the CURSOR, not from the last match found (#417): scroll
@@ -1116,16 +1123,38 @@ class FindBar(QWidget):
         # are, not from wherever the search had got to.
         if not self._matches:
             return
-        self._current = self._match_at_or_after(self._editor.textCursor().position())
+        self._current = self._step_from(forward=True)
         self._update_highlights()
         self._go_to_current()
 
     def _find_prev(self):
         if not self._matches:
             return
-        self._current = self._match_before(self._editor.textCursor().position())
+        self._current = self._step_from(forward=False)
         self._update_highlights()
         self._go_to_current()
+
+    def _step_from(self, forward: bool) -> int:
+        """The match an arrow should move to.
+
+        Two cases, and the caret says which. If it is still where the last
+        step left it, the user has not moved since, so this is a plain step
+        on from the current match -- and stepping on from the last match
+        wraps round to the first. If the caret is anywhere else, the user
+        put it there and the search runs from it (#417).
+
+        Stepping by index rather than by position is what guarantees an
+        arrow always moves: searching from a caret the user parked at the
+        start of a match finds that same match again, which reads as a dead
+        button, and reads worst of all on the last match, where the step is
+        meant to wrap.
+        """
+        n = len(self._matches)
+        pos = self._editor.textCursor().position()
+        if self._caret_after_step is not None and pos == self._caret_after_step \
+                and 0 <= self._current < n:
+            return (self._current + (1 if forward else -1)) % n
+        return self._match_at_or_after(pos) if forward else self._match_before(pos)
 
     # ------------------------------------------------------------------
     # Replace logic
