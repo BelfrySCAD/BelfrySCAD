@@ -108,3 +108,24 @@ def test_the_resolved_extension_always_matches_the_resolved_path():
             path, ext = _resolve_export_format(name, chosen)
             assert ext in known
             assert path.lower().endswith(ext)
+
+
+def test_readme_lists_every_export_format():
+    """The README names the export formats in prose, so it is a hand-written
+    copy of a list the evaluator owns -- the exact shape that let `.off` go
+    missing from both the GUI and the CLI while every test passed, because
+    the copies were only ever compared to each other. Compare it to the
+    source of truth instead.
+    """
+    from pathlib import Path
+
+    from openscad_cpp_evaluator import export_extensions
+
+    readme = (Path(__file__).parent.parent / "README.md").read_text().lower()
+    # VRML is written under its own name, not its .wrl extension.
+    spelling = {"wrl": "vrml"}
+    missing = [
+        ext for ext in export_extensions()
+        if spelling.get(ext.lstrip(".").lower(), ext.lstrip(".").lower()) not in readme
+    ]
+    assert not missing, f"README does not mention export format(s): {missing}"
