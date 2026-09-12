@@ -36,13 +36,15 @@ _SAMPLE_POINT_SIZE = 16
 
 #: One of these per row, chosen by family so a face keeps its sentence
 #: however the table is sorted or filtered. The digits follow every one.
+#: "Jackdaws love my big sphinx of quartz" is deliberately absent -- it
+#: reads as a dirty euphemism, which is not what anyone wants to find
+#: while picking a font. The other sphinx pangram is fine.
 PANGRAMS = (
     "Waltz, bad nymph, for quick jigs vex.",
     "Glib jocks quiz nymph to vex dwarf.",
     "Sphinx of black quartz, judge my vow!",
     "How quickly daft jumping zebras vex!",
     "The five boxing wizards jump quickly.",
-    "Jackdaws love my big sphinx of quartz.",
     "Pack my box with five dozen liquor jugs.",
     "The quick brown fox jumps over the lazy dog.",
 )
