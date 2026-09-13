@@ -131,6 +131,21 @@ def find_bar_bg() -> str:
     return "#3A3A3A" if is_dark() else "#F3F3F3"
 
 
+def whitespace_marker_color() -> str:
+    """Trailing-space dots and the wrapped-line return arrows.
+
+    NOT guide_colors(): those are deliberately 1.3:1, a hint of structure
+    you are not meant to look at. A marker that says "there is something
+    here you cannot otherwise see" has to be seen.
+
+    Targeted at 2:1 -- half again the guides' 1.3 and enough to read, while
+    staying clearly quieter than the code it annotates. Matched across
+    themes the same way the guides are, rather than picked by eye: 1.98:1
+    for #B8B8B8 on white, 2.02:1 for #4A4A4A on the dark editor's #171717.
+    """
+    return "#4A4A4A" if is_dark() else "#B8B8B8"
+
+
 def find_match_colors() -> tuple[str, str, str, str]:
     """(current bg, current fg, other bg, other fg) for Find match highlights.
 

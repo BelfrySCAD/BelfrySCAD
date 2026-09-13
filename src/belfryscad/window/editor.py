@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 from belfryscad.window.ui_colors import (
     execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
     fold_arrow_color, guide_colors, gutter_colors, on_appearance_change,
+    whitespace_marker_color,
     syntax_colors,
 )
 
@@ -2177,8 +2178,8 @@ class CodeEditor(QPlainTextEdit):
         """
         painter = QPainter(self.viewport())
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(guide_colors()[0]))
-        r = max(1, self.fontMetrics().height() // 10)
+        painter.setBrush(QColor(whitespace_marker_color()))
+        r = max(1, self.fontMetrics().height() // 8)
         offset = self.contentOffset()
         height = self.viewport().height()
 
@@ -2210,7 +2211,7 @@ class CodeEditor(QPlainTextEdit):
         """A small hooked arrow at the right edge of every row that
         continues below -- every layout line of a block except its last."""
         painter = QPainter(self.viewport())
-        painter.setPen(QColor(guide_colors()[0]))
+        painter.setPen(QColor(whitespace_marker_color()))
         right = self.viewport().width() - 2
         fm = self.fontMetrics()
         w = max(4, fm.horizontalAdvance("0") - 2)
