@@ -136,13 +136,14 @@ def whitespace_marker_color() -> str:
 
     NOT guide_colors(): those are deliberately 1.3:1, a hint of structure
     you are not meant to look at. A marker that says "there is something
-    here you cannot otherwise see" has to be seen, so this is measured at
-    roughly 3:1 -- about 2.3x the guides -- and matched across themes the
-    same way they are: 3.03:1 for #949494 on white, 3.12:1 for #666666 on
-    the dark editor's #171717. Still well under the code's own contrast, so
-    it marks without competing.
+    here you cannot otherwise see" has to be seen.
+
+    Targeted at 2:1 -- half again the guides' 1.3 and enough to read, while
+    staying clearly quieter than the code it annotates. Matched across
+    themes the same way the guides are, rather than picked by eye: 1.98:1
+    for #B8B8B8 on white, 2.02:1 for #4A4A4A on the dark editor's #171717.
     """
-    return "#666666" if is_dark() else "#949494"
+    return "#4A4A4A" if is_dark() else "#B8B8B8"
 
 
 def find_match_colors() -> tuple[str, str, str, str]:
