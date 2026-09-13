@@ -200,9 +200,18 @@ rendered example images without saving or leaving the app.
 vendored **very nearly unchanged** under `src/belfryscad/docsgen/` — only its
 two OpenSCAD-launching modules (`imagemanager.py`, `logmanager.py`) are
 reimplemented, keeping the upstream names so nothing else needed editing, and
-the parser carries exactly one added line: `parse_lines` blanks `/* ... */`
+the parser carries two deliberate departures. `parse_lines` blanks `/* ... */`
 block comments first (`block_comments.py`), because a `//` inside one is not
-a documentation comment and upstream documents it anyway (#415). Keeping the
+a documentation comment and upstream documents it anyway (#415). And an error
+raised while reading a block's body now reports **the line at fault**:
+`DocsGenException` carries an optional `line`, `_parse_block` builds `origin`
+before the body loop rather than after it, and the handler prefers `e.line`.
+Upstream builds `origin` after that loop, so its own handler reads an
+unassigned local and dies with `UnboundLocalError` — the "body line has less
+indentation" error could not be reported at all, in the CLI or the Docs pane.
+Neither change alters a verdict: the same input still passes or fails exactly
+as upstream would have it, which is what keeps the pane's validation
+trustworthy. Keeping the
 parser otherwise byte-identical is what makes the pane's verdict trustworthy:
 it is the same validation a real docs build performs. Full
 details, including the camera/`--viewall` semantics and the APNG animation

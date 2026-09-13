@@ -13,9 +13,13 @@ from .logmanager import log_manager
 
 
 class DocsGenException(Exception):
-    def __init__(self, block="", message=""):
+    def __init__(self, block="", message="", line=None):
         self.block = block
         self.message = message
+        #: 1-based source line the problem is ON, when that is not simply
+        #: the line the block was declared at. "Somewhere in this block"
+        #: is poor guidance in a 1500-line library.
+        self.line = line
         super().__init__('{} "{}"'.format(self.message, self.block))
 
 
