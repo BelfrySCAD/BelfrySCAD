@@ -12,7 +12,7 @@ from PySide6.QtGui import (
     QDesktopServices,
 )
 from PySide6.QtCore import (
-    Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal,
+    Qt, QRect, QSize, QRegularExpression, QPoint, QPointF, QEvent, Signal,
     QStringListModel, QUrl,
 )
 
@@ -2089,24 +2089,122 @@ class CodeEditor(QPlainTextEdit):
 
     # -- Wrapped lines -------------------------------------------------
     #
-    # A marker sits at the right edge of every row that carries on below, so
-    # a wrapped line does not read as two separate statements.
+    # A wrapped line is shown the way OpenSCAD's editor shows one: the
+    # continuation rows are indented, and a marker sits at the right edge of
+    # every row that carries on below. Without both, a wrapped line reads as
+    # two separate statements.
     #
-    # OpenSCAD also INDENTS the continuation rows. That is not available
-    # here: QPlainTextEdit's layout ignores QTextBlockFormat's leftMargin
-    # and textIndent outright. Measured, rather than assumed -- the first
-    # row and its continuations both report x=4.0 for every combination of
-    # the two, while the same formats on a QTextEdit give 0.0 and 40.0. A
-    # hanging indent would mean changing the widget or writing a document
-    # layout, neither of which this is worth on its own.
+    # The indent is NOT a block format. QPlainTextEdit's layout ignores
+    # QTextBlockFormat's leftMargin and textIndent outright -- measured: the
+    # first row and its continuations both report x=4.0 for every
+    # combination of the two, while the same formats on a QTextEdit give 0.0
+    # and 40.0. What does work is re-running the block's own QTextLayout with
+    # our own line widths and positions. It has to happen AFTER Qt's own
+    # pass, which is lazy: doing it from a QPlainTextDocumentLayout subclass'
+    # documentChanged is too early and is simply discarded.
+
+    #: Continuation rows come in this many indent units.
+    _WRAP_INDENT_UNITS = 1
 
     def _wrapping(self) -> bool:
         return self.lineWrapMode() != QPlainTextEdit.LineWrapMode.NoWrap
 
+    def _wrap_indent(self) -> float:
+        return (QFontMetricsF(self.font()).horizontalAdvance(" ")
+                * self._indent_size * self._WRAP_INDENT_UNITS)
+
+    def _apply_wrap_indent(self):
+        """Give every visible wrapped block a hanging indent.
+
+        Only the blocks on screen, and only those not already right: a
+        re-layout is the expensive part, and most paints change nothing.
+        Widths come off the viewport, so this follows a resize with no
+        extra plumbing.
+        """
+        indent = self._wrap_indent()
+        width = self.viewport().width() - self.document().documentMargin() * 2
+        if width <= indent + 20:
+            return                      # too narrow to indent into
+        bottom = self.viewport().height()
+        offset = self.contentOffset()
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            if self.blockBoundingGeometry(block).translated(offset).top() > bottom:
+                break
+            layout = block.layout()
+            count = layout.lineCount()
+            if count > 1 and not self._already_indented(layout, indent):
+                layout.beginLayout()
+                y = 0.0
+                first = True
+                while True:
+                    line = layout.createLine()
+                    if not line.isValid():
+                        break
+                    x = 0.0 if first else indent
+                    line.setLineWidth(width - x)
+                    line.setPosition(QPointF(x, y))
+                    y += line.height()
+                    first = False
+                layout.endLayout()
+            block = block.next()
+
+    @staticmethod
+    def _already_indented(layout, indent: float) -> bool:
+        for i in range(layout.lineCount()):
+            want = 0.0 if i == 0 else indent
+            if abs(layout.lineAt(i).x() - want) > 0.01:
+                return False
+        return True
+
     def paintEvent(self, event):
+        if self._wrapping():
+            # Before super(), so the text is drawn from the indented layout
+            # rather than being moved under it.
+            self._apply_wrap_indent()
         super().paintEvent(event)
+        self._paint_trailing_spaces()
         if self._wrapping():
             self._paint_wrap_markers()
+
+    def _paint_trailing_spaces(self):
+        """A faint dot in every space that sits at the end of a line.
+
+        Only trailing ones: marking every space turns the whole file into
+        dot-matrix. Positions come from the text layout rather than from a
+        character width, so this stays right if the font is ever not
+        monospaced.
+        """
+        painter = QPainter(self.viewport())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(guide_colors()[0]))
+        r = max(1, self.fontMetrics().height() // 10)
+        offset = self.contentOffset()
+        height = self.viewport().height()
+
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            top = self.blockBoundingGeometry(block).translated(offset).top()
+            if top > height:
+                break
+            text = block.text()
+            start = len(text.rstrip())
+            if block.isVisible() and start < len(text):
+                layout = block.layout()
+                for i in range(start, len(text)):
+                    if text[i] != " ":
+                        continue        # a trailing TAB is the Tab key's business
+                    line = layout.lineForTextPosition(i)
+                    if not line.isValid():
+                        continue
+                    x = line.cursorToX(i)[0] if isinstance(line.cursorToX(i), tuple) \
+                        else line.cursorToX(i)
+                    y = top + line.y() + line.height() / 2
+                    if 0 <= y <= height:
+                        painter.drawEllipse(
+                            QPointF(x + offset.x() + self.fontMetrics().horizontalAdvance(" ") / 2, y),
+                            r, r)
+            block = block.next()
 
     def _paint_wrap_markers(self):
         """A small hooked arrow at the right edge of every row that
