@@ -209,11 +209,18 @@ before the body loop rather than after it, and the handler prefers `e.line`.
 Upstream builds `origin` after that loop, so its own handler reads an
 unassigned local and dies with `UnboundLocalError` — the "body line has less
 indentation" error could not be reported at all, in the CLI or the Docs pane.
-Neither change alters a verdict: the same input still passes or fails exactly
-as upstream would have it, which is what keeps the pane's validation
-trustworthy. Keeping the
-parser otherwise byte-identical is what makes the pane's verdict trustworthy:
-it is the same validation a real docs build performs. Full
+A third departure: `parse_links` leaves **code spans alone**, so `` `{{r}}` ``
+keeps its braces instead of being eaten as a link and reported as an Invalid
+Link — a library has to be able to document its own inline syntax (#435).
+That one *does* change a verdict, deliberately, because the old one was wrong:
+it errored on legitimate content. Its cost was measured against all of BOSL2
+before shipping — 42,963 doc lines, 106 carrying both a link and a code span,
+exactly one behaving differently (`nurbs.scad` writes a link inside backticks,
+which now renders literally).
+The first two alter no verdict at all: the same input passes or fails exactly
+as upstream would have it. Keeping the parser otherwise byte-identical is what
+makes the pane's verdict trustworthy: it is the same validation a real docs
+build performs. Full
 details, including the camera/`--viewall` semantics and the APNG animation
 support, in `docs/docsgen.md`.
 
