@@ -196,6 +196,11 @@ class DocsGenParser(object):
         body = []
         unstripped_body = []
         line_num += 1
+        # Built BEFORE the try: the body-reading loop below can raise, and
+        # this used to be assigned only after it, so the handler's own
+        # origin.file/origin.line lookup died with UnboundLocalError and the
+        # error was never reported at all.
+        origin = OriginInfo(src_file, hdr_line_num + 1)
 
         try:
             first_line = True
@@ -204,7 +209,10 @@ class DocsGenParser(object):
                 line = lines[line_num]
                 if not line.startswith("//" + (" " * indent)):
                     if line.startswith("//  "):
-                        raise DocsGenException(title, "Body line has less indentation than first line, while declaring block:")
+                        raise DocsGenException(
+                            title,
+                            "Body line has less indentation than the first body line, while declaring block:",
+                            line=line_num + 1)
                     break
                 line = line[2:]
                 if first_line:
@@ -216,7 +224,6 @@ class DocsGenParser(object):
                 line_num += 1
 
             parent = self.curr_parent
-            origin = OriginInfo(src_file, hdr_line_num+1)
             if title == "DefineHeader":
                 self._define_blocktype(subtitle, meta)
             elif title == "ColorScheme":
@@ -475,7 +482,9 @@ class DocsGenParser(object):
             line_num = self._skip_lines(lines, line_num)
 
         except DocsGenException as e:
-            errorlog.add_entry(origin.file, origin.line, str(e), ErrorLog.FAIL)
+            # e.line when the exception knows which line is at fault;
+            # otherwise the block's own declaration line.
+            errorlog.add_entry(origin.file, e.line or origin.line, str(e), ErrorLog.FAIL)
 
         return line_num
 
