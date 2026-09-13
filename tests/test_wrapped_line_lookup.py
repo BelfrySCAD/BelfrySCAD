@@ -75,6 +75,24 @@ out["trailing_counts"] = [
 ed2.repaint()          # the painter must not raise on any of them
 out["painted"] = True
 
+# Hanging indent: first row at 0, continuations in by one indent unit.
+ind = ed._wrap_indent()
+ed.repaint(); app.processEvents()
+lay0 = doc.findBlockByNumber(0).layout()
+out["indent_unit"] = round(ind, 1)
+out["wrapped_xs"] = [round(lay0.lineAt(i).x(), 1) for i in range(lay0.lineCount())]
+# Heights must still agree or the scrollbar drifts.
+dl = doc.documentLayout()
+out["height_consistent"] = all(
+    abs(dl.blockBoundingRect(doc.findBlockByNumber(b)).height()
+        - sum(doc.findBlockByNumber(b).layout().lineAt(i).height()
+              for i in range(doc.findBlockByNumber(b).layout().lineCount()))) < 5
+    for b in range(doc.blockCount()))
+# A viewport too narrow to indent into must not try.
+ed.resize(30, 200); ed.repaint(); app.processEvents()
+out["narrow_survived"] = True
+ed.resize(220, 400); ed.repaint(); app.processEvents()
+
 out["wrapping_on"] = ed._wrapping()
 out["marker_rows"] = sum(max(0, doc.findBlockByNumber(b).layout().lineCount() - 1)
                          for b in range(doc.blockCount()))
@@ -112,5 +130,13 @@ def test_lookups_use_source_lines_not_wrapped_rows():
     # 3 / 0 / 2 / 3 / 1, then the empty last block.
     assert out["trailing_counts"][:5] == [3, 0, 2, 3, 1], out["trailing_counts"]
     assert out["painted"]
+    # The first row stays put; every continuation comes in one unit.
+    assert out["indent_unit"] > 0
+    xs = out["wrapped_xs"]
+    assert len(xs) > 1, "the fixture's first line must wrap"
+    assert xs[0] == 0.0, xs
+    assert all(x == out["indent_unit"] for x in xs[1:]), xs
+    assert out["height_consistent"], "block heights must match their lines"
+    assert out["narrow_survived"], "a viewport narrower than the indent must not break"
     assert out["wrapping_on"] and out["marker_rows"] > 0
     assert not out["wrapping_off"] and out["rows_without_wrap"] == 0
