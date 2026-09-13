@@ -92,7 +92,29 @@ class GenericBlock(object):
     def get_link(self, target, currfile=None, literalize=False, html=False):
         return self.title
 
+    #: A markdown code span: a run of backticks, then anything, then a run
+    #: of the SAME length. An unmatched backtick simply does not match, so
+    #: it cannot swallow the rest of the line.
+    _code_pat = re.compile(r"(`+)(.*?)\1")
+
     def parse_links(self, line, controller, target, html=False):
+        """Resolve {{links}} -- but not inside a code span.
+
+        Backticked text is meant to be shown as typed. `{{r}}` is a literal
+        the reader is supposed to copy, not a link to an item called `r`:
+        before this it lost its braces AND logged "Invalid Link" as an
+        error, so a library could not document its own inline syntax (#435).
+        """
+        out = []
+        pos = 0
+        for m in self._code_pat.finditer(line):
+            out.append(self._parse_links_in(line[pos:m.start()], controller, target, html))
+            out.append(m.group(0))          # verbatim, braces and all
+            pos = m.end()
+        out.append(self._parse_links_in(line[pos:], controller, target, html))
+        return "".join(out)
+
+    def _parse_links_in(self, line, controller, target, html=False):
         oline = ""
         while line:
             m = self._link_pat.match(line)
@@ -110,7 +132,6 @@ class GenericBlock(object):
                     term = controller.defn_aliases[name]
                     oline += target.get_link(name, anchor=term.lower(), file="Glossary", literalize=literalize, html=html)
                 else:
-                    print(controller.definitions)
                     msg = "Invalid Link {{{{{0}}}}}".format(name)
                     errorlog.add_entry(self.origin.file, self.origin.line, msg, ErrorLog.FAIL)
                     oline += name
