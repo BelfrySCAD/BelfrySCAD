@@ -12,7 +12,7 @@ from PySide6.QtGui import (
     QDesktopServices,
 )
 from PySide6.QtCore import (
-    Qt, QRect, QSize, QRegularExpression, QPoint, QEvent, Signal,
+    Qt, QRect, QSize, QRegularExpression, QPoint, QPointF, QEvent, Signal,
     QStringListModel, QUrl,
 )
 
@@ -2105,8 +2105,48 @@ class CodeEditor(QPlainTextEdit):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        self._paint_trailing_spaces()
         if self._wrapping():
             self._paint_wrap_markers()
+
+    def _paint_trailing_spaces(self):
+        """A faint dot in every space that sits at the end of a line.
+
+        Only trailing ones: marking every space turns the whole file into
+        dot-matrix. Positions come from the text layout rather than from a
+        character width, so this stays right if the font is ever not
+        monospaced.
+        """
+        painter = QPainter(self.viewport())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(guide_colors()[0]))
+        r = max(1, self.fontMetrics().height() // 10)
+        offset = self.contentOffset()
+        height = self.viewport().height()
+
+        block = self.firstVisibleBlock()
+        while block.isValid():
+            top = self.blockBoundingGeometry(block).translated(offset).top()
+            if top > height:
+                break
+            text = block.text()
+            start = len(text.rstrip())
+            if block.isVisible() and start < len(text):
+                layout = block.layout()
+                for i in range(start, len(text)):
+                    if text[i] != " ":
+                        continue        # a trailing TAB is the Tab key's business
+                    line = layout.lineForTextPosition(i)
+                    if not line.isValid():
+                        continue
+                    x = line.cursorToX(i)[0] if isinstance(line.cursorToX(i), tuple) \
+                        else line.cursorToX(i)
+                    y = top + line.y() + line.height() / 2
+                    if 0 <= y <= height:
+                        painter.drawEllipse(
+                            QPointF(x + offset.x() + self.fontMetrics().horizontalAdvance(" ") / 2, y),
+                            r, r)
+            block = block.next()
 
     def _paint_wrap_markers(self):
         """A small hooked arrow at the right edge of every row that

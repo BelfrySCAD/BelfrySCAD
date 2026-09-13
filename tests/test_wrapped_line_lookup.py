@@ -63,6 +63,18 @@ ed.scroll_to_line(3)
 out["scrolled_block_text"] = ed.textCursor().block().text()
 
 # Wrap markers: one per row that carries on below, never on a last row.
+# Trailing spaces: which lines have them, and how many.
+ed2 = CodeEditor()
+ed2.setPlainText("cube(1);   \\nsphere(2);\\nx = 1;  \\n   \\n// c \\n")
+ed2.resize(400, 300); ed2.show()
+for _ in range(10): app.processEvents(); time.sleep(0.01)
+d2 = ed2.document()
+out["trailing_counts"] = [
+    len(d2.findBlockByNumber(b).text()) - len(d2.findBlockByNumber(b).text().rstrip(" "))
+    for b in range(d2.blockCount())]
+ed2.repaint()          # the painter must not raise on any of them
+out["painted"] = True
+
 out["wrapping_on"] = ed._wrapping()
 out["marker_rows"] = sum(max(0, doc.findBlockByNumber(b).layout().lineCount() - 1)
                          for b in range(doc.blockCount()))
@@ -97,5 +109,8 @@ def test_lookups_use_source_lines_not_wrapped_rows():
 
     # One marker per continuing row. The long first line wraps, so there is
     # at least one; with wrapping off there are none to draw.
+    # 3 / 0 / 2 / 3 / 1, then the empty last block.
+    assert out["trailing_counts"][:5] == [3, 0, 2, 3, 1], out["trailing_counts"]
+    assert out["painted"]
     assert out["wrapping_on"] and out["marker_rows"] > 0
     assert not out["wrapping_off"] and out["rows_without_wrap"] == 0
