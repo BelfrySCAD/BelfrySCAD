@@ -1510,7 +1510,12 @@ class CodeEditor(QPlainTextEdit):
         fmt = QTextCharFormat()
         fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
         fmt.setUnderlineColor(QColor("#F44747"))
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         cursor_start = block.position() + max(0, col - 1)
@@ -2045,7 +2050,12 @@ class CodeEditor(QPlainTextEdit):
 
     def scroll_to_line(self, line: int, margin: int = 5):
         """Scroll so that *line* (1-indexed) is visible with *margin* lines of context."""
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         cursor = self.textCursor()
@@ -2060,12 +2070,69 @@ class CodeEditor(QPlainTextEdit):
             sb = self.verticalScrollBar()
             sb.setValue(scroll_to)
 
+    # -- Wrapped lines -------------------------------------------------
+    #
+    # A marker sits at the right edge of every row that carries on below, so
+    # a wrapped line does not read as two separate statements.
+    #
+    # OpenSCAD also INDENTS the continuation rows. That is not available
+    # here: QPlainTextEdit's layout ignores QTextBlockFormat's leftMargin
+    # and textIndent outright. Measured, rather than assumed -- the first
+    # row and its continuations both report x=4.0 for every combination of
+    # the two, while the same formats on a QTextEdit give 0.0 and 40.0. A
+    # hanging indent would mean changing the widget or writing a document
+    # layout, neither of which this is worth on its own.
+
+    def _wrapping(self) -> bool:
+        return self.lineWrapMode() != QPlainTextEdit.LineWrapMode.NoWrap
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._wrapping():
+            self._paint_wrap_markers()
+
+    def _paint_wrap_markers(self):
+        """A small hooked arrow at the right edge of every row that
+        continues below -- every layout line of a block except its last."""
+        painter = QPainter(self.viewport())
+        painter.setPen(QColor(guide_colors()[0]))
+        right = self.viewport().width() - 2
+        fm = self.fontMetrics()
+        w = max(4, fm.horizontalAdvance("0") - 2)
+        h = max(4, fm.height() // 3)
+
+        block = self.firstVisibleBlock()
+        offset = self.contentOffset()
+        bottom_limit = self.viewport().height()
+        while block.isValid():
+            top = self.blockBoundingGeometry(block).translated(offset).top()
+            if top > bottom_limit:
+                break
+            if block.isVisible():
+                layout = block.layout()
+                for i in range(layout.lineCount() - 1):   # not the last row
+                    line = layout.lineAt(i)
+                    y = top + line.y() + line.height() / 2
+                    if 0 <= y <= bottom_limit:
+                        x = right - w
+                        # ⏎ : along the top, down, then a head pointing left.
+                        painter.drawLine(int(x + w), int(y - h), int(x + w), int(y))
+                        painter.drawLine(int(x), int(y), int(x + w), int(y))
+                        painter.drawLine(int(x), int(y), int(x + h / 2), int(y - h / 2))
+                        painter.drawLine(int(x), int(y), int(x + h / 2), int(y + h / 2))
+            block = block.next()
+
     def set_execution_line(self, line: int):
         """Highlight the currently executing line (1-indexed)."""
         fmt = QTextCharFormat()
         fmt.setBackground(QColor(execution_line_color()))
         fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         sel = QTextEdit.ExtraSelection()
