@@ -23,12 +23,9 @@ _COMPONENTS = ("openscad_cpp_evaluator", "PySide6", "moderngl", "manifold3d", "n
 
 
 def _version_of(package: str) -> str:
-    import importlib.metadata
+    from belfryscad.versions import package_version
 
-    try:
-        return importlib.metadata.version(package)
-    except importlib.metadata.PackageNotFoundError:
-        return "not installed"
+    return package_version(package, default="not installed")
 
 
 def about_info() -> dict:
