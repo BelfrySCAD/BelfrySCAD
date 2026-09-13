@@ -333,23 +333,26 @@ def _send_ai_prompt(window, prompt: str):
 
 
 def _belfryscad_version() -> str:
-    import importlib.metadata
-    try:
-        return importlib.metadata.version("belfryscad")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+    from belfryscad.versions import package_version
+    return package_version("belfryscad")
 
 
 def _print_info():
     import platform
     print(f"BelfrySCAD {_belfryscad_version()}")
     print(f"Python {platform.python_version()} ({platform.platform()})")
+    from belfryscad.versions import duplicate_installs, package_version
     for pkg in ("PySide6", "moderngl", "openscad_cpp_evaluator", "manifold3d", "numpy"):
-        import importlib.metadata
-        try:
-            print(f"{pkg} {importlib.metadata.version(pkg)}")
-        except importlib.metadata.PackageNotFoundError:
-            print(f"{pkg} not installed")
+        print(f"{pkg} {package_version(pkg, default='not installed')}")
+    # Said out loud rather than silently resolved: two of these side by side
+    # means an installer left the old one behind, and that is worth knowing
+    # before anything else in a bug report is believed (#411).
+    for pkg in ("belfryscad", "openscad_cpp_evaluator"):
+        others = duplicate_installs(pkg)
+        if others:
+            print(f"WARNING: {len(others)} installs of {pkg} are visible at once "
+                  f"({', '.join(others)}); the newest is the one running. "
+                  f"Uninstall the older entries.")
 
 
 #: Where an unexplained exit leaves its explanation. Next to the docs
