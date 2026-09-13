@@ -61,6 +61,16 @@ out["error_block_text"] = esel.cursor.block().text()
 # And scroll_to_line, which moves the cursor to the target block.
 ed.scroll_to_line(3)
 out["scrolled_block_text"] = ed.textCursor().block().text()
+
+# Wrap markers: one per row that carries on below, never on a last row.
+out["wrapping_on"] = ed._wrapping()
+out["marker_rows"] = sum(max(0, doc.findBlockByNumber(b).layout().lineCount() - 1)
+                         for b in range(doc.blockCount()))
+ed.setLineWrapMode(ed.LineWrapMode.NoWrap)
+for _ in range(10): app.processEvents(); time.sleep(0.01)
+out["wrapping_off"] = ed._wrapping()
+out["rows_without_wrap"] = sum(max(0, doc.findBlockByNumber(b).layout().lineCount() - 1)
+                               for b in range(doc.blockCount()))
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
@@ -84,3 +94,8 @@ def test_lookups_use_source_lines_not_wrapped_rows():
     assert out["exec_block_text"] == "cube(1);"
     assert out["error_block_text"] == "cube(1);"
     assert out["scrolled_block_text"] == "// short comment", "line 3"
+
+    # One marker per continuing row. The long first line wraps, so there is
+    # at least one; with wrapping off there are none to draw.
+    assert out["wrapping_on"] and out["marker_rows"] > 0
+    assert not out["wrapping_off"] and out["rows_without_wrap"] == 0
