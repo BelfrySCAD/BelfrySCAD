@@ -1710,7 +1710,15 @@ class CodeEditor(QPlainTextEdit):
                 self.setTextCursor(cursor)
                 return
         if event.key() == Qt.Key.Key_Tab and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self._indent_lines()
+            # Tab indents LINES only when lines are selected. With nothing
+            # selected it types, like it does in every other editor -- it
+            # used to indent the line the cursor happened to be on, so
+            # pressing it after `x=0;` moved the statement instead of
+            # inserting anything (#433).
+            if self.textCursor().hasSelection():
+                self._indent_lines()
+            else:
+                self._insert_indent_at_cursor()
             return
         if event.key() == Qt.Key.Key_Backtab:
             self._unindent_lines()
@@ -1860,6 +1868,15 @@ class CodeEditor(QPlainTextEdit):
             pad = self._next_indent_stop(width) - width
             QTextCursor(block).insertText(" " * pad)
         cursor.endEditBlock()
+
+    def _insert_indent_at_cursor(self):
+        """Spaces up to the next stop, measured from the CURSOR's column --
+        so Tab at column 5 with size 4 adds 3, landing on 8, rather than
+        always adding a full level and leaving the line off-grid."""
+        cursor = self.textCursor()
+        col = cursor.positionInBlock()
+        cursor.insertText(" " * (self._next_indent_stop(col) - col))
+        self.setTextCursor(cursor)
 
     def _unindent_lines(self):
         # Mirror of _indent_lines: back to the previous stop, so an off-grid
