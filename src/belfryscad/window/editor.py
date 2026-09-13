@@ -1510,7 +1510,12 @@ class CodeEditor(QPlainTextEdit):
         fmt = QTextCharFormat()
         fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
         fmt.setUnderlineColor(QColor("#F44747"))
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         cursor_start = block.position() + max(0, col - 1)
@@ -2045,7 +2050,12 @@ class CodeEditor(QPlainTextEdit):
 
     def scroll_to_line(self, line: int, margin: int = 5):
         """Scroll so that *line* (1-indexed) is visible with *margin* lines of context."""
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         cursor = self.textCursor()
@@ -2065,7 +2075,12 @@ class CodeEditor(QPlainTextEdit):
         fmt = QTextCharFormat()
         fmt.setBackground(QColor(execution_line_color()))
         fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        block = self.document().findBlockByLineNumber(line - 1)
+        # findBlockByNumber, NOT findBlockByLineNumber: the latter counts
+        # LAYOUT lines, so with word wrap on a long line occupies several and
+        # every lookup below it lands on an earlier block -- the debugger
+        # highlighting a blank line or a comment (#432). Blocks are source
+        # lines whatever the wrapping.
+        block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
         sel = QTextEdit.ExtraSelection()
