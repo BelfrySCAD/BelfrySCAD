@@ -1,11 +1,12 @@
-"""The AppImage Qt deduplication, on a fake AppDir."""
+"""The AppImage library fixes, on a fake AppDir."""
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from dedupe_appimage_qt import DEPLOY_LIB, WHEEL_QT_LIB, dedupe   # noqa: E402
+from fix_appimage_libs import (DEPLOY_LIB, WHEEL_QT_LIB, dedupe,   # noqa: E402
+                               drop_split_libraries)
 
 
 def _appdir(tmp_path, wheel_libs, deployed_libs):
@@ -56,3 +57,27 @@ def test_a_moved_layout_reports_nothing_rather_than_crashing(tmp_path):
     empty = tmp_path / "BelfrySCAD.AppDir"
     empty.mkdir()
     assert dedupe(empty) == (0, 0)
+
+
+def test_the_bundled_libxkbcommon_is_dropped(tmp_path):
+    """Its -x11 companion is not bundled, so pairing a bundled core half with
+    the host's current -x11 half segfaults Qt at startup (#430)."""
+    appdir = _appdir(tmp_path, {}, {"libxkbcommon.so.0": b"old", "libQt6Core.so.6": b"q"})
+    removed = drop_split_libraries(appdir)
+    assert removed == [f"{DEPLOY_LIB}/libxkbcommon.so.0"]
+    assert not (appdir / DEPLOY_LIB / "libxkbcommon.so.0").exists()
+    # Nothing else is touched.
+    assert (appdir / DEPLOY_LIB / "libQt6Core.so.6").exists()
+
+
+def test_glib_is_left_alone(tmp_path):
+    """Bundled as a complete set, so no half comes from the host."""
+    appdir = _appdir(tmp_path, {}, {"libglib-2.0.so.0": b"g", "libgio-2.0.so.0": b"g"})
+    assert drop_split_libraries(appdir) == []
+    assert (appdir / DEPLOY_LIB / "libglib-2.0.so.0").exists()
+
+
+def test_dropping_is_idempotent(tmp_path):
+    appdir = _appdir(tmp_path, {}, {"libxkbcommon.so.0": b"old"})
+    assert len(drop_split_libraries(appdir)) == 1
+    assert drop_split_libraries(appdir) == []

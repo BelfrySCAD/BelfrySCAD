@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replace an AppDir's duplicated Qt libraries with symlinks.
+"""Two fixes to an AppDir's bundled libraries, applied before it is packed.
 
 briefcase hands linuxdeploy every folder in the AppDir that contains a `.so`
 (`appimage.py`: `--deploy-deps-only` per folder). One of them is PySide6's,
@@ -21,13 +21,33 @@ the dynamic loader already resolves all of Qt to whichever was loaded first,
 which is always `usr/lib`'s (Python imports PySide6 long before any plugin is
 dlopened).
 
-Usage: dedupe_appimage_qt.py <AppDir>
+The second fix drops libraries that MUST come from the host. A bundled
+library is safe only if everything that links against it is bundled too. Qt
+loads `libxkbcommon-x11.so.0`, which the wheel does not ship and linuxdeploy
+therefore never copied -- so the host's current `-x11` half was being paired
+with the bundle's older core half, and `xkb_x11_keymap_new_from_device`
+walked off the end of it. Every Qt app in the AppImage segfaulted at
+`QApplication()` on any distro new enough for the two halves to have
+diverged (#430).
+
+Reproduced and fixed on CI, not reasoned about: the released AppImage exits
+139 under xvfb as shipped, and prints "qt ok" with this one file removed.
+
+Note glib/gio/gobject are NOT in that category and are left alone -- they
+are bundled as a complete set, so nothing pairs a bundled half with a host
+half.
+
+Usage: fix_appimage_libs.py <AppDir>
 """
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
+
+#: Bundled libraries whose companions are not bundled, so both halves have
+#: to come from the host. Matched as `<name>.so*`.
+SPLIT_LIBRARIES = ("libxkbcommon",)
 
 #: Where the wheel keeps its Qt, and where linuxdeploy puts its copies.
 WHEEL_QT_LIB = "usr/app_packages/PySide6/Qt/lib"
@@ -62,6 +82,20 @@ def dedupe(appdir: Path) -> tuple[int, int]:
     return count, saved
 
 
+def drop_split_libraries(appdir: Path) -> list:
+    """Delete the bundled halves of libraries whose other half is not
+    bundled. Returns the paths removed."""
+    removed = []
+    lib = appdir / DEPLOY_LIB
+    if not lib.is_dir():
+        return removed
+    for stem in SPLIT_LIBRARIES:
+        for path in sorted(lib.glob(f"{stem}.so*")):
+            path.unlink()
+            removed.append(str(path.relative_to(appdir)))
+    return removed
+
+
 def main(argv):
     if len(argv) != 2:
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
@@ -72,6 +106,8 @@ def main(argv):
         return 1
     count, saved = dedupe(appdir)
     print(f"Deduplicated {count} Qt libraries, {saved / 1048576:.0f}MB reclaimed.")
+    for path in drop_split_libraries(appdir):
+        print(f"Dropped {path} -- must come from the host (#430).")
     # Nothing to do is not a failure -- but it IS worth saying loudly, since
     # it means the layout moved and this script has quietly stopped working.
     if count == 0:

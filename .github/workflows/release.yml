@@ -94,8 +94,9 @@ jobs:
       # the copy the wheel already shipped -- 129 libraries twice, most of the
       # download. `build` has populated the AppDir and packed it by now; this
       # deduplicates the tree and repacks, so `package` picks up the smaller
-      # image. See scripts/dedupe_appimage_qt.py for why this symlinks rather
-      # than deletes.
+      # image. It also drops libxkbcommon, whose -x11 half is not bundled and
+      # which segfaulted Qt at startup on newer distros (#430). See
+      # scripts/fix_appimage_libs.py.
       - name: Drop the duplicate Qt and repack
         run: |
           set -euo pipefail
@@ -107,7 +108,7 @@ jobs:
           test -n "$IMAGE" -a -n "$APPDIR" || { echo "AppImage/AppDir not found"; exit 1; }
           BEFORE=$(stat -c%s "$IMAGE")
 
-          python3 scripts/dedupe_appimage_qt.py "$APPDIR"
+          python3 scripts/fix_appimage_libs.py "$APPDIR"
 
           # Fetched rather than reused: linuxdeploy carries appimagetool
           # inside its own AppImage and extracts it to a temp directory
@@ -128,12 +129,27 @@ jobs:
 
       # The AppImage is the one artifact that cannot be smoke-tested by
       # building it, so run it. --version exits without needing a display.
+      #
+      # And then start Qt for real. --version never loads the platform plugin,
+      # which is why #430 -- a segfault in QApplication() on every distro
+      # newer than the build container -- shipped in four releases with this
+      # job green throughout.
       - name: Check the repacked AppImage runs
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 libxkbcommon0 \
+              libegl1 libgl1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+              libxcb-shape0 libxcb-xinerama0
           IMAGE="$(find build -name '*.AppImage' -type f | head -1)"
           chmod +x "$IMAGE"
           APPIMAGE_EXTRACT_AND_RUN=1 "$IMAGE" --version
+
+          "$IMAGE" --appimage-extract > /dev/null
+          cd squashfs-root
+          xvfb-run -a env PYTHONPATH=usr/app:usr/app_packages \
+              usr/python/bin/python3 -u -s -X utf8 \
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
 
       - name: Package Linux AppImage
         run: uv run --no-sync --python 3.12 briefcase package linux appimage
