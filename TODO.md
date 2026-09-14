@@ -26,15 +26,3 @@
   `belfryscad --test tests/*.scadtest`. Needs belfryscad with
   openscad_cpp_evaluator >= 1.3.0.
 
-- Stop shipping Qt twice in the AppImage. `BelfrySCAD-1.23.14-x86_64.AppImage`
-  is 343MB, and ~300MB of that is **129 Qt libraries present in two copies**:
-  the PySide6 wheel's own under `usr/app_packages/PySide6/Qt/lib/`, and
-  linuxdeploy's stripped-and-patched copies under `usr/lib/`. Same SONAME, same
-  Qt 6.9.3, and PySide6's `RUNPATH` lists `$ORIGIN/../../../../lib` (= `usr/lib`)
-  ahead of `$ORIGIN`, so the loader dedups by SONAME and the `usr/lib` copy is
-  the one that loads -- consistently, for every module. **Harmless, just dead
-  weight**, and explicitly *not* the cause of #430 (checked while investigating
-  it). The fix is on the briefcase/linuxdeploy side: stop it copying libraries it
-  finds inside `app_packages`, or drop the wheel's `Qt/lib` after the bundle is
-  built. Verify by re-running the duplicate scan on the built AppImage rather
-  than trusting the size.
