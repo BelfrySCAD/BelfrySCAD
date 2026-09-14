@@ -92,7 +92,9 @@ def drop_split_libraries(appdir: Path) -> list:
     for stem in SPLIT_LIBRARIES:
         for path in sorted(lib.glob(f"{stem}.so*")):
             path.unlink()
-            removed.append(str(path.relative_to(appdir)))
+            # as_posix: an AppDir path is POSIX whatever builds it, and this
+            # string is both printed and asserted on.
+            removed.append(path.relative_to(appdir).as_posix())
     return removed
 
 
