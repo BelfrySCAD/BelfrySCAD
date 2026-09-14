@@ -1,0 +1,121 @@
+# Diagnostic only: reproduces #411 on a real Windows box.
+#
+# The reporter installs "for all users" every time, so the per-user versus
+# per-machine explanation is out -- two same-scope installs still stack, and
+# Programs and Features ends up listing both. Nothing about that can be
+# checked from macOS, and the MSI tables have looked correct every time they
+# were read statically, so the question is what Windows Installer actually
+# does at run time.
+#
+# Never runs on its own: dispatch it, read the summary, throw it away when
+# #411 is closed.
+name: MSI upgrade probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_version:
+        description: "Version to install first (no leading v)"
+        default: "1.18.6"
+      new_version:
+        description: "Version to install over it"
+        default: "1.23.2"
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download both MSIs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${{ inputs.old_version }}" -p "*.msi" -D old
+          gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
+          Get-ChildItem old, new | Format-Table Name, Length
+
+      # Read statically first: if the tables disagree, the install is not
+      # where the answer is.
+      - name: Compare the MSI upgrade tables
+        run: |
+          function Get-MsiFacts($path) {
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $db = $installer.GetType().InvokeMember(
+              "OpenDatabase", "InvokeMethod", $null, $installer, @($path, 0))
+            function Query($sql) {
+              $view = $db.GetType().InvokeMember(
+                "OpenView", "InvokeMethod", $null, $db, @($sql))
+              $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null)
+              $rows = @()
+              while ($true) {
+                $rec = $view.GetType().InvokeMember(
+                  "Fetch", "InvokeMethod", $null, $view, $null)
+                if ($null -eq $rec) { break }
+                $count = $rec.GetType().InvokeMember(
+                  "FieldCount", "GetProperty", $null, $rec, $null)
+                $vals = @()
+                for ($i = 1; $i -le $count; $i++) {
+                  $vals += $rec.GetType().InvokeMember(
+                    "StringData", "GetProperty", $null, $rec, @($i))
+                }
+                $rows += ,$vals
+              }
+              $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null)
+              return $rows
+            }
+            Write-Host "=== $path ==="
+            foreach ($p in @("ProductCode", "UpgradeCode", "ProductVersion",
+                             "ProductName", "ALLUSERS", "MSIINSTALLPERUSER")) {
+              $r = Query "SELECT Value FROM Property WHERE Property='$p'"
+              $v = if ($r.Count) { $r[0][0] } else { "(unset)" }
+              Write-Host ("  {0,-18} {1}" -f $p, $v)
+            }
+            Write-Host "  Upgrade table:"
+            foreach ($row in Query "SELECT UpgradeCode,VersionMin,VersionMax,Attributes,ActionProperty FROM Upgrade") {
+              Write-Host ("    code={0} min={1} max={2} attrs={3} prop={4}" -f $row)
+            }
+            Write-Host "  Upgrade-related sequencing:"
+            foreach ($row in Query "SELECT Action,Sequence FROM InstallExecuteSequence") {
+              if ($row[0] -match "RemoveExistingProducts|FindRelatedProducts|MigrateFeatureStates|InstallValidate") {
+                Write-Host ("    {0,-24} {1}" -f $row[0], $row[1])
+              }
+            }
+          }
+          Get-MsiFacts (Get-ChildItem old/*.msi)[0].FullName
+          Get-MsiFacts (Get-ChildItem new/*.msi)[0].FullName
+
+      - name: Install the old version for all users
+        run: |
+          $msi = (Get-ChildItem old/*.msi)[0].FullName
+          $p = Start-Process msiexec -Wait -PassThru -ArgumentList `
+            "/i","`"$msi`"","/qn","ALLUSERS=1","/l*v","$PWD\old-install.log"
+          Write-Host "exit=$($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Get-Content old-install.log -Tail 40; exit 1 }
+
+      - name: State after the first install
+        run: ./.github/scripts/msi_state.ps1 -Label "after ${{ inputs.old_version }}"
+
+      - name: Install the new version over it, same scope
+        run: |
+          $msi = (Get-ChildItem new/*.msi)[0].FullName
+          $p = Start-Process msiexec -Wait -PassThru -ArgumentList `
+            "/i","`"$msi`"","/qn","ALLUSERS=1","/l*v","$PWD\new-install.log"
+          Write-Host "exit=$($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Get-Content new-install.log -Tail 40; exit 1 }
+
+      - name: State after the upgrade -- the actual question
+        run: ./.github/scripts/msi_state.ps1 -Label "after ${{ inputs.new_version }}" -Verdict
+
+      - name: What the installer decided about the older product
+        run: |
+          Write-Host "=== lines naming the upgrade actions ==="
+          Select-String -Path new-install.log `
+            -Pattern "FindRelatedProducts|RemoveExistingProducts|MigrateFeatureStates|Found related product|Upgrade code|ActionProperty|Disallowing installation|SELMGR" `
+            | ForEach-Object { $_.Line.Trim() } | Select-Object -First 60
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: msi-logs
+          path: "*.log"
