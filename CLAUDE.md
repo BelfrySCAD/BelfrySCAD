@@ -196,6 +196,13 @@ pane (View ▸ Show Docs) runs the identical code over the live editor buffer,
 so a library author sees the formatted docs, the validation errors and the
 rendered example images without saving or leaving the app.
 
+A library previewed from a checkout that is **not** in the libraries folder
+(a clone, a worktree, a PR review) would render its examples against the
+*installed* copy of itself, silently -- its examples include it by name.
+`belfryscad/libshim.py` detects that case (the script includes `<NAME/rest>`
+and `rest` exists beside it, so this directory is NAME) and redirects the name
+to the checkout for the duration of each example. See `docs/docsgen.md`.
+
 `openscad_docsgen`'s parser, blocks, error log and output targets are
 vendored **very nearly unchanged** under `src/belfryscad/docsgen/` — only its
 two OpenSCAD-launching modules (`imagemanager.py`, `logmanager.py`) are

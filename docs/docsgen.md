@@ -149,6 +149,37 @@ hard-wired to `True` and a `UsePNGAnimations: No` in an rc file is reported
 and ignored. Frame 0 is the plain `IDAT`, so a viewer with no APNG support
 still shows a still image.
 
+### A library previewed from outside the libraries folder
+
+A library's examples include the library *by name* -- BOSL2's say
+`include <BOSL2/std.scad>`. That name resolves through `OPENSCADPATH`, or
+the platform libraries folder when it is unset, so previewing docs from a
+clone, worktree or review checkout renders every example against the
+**installed** copy rather than the one being edited. Nothing reports it: the
+examples render, they just render the wrong code. Only an example calling
+something the checkout *adds* gives it away, as `Ignoring unknown module`;
+an example whose behaviour merely changed looks entirely normal.
+
+`belfryscad/libshim.py` fixes it by agreement rather than configuration. If a
+script says `include <NAME/rest>` and `rest` exists in the directory the
+script is being run from, then that directory *is* the library called NAME --
+a file that merely *uses* BOSL2 has no `std.scad` beside it and is left
+alone. A temp directory holding one symlink, `NAME -> the checkout`, is
+prepended to `OPENSCADPATH` for the evaluation.
+
+Two details matter. Setting `OPENSCADPATH` **replaces** the platform default
+rather than adding to it (`api.cpp`: `env = envPath ? envPath : dfltPath`),
+so the shim re-appends what was there or every other library disappears. And
+the override is scoped to the single `evaluate()` call in
+`ScriptRunner.run()`, not set for the session, so an ordinary model in
+another tab still gets the installed copy.
+
+Applies to the Docs pane, `--docsgen` and `--mdimggen` alike, since all three
+run examples through `ScriptRunner`. The Docs pane's status line says
+`Examples resolve BOSL2 to this folder.` when the redirect is in effect, and
+stays quiet when the checkout is already named after its library and needs no
+help.
+
 ### Block comments
 
 A documentation comment inside `/* ... */` is not documentation
