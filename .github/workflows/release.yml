@@ -88,7 +88,55 @@ jobs:
         run: |
           uv run --no-sync --python 3.12 briefcase create linux appimage
           uv run --no-sync --python 3.12 briefcase build linux appimage
-          uv run --no-sync --python 3.12 briefcase package linux appimage
+
+      # briefcase hands linuxdeploy every folder in the AppDir containing a
+      # .so, PySide6's among them, so all of Qt is copied into usr/lib beside
+      # the copy the wheel already shipped -- 129 libraries twice, most of the
+      # download. `build` has populated the AppDir and packed it by now; this
+      # deduplicates the tree and repacks, so `package` picks up the smaller
+      # image. See scripts/dedupe_appimage_qt.py for why this symlinks rather
+      # than deletes.
+      - name: Drop the duplicate Qt and repack
+        run: |
+          set -euo pipefail
+          # Found, not hardcoded: `briefcase package` copies from exactly the
+          # path `build` wrote, and the bundle layout is briefcase's to
+          # change. Repacking to any other name would ship the fat image.
+          IMAGE="$(find build -name '*.AppImage' -type f | head -1)"
+          APPDIR="$(find build -name '*.AppDir' -type d | head -1)"
+          test -n "$IMAGE" -a -n "$APPDIR" || { echo "AppImage/AppDir not found"; exit 1; }
+          BEFORE=$(stat -c%s "$IMAGE")
+
+          python3 scripts/dedupe_appimage_qt.py "$APPDIR"
+
+          # Fetched rather than reused: linuxdeploy carries appimagetool
+          # inside its own AppImage and extracts it to a temp directory
+          # INSIDE the build container, so nothing lands on the runner. The
+          # continuous build is what linuxdeploy itself runs, which keeps the
+          # runtime -- and so the libfuse requirement -- the same as before.
+          TOOL=/tmp/appimagetool
+          curl -fsSL --retry 3 -o "$TOOL" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$TOOL"
+          rm -f "$IMAGE"
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$IMAGE"
+
+          AFTER=$(stat -c%s "$IMAGE")
+          echo "AppImage: $((BEFORE / 1048576))MB -> $((AFTER / 1048576))MB"
+          # A repack that saved nothing means the dedupe silently missed.
+          test "$AFTER" -lt "$BEFORE" || { echo "no size reduction"; exit 1; }
+
+      # The AppImage is the one artifact that cannot be smoke-tested by
+      # building it, so run it. --version exits without needing a display.
+      - name: Check the repacked AppImage runs
+        run: |
+          set -euo pipefail
+          IMAGE="$(find build -name '*.AppImage' -type f | head -1)"
+          chmod +x "$IMAGE"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$IMAGE" --version
+
+      - name: Package Linux AppImage
+        run: uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
