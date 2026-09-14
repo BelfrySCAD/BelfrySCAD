@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "1.24.1"
+version = "1.24.2"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -45,7 +45,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "1.24.1"
+version = "1.24.2"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
@@ -88,6 +88,14 @@ universal_build = false
 
 [tool.briefcase.app.belfryscad.windows]
 installer_type = "msi"
+# Pin the install to per-machine instead of asking. Unset, briefcase emits
+# WiX's `perUserOrMachine` -- ALLUSERS=2 with MSIINSTALLPERUSER=1 -- and
+# Windows treats a per-user and a per-machine install as two separate
+# products that never replace each other. That is the only known mechanism
+# that produces the stacked installs of #411. The dialog is also not
+# trustworthy as it stands: elevated, ALLUSERS=2 resolves to per-machine, so
+# "just for me" does not reliably mean what it says.
+system_installer = true
 # Install to C:\Program Files\BelfrySCAD, not
 # C:\Program Files\Revar Desmera\BelfrySCAD. The template wraps the app
 # folder in one named after `author` unless this is off, and a vendor folder

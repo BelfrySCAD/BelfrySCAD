@@ -18,8 +18,13 @@ on:
         description: "Version to install first (no leading v)"
         default: "1.18.6"
       new_version:
-        description: "Version to install over it"
-        default: "1.23.2"
+        description: 'Version to install over it, or "local" to build it here'
+        default: "local"
+      ui_mode:
+        description: "How to drive msiexec"
+        type: choice
+        default: "passive"
+        options: ["passive", "quiet"]
       old_scope:
         description: "Scope for the first install"
         type: choice
@@ -42,7 +47,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "v${{ inputs.old_version }}" -p "*.msi" -D old
-          gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
+          if ("${{ inputs.new_version }}" -ne "local") {
+            gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
+          }
           Get-ChildItem old, new | Format-Table Name, Length
 
       - name: Scope helper
@@ -60,11 +67,27 @@ jobs:
           '@ | Set-Content scope.ps1
           Get-Content scope.ps1
 
+      - uses: astral-sh/setup-uv@v7
+        if: inputs.new_version == 'local'
+        with:
+          python-version: "3.12"
+
+      - name: Build the MSI from this checkout
+        if: inputs.new_version == 'local'
+        run: |
+          uv sync --frozen --python 3.12
+          uv run --python 3.12 briefcase create windows app
+          uv run --python 3.12 briefcase build windows app
+          uv run --python 3.12 briefcase package windows app
+          New-Item -ItemType Directory -Force -Path new | Out-Null
+          Copy-Item dist/*.msi new/
+          Get-ChildItem new
+
       - name: Install the old version (${{ inputs.old_scope }})
         run: |
           . ./scope.ps1
           $msi = (Get-ChildItem old/*.msi)[0].FullName
-          $a = @("/i","`"$msi`"","/qn") + `
+          $a = @("/i","`"$msi`"", $(if ("${{ inputs.ui_mode }}" -eq "passive") { "/passive" } else { "/qn" })) + `
                (Get-ScopeArgs "${{ inputs.old_scope }}") + `
                @("/l*v","$PWD\old-install.log")
           $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
@@ -78,7 +101,7 @@ jobs:
         run: |
           . ./scope.ps1
           $msi = (Get-ChildItem new/*.msi)[0].FullName
-          $a = @("/i","`"$msi`"","/qn") + `
+          $a = @("/i","`"$msi`"", $(if ("${{ inputs.ui_mode }}" -eq "passive") { "/passive" } else { "/qn" })) + `
                (Get-ScopeArgs "${{ inputs.new_scope }}") + `
                @("/l*v","$PWD\new-install.log")
           $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
