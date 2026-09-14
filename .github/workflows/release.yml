@@ -109,10 +109,14 @@ jobs:
 
           python3 scripts/dedupe_appimage_qt.py "$APPDIR"
 
-          # linuxdeploy already downloaded appimagetool; reuse it rather than
-          # fetching another copy.
-          TOOL="$(find "$HOME/.cache/briefcase/tools" -name 'appimagetool*' -type f | head -1)"
-          test -n "$TOOL" || { echo "appimagetool not found"; exit 1; }
+          # Fetched rather than reused: linuxdeploy carries appimagetool
+          # inside its own AppImage and extracts it to a temp directory
+          # INSIDE the build container, so nothing lands on the runner. The
+          # continuous build is what linuxdeploy itself runs, which keeps the
+          # runtime -- and so the libfuse requirement -- the same as before.
+          TOOL=/tmp/appimagetool
+          curl -fsSL --retry 3 -o "$TOOL" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x "$TOOL"
           rm -f "$IMAGE"
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$IMAGE"
