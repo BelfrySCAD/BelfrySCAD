@@ -37,53 +37,12 @@ jobs:
 
       # Read statically first: if the tables disagree, the install is not
       # where the answer is.
+      # Read statically first: if the tables disagree, the install is not
+      # where the answer is.
       - name: Compare the MSI upgrade tables
         run: |
-          function Get-MsiFacts($path) {
-            $installer = New-Object -ComObject WindowsInstaller.Installer
-            $db = $installer.GetType().InvokeMember(
-              "OpenDatabase", "InvokeMethod", $null, $installer, @($path, 0))
-            function Query($sql) {
-              $view = $db.GetType().InvokeMember(
-                "OpenView", "InvokeMethod", $null, $db, @($sql))
-              $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null)
-              $rows = @()
-              while ($true) {
-                $rec = $view.GetType().InvokeMember(
-                  "Fetch", "InvokeMethod", $null, $view, $null)
-                if ($null -eq $rec) { break }
-                $count = $rec.GetType().InvokeMember(
-                  "FieldCount", "GetProperty", $null, $rec, $null)
-                $vals = @()
-                for ($i = 1; $i -le $count; $i++) {
-                  $vals += $rec.GetType().InvokeMember(
-                    "StringData", "GetProperty", $null, $rec, @($i))
-                }
-                $rows += ,$vals
-              }
-              $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null)
-              return $rows
-            }
-            Write-Host "=== $path ==="
-            foreach ($p in @("ProductCode", "UpgradeCode", "ProductVersion",
-                             "ProductName", "ALLUSERS", "MSIINSTALLPERUSER")) {
-              $r = Query "SELECT Value FROM Property WHERE Property='$p'"
-              $v = if ($r.Count) { $r[0][0] } else { "(unset)" }
-              Write-Host ("  {0,-18} {1}" -f $p, $v)
-            }
-            Write-Host "  Upgrade table:"
-            foreach ($row in Query "SELECT UpgradeCode,VersionMin,VersionMax,Attributes,ActionProperty FROM Upgrade") {
-              Write-Host ("    code={0} min={1} max={2} attrs={3} prop={4}" -f $row)
-            }
-            Write-Host "  Upgrade-related sequencing:"
-            foreach ($row in Query "SELECT Action,Sequence FROM InstallExecuteSequence") {
-              if ($row[0] -match "RemoveExistingProducts|FindRelatedProducts|MigrateFeatureStates|InstallValidate") {
-                Write-Host ("    {0,-24} {1}" -f $row[0], $row[1])
-              }
-            }
-          }
-          Get-MsiFacts (Get-ChildItem old/*.msi)[0].FullName
-          Get-MsiFacts (Get-ChildItem new/*.msi)[0].FullName
+          ./.github/scripts/msi_facts.ps1 -Path (Get-ChildItem old/*.msi)[0].FullName
+          ./.github/scripts/msi_facts.ps1 -Path (Get-ChildItem new/*.msi)[0].FullName
 
       - name: Install the old version for all users
         run: |
