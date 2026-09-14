@@ -823,12 +823,12 @@ class DocsPane(QWidget):
         # this is only so the status line can say so.
         import os.path
         from belfryscad.libshim import detect
-        self._library_as = detect(os.path.dirname(src_file), source_text.splitlines())
+        found = detect(os.path.dirname(src_file), source_text.splitlines())
+        self._library_as = found[0] if found else None
         # A checkout already named after its library is resolved correctly
         # without any help, and saying so would be noise.
         self._library_shimmed = bool(
-            self._library_as
-            and os.path.basename(os.path.dirname(os.path.abspath(src_file))) != self._library_as)
+            found and os.path.basename(os.path.abspath(found[1])) != found[0])
         # A plain refresh renders nothing: the document appears at once with
         # a placeholder per example, and images are rendered on demand.
         self._last_source = (source_text, src_file)

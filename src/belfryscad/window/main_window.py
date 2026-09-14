@@ -2537,12 +2537,16 @@ class MainWindow(QMainWindow):
         under its real path."""
         if self._coverage is None:
             return []
+        # realpath, matching CoverageReport.merge_spans: a library reached
+        # through libshim's symlinked name must match the tab that has the
+        # real file open.
         origins = set()
         if getattr(tab, "_last_parse_path", None):
-            origins.add(os.path.abspath(tab._last_parse_path))
+            origins.add(os.path.realpath(tab._last_parse_path))
         if tab.file_path:
-            origins.add(os.path.abspath(tab.file_path))
-        return [s for s in self._coverage.spans.values() if os.path.abspath(s["origin"]) in origins]
+            origins.add(os.path.realpath(tab.file_path))
+        return [s for s in self._coverage.spans.values()
+                if os.path.realpath(s["origin"]) in origins]
 
     def _apply_coverage_overlays(self, only_tab=None):
         from belfryscad.window.preferences import load_preference

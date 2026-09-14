@@ -216,7 +216,7 @@ class ScriptRunner:
                 # being edited anywhere else renders its examples against
                 # the INSTALLED copy unless src_dir is shimmed in. See
                 # belfryscad.libshim.
-                with library_shim(detect(src_dir, script_lines), src_dir):
+                with library_shim(detect(src_dir, script_lines)):
                     bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path),
                                                       generate=generate)
             except RecursionError:

@@ -174,8 +174,16 @@ the override is scoped to the single `evaluate()` call in
 `ScriptRunner.run()`, not set for the session, so an ordinary model in
 another tab still gets the installed copy.
 
-Applies to the Docs pane, `--docsgen` and `--mdimggen` alike, since all three
-run examples through `ScriptRunner`. The Docs pane's status line says
+The search climbs: a `.scadtest` runs from `tests/`, where `std.scad` is not,
+so only the parent identifies the library. Three levels up, which covers a
+`tests/` or `examples/` subfolder without wandering off.
+
+Applies to the Docs pane, `--docsgen`, `--mdimggen`, `--test` and the Testing
+pane alike, since all of them run scripts through `ScriptRunner`. Coverage
+files a shimmed origin under its **real** path (`CoverageReport.merge_spans`
+and the editor overlay both `realpath`), so a library reached through the
+redirect and the same library reached by a relative include are one file in
+the report, not two half-covered ones under an unreadable temp path. The Docs pane's status line says
 `Examples resolve BOSL2 to this folder.` when the redirect is in effect, and
 stays quiet when the checkout is already named after its library and needs no
 help.

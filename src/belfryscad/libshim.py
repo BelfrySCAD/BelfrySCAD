@@ -37,18 +37,34 @@ _INCLUDE_RE = re.compile(r'\b(?:use|include)\s*<([^>]+)>')
 _shims: dict[tuple[str, str], str] = {}
 
 
-def detect(src_dir: str, script_lines) -> str | None:
-    """The library name `src_dir` provides, judged from what `script_lines`
-    includes, or None.
+#: How far above the script's own directory to look for the library root.
+#: A suite lives in `tests/`, examples in `examples/`; three levels covers
+#: those and anything similar without wandering off towards the home
+#: directory.
+_MAX_CLIMB = 3
+
+
+def detect(src_dir: str, script_lines) -> tuple[str, str] | None:
+    """`(library name, its root directory)` for the library the script is
+    running from inside, or None.
 
     `include <BOSL2/std.scad>` names BOSL2 and asks for `std.scad` inside
-    it; if `src_dir/std.scad` is a real file then src_dir is that BOSL2.
-    The first such include wins -- a script including two libraries can
-    only be inside one of them.
+    it; if `std.scad` is a real file at or above `src_dir`, that is the
+    BOSL2 this script means.
+
+    The climb is what makes a test suite work. A `.scadtest` runs from
+    `tests/`, so `tests/std.scad` does not exist and only the parent
+    identifies the library. Examples in an `examples/` subfolder are the
+    same shape.
+
+    The first include that resolves wins -- a script including two
+    libraries by name can only be inside one of them, and that is the one
+    whose files sit above it.
     """
     if not src_dir:
         return None
     base = Path(src_dir)
+    roots = [base, *list(base.parents)[:_MAX_CLIMB]]
     for line in script_lines:
         for target in _INCLUDE_RE.findall(line):
             name, _, rest = target.partition("/")
@@ -56,8 +72,9 @@ def detect(src_dir: str, script_lines) -> str | None:
             # library at all.
             if not rest or not name or name in (".", ".."):
                 continue
-            if (base / rest).is_file():
-                return name
+            for root in roots:
+                if (root / rest).is_file():
+                    return name, str(root)
     return None
 
 
@@ -102,10 +119,11 @@ def shim_dir(name: str, real: str) -> str:
 
 
 @contextmanager
-def library_shim(name: str | None, real: str):
-    """Resolve `name` to `real` for the duration of the block.
+def library_shim(found: tuple[str, str] | None):
+    """Resolve a library name to the checkout it was found in, for the
+    duration of the block. `found` is what `detect` returned.
 
-    A no-op when `name` is None, so callers can wrap unconditionally.
+    A no-op when `found` is None, so callers can wrap unconditionally.
 
     ponytail: os.environ is process-wide, so a render on another thread
     during this block would see the shimmed path too. The block is one
@@ -114,9 +132,10 @@ def library_shim(name: str | None, real: str):
     blast radius is small. Give the parser a per-call search path and this
     can stop touching the environment at all.
     """
-    if not name:
+    if not found:
         yield
         return
+    name, real = found
     try:
         path = shim_dir(name, real)
     except OSError:
