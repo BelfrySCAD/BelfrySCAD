@@ -636,6 +636,11 @@ class DocsPane(QWidget):
         #: Where to put the view back after a rebuild -- see _capture_scroll.
         self._scroll_anchor = None
 
+        #: The library this file belongs to, and whether previewing it
+        #: needs the name redirected. Set per refresh(); see libshim.
+        self._library_as = None
+        self._library_shimmed = False
+
         #: Set by the Refresh button alone; consumed by the next refresh().
         self._invalidate_next = False
         #: slug -> block number for the current document, built on demand.
@@ -812,6 +817,18 @@ class DocsPane(QWidget):
             dropped = invalidate_cache(src_file)
             self._status.setText(f"Discarded {dropped} rendered image{'' if dropped == 1 else 's'}…")
         self._invalidate_next = False
+        # Examples include this library by name, so one being edited outside
+        # the libraries folder would otherwise render against the installed
+        # copy. libshim redirects the name for the duration of each example;
+        # this is only so the status line can say so.
+        import os.path
+        from belfryscad.libshim import detect
+        found = detect(os.path.dirname(src_file), source_text.splitlines())
+        self._library_as = found[0] if found else None
+        # A checkout already named after its library is resolved correctly
+        # without any help, and saying so would be noise.
+        self._library_shimmed = bool(
+            found and os.path.basename(os.path.abspath(found[1])) != found[0])
         # A plain refresh renders nothing: the document appears at once with
         # a placeholder per example, and images are rendered on demand.
         self._last_source = (source_text, src_file)
@@ -1049,6 +1066,10 @@ class DocsPane(QWidget):
                 for name, n in sorted(counts.items(), key=lambda kv: _LEVEL_ORDER.get(kv[0], 9))))
         else:
             self._status.setText("Documentation is valid.")
+        if self._library_shimmed:
+            self._status.setText(
+                f"{self._status.text()} &nbsp; Examples resolve "
+                f"<b>{self._library_as}</b> to this folder.")
         if self._pending_images:
             n = len(self._pending_images)
             plural = "s" if n != 1 else ""

@@ -162,6 +162,7 @@ class ScriptRunner:
         reason openscad_docsgen's logmanager writes its temp file there."""
         from openscad_cpp_evaluator import (Evaluator, EvalError,
                                              to_renderable_bodies)
+        from belfryscad.libshim import detect, library_shim
 
         src_dir = self.src_dir_override or src_dir
         result = ScriptResult()
@@ -210,8 +211,14 @@ class ScriptRunner:
                 # `bodies` comes back empty. That is what --test-only wants,
                 # and it matches what the reference does for
                 # `openscad -o out.term`.
-                bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path),
-                                                  generate=generate)
+                # The script includes its own library by name, which
+                # resolves through the libraries folder -- so a library
+                # being edited anywhere else renders its examples against
+                # the INSTALLED copy unless src_dir is shimmed in. See
+                # belfryscad.libshim.
+                with library_shim(detect(src_dir, script_lines)):
+                    bodies, _ids = evaluator.evaluate(path, seed_params(seeded, path),
+                                                      generate=generate)
             except RecursionError:
                 result.errors.append("ERROR: AST too deeply nested "
                                      "(recursion limit exceeded during evaluation).")

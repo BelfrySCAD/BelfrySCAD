@@ -91,10 +91,14 @@ class CoverageReport:
         # keying on the raw string filed those as two separate files --
         # duplicate rows in the report and every percentage roughly halved.
         # Running a whole directory tree at once (the Testing pane) makes
-        # that the normal case rather than a curiosity. abspath normalises
-        # away the `..` as well as relative roots.
+        # that the normal case rather than a curiosity. realpath normalises
+        # away the `..` and relative roots, and resolves symlinks -- which
+        # is what keeps a library reached through libshim's redirect (a
+        # symlinked name on OPENSCADPATH) filed under its real checkout
+        # path, rather than as a second copy under a temp directory whose
+        # name means nothing to the reader.
         for s in spans:
-            origin = os.path.abspath(s["origin"])
+            origin = os.path.realpath(s["origin"])
             key = (origin, s["start"], s["end"], s["kind"])
             have = self.spans.get(key)
             if have is None:
