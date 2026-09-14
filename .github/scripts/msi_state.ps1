@@ -25,7 +25,16 @@ foreach ($e in $entries) {
     Write-Host ("      {0}" -f $e.PSChildName)
 }
 
-$dirs = @("C:\Program Files\BelfrySCAD", "C:\Program Files\Revar Desmera\BelfrySCAD")
+# Ask the registry where it actually went. Guessing two well-known paths
+# missed a default-scope install entirely, and reported "0 dist-info" for a
+# product that had installed perfectly well somewhere else.
+$dirs = @()
+foreach ($e in $entries) {
+    if ($e.InstallLocation) { $dirs += $e.InstallLocation.TrimEnd("\") }
+}
+$dirs += @("C:\Program Files\BelfrySCAD", "C:\Program Files\Revar Desmera\BelfrySCAD",
+           "$env:LOCALAPPDATA\Programs\BelfrySCAD")
+$dirs = $dirs | Select-Object -Unique
 foreach ($d in $dirs) {
     if (-not (Test-Path $d)) { continue }
     Write-Host "Install folder: $d"

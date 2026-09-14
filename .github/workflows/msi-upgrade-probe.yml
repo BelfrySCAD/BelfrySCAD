@@ -35,24 +35,6 @@ jobs:
   probe:
     runs-on: windows-latest
     steps:
-      # The package ships ALLUSERS=2 with MSIINSTALLPERUSER=1, which is WiX
-      # for "per-user unless told otherwise". "default" therefore passes
-      # nothing and takes whatever a click-through user would get.
-      - name: Scope arguments
-        id: scope
-        run: |
-          function Args($scope) {
-            switch ($scope) {
-              "perMachine" { return 'ALLUSERS=1 MSIINSTALLPERUSER=""' }
-              "perUser"    { return 'ALLUSERS=2 MSIINSTALLPERUSER=1' }
-              default      { return '' }
-            }
-          }
-          "old=$(Args '${{ inputs.old_scope }}')" >> $env:GITHUB_OUTPUT
-          "new=$(Args '${{ inputs.new_scope }}')" >> $env:GITHUB_OUTPUT
-          Write-Host "old scope args: $(Args '${{ inputs.old_scope }}')"
-          Write-Host "new scope args: $(Args '${{ inputs.new_scope }}')"
-
       - uses: actions/checkout@v5
 
       - name: Download both MSIs
@@ -63,11 +45,27 @@ jobs:
           gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
           Get-ChildItem old, new | Format-Table Name, Length
 
+      - name: Scope helper
+        run: |
+          @'
+          function Get-ScopeArgs($scope) {
+              # Elevated, ALLUSERS=2 resolves to per-machine, so forcing
+              # per-user means clearing ALLUSERS rather than setting it to 2.
+              switch ($scope) {
+                  "perMachine" { return @("ALLUSERS=1", "MSIINSTALLPERUSER=") }
+                  "perUser"    { return @("ALLUSERS=", "MSIINSTALLPERUSER=1") }
+                  default      { return @() }
+              }
+          }
+          '@ | Set-Content scope.ps1
+          Get-Content scope.ps1
+
       - name: Install the old version (${{ inputs.old_scope }})
         run: |
+          . ./scope.ps1
           $msi = (Get-ChildItem old/*.msi)[0].FullName
           $a = @("/i","`"$msi`"","/qn") + `
-               ("${{ steps.scope.outputs.old }}".Split(" ") | Where-Object { $_ }) + `
+               (Get-ScopeArgs "${{ inputs.old_scope }}") + `
                @("/l*v","$PWD\old-install.log")
           $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
           Write-Host "exit=$($p.ExitCode)"
@@ -78,9 +76,10 @@ jobs:
 
       - name: Install the new version over it (${{ inputs.new_scope }})
         run: |
+          . ./scope.ps1
           $msi = (Get-ChildItem new/*.msi)[0].FullName
           $a = @("/i","`"$msi`"","/qn") + `
-               ("${{ steps.scope.outputs.new }}".Split(" ") | Where-Object { $_ }) + `
+               (Get-ScopeArgs "${{ inputs.new_scope }}") + `
                @("/l*v","$PWD\new-install.log")
           $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
           Write-Host "exit=$($p.ExitCode)"
