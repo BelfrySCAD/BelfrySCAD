@@ -35,15 +35,6 @@ jobs:
           gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
           Get-ChildItem old, new | Format-Table Name, Length
 
-      # Read statically first: if the tables disagree, the install is not
-      # where the answer is.
-      # Read statically first: if the tables disagree, the install is not
-      # where the answer is.
-      - name: Compare the MSI upgrade tables
-        run: |
-          ./.github/scripts/msi_facts.ps1 -Path (Get-ChildItem old/*.msi)[0].FullName
-          ./.github/scripts/msi_facts.ps1 -Path (Get-ChildItem new/*.msi)[0].FullName
-
       - name: Install the old version for all users
         run: |
           $msi = (Get-ChildItem old/*.msi)[0].FullName
