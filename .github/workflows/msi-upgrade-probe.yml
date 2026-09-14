@@ -20,11 +20,39 @@ on:
       new_version:
         description: "Version to install over it"
         default: "1.23.2"
+      old_scope:
+        description: "Scope for the first install"
+        type: choice
+        default: "default"
+        options: ["default", "perMachine", "perUser"]
+      new_scope:
+        description: "Scope for the second install"
+        type: choice
+        default: "default"
+        options: ["default", "perMachine", "perUser"]
 
 jobs:
   probe:
     runs-on: windows-latest
     steps:
+      # The package ships ALLUSERS=2 with MSIINSTALLPERUSER=1, which is WiX
+      # for "per-user unless told otherwise". "default" therefore passes
+      # nothing and takes whatever a click-through user would get.
+      - name: Scope arguments
+        id: scope
+        run: |
+          function Args($scope) {
+            switch ($scope) {
+              "perMachine" { return 'ALLUSERS=1 MSIINSTALLPERUSER=""' }
+              "perUser"    { return 'ALLUSERS=2 MSIINSTALLPERUSER=1' }
+              default      { return '' }
+            }
+          }
+          "old=$(Args '${{ inputs.old_scope }}')" >> $env:GITHUB_OUTPUT
+          "new=$(Args '${{ inputs.new_scope }}')" >> $env:GITHUB_OUTPUT
+          Write-Host "old scope args: $(Args '${{ inputs.old_scope }}')"
+          Write-Host "new scope args: $(Args '${{ inputs.new_scope }}')"
+
       - uses: actions/checkout@v5
 
       - name: Download both MSIs
@@ -35,22 +63,26 @@ jobs:
           gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
           Get-ChildItem old, new | Format-Table Name, Length
 
-      - name: Install the old version for all users
+      - name: Install the old version (${{ inputs.old_scope }})
         run: |
           $msi = (Get-ChildItem old/*.msi)[0].FullName
-          $p = Start-Process msiexec -Wait -PassThru -ArgumentList `
-            "/i","`"$msi`"","/qn","ALLUSERS=1","/l*v","$PWD\old-install.log"
+          $a = @("/i","`"$msi`"","/qn") + `
+               ("${{ steps.scope.outputs.old }}".Split(" ") | Where-Object { $_ }) + `
+               @("/l*v","$PWD\old-install.log")
+          $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
           Write-Host "exit=$($p.ExitCode)"
           if ($p.ExitCode -ne 0) { Get-Content old-install.log -Tail 40; exit 1 }
 
       - name: State after the first install
         run: ./.github/scripts/msi_state.ps1 -Label "after ${{ inputs.old_version }}"
 
-      - name: Install the new version over it, same scope
+      - name: Install the new version over it (${{ inputs.new_scope }})
         run: |
           $msi = (Get-ChildItem new/*.msi)[0].FullName
-          $p = Start-Process msiexec -Wait -PassThru -ArgumentList `
-            "/i","`"$msi`"","/qn","ALLUSERS=1","/l*v","$PWD\new-install.log"
+          $a = @("/i","`"$msi`"","/qn") + `
+               ("${{ steps.scope.outputs.new }}".Split(" ") | Where-Object { $_ }) + `
+               @("/l*v","$PWD\new-install.log")
+          $p = Start-Process msiexec -Wait -PassThru -ArgumentList $a
           Write-Host "exit=$($p.ExitCode)"
           if ($p.ExitCode -ne 0) { Get-Content new-install.log -Tail 40; exit 1 }
 
