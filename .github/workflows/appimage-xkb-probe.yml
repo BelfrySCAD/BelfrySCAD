@@ -1,0 +1,83 @@
+# Diagnostic only: #430's segfault, and whether dropping one library fixes it.
+#
+# The AppImage ships libxkbcommon.so.0 but not its companion
+# libxkbcommon-x11.so.0, so Qt loads the host's -x11 half against the bundle's
+# older core half. @DanBUK's backtrace dies in xkb_x11_keymap_new_from_device,
+# which is exactly that seam.
+#
+# ubuntu-latest is newer than the manylinux the bundle was built on, so it
+# should show the same split without needing Debian trixie. Runs the released
+# AppImage as-is, then again with the offending library removed, and reports
+# both rather than failing -- the comparison IS the result.
+name: AppImage xkb probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to probe (no leading v)"
+        default: "1.24.2"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install an X server and the host xkb libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 libegl1 libgl1 \
+              libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+              libxcb-xinerama0 libxkbcommon0
+
+      - name: Download and unpack the AppImage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${{ inputs.version }}" -p "*.AppImage" \
+              -R ${{ github.repository }} -D .
+          chmod +x BelfrySCAD-*.AppImage
+          ./BelfrySCAD-*.AppImage --appimage-extract > /dev/null
+          echo "--- what the bundle ships ---"
+          ls -l squashfs-root/usr/lib/ | grep -E "xkbcommon|glib|gio|gobject" || true
+          echo "--- what the host has ---"
+          ldconfig -p | grep -E "libxkbcommon" || true
+
+      # Same command @DanBUK ran, under a virtual display.
+      - name: Run QApplication as shipped
+        id: before
+        run: |
+          cd squashfs-root
+          set +e
+          xvfb-run -a env PYTHONPATH=usr/app:usr/app_packages \
+              usr/python/bin/python3 -u -s -X utf8 \
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
+          echo "exit=$?" | tee -a $GITHUB_OUTPUT
+          set -e
+
+      - name: Run it again without the bundled libxkbcommon
+        id: after
+        run: |
+          cd squashfs-root
+          rm -fv usr/lib/libxkbcommon.so*
+          set +e
+          xvfb-run -a env PYTHONPATH=usr/app:usr/app_packages \
+              usr/python/bin/python3 -u -s -X utf8 \
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
+          echo "exit=$?" | tee -a $GITHUB_OUTPUT
+          set -e
+
+      - name: Verdict
+        run: |
+          B=${{ steps.before.outputs.exit }}
+          A=${{ steps.after.outputs.exit }}
+          echo "as shipped:            exit $B"
+          echo "without libxkbcommon:  exit $A"
+          if [ "$B" -ne 0 ] && [ "$A" -eq 0 ]; then
+            echo "REPRODUCED AND FIXED: the bundled libxkbcommon is the cause."
+          elif [ "$B" -eq 0 ]; then
+            echo "NOT REPRODUCED here: this host's libxkbcommon is close enough"
+            echo "to the bundled one. Needs a newer distro, as in the report."
+          else
+            echo "STILL BROKEN without it: something else is also wrong."
+            exit 1
+          fi
