@@ -50,7 +50,8 @@ jobs:
           if ("${{ inputs.new_version }}" -ne "local") {
             gh release download "v${{ inputs.new_version }}" -p "*.msi" -D new
           }
-          Get-ChildItem old, new | Format-Table Name, Length
+          # `new` does not exist yet when it is built rather than downloaded.
+          Get-ChildItem (@('old','new') | Where-Object { Test-Path $_ }) | Format-Table Name, Length
 
       - name: Scope helper
         run: |
