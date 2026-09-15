@@ -987,6 +987,18 @@ class Viewport(QOpenGLWidget):
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
 
+        # Feed the X-ray flashlight. gl_FragCoord is in DEVICE pixels with a
+        # bottom-left origin; Qt gives logical pixels from the top-left, so
+        # this scales by the device pixel ratio and flips Y. Getting either
+        # wrong puts the beam somewhere other than the pointer, and on a
+        # HiDPI screen it is out by exactly a factor of two -- see
+        # docs/wysiwyg.md on ctx.viewport vs logical size.
+        if self._renderer is not None and self._renderer.torch_on:
+            dpr = self.devicePixelRatioF()
+            self._renderer.torch_centre = (pos.x() * dpr,
+                                           (self.height() - pos.y()) * dpr)
+            self.update()
+
         if self._measure_mode is not None and self._last_mouse is None:
             snap = self._renderer.snap_at(pos.x(), pos.y(), self.width(), self.height())
             hover = (np.asarray(snap[0], dtype=np.float64), snap[1]) if snap else None

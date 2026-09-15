@@ -59,8 +59,39 @@ uniform bool flat_preview;
 // A plain float rather than a bool so the two looks can be mixed between
 // rather than branched on.
 uniform float glass;
+// The X-ray flashlight. `beam` is (centre x, centre y, radius) in DEVICE
+// pixels, matching gl_FragCoord; `beam_pass` selects what this draw is for:
+//   0  no torch -- draw everything, the ordinary path
+//   1  opaque pass with the torch on -- drop what the beam covers, leaving
+//      no depth there, so the torch pass below can layer into the hole
+//   2  the torch pass itself -- draw ONLY what the beam covers, translucent
+
+// Splitting it this way is what keeps the rest of the model fully opaque
+// with correct depth: only the lit disc pays for blending.
+uniform vec3 beam;
+uniform int beam_pass;
+uniform float beam_alpha;
+// Fraction of the radius held at a flat beam_alpha before the climb to
+// opaque begins. At the rim alpha reaches exactly 1.0, which redraws the
+// opaque surface the first pass discarded, so the two meet seamlessly.
+uniform float beam_plateau;
+// Per-shell depth cue, precomputed on the CPU: 1.0 for the outermost shell,
+// falling toward torch_depth_dim for the innermost. MULTIPLIED into the lit
+// colour, never added -- the torch stacks many surfaces, so anything additive
+// accumulates and blows out to white (which is what a specular highlight and
+// then a Fresnel rim light each did here in turn). Multiplying can only
+// darken, so depth stays readable however many layers overlap.
+uniform float beam_dim;
+// 1.0 only for the nearest face of the outermost shell -- the surface you
+// would be looking at with the torch off. It both keeps the specular
+// highlight and ramps toward opaque at the rim; everything deeper loses the
+// highlight and fades out instead.
+uniform float beam_spec;
+
 out vec4 fragColor;
 void main() {
+    float beam_d = distance(gl_FragCoord.xy, beam.xy) / beam.z;
+    if (beam_pass == 2 && beam_d >= 1.0) discard;
     // At a silhouette edge, a manifold solid's front- and back-facing
     // triangles converge to nearly the same screen depth -- floating-
     // point/MSAA-sample precision can then let a sliver of the
@@ -80,7 +111,10 @@ void main() {
     gl_FragDepth = gl_FragCoord.z + (gl_FrontFacing ? 0.0 : 0.000002);
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) {
-        if (!flat_preview) {
+        // Magenta means "you are seeing inside a solid, which is a bug" --
+        // except under the torch, where it is exactly what was asked for.
+        // Under either beam, a visible backface is the point, not a bug.
+        if (!flat_preview && beam_pass != 2) {
             fragColor = vec4(1.0, 0.0, 1.0, 1.0);
             return;
         }
@@ -103,9 +137,29 @@ void main() {
     // Glass reads as a tighter, brighter highlight than a matte surface's.
     float spec = pow(max(dot(n, H), 0.0), mix(64.0, 120.0, glass))
                * mix(0.5, 1.15, glass);
-    lit += vec3(spec);
+    // Under the torch, only the outermost surface facing you keeps a
+    // highlight. A specular term is a claim about a surface you are looking
+    // AT, and it is additive -- on interior shells it both reads wrongly, as
+    // shine on something buried, and accumulates across every layer the beam
+    // stacks. The one surface that keeps it is the one that ramps back to
+    // opaque at the rim, so the beam edge still matches its surroundings.
+    lit += vec3(spec * (beam_pass == 2 ? beam_spec : 1.0));
+
+    if (beam_pass == 2) lit *= beam_dim;
 
     float alpha = object_color.a * v_vcolor.a;
+    if (beam_pass == 2) {
+        // Ramps back to alpha 1.0 at the rim, which is what makes the hole
+        // the opaque pass cut invisible: the same surface is redrawn there
+        // at full opacity, so the two meet seamlessly.
+        // Everything drawn in this pass is hidden geometry, composited OVER
+        // an outer surface that was never removed -- so the only thing that
+        // varies across the rim is how strongly the hidden stuff shows, and
+        // it simply fades to nothing. There is no boundary to hide.
+        float t = clamp((beam_d - beam_plateau) / max(1.0 - beam_plateau, 1e-6),
+                        0.0, 1.0);
+        alpha = alpha * beam_alpha * (1.0 - t);
+    }
     // Fresnel: a real pane reflects far more at a grazing angle than
     // face-on, which is what actually makes something read as glass rather
     // than as a flat wash of colour -- the silhouette and the far wall's
@@ -118,6 +172,7 @@ void main() {
         lit += vec3(0.30 * fres * glass);
         alpha = clamp(alpha + (1.0 - alpha) * fres * 0.6 * glass, 0.0, 1.0);
     }
+
 
     fragColor = vec4(lit, alpha);
 }
@@ -674,7 +729,8 @@ class MeshBuffer:
                  edge_vao: Optional[mgl.VertexArray] = None,
                  flat_preview: bool = False,
                  role: str = "normal",
-                 uses_vertex_color: bool = False):
+                 uses_vertex_color: bool = False,
+                 tri_colors: Optional[np.ndarray] = None):
         self.ctx = ctx
         self.vbo = vbo
         self.ibo = ibo
@@ -693,6 +749,17 @@ class MeshBuffer:
         self.original_ids: set[int] = set(int(x) for x in self.tri_ids)
         self.edge_vbo = edge_vbo
         self.edge_vao = edge_vao
+        #: Boundary shells, for the X-ray flashlight. None until built; see
+        #: SceneRenderer._ensure_shells. Lazy for the same reason the edge
+        #: buffer is: the torch is off by default and most bodies are a
+        #: single shell, for which this buys nothing.
+        self.shells: Optional[list] = None
+        #: Per-triangle RGBA, when this buffer carries its colour in the
+        #: vertex stream rather than in a uniform (uses_vertex_color). Kept
+        #: because a shell VAO has to rebuild that stream: filling it with
+        #: ones instead renders a multi-coloured body as flat grey, since
+        #: object_color is a neutral for these buffers by design.
+        self.tri_colors = tri_colors
         self.flat_preview = flat_preview
         self.role = role
         # True for a buffer built from ColoredBody.tri_colors (a multi-color
@@ -795,6 +862,34 @@ class SceneRenderer:
         self.show_grid: bool = False
         self.show_scale_markers: bool = True
         self.show_edges: bool = False
+
+        #: The X-ray flashlight. `torch_centre` is in DEVICE pixels with a
+        #: bottom-left origin, to match gl_FragCoord -- the viewport converts
+        #: from Qt's top-left logical pixels. Radius is device pixels too.
+        self.torch_on: bool = False
+        self.torch_centre: tuple = (0.0, 0.0)
+        self.torch_radius: float = 146.0
+        #: How strongly hidden geometry shows through the model under the
+        #: beam. The model itself is never removed, so this is the weight of
+        #: what is composited OVER it, not a hole's transparency.
+        self.torch_alpha: float = 0.67
+        #: How much of the radius stays at a flat torch_alpha before hidden
+        #: geometry fades out. The outer 1 - this is the fade, and it reaches
+        #: zero at the rim so the beam has no visible boundary.
+        self.torch_plateau: float = 0.80
+        #: How glassy the torch looks. ZERO on purpose, unlike the ordinary
+        #: translucent pass. The glass path's Fresnel term RAISES alpha at
+        #: grazing angles, which on a sphere is the silhouette -- a hollow
+        #: sphere then draws as a dense ring around a see-through middle, ie
+        #: a torus. It also adds a highlight per surface, and those are
+        #: additive, so five stacked layers in the beam centre wash out to
+        #: white. Both are right for a glass bauble and wrong for an X-ray,
+        #: whose job is to show structure, not material.
+        self.torch_glass: float = 0.0
+        #: How far the innermost shell is darkened relative to the outermost,
+        #: so depth is visible rather than inferred. 1.0 disables the cue.
+        self.torch_depth_dim: float = 0.45
+
         self.show_crosshairs: bool = False
         self.light_az_offset: float = 0.0
         self.light_el_offset: float = 0.0
@@ -974,7 +1069,128 @@ class SceneRenderer:
                           program=self._prog,
                           tri_ids=tri_ids,
                           flat_preview=flat_preview, role=role,
-                          uses_vertex_color=uses_vertex_color)
+                          uses_vertex_color=uses_vertex_color,
+                          tri_colors=tri_colors)
+
+    def _ensure_shells(self, buf: MeshBuffer) -> None:
+        """Split `buf` into its boundary shells, once, on first torch use.
+
+        A closed body's surface can consist of several disjoint shells: the
+        outside, any sealed cavity within it, anything solid inside that
+        cavity, and so on. They matter to the torch because blending is
+        order-dependent, and a single buffer's triangles are drawn in raw
+        mesh order -- so a body enclosing its own void composites its layers
+        arbitrarily. Drawn shell by shell, in nesting order, it composites
+        correctly.
+
+        Two facts do the work, both verified against real geometry rather
+        than assumed:
+
+        * **Signed volume gives kind.** A shell wound so its normals face
+          outward encloses material and integrates positive; a cavity's
+          normals face into the void and integrate negative.
+        * **Ray parity gives position.** Shells never intersect, so every
+          point of one is consistently inside or outside another. Casting
+          from a point ON a shell and counting crossings with each other
+          shell gives its nesting depth. It must be a point on the surface:
+          a shell's CENTROID sits inside everything nested within it, which
+          counts the containment backwards and reports every shell at
+          depth 1.
+        """
+        if buf.shells is not None:
+            return
+        v0, v1, v2 = buf.cpu_v0, buf.cpu_v1, buf.cpu_v2
+        T = len(v0)
+        buf.shells = []
+        if T == 0:
+            return
+
+        # The buffers hold de-indexed triangle soup, so weld corners by
+        # position to recover which triangles share a vertex.
+        corners = np.concatenate([v0, v1, v2], axis=0)
+        _uniq, inverse = np.unique(corners, axis=0, return_inverse=True)
+        tri_verts = inverse.reshape(3, T).T
+
+        parent = list(range(len(_uniq)))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for a, b, c in tri_verts:
+            ra = find(int(a))
+            for other in (find(int(b)), find(int(c))):
+                if other != ra:
+                    parent[other] = ra
+
+        groups: dict = {}
+        for i, tri in enumerate(tri_verts):
+            groups.setdefault(find(int(tri[0])), []).append(i)
+        if len(groups) < 2:
+            return                      # one shell: nothing for this to fix
+
+        members = [np.array(idx) for idx in groups.values()]
+        signed = []
+        probes = []
+        for idx in members:
+            a, b, c = v0[idx], v1[idx], v2[idx]
+            signed.append(float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0))
+            probes.append((a[0] + b[0] + c[0]) / 3.0)   # a point ON this shell
+
+        shells = []
+        for i, idx in enumerate(members):
+            depth = 0
+            for j, other in enumerate(members):
+                if i != j and self._ray_crossings(probes[i], v0[other], v1[other],
+                                                  v2[other]) % 2 == 1:
+                    depth += 1
+            shells.append({
+                "vao": self._shell_vao(buf, idx),
+                "depth": depth,
+                "is_void": signed[i] < 0.0,
+            })
+        buf.shells = shells
+
+    @staticmethod
+    def _ray_crossings(origin: np.ndarray, a: np.ndarray, b: np.ndarray,
+                       c: np.ndarray) -> int:
+        """How many times a +X ray from `origin` pierces these triangles.
+        Parity answers inside/outside whichever way the shell is wound."""
+        d = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        e1, e2 = (b - a).astype(np.float64), (c - a).astype(np.float64)
+        h = np.cross(d, e2)
+        det = np.einsum("ij,ij->i", e1, h)
+        ok = np.abs(det) > 1e-12
+        inv = np.zeros_like(det)
+        inv[ok] = 1.0 / det[ok]
+        s = origin.astype(np.float64) - a
+        u = inv * np.einsum("ij,ij->i", s, h)
+        q = np.cross(s, e1)
+        v = inv * np.einsum("j,ij->i", d, q)
+        t = inv * np.einsum("ij,ij->i", e2, q)
+        hit = ok & (u >= 0.0) & (u <= 1.0) & (v >= 0.0) & (u + v <= 1.0) & (t > 1e-9)
+        return int(hit.sum())
+
+    def _shell_vao(self, buf: MeshBuffer, idx: np.ndarray):
+        """A VAO for just this shell's triangles, laid out exactly as
+        _make_mesh_buffer does so the same program can draw it."""
+        v0, v1, v2 = buf.cpu_v0[idx], buf.cpu_v1[idx], buf.cpu_v2[idx]
+        normals = np.cross(v1 - v0, v2 - v0)
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals /= np.where(lengths == 0, 1, lengths)
+        if buf.tri_colors is None:
+            vcolor = np.ones((3 * len(idx), 4), dtype=np.float32)
+        else:
+            vcolor = np.repeat(buf.tri_colors[idx].astype(np.float32), 3, axis=0)
+        interleaved = np.concatenate(
+            [np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3),
+             np.repeat(normals, 3, axis=0),
+             vcolor], axis=1).astype(np.float32)
+        vbo = self._ctx.buffer(interleaved.tobytes())
+        return self._ctx.vertex_array(
+            self._prog, [(vbo, "3f 3f 4f", "in_position", "in_normal", "in_vcolor")])
 
     def _ensure_edge_buffer(self, buf: MeshBuffer) -> None:
         """Builds `buf`'s wireframe geometry, once, on first use.
@@ -1257,6 +1473,18 @@ class SceneRenderer:
         # underneath leaves nothing to see through to.
         opaque_bufs = [buf for buf in self._buffers
                        if buf.role not in ("background", "highlight", "highlight_ghost")]
+        # The torch is a property of the frame, not of any one buffer.
+        self._prog["beam"].value = (float(self.torch_centre[0]),
+                                    float(self.torch_centre[1]),
+                                    float(self.torch_radius))
+        self._prog["beam_alpha"].value = float(self.torch_alpha)
+        self._prog["beam_plateau"].value = float(self.torch_plateau)
+        self._prog["beam_dim"].value = 1.0
+        self._prog["beam_spec"].value = 1.0
+        # The opaque pass is now untouched by the torch: the model is drawn
+        # normally, in full, writing depth. Cutting a hole and refilling it
+        # is what created a visible boundary in the first place.
+        self._prog["beam_pass"].value = 0
         buf_models: list[np.ndarray] = []
         translucent: list[tuple] = []  # (buf, buf_model, color) deferred to Pass 1b
         for buf in opaque_bufs:
@@ -1381,6 +1609,99 @@ class SceneRenderer:
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
+
+        # --- Pass 1c: the X-ray flashlight ---
+        # The opaque pass left a hole where the beam falls, so these draws
+        # layer into it. Far-to-near by centroid and back faces before front,
+        # for the same reason Pass 1b does: with depth writes off, raw
+        # triangle order cannot be trusted to composite near over far.
+        #
+        # Known limit: ordering is per BUFFER, so one body enclosing its own
+        # void composites its shells in mesh order. Splitting a body into its
+        # boundary shells (connected components, ordered by nesting depth)
+        # would fix that, and is the next thing to do here.
+        if self.torch_on and opaque_bufs:
+            self._prog["beam_pass"].value = 2
+            self._ctx.enable(mgl.BLEND)
+            self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+            self._active_fbo.depth_mask = False
+            # Draw only what the opaque pass HID: a reversed depth test picks
+            # out fragments behind the surface already on screen. That is the
+            # whole trick -- hidden geometry is added over an intact model
+            # rather than exposed through a hole in it.
+            self._ctx.depth_func = ">"
+            self._ctx.enable(mgl.CULL_FACE)
+
+            lit = [(buf, bm) for buf, bm in zip(opaque_bufs, buf_models)
+                   if buf.program is self._prog]
+
+            def _torch_dist(item):
+                buf, buf_model = item
+                centroid = (buf.cpu_v0.mean(axis=0) if len(buf.cpu_v0)
+                            else np.zeros(3, dtype=np.float32))
+                world = (buf_model[:3, :3] @ centroid) + buf_model[:3, 3]
+                return -float(np.linalg.norm(world - eye_pos))
+
+            lit.sort(key=_torch_dist)
+            for buf, _bm in lit:
+                self._ensure_shells(buf)
+
+            for far_wall in (True, False):
+                for buf, buf_model in lit:
+                    base = buf.color if buf.color is not None else self._default_color
+                    self._prog["model"].write(buf_model.T.tobytes())
+                    self._prog["mvp"].write(
+                        (proj @ view @ buf_model).T.astype(np.float32).tobytes())
+                    self._prog["object_color"].value = (
+                        (*base[:3], 1.0) if buf.uses_vertex_color else base)
+                    self._prog["flat_preview"].value = (
+                        True if far_wall else (buf.flat_preview or self.light_backfaces))
+                    self._prog["glass"].value = self.torch_glass
+
+                    if not buf.shells:
+                        # One shell: the plain two-sub-pass order is already
+                        # right, and there is nothing to sort.
+                        self._ctx.cull_face = "front" if far_wall else "back"
+                        self._prog["beam_dim"].value = 1.0
+                        self._prog["beam_spec"].value = 0.0 if far_wall else 1.0
+                        buf.vao.render()
+                        continue
+
+                    # Nested shells, composited in true depth order.
+                    #
+                    # A shell's far side is the farthest thing in the stack
+                    # when the shell is outermost, and its near side is the
+                    # farthest when it is innermost -- so the two sub-passes
+                    # walk the nesting in OPPOSITE directions: outward-in for
+                    # far sides, inward-out for near sides.
+                    #
+                    # And a cavity is wound inside-out: its normals face into
+                    # the void, so what GL calls a front face is its FAR
+                    # side, the reverse of a solid shell. Flipping the cull
+                    # for void shells normalises that, after which depth
+                    # order is all that is left to get right.
+                    ordered = sorted(buf.shells, key=lambda sh: sh["depth"],
+                                     reverse=not far_wall)
+                    deepest = max(sh["depth"] for sh in buf.shells) or 1
+                    for sh in ordered:
+                        solid_cull = "front" if far_wall else "back"
+                        flipped = {"front": "back", "back": "front"}[solid_cull]
+                        self._ctx.cull_face = flipped if sh["is_void"] else solid_cull
+                        # Deeper shells render darker, so the stack reads as
+                        # a stack instead of one flat wash.
+                        t = sh["depth"] / deepest
+                        self._prog["beam_dim"].value = (
+                            1.0 + (self.torch_depth_dim - 1.0) * t)
+                        self._prog["beam_spec"].value = (
+                            1.0 if (not far_wall and sh["depth"] == 0) else 0.0)
+                        sh["vao"].render()
+
+            self._ctx.cull_face = "back"
+            self._ctx.disable(mgl.CULL_FACE)
+            self._ctx.depth_func = "<"
+            self._active_fbo.depth_mask = True
+            self._ctx.disable(mgl.BLEND)
+            self._prog["beam_pass"].value = 0
 
         if self.show_edges:
             if self._edge_prog is not None:

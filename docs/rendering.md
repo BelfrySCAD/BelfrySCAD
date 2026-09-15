@@ -239,6 +239,54 @@ surface is a legitimate export, and blocking a save the user asked for
 would be worse than saying so.
 
 
+## The X-ray flashlight
+
+View ▸ X-ray Flashlight (Ctrl+Shift+X) shines a beam wherever the pointer is,
+showing what the model hides there. Everything outside the beam is drawn
+exactly as it would be with the torch off.
+
+**The model is never cut.** The opaque pass draws it in full, writing depth,
+and a second pass draws only what that pass HID -- a reversed depth test
+(`depth_func = ">"`) selects fragments behind the surface already on screen --
+compositing them over the intact model at `torch_alpha`.
+
+That is the whole design, and it was arrived at the hard way. The obvious
+approach is to cut a hole in the model inside the beam and refill it with
+blended geometry, and it works until you look at the rim: a hole has an edge,
+and every attempt to disguise that edge failed in a different way. Fading the
+hole's alpha did not help, because the geometry revealed THROUGH the hole was
+still drawn at full strength right up to the boundary and then simply stopped.
+Compositing over an uncut model has no boundary to hide: the only thing that
+varies across the rim is how strongly hidden geometry shows, and that fades to
+zero. `torch_plateau` (0.8) is the fraction of the radius held flat before
+that fade begins.
+
+**Shells.** A body's surface can be several disjoint shells -- the outside, a
+sealed cavity within it, something solid inside that cavity. They are found
+on first torch use (`_ensure_shells`): weld the triangle soup by position,
+union-find the connected components, then classify each by signed volume
+(positive encloses material, negative is a cavity) and by nesting depth (ray
+parity from a point ON the shell -- its CENTROID sits inside everything nested
+within it and counts the containment backwards). Shells are drawn in nesting
+order so nested cavities composite correctly, and deeper ones are darkened
+(`torch_depth_dim`) so the stack reads as a stack. Single-shell bodies skip
+all of it and cost nothing.
+
+**Nothing additive.** Specular is suppressed on everything but the nearest
+face of the outermost shell, and the depth cue multiplies rather than adds.
+The beam stacks many surfaces, so any additive term accumulates: a specular
+highlight, then a Fresnel rim light, each whited out the beam centre before
+being removed. Fresnel also raised alpha at grazing angles, which drew a dense
+ring around every sphere and made a hollow one look like a torus.
+
+**Known limit: perforated geometry.** A Menger sponge is one connected shell
+that a view ray crosses a dozen times, and a dozen translucent layers are
+unreadable however they are ordered -- order-independent transparency would
+composite them correctly and still give a wash. Depth fog, a rim light, a
+front-face cutaway and a Gaussian-faded spherical bite were all tried and all
+failed for that reason. The mode is for solids with cavities; lattices are
+out of scope.
+
 ## Viewport visuals
 
 **Clip planes**: `Camera.clip_planes()` returns `(near, far)`, scaled to `camera.distance` rather than fixed constants (floors at the original `0.1`/`10000.0`, so typical/small scenes are unaffected). `frame_bounds()` sets `distance` proportional to the framed object's radius (same distance-scaling heuristic `_render_axes`/`_axis_extent` use for tick/axis extent) — a fixed `far=10000` clipped large or elongated models once that pushed the camera far enough away to fit them at the default FOV: `cylinder(h=3500, d=1000)` needs `distance≈10438` to fit at `fov=22.5`, already past a fixed `far=10000`, silently clipping whichever end of the cylinder was farther from the eye (and varying with zoom, since that changes `distance`). `far = max(10000.0, distance * 3.0)`; `near = max(0.1, far / 100000.0)` — grown proportionally rather than held fixed, preserving the original `far/near` ratio (holding `near` fixed while `far` grows would only worsen depth-buffer precision for large scenes on top of the clipping bug). `projection_matrix()` uses these for both perspective (`_perspective`'s own near/far) and orthographic (`_ortho`'s symmetric `±far` depth range) modes. Pure math, unit-tested in `test_renderer.py::TestCameraClipPlanes` — no GL/Qt dependency.

@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
 )
-from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon, QShortcut, QUndoCommand, QTextCursor
+from PySide6.QtGui import (QAction, QCursor, QKeySequence, QFont, QIcon, QShortcut,
+                           QUndoCommand, QTextCursor)
 from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
 from belfryscad.settings import app_settings
 import os
@@ -1318,6 +1319,10 @@ class MainWindow(QMainWindow):
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
         self._act_show_edges.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._act_torch = self._add_checkable(
+            view_menu, "X-ray Flashlight", False, self._toggle_torch)
+        self._act_torch.setShortcut(QKeySequence("Ctrl+Shift+X"))
+        self._act_torch.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -4893,6 +4898,23 @@ class MainWindow(QMainWindow):
     def _toggle_edges(self, visible):
         vp = self._target_viewport()
         vp._renderer.show_edges = visible
+        vp.update()
+
+    def _toggle_torch(self, visible):
+        """Shine an X-ray beam wherever the pointer is, leaving the rest of
+        the model solid. Mouse tracking is already on, so Viewport's
+        mouseMoveEvent feeds the beam position while this is enabled."""
+        vp = self._target_viewport()
+        vp._renderer.torch_on = visible
+        if visible:
+            # Start the beam under the pointer if it is already over the
+            # viewport, so switching on does something visible immediately
+            # rather than waiting for the first move.
+            pos = vp.mapFromGlobal(QCursor.pos())
+            if vp.rect().contains(pos):
+                dpr = vp.devicePixelRatioF()
+                vp._renderer.torch_centre = (pos.x() * dpr,
+                                             (vp.height() - pos.y()) * dpr)
         vp.update()
 
     def _toggle_grid(self, visible):
