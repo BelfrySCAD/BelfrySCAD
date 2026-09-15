@@ -10,10 +10,33 @@ from PySide6.QtWidgets import (
     QLabel, QHeaderView, QAbstractItemView, QComboBox, QCheckBox,
     QMenu, QLineEdit,
 )
-from PySide6.QtGui import QFont, QIcon, QPalette
+from PySide6.QtGui import QFont, QIcon, QKeySequence, QPalette
 
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from PySide6.QtCore import Qt, QObject, Signal
+
+# The debugger's keys, defined once: DebuggerPane labels its buttons from
+# these and MainWindow binds the QShortcuts from them. They used to be two
+# hand-written lists, and they disagreed -- Step to Child is Qt's CTRL,
+# which macOS renders as Command, but the tooltip said Control, and Restart
+# claimed Command when the binding asks for Meta. Qt names the key, so
+# neither the tooltip nor the platform can be got wrong by hand.
+DEBUG_SHORTCUTS = {
+    "continue": Qt.Key.Key_F5,
+    "step_over": Qt.Key.Key_F10,
+    "step_into": Qt.Key.Key_F11,
+    "step_to_child": Qt.Modifier.CTRL | Qt.Key.Key_F11,
+    "step_out": Qt.Modifier.SHIFT | Qt.Key.Key_F11,
+    "restart": Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5,
+    "stop": Qt.Modifier.SHIFT | Qt.Key.Key_F5,
+}
+
+
+def _key_label(name: str) -> str:
+    """The shortcut as this platform writes it -- U+2318F11 on macOS,
+    Ctrl+F11 on Windows and Linux."""
+    return QKeySequence(DEBUG_SHORTCUTS[name]).toString(
+        QKeySequence.SequenceFormat.NativeText)
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
@@ -533,31 +556,31 @@ class DebuggerPane(QWidget):
 
         self._btn_continue = QPushButton()
         _set_debug_icon(self._btn_continue, "continue")
-        self._btn_continue.setToolTip("Continue / Pause (F5)")
+        self._btn_continue.setToolTip(f"Continue / Pause ({_key_label('continue')})")
         self._btn_continue.setFixedSize(28, 28)
         self._btn_step_over = QPushButton()
         _set_debug_icon(self._btn_step_over, "step-over")
-        self._btn_step_over.setToolTip("Step Over (F10)")
+        self._btn_step_over.setToolTip(f"Step Over ({_key_label('step_over')})")
         self._btn_step_over.setFixedSize(28, 28)
         self._btn_step_into = QPushButton()
         _set_debug_icon(self._btn_step_into, "step-into")
-        self._btn_step_into.setToolTip("Step Into Call (F11)")
+        self._btn_step_into.setToolTip(f"Step Into Call ({_key_label('step_into')})")
         self._btn_step_into.setFixedSize(28, 28)
         self._btn_step_to_child = QPushButton()
         _set_debug_icon(self._btn_step_to_child, "step-to-child")
-        self._btn_step_to_child.setToolTip("Step to Child (⌃F11)")
+        self._btn_step_to_child.setToolTip(f"Step to Child ({_key_label('step_to_child')})")
         self._btn_step_to_child.setFixedSize(28, 28)
         self._btn_step_out = QPushButton()
         _set_debug_icon(self._btn_step_out, "step-out")
-        self._btn_step_out.setToolTip("Step Out (⇧F11)")
+        self._btn_step_out.setToolTip(f"Step Out ({_key_label('step_out')})")
         self._btn_step_out.setFixedSize(28, 28)
         self._btn_restart = QPushButton()
         _set_debug_icon(self._btn_restart, "restart")
-        self._btn_restart.setToolTip("Restart (⇧⌘F5)")
+        self._btn_restart.setToolTip(f"Restart ({_key_label('restart')})")
         self._btn_restart.setFixedSize(28, 28)
         self._btn_stop = QPushButton()
         _set_debug_icon(self._btn_stop, "stop")
-        self._btn_stop.setToolTip("Stop (⇧F5)")
+        self._btn_stop.setToolTip(f"Stop ({_key_label('stop')})")
         self._btn_stop.setFixedSize(28, 28)
 
         for btn in (self._btn_continue, self._btn_step_over, self._btn_step_into,
@@ -894,14 +917,14 @@ class DebuggerPane(QWidget):
     def _set_continue_mode(self):
         self._is_running = False
         _set_debug_icon(self._btn_continue, "continue")
-        self._btn_continue.setToolTip("Continue / Pause (F5)")
+        self._btn_continue.setToolTip(f"Continue / Pause ({_key_label('continue')})")
 
     def set_running(self):
         self._is_running = True
         self._set_partial_warning(None)
         self._status.setText("Running…")
         _set_debug_icon(self._btn_continue, "pause")
-        self._btn_continue.setToolTip("Pause (F5)")
+        self._btn_continue.setToolTip(f"Pause ({_key_label('continue')})")
         self._btn_continue.setEnabled(True)
         for btn in (self._btn_step_into, self._btn_step_over, self._btn_step_to_child, self._btn_step_out):
             btn.setEnabled(False)

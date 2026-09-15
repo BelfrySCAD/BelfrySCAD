@@ -102,6 +102,11 @@ Right-clicking a variable name **in the code editor** while the debugger is paus
 
 ## DebuggerPane states
 
+The keys live in `debugger.py`'s `DEBUG_SHORTCUTS`, and both the QShortcuts
+and the buttons' tooltips are built from it -- Qt's CTRL is Command on macOS
+and Control elsewhere, so a hand-written symbol gets one platform wrong
+(#448).
+
 Toolbar button order: Continue/Pause · Step Over · Step Into · Step to Child · Step Out · Restart · Stop
 
 Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected to `btn.click`):
@@ -111,9 +116,9 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 | F5 | Continue / Pause |
 | F10 | Step Over |
 | F11 | Step Into |
-| ⌃F11 (Ctrl+F11) | Step to Child |
+| ⌘F11 (Qt's CTRL) | Step to Child |
 | Shift+F11 | Step Out |
-| Shift+Cmd+F5 | Restart |
+| ⌃⇧F5 (Qt's SHIFT+META) | Restart |
 | Shift+F5 | Stop |
 
 ### Button behaviors

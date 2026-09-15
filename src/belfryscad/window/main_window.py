@@ -18,7 +18,8 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.debugger import DebuggerPane, DebugSession, _pretty_assignment
+from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
+                                        _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
 from belfryscad.window.customizer import CustomizerPane
 from belfryscad.window.ai_chat import AIChatPane
@@ -839,16 +840,19 @@ class MainWindow(QMainWindow):
         self._debugger_pane.frame_selected.connect(self._on_debug_frame_selected)
         self._debugger_pane.set_splitter_orientation(self._current_debugger_splitter_orientation())
 
-        for key, btn in (
-            (Qt.Key.Key_F5, self._debugger_pane._btn_continue),
-            (Qt.Key.Key_F10, self._debugger_pane._btn_step_over),
-            (Qt.Key.Key_F11, self._debugger_pane._btn_step_into),
-            (Qt.Modifier.CTRL | Qt.Key.Key_F11, self._debugger_pane._btn_step_to_child),
-            (Qt.Modifier.SHIFT | Qt.Key.Key_F11, self._debugger_pane._btn_step_out),
-            (Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5, self._debugger_pane._btn_restart),
-            (Qt.Modifier.SHIFT | Qt.Key.Key_F5, self._debugger_pane._btn_stop),
+        # DEBUG_SHORTCUTS, not a second list: the buttons' tooltips are
+        # written from the same dict, and when this was spelled out here too
+        # the two drifted apart (#448).
+        for name, btn in (
+            ("continue", self._debugger_pane._btn_continue),
+            ("step_over", self._debugger_pane._btn_step_over),
+            ("step_into", self._debugger_pane._btn_step_into),
+            ("step_to_child", self._debugger_pane._btn_step_to_child),
+            ("step_out", self._debugger_pane._btn_step_out),
+            ("restart", self._debugger_pane._btn_restart),
+            ("stop", self._debugger_pane._btn_stop),
         ):
-            sc = QShortcut(QKeySequence(key), self)
+            sc = QShortcut(QKeySequence(DEBUG_SHORTCUTS[name]), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(btn.click)
 

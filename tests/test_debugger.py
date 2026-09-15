@@ -1156,3 +1156,26 @@ class TestFastContinueInterrupt:
         # the FastContinueSignal interrupt actually cut it short rather than
         # the second pause just being the computation's own natural end.
         assert second_pause_delay < 1.0
+
+
+def test_debug_shortcut_labels_match_their_bindings():
+    """A button's tooltip must name the key that is actually bound.
+
+    They were two hand-written lists and drifted: Step to Child bound Qt's
+    CTRL (Command on macOS) while the tooltip said Control, and Restart
+    claimed Command for a Meta binding (#448).
+    """
+    from PySide6.QtGui import QKeySequence
+    from belfryscad.window.debugger import DEBUG_SHORTCUTS, _key_label
+
+    for name, key in DEBUG_SHORTCUTS.items():
+        expected = QKeySequence(key).toString(
+            QKeySequence.SequenceFormat.NativeText)
+        assert expected, f"{name} renders as an empty key name"
+        assert _key_label(name) == expected
+
+    # The pairing that was wrong, stated as the platform sees it.
+    ctrl = _key_label("step_to_child")
+    meta = _key_label("restart")
+    assert ctrl != meta
+    assert ctrl.endswith("F11") and meta.endswith("F5")

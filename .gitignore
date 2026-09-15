@@ -58,3 +58,4 @@ graphify-out/
 
 # Wiki content — its own git repo, pushed to BelfrySCAD.wiki.git
 wiki/
+.briefcase/
