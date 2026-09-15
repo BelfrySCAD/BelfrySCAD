@@ -126,6 +126,12 @@ No live preview. Full Manifold CSG processing runs when:
 - The **AI calls its `render` tool** (`AIToolContext.request_render`, wired to `_render_threadsafe`) — for a script it has not itself changed
 - **Preferences ▸ Viewport ▸ Cut faces** is toggled (`_apply_preferences`): the rule for which colour a `difference()` cut face takes is baked into the geometry by the evaluator (`keep_minuend_color`), so the current design re-renders to show it (#412; see `docs/rendering.md`)
 
+**"X-ray Flashlight"** (View menu, Ctrl+Shift+X) shines a beam wherever the
+pointer is and composites what the model hides there OVER the intact model --
+it never cuts the model, which is what keeps the beam from having a visible
+edge. See `docs/rendering.md`; it is for solids with cavities, and perforated
+lattices are explicitly out of scope.
+
 **"Run Tests…"** (Design menu) asks for a directory of `.scadtest` files and opens the Testing pane, which is where coverage comes from — there is no per-render capture (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
