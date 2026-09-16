@@ -167,8 +167,8 @@ def answer(value):
     QTimer.singleShot(120, go)
 
 ed = editor([67, 100])
-out["default_is_widest_guide"] = ed.default_reflow_width()
-out["default_with_no_guides"] = editor([]).default_reflow_width()
+out["default_is_widest_guide"] = ed.guide_width()
+out["default_with_no_guides"] = editor([]).guide_width()
 
 # Targets: body expands to its own prefix run; code offers nothing.
 out["body_target"] = list(ed._reflow_target(at(ed, 1)))

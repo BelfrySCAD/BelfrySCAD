@@ -1890,16 +1890,26 @@ class CodeEditor(QPlainTextEdit):
             return
         QDesktopServices.openUrl(QUrl(entry.url))
 
-    def _reformat_selection(self, start: int, end: int, selected_text: str):
+    def _reformat_selection(self, start: int, end: int, selected_text: str,
+                            profile_name: str | None = None):
         """Reformat Selection context-menu action: replace [start, end) with
         format_scad's pretty-printed output, re-based to the selection's own
         current indentation (so reformatting a nested block doesn't yank it
-        out to column 0)."""
-        from belfryscad.window.scad_format import format_scad
+        out to column 0).
+
+        `profile_name` picks how freely lines may be broken (#466); without
+        one, whatever the user set as their usual."""
+        from belfryscad.window.scad_format import (DEFAULT_PROFILE, PROFILES,
+                                                   format_scad)
+        if profile_name is None:
+            from belfryscad.window.preferences import load_preference
+            profile_name = load_preference("editor/formatProfile")
+        profile = PROFILES.get(profile_name) or PROFILES[DEFAULT_PROFILE]
         block = self.document().findBlock(start)
         prefix = block.text()[:start - block.position()]
         base_indent = prefix if prefix.strip() == "" else ""
-        formatted = format_scad(selected_text, self._indent_size)
+        formatted = format_scad(selected_text, self._indent_size,
+                                profile, self.guide_width())
         # split() (not splitlines()) keeps a trailing '' entry when
         # formatted ends in '\n' (the normal case), so the reformatted
         # block's own trailing newline is preserved and doesn't glue its
@@ -1921,14 +1931,14 @@ class CodeEditor(QPlainTextEdit):
         self.replace_span(start, end, new_text)
         self.source_edited_externally.emit()
 
-    def default_reflow_width(self) -> int:
-        """The column a reflow *offers* to wrap at: the rightmost column
-        guide, or 80 with guides off or unset.
+    def guide_width(self) -> int:
+        """The rightmost column guide, or 80 with guides off or unset.
 
-        Only a default. Somebody keeping a guide at 67 and another at 100
-        means the 67 for code and the 100 for prose (#467), so the wider one
-        is the better guess -- but it stays a guess, and the dialog is where
-        the answer comes from."""
+        Somebody keeping a guide at 67 and another at 100 means the 67 for
+        code and the 100 for prose, so the wider one is the text width. Both
+        the comment reflow (#467) and the reformatter (#466) measure against
+        it, so the formatter and the line you are eyeing agree -- the
+        reformatter used to wrap at a hard-coded 80 whatever you had set."""
         return max(self._column_guide._columns, default=80) or 80
 
     def ask_reflow_width(self) -> int | None:
@@ -1941,7 +1951,7 @@ class CodeEditor(QPlainTextEdit):
         from PySide6.QtWidgets import QInputDialog
         width, ok = QInputDialog.getInt(
             self, "Reflow Comment", "Wrap to column:",
-            self._last_reflow_width or self.default_reflow_width(), 20, 300)
+            self._last_reflow_width or self.guide_width(), 20, 300)
         if not ok:
             return None
         self._last_reflow_width = width
@@ -2621,14 +2631,24 @@ class CodeEditor(QPlainTextEdit):
             selected_text = sel_cursor.selectedText().replace(' ', '\n')
             from belfryscad.window.scad_format import can_format
             if can_format(selected_text):
+                from belfryscad.window.scad_format import PROFILES
                 menu.addSeparator()
+                _s, _e = sel_cursor.selectionStart(), sel_cursor.selectionEnd()
                 act = QAction("Reformat Selection", self)
                 act.triggered.connect(
-                    lambda checked=False, s=sel_cursor.selectionStart(),
-                    e=sel_cursor.selectionEnd(), t=selected_text:
+                    lambda checked=False, s=_s, e=_e, t=selected_text:
                         self._reformat_selection(s, e, t)
                 )
                 menu.addAction(act)
+                # The plain item above uses whatever profile the user set as
+                # their usual; the submenu is for reaching for a different
+                # one this once, without a trip to Preferences (#466).
+                as_menu = menu.addMenu("Reformat Selection As")
+                for _name in PROFILES:
+                    _a = as_menu.addAction(_name)
+                    _a.triggered.connect(
+                        lambda checked=False, s=_s, e=_e, t=selected_text,
+                        n=_name: self._reformat_selection(s, e, t, n))
 
         is_identifier = bool(word and re.match(r'^\$?[A-Za-z_][A-Za-z0-9_]*$', word))
 
