@@ -147,6 +147,37 @@ the one that really does overrun. It is also the rule as a person states it:
 keep the arguments inline unless there are a lot of them. `wrap_every_list`
 bypasses it, since Expanded's whole point is wrapping a list that fits.
 
+**The collapse stops at a comment**, in both directions: a newline inside a
+running `//` comment is kept (collapsing it ran the rest of the arguments into
+the comment — `max(a,  // why` + `b);` became `max(a,  // why b);`, which still
+parses and computes `max(a)`), and so is the newline *before* a comment, since
+pulling one up onto the previous line re-attaches it to a different AST node
+and the rewrite stops being purely whitespace. Both are caught by `_same_shape`
+in `tests/test_format_profiles.py`.
+
+**A function whose body does not fit breaks at the body's own structure**
+(`_break_function_bodies`), which is what Default is meant to look like —
+BOSL2/strings.scad is the reference. The signature keeps its line, the body
+goes on the next one indented a level, each leading `assert()`/`echo()` clause
+takes a line, and a ternary chain breaks after each depth-0 `:`. Depth-0
+matters: the `:` in `[0:1:n]` is a range, not an arm.
+
+It runs **before** `_wrap_long_lists`, so wrapping an argument list is the
+fallback rather than the first thing tried. Before this the whole body was
+joined onto the signature line and then rescued by wrapping whatever argument
+list happened to be there, which read worse than the input it replaced:
+
+```openscad
+function substr_match(str, start, pattern) = assert(
+    _is_liststr(str), "str must be a string or list"
+) assert(...) len(str)-start <len(pattern)? false : _substr_match_recurse(
+    str, start, pattern, len(pattern)
+);
+```
+
+`tests/test_bosl2_house_style.py` reformats **every definition in
+strings.scad** and requires each to be shape-preserving and idempotent.
+
 Two smaller faults fell out of the same change. With `break_chained_child`
 off nothing flushed at the `)`, and a newline at depth 0 added no space, so
 `translate([1, 0, 0])cuboid(` came out glued; and collapsing the newline

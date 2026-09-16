@@ -205,7 +205,9 @@ def test_a_short_parameter_list_stays_inline_however_long_the_body(name):
     measured the wrong thing."""
     out = format_scad(LONG_BODY, 4, PROFILES[name], 80)
     assert "function foo(a, b, c) =" in out, out
-    assert out.count("\n") == 1, out
+    # The body moves to its own line (see the BOSL2 house style below); the
+    # point here is that `a, b, c` is not what gets broken up.
+    assert "a, b, c" in out.splitlines()[0], out
 
 
 def test_a_long_parameter_list_still_wraps():
@@ -235,3 +237,40 @@ def test_expanded_still_wraps_a_short_list_on_purpose():
     """The skip is part of the width test, so wrap_every_list bypasses it."""
     out = format_scad(LONG_BODY, 4, PROFILES["Expanded"], 80)
     assert "function foo(\n    a,\n    b,\n    c\n)" in out, out
+
+
+# -- Comments inside an argument list --------------------------------------
+
+def test_a_line_comment_never_swallows_the_rest_of_the_list():
+    """Regression, and a bad one: collapsing newlines inside `(...)` ran the
+    rest of the arguments into the comment.
+
+        x = max(a,   // why
+                b);        ->   x = max(a,   // why b);
+
+    which still parses, still runs, and computes max(a)."""
+    from belfryscad.window.scad_format import _same_shape
+    src = "x = max(a,   // why\n        b);\n"
+    for name in PROFILES:
+        out = format_scad(src, 4, PROFILES[name], 80)
+        assert "// why b" not in out, (name, out)
+        assert _same_shape(src, out), (name, out)
+
+
+def test_a_comment_on_its_own_line_is_not_pulled_up_onto_the_previous_one():
+    """Not corruption, but it re-attaches the comment to a different node,
+    so the rewrite stops being purely whitespace."""
+    from belfryscad.window.scad_format import _same_shape
+    src = ("function g(M) =\n    let(\n        a = 1,\n        // a note\n"
+           "        b = 2\n    )\n    a+b;\n")
+    for name in PROFILES:
+        out = format_scad(src, 4, PROFILES[name], 80)
+        assert _same_shape(src, out), (name, out)
+        assert "// a note" in out
+
+
+def test_an_uncommented_list_still_collapses():
+    """The guard must not switch the unwrapping off wholesale -- that is
+    what lets one profile reformat another's output."""
+    assert format_scad("x = max(a,\n        b);\n", 4, PROFILES["Compact"], 80) \
+        == "x = max(a, b);\n"
