@@ -219,7 +219,28 @@ The active tool declares which transform type to edit — no intent inference ne
 2. If found: update its vector argument via a **targeted source span replacement** (not full code regeneration)
 3. If not found: insert a new wrapper around the selected node's source span
 
-**[DIFFERS]** in step 1 only: the search is a regex over the raw source text immediately preceding the node, not an AST walk — so it matches only a literal `translate([a, b, c])`-shaped wrapper, and misses any spelled differently (named arguments, a 2-element vector, a wrapper separated by a comment). Steps 2 and 3 are accurate. See the Source Rewrite Rules section for what "update" actually does.
+Step 1 is `scad_format.find_transform_call`, which scans *backwards* from the
+node's span: over whitespace and comments, back through the matching `)` --
+counting nesting and stepping over strings, so `translate([f("a)b"), 0, 0])`
+closes where it actually closes -- and then checks the identifier in front of
+it. `vector_arg` reads the argument, by keyword (`v` for translate/scale, `a`
+for rotate) or position, padding a short vector the way OpenSCAD does: z=0 for
+translate, z=1 for scale, so `scale([2,2])` does not come back flattened.
+
+This replaced a regex that matched only a literal three-element
+`translate([a, b, c])` anchored to the node. A named argument, a two-element
+vector, a comment between wrapper and child, or anything nested all missed, and
+step 3 then inserted a *second* wrapper instead of updating the first (#452).
+
+A vector that is not plain numbers -- `translate([x, 0, 0])`, `[1+1, 0, 0]` --
+is found but deliberately **not** rewritten: the drag wraps instead, because
+replacing an expression with a number would throw the user's own work away.
+
+`translate/rotate/scale` share one implementation (`_commit_transform`); they
+differed only in the op name and how an existing vector combines with the drag.
+A merged rewrite replaces exactly the wrapper's own span, so a comment between
+it and the node stays where the user put it. A named argument is normalised to
+positional on rewrite.
 
 ## Value Overlay
 
@@ -235,7 +256,7 @@ During translate/rotate/scale, a text readout of the current value is shown in t
 
 ## Transform Edit Rules
 
-- **Nested transforms of the same type**: modify the innermost matching wrapper. The regex is anchored to the text immediately preceding the node, so the innermost is the only one it can match.
+- **Nested transforms of the same type**: modify the innermost matching wrapper. The backwards scan starts at the node, so the innermost is the only one it reaches.
 - **Transform composition order** — **[DIFFERS]**. A new wrapper is inserted immediately before the selected node, i.e. *inside* any existing transform wrappers, not outside them (`source[:start] + insert + source[start:]`).
   > Original intent: new wrappers are always inserted outside any existing transform wrappers on the selected node.
 - **Live drag preview** — **[NOT IMPLEMENTED]**. There is no ghost mesh; only the delta readout updates during a drag. The AST edit and re-render still happen on mouse-up, as one undo step.

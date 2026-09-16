@@ -18,6 +18,7 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
+from belfryscad.window.scad_format import find_transform_call, vector_arg
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
                                         _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
@@ -5165,7 +5166,23 @@ class MainWindow(QMainWindow):
     # Translate gizmo commit
     # ------------------------------------------------------------------
 
-    def _on_translate_committed(self, dx: float, dy: float, dz: float):
+    def _commit_transform(self, name: str, keyword: str, identity, fill: float,
+                          combine, label: str, merge_id: int):
+        """Wrap or update a `name(...)` transform around the selected node.
+
+        One implementation for translate/rotate/scale, which differed only
+        in the op name and how an existing vector combines with the drag.
+
+        The wrapper is found by parsing backwards from the span
+        (`find_transform_call`) rather than by matching a regex against the
+        raw text. The regex only recognised a literal three-element
+        `name([a, b, c])`, so a named argument, a two-element vector, a
+        comment in between, or anything nested missed and got a SECOND
+        wrapper instead of an update (#452).
+
+        `combine(vals)` returns the new vector; `vals` is the existing one,
+        or `identity` when there is nothing to update.
+        """
         if not self._rendered_tab:
             return
         orig_id = self._viewport._renderer.selected_id
@@ -5175,7 +5192,6 @@ class MainWindow(QMainWindow):
         if span is None:
             return
 
-        # Switch to rendered tab if it's not the current editor
         if self._current_tab() is not self._rendered_tab:
             idx = self._tabs.indexOf(self._rendered_tab)
             if idx >= 0:
@@ -5183,186 +5199,51 @@ class MainWindow(QMainWindow):
 
         source = self._rendered_tab.editor.toPlainText()
         start = span.start_offset
+        call = find_transform_call(source, start, name)
+        vals = vector_arg(call, keyword, 3, fill) if call is not None else None
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"
 
-        # Detect an existing translate([x, y, z]) immediately before this node
-        prefix = source[:start]
-        m = re.search(
-            r'translate\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
-            prefix
-        )
-
-        merged = False
-        if m:
-            try:
-                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                merged = True
-            except ValueError:
-                pass
-
-        if merged:
-            nx, ny, nz = ex + dx, ey + dy, ez + dz
-            new_translate = f"translate([{_fmt(nx)}, {_fmt(ny)}, {_fmt(nz)}]) "
-            match_start = m.start()
-            new_source = source[:match_start] + new_translate + source[start:]
-            new_node_start = match_start + len(new_translate)
+        new_vals = combine(list(vals) if vals is not None else list(identity))
+        text = f"{name}([{_fmt(new_vals[0])}, {_fmt(new_vals[1])}, {_fmt(new_vals[2])}]) "
+        if vals is not None:
+            # Replace the wrapper we found, keeping everything after it --
+            # a comment between it and the node stays where the user put it.
+            head, tail = source[:call.start], source[call.end:]
+            new_source = head + text.rstrip() + tail
+            new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
         else:
-            insert = f"translate([{_fmt(dx)}, {_fmt(dy)}, {_fmt(dz)}]) "
-            new_source = source[:start] + insert + source[start:]
-            new_node_start = start + len(insert)
+            new_source = source[:start] + text + source[start:]
+            new_node_start = start + len(text)
 
-        cmd = _GizmoCmd(
-            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
-            new_node_start, self._restore_selection_after_translate,
-            merge_id=1001, label="Translate", viewport=self._viewport,
-        )
-        self._undo_stack.push(cmd)
+        self._undo_stack.push(_GizmoCmd(
+            self._rendered_tab, self._rendered_tab.editor, source, new_source,
+            self._render, new_node_start, self._restore_selection_after_translate,
+            merge_id=merge_id, label=label, viewport=self._viewport,
+        ))
 
-    def _restore_selection_after_translate(self, new_node_start: int):
-        for orig_id in self.id_to_node:
-            # The editable span, not the producing node's: for library-built
-            # geometry those are different spans in different files, and only
-            # the editable one is comparable with an offset in this buffer
-            # (#450, #451).
-            span = self._editable_span_for_id(orig_id)
-            if span is not None and span.start_offset == new_node_start:
-                self._viewport.set_selection(orig_id)
-                if self._rendered_tab:
-                    self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
-                self._viewport.update()
-                return
-        self._viewport.set_selection(None)
-        if self._rendered_tab:
-            self._rendered_tab.editor.clear_selection()
-        self._viewport.update()
-
-    # ------------------------------------------------------------------
-    # Rotate gizmo commit
-    # ------------------------------------------------------------------
+    def _on_translate_committed(self, dx: float, dy: float, dz: float):
+        self._commit_transform(
+            "translate", "v", (0.0, 0.0, 0.0), 0.0,
+            lambda v: [v[0] + dx, v[1] + dy, v[2] + dz],
+            "Translate", 1001)
 
     def _on_rotate_committed(self, axis: int, angle_deg: float):
-        if not self._rendered_tab:
-            return
-        orig_id = self._viewport._renderer.selected_id
-        if orig_id is None:
-            return
-        span = self._editable_span_for_id(orig_id)
-        if span is None:
-            return
-
-        if self._current_tab() is not self._rendered_tab:
-            idx = self._tabs.indexOf(self._rendered_tab)
-            if idx >= 0:
-                self._tabs.setCurrentIndex(idx)
-
-        source = self._rendered_tab.editor.toPlainText()
-        start = span.start_offset
-
-        def _fmt(v: float) -> str:
-            return f"{v:.4g}"
-
-        prefix = source[:start]
-        m = re.search(
-            r'rotate\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
-            prefix
-        )
-
-        merged = False
-        if m:
-            try:
-                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                merged = True
-            except ValueError:
-                pass
-
-        if merged:
-            vals = [ex, ey, ez]
-            vals[axis] += angle_deg
-            new_rotate = f"rotate([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
-            match_start = m.start()
-            new_source = source[:match_start] + new_rotate + source[start:]
-            new_node_start = match_start + len(new_rotate)
-        else:
-            vals = [0.0, 0.0, 0.0]
-            vals[axis] = angle_deg
-            insert = f"rotate([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
-            new_source = source[:start] + insert + source[start:]
-            new_node_start = start + len(insert)
-
-        cmd = _GizmoCmd(
-            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
-            new_node_start, self._restore_selection_after_translate,
-            merge_id=1002, label="Rotate", viewport=self._viewport,
-        )
-        self._undo_stack.push(cmd)
-
-    # ------------------------------------------------------------------
-    # Scale gizmo commit
-    # ------------------------------------------------------------------
+        def combine(v):
+            v[axis] += angle_deg
+            return v
+        self._commit_transform("rotate", "a", (0.0, 0.0, 0.0), 0.0,
+                               combine, "Rotate", 1002)
 
     def _on_scale_committed(self, axis: int, factor: float, uniform: bool):
-        if not self._rendered_tab:
-            return
-        orig_id = self._viewport._renderer.selected_id
-        if orig_id is None:
-            return
-        span = self._editable_span_for_id(orig_id)
-        if span is None:
-            return
-
-        if self._current_tab() is not self._rendered_tab:
-            idx = self._tabs.indexOf(self._rendered_tab)
-            if idx >= 0:
-                self._tabs.setCurrentIndex(idx)
-
-        source = self._rendered_tab.editor.toPlainText()
-        start = span.start_offset
-
-        def _fmt(v: float) -> str:
-            return f"{v:.4g}"
-
-        prefix = source[:start]
-        m = re.search(
-            r'scale\s*\(\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]\s*\)\s*$',
-            prefix
-        )
-
-        merged = False
-        if m:
-            try:
-                ex, ey, ez = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                merged = True
-            except ValueError:
-                pass
-
-        if merged:
-            vals = [ex, ey, ez]
+        def combine(v):
             if uniform:
-                vals = [v * factor for v in vals]
-            else:
-                vals[axis] *= factor
-            new_scale = f"scale([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
-            match_start = m.start()
-            new_source = source[:match_start] + new_scale + source[start:]
-            new_node_start = match_start + len(new_scale)
-        else:
-            if uniform:
-                vals = [factor, factor, factor]
-            else:
-                vals = [1.0, 1.0, 1.0]
-                vals[axis] = factor
-            insert = f"scale([{_fmt(vals[0])}, {_fmt(vals[1])}, {_fmt(vals[2])}]) "
-            new_source = source[:start] + insert + source[start:]
-            new_node_start = start + len(insert)
-
-        cmd = _GizmoCmd(
-            self._rendered_tab, self._rendered_tab.editor, source, new_source, self._render,
-            new_node_start, self._restore_selection_after_translate,
-            merge_id=1003, label="Scale", viewport=self._viewport,
-        )
-        self._undo_stack.push(cmd)
+                return [x * factor for x in v]
+            v[axis] *= factor
+            return v
+        self._commit_transform("scale", "v", (1.0, 1.0, 1.0), 1.0,
+                               combine, "Scale", 1003)
 
     # ------------------------------------------------------------------
     # Coordinate display
