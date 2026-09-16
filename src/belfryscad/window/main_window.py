@@ -18,7 +18,8 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.scad_format import find_transform_call, vector_arg
+from belfryscad.window.scad_format import (find_transform_call,
+                                           find_transform_chain, vector_arg)
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
                                         _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
@@ -5199,7 +5200,14 @@ class MainWindow(QMainWindow):
 
         source = self._rendered_tab.editor.toPlainText()
         start = span.start_offset
-        call = find_transform_call(source, start, name)
+
+        # The handles are world-aligned, so the edit has to be too: a new
+        # transform goes OUTSIDE any it is already wrapped in. Inserted
+        # inside, `rotate([0,0,45]) cube(10)` moved along the rotated x
+        # when the handle pointed along world x (#453).
+        chain = find_transform_chain(source, start)
+        outer_name, outer = chain[-1] if chain else (None, None)
+        call = outer if outer_name == name else None
         vals = vector_arg(call, keyword, 3, fill) if call is not None else None
 
         def _fmt(v: float) -> str:
@@ -5208,13 +5216,15 @@ class MainWindow(QMainWindow):
         new_vals = combine(list(vals) if vals is not None else list(identity))
         text = f"{name}([{_fmt(new_vals[0])}, {_fmt(new_vals[1])}, {_fmt(new_vals[2])}]) "
         if vals is not None:
-            # Replace the wrapper we found, keeping everything after it --
-            # a comment between it and the node stays where the user put it.
+            # Update the outermost wrapper in place, keeping everything
+            # after it -- a comment between it and the node stays put.
             head, tail = source[:call.start], source[call.end:]
             new_source = head + text.rstrip() + tail
             new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
         else:
-            new_source = source[:start] + text + source[start:]
+            # Outside the whole chain, not against the node.
+            at = outer.start if outer is not None else start
+            new_source = source[:at] + text + source[at:]
             new_node_start = start + len(text)
 
         self._undo_stack.push(_GizmoCmd(

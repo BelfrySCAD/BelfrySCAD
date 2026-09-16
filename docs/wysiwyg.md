@@ -257,12 +257,16 @@ During translate/rotate/scale, a text readout of the current value is shown in t
 ## Transform Edit Rules
 
 - **Nested transforms of the same type**: modify the innermost matching wrapper. The backwards scan starts at the node, so the innermost is the only one it reaches.
-- **Transform composition order** — **[DIFFERS]**. A new wrapper is inserted immediately before the selected node, i.e. *inside* any existing transform wrappers, not outside them (`source[:start] + insert + source[start:]`).
-  > Original intent: new wrappers are always inserted outside any existing transform wrappers on the selected node.
+- **Transform composition order**: a new wrapper goes **outside** any the node is already wrapped in, and a merge updates the **outermost** wrapper of that type. This is what makes a world-aligned handle tell the truth — inserted inside, a drag on the world-x handle of `rotate([0,0,45]) cube(10)` moved the object along the *rotated* x (#453).
+
+  `find_transform_chain` walks out while each enclosing call is one of `TRANSFORM_WRAPPERS` (translate, rotate, scale, mirror, resize, multmatrix, color) and **stops at anything else**. A `for` is a wrapper too, but hoisting a drag outside the loop would move every iteration rather than the one the user grabbed; the same goes for `if`, a `difference()` operand and a user module's call.
+
+  An *inner* wrapper of the same type is deliberately left alone: merging into the `translate` in `rotate([0,0,45]) translate([1,0,0]) cube(10)` would move along the rotated axis, so a new outer one is added instead.
 - **Live drag preview** — **[NOT IMPLEMENTED]**. There is no ghost mesh; only the delta readout updates during a drag. The AST edit and re-render still happen on mouse-up, as one undo step.
   > Original intent: wireframe ghost copy of the mesh during drag.
-- **Gizmo orientation** — **[DIFFERS]**. Handles are world-axis aligned (`Viewport._AXIS_DIRS` is the identity basis), positioned at the selection's bounding-box centre. A rotated object gets world-aligned handles, not ones following its own frame.
-  > Original intent: handles drawn in local (post-transform) space.
+- **Gizmo orientation**: handles are world-axis aligned (`Viewport._AXIS_DIRS` is the identity basis), at the selection's bounding-box centre, and since #453 the *edit* is world-aligned to match — a drag on the world-x handle moves the object along world x whatever it is wrapped in.
+
+  Local-frame handles were the original intent and are not what shipped. They would need the object's accumulated transform, and nothing keeps it: bodies reach the renderer already baked into world space and `ColoredBody` carries no matrix, so it would have to be reconstructed from source or added to the evaluator. Aligning the edit to the handles instead needed neither, and leaves the two agreeing — which was the actual complaint.
 
 ## Source Rewrite Rules (Intent Preservation)
 

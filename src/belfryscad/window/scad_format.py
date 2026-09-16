@@ -688,3 +688,35 @@ def vector_arg(call: TransformCall, keyword: str, size: int, fill: float):
     except ValueError:
         return None            # an expression or a variable: not ours to rewrite
     return vals + [fill] * (size - len(vals))
+
+
+#: Calls a new transform may be inserted OUTSIDE of. Everything else stops
+#: the walk, and deliberately: `for (i=[0:3]) translate(...) cube();` is a
+#: wrapper too, but hoisting a drag outside the loop would move every
+#: iteration rather than the one the user grabbed. Same for `if`, a
+#: `difference()` operand, or a user module's call.
+TRANSFORM_WRAPPERS = ("translate", "rotate", "scale", "mirror", "resize",
+                      "multmatrix", "color")
+
+
+def find_transform_chain(source: str, before: int) -> list:
+    """The transform calls wrapping the node at `before`, innermost first.
+
+    Walks out while each enclosing call is one of `TRANSFORM_WRAPPERS`.
+    Stops at anything else, so the chain only ever contains calls a new
+    transform can be safely hoisted outside of.
+    """
+    chain = []
+    at = before
+    while True:
+        found = None
+        for name in TRANSFORM_WRAPPERS:
+            call = find_transform_call(source, at, name)
+            if call is not None:
+                found = (name, call)
+                break
+        if found is None:
+            return chain
+        name, call = found
+        chain.append((name, call))
+        at = call.start
