@@ -5224,9 +5224,32 @@ class MainWindow(QMainWindow):
 
         self._undo_stack.push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
-            self._render, new_node_start, self._restore_selection_after_translate,
+            self._render, new_node_start, self._restore_selection_after_gizmo,
             merge_id=merge_id, label=label, viewport=self._viewport,
         ))
+
+    def _restore_selection_after_gizmo(self, new_node_start: int):
+        """Re-select whatever the edit landed on, after the re-render.
+
+        The ids are all new by then, so the span is what identifies it.
+        Matched on the EDITABLE span, not the producing node's: for
+        library-built geometry those are different spans in different
+        files, and only the editable one is comparable with an offset in
+        this buffer (#450, #451).
+        """
+        for orig_id in self.id_to_node:
+            span = self._editable_span_for_id(orig_id)
+            if span is not None and span.start_offset == new_node_start:
+                self._viewport.set_selection(orig_id)
+                if self._rendered_tab:
+                    self._rendered_tab.editor.set_selection(span.start_offset,
+                                                            span.end_offset)
+                self._viewport.update()
+                return
+        self._viewport.set_selection(None)
+        if self._rendered_tab:
+            self._rendered_tab.editor.clear_selection()
+        self._viewport.update()
 
     def _on_translate_committed(self, dx: float, dy: float, dz: float):
         self._commit_transform("translate", "v", "0", (dx, dy, dz), "add",
