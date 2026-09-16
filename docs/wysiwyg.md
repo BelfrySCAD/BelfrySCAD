@@ -276,6 +276,16 @@ the only signal there, since the call is not a rotation. An angle steps
 90/15/1 degrees, everything else 10/1/0.1 units -- the same table the viewport's
 rotate nudge uses, so there is one definition of what Shift and Cmd mean.
 
+**The status bar says what is armed**, because arming is modal and leaves no
+other mark on the window -- without it the arrow keys would silently mean
+something new. `_nudge_status_text` names the value, the three step sizes and
+Escape, and it is rebuilt on every step, so the value shown is the current one.
+The modifiers are spelled by `_modifier_label`, which asks `QKeySequence` for
+`Shift+Up`/`Ctrl+Up` and takes the arrow back off -- Qt renders a bare modifier
+as the empty string, and asking Qt at all is what keeps Cmd-vs-Ctrl out of the
+code. `focusOutEvent` disarms, so switching tabs does not leave the bar
+promising arrow keys this editor no longer receives.
+
 The window's `_on_value_nudged` pushes one `_GizmoCmd` per step with
 `merge_id=1004`, so holding the key is a single undo. **The render is
 debounced** (`_VALUE_NUDGE_RENDER_DELAY_MS`, 400ms): an arrow key repeats faster

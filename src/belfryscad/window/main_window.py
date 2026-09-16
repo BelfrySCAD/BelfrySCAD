@@ -1445,6 +1445,7 @@ class MainWindow(QMainWindow):
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
+        tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
         tab.editor.use_library_requested.connect(self._open_use_library)
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
@@ -1781,6 +1782,7 @@ class MainWindow(QMainWindow):
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
+        tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
         tab.editor.use_library_requested.connect(self._open_use_library)
         self._apply_preferences_to_tab(
             tab,
@@ -5199,6 +5201,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     _VALUE_NUDGE_RENDER_DELAY_MS = 400
+
+    def _on_value_nudge_status(self, text: str):
+        """Show, or clear, the armed-value message. Arming changes what the
+        arrow keys do and marks nothing else in the window, so it has to
+        say so somewhere."""
+        if text:
+            self.statusBar().showMessage(text)
+        else:
+            self.statusBar().clearMessage()
 
     def _on_value_nudged(self, tab, start: int, end: int, new_text: str):
         """Apply one armed-nudge step: rewrite the span, then re-render.

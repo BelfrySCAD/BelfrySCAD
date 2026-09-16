@@ -161,3 +161,51 @@ def test_an_angle_argument_steps_in_degrees_whatever_the_call(src, sub):
 ])
 def test_a_length_argument_does_not(src, sub):
     assert not is_angle_value(src, src.index(sub))
+
+
+# -- The armed message -----------------------------------------------------
+
+class _Armed:
+    """Just enough of a CodeEditor to build the message -- a real widget in
+    pytest takes the whole process down with it (see the project's Qt rule)."""
+    def __init__(self, text, span):
+        self.toPlainText, self._nudge_span = (lambda: text), span
+
+
+def test_the_status_message_names_the_value_the_steps_and_the_way_out():
+    """Arming is modal and marks nothing else in the window, so the message
+    has to carry all three."""
+    from belfryscad.window.editor import CodeEditor
+    src = "cube(25);\nxrot(45);\n"
+
+    msg = CodeEditor._nudge_status_text(_Armed(src, find_value_span(src, 6)))
+    assert "25" in msg, msg                                   # what is armed
+    assert "1" in msg and "10" in msg and "0.1" in msg, msg   # the steps
+    assert "Esc" in msg, msg                                  # the way out
+
+    ang = CodeEditor._nudge_status_text(_Armed(src, find_value_span(src, 15)))
+    assert "90" in ang and "15" in ang, ang                   # degrees, not units
+    assert "0.1" not in ang, ang
+
+
+def test_the_message_is_raised_on_arm_and_cleared_on_disarm():
+    import inspect
+    from belfryscad.window.editor import CodeEditor
+    assert "value_nudge_status" in inspect.getsource(CodeEditor.arm_value_nudge)
+    assert 'value_nudge_status.emit("")' in inspect.getsource(
+        CodeEditor.disarm_value_nudge), "the message must not outlive the arming"
+
+
+def test_losing_focus_disarms():
+    """Switching tabs must not leave the status bar promising arrow keys
+    this editor no longer receives."""
+    import inspect
+    from belfryscad.window.editor import CodeEditor
+    assert "disarm_value_nudge" in inspect.getsource(CodeEditor.focusOutEvent)
+
+
+def test_the_window_shows_and_clears_it():
+    import inspect
+    from belfryscad.window.main_window import MainWindow
+    src = inspect.getsource(MainWindow._on_value_nudge_status)
+    assert "showMessage" in src and "clearMessage" in src
