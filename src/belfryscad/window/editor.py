@@ -2585,7 +2585,7 @@ class CodeEditor(QPlainTextEdit):
             if _vspan is not None:
                 if menu.actions() and not menu.actions()[-1].isSeparator():
                     menu.addSeparator()
-                _act = menu.addAction(f"Nudge {text[_vspan[0]:_vspan[1]]}")
+                _act = menu.addAction("Adjust Value...")
                 _act.triggered.connect(lambda _c=False, sp=_vspan: self.arm_value_nudge(sp))
 
         if view_literals:

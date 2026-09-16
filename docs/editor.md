@@ -90,8 +90,10 @@ The available variables come from the innermost debug frame: `{**outer_scope, **
 
 `MainWindow._on_debug_paused` and `_on_debug_error_break` call `_set_debug_locals_on_visible(locals_dict)`, which first clears locals from all editors via `_clear_all_debug_locals()`, then sets them on `_current_tab().editor` — the editor that is actually visible after `_show_debug_line` may have switched to an included file's tab. All resume/step/stop/finish/restart handlers call `_clear_all_debug_locals()` to sweep every open editor clean.
 
-**Nudge `<value>`** (writable tabs only): arms the number or expression under
-the click for Up/Down stepping in place, Escape or a click to end it. The span
+**Adjust Value...** (writable tabs only): arms the number or expression under
+the click for Up/Down stepping in place, Escape or a click to end it. The item
+is shown only when there is a value under the click, so the label need not
+name it. The span
 comes from `scad_format.find_value_span` and the step size from
 `is_angle_value`; the window applies each step as one merged undo entry and
 renders on a 400ms debounce. Full rules in `docs/wysiwyg.md` under

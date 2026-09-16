@@ -5218,7 +5218,7 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(_GizmoCmd(
             tab, tab.editor, source, new_source, lambda: None,
             start, lambda _offset: None,
-            merge_id=1004, label="Nudge Value", viewport=self._viewport,
+            merge_id=1004, label="Adjust Value", viewport=self._viewport,
         ))
         tab.editor.arm_value_nudge((start, start + len(new_text)))
         self._value_nudge_tab = tab
