@@ -303,3 +303,59 @@ def test_a_level_does_not_carry_over_to_a_different_pick(tmp_path):
     span, _owner = _span(mw, 2)
     assert span is not None, "a different pick must not inherit A's level"
     assert span.origin == str(script)
+
+
+# -- Re-selecting after an edit (#463 follow-up) ---------------------------
+
+def test_the_reselect_only_records_it_cannot_search_yet():
+    """`_render()` starts a QThread and returns, so when the undo command
+    asks for the node back the id map is still the one from BEFORE the edit
+    -- spans at the old offsets, nothing matching, selection cleared. One
+    nudge deselected the object and a second was impossible."""
+    mw = SimpleNamespace(_pending_reselect=None)
+    MainWindow._restore_selection_after_gizmo(mw, 42)
+    assert mw._pending_reselect == 42
+
+
+def test_the_reselect_happens_after_the_new_ids_land():
+    """Ordering is the whole fix: _on_render_done must consume it only
+    after assigning id_to_node."""
+    import inspect
+    src = inspect.getsource(MainWindow._on_render_done)
+    assign = src.index("self.id_to_node = id_to_node")
+    consume = src.index("_apply_pending_reselect()")
+    assert assign < consume, "the reselect must run after the map is replaced"
+
+
+def test_applying_it_selects_the_span_that_starts_there(tmp_path):
+    script = tmp_path / "s.scad"
+    script.write_text("translate([1,0,0]) cube(10);\n")
+    tab = _tab(str(script), str(script))
+
+    selected = {}
+    node = SimpleNamespace(position=_pos(str(script), 19, 27), call_sites=())
+    mw = _build({7: node}, tab)
+    mw._pending_reselect = 19
+    mw._viewport = SimpleNamespace(set_selection=lambda i: selected.setdefault("id", i),
+                                   update=lambda: None)
+    tab.editor.set_selection = lambda a, b: selected.setdefault("span", (a, b))
+    tab.editor.clear_selection = lambda: selected.setdefault("cleared", True)
+
+    MainWindow._apply_pending_reselect(mw)
+    assert selected.get("id") == 7
+    assert selected.get("span") == (19, 27)
+    assert mw._pending_reselect is None, "consumed, so a later render does not redo it"
+
+
+def test_nothing_matching_clears_rather_than_selecting_the_wrong_thing(tmp_path):
+    script = tmp_path / "s.scad"
+    script.write_text("cube(10);\n")
+    tab = _tab(str(script), str(script))
+    cleared = {}
+    mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 9), call_sites=())}, tab)
+    mw._pending_reselect = 999
+    mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
+                                   update=lambda: None)
+    tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
+    MainWindow._apply_pending_reselect(mw)
+    assert cleared.get("id") is None and cleared.get("cleared") is True

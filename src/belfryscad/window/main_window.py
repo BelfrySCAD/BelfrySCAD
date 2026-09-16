@@ -662,6 +662,9 @@ class MainWindow(QMainWindow):
         # thing clicked.
         self._selection_level = None
         self._selection_level_id = None
+        # Offset a pending gizmo/nudge edit wants re-selected once its
+        # render lands. See _restore_selection_after_gizmo.
+        self._pending_reselect = None
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
@@ -2442,6 +2445,9 @@ class MainWindow(QMainWindow):
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
+        # A gizmo drag or an arrow-key nudge asked for its node back; the
+        # ids only exist now, past the render_id guard.
+        self._apply_pending_reselect()
         # Stored only past the render_id guard above, so a superseded render
         # can never leave its geometry behind for Export to write -- the
         # handle has to stay in step with self._bodies, which is what the
@@ -5229,17 +5235,31 @@ class MainWindow(QMainWindow):
         ))
 
     def _restore_selection_after_gizmo(self, new_node_start: int):
-        """Re-select whatever the edit landed on, after the re-render.
+        """Ask for the edited node to be re-selected once the render lands.
 
-        The ids are all new by then, so the span is what identifies it.
-        Matched on the EDITABLE span, not the producing node's: for
-        library-built geometry those are different spans in different
-        files, and only the editable one is comparable with an offset in
-        this buffer (#450, #451).
+        It cannot be done here. `_render()` starts a QThread and returns, so
+        at this point `id_to_node` is still the map from BEFORE the edit,
+        whose spans are at the old offsets -- the search found nothing and
+        cleared the selection, so one nudge deselected the object and there
+        was no way to nudge it twice.
         """
+        self._pending_reselect = new_node_start
+
+    def _apply_pending_reselect(self):
+        """Re-select whatever the edit landed on, now that the ids are new.
+
+        Matched on the EDITABLE span, not the producing node's: for
+        library-built geometry those are different spans in different files,
+        and only the editable one is comparable with an offset in this
+        buffer (#450, #451).
+        """
+        target = self._pending_reselect
+        if target is None:
+            return
+        self._pending_reselect = None
         for orig_id in self.id_to_node:
             span = self._editable_span_for_id(orig_id)
-            if span is not None and span.start_offset == new_node_start:
+            if span is not None and span.start_offset == target:
                 self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
                     self._rendered_tab.editor.set_selection(span.start_offset,
