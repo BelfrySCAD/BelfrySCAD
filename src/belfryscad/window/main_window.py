@@ -5110,6 +5110,13 @@ class MainWindow(QMainWindow):
         levels = self._selection_levels(orig_id)
         if not levels:
             return None, None
+        # Reset here, not in the caller: a level belongs to the id it was
+        # stepped on, and carrying one over to a different pick selected a
+        # frame in a file that pick never touches -- which then resolves to
+        # no open tab and reads as "not selectable".
+        if orig_id != self._selection_level_id:
+            self._selection_level_id = orig_id
+            self._selection_level = None
         if self._selection_level is None:
             self._selection_level = self._default_selection_level(levels)
         idx = max(0, min(self._selection_level, len(levels) - 1))
@@ -5143,9 +5150,6 @@ class MainWindow(QMainWindow):
         if orig_id < 0:
             rendered.editor.clear_selection()
             return
-        if orig_id != self._selection_level_id:
-            self._selection_level_id = orig_id
-            self._selection_level = None      # a fresh pick starts at the default
         span, tab = self._selectable_span_for_id(orig_id)
         if span is None:
             rendered.editor.clear_selection()

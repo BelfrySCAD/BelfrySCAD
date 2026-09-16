@@ -263,3 +263,43 @@ def test_repeated_frames_collapse_into_one_level(tmp_path):
                            call_sites=(same, dup))
     mw = _build({4: node}, _tab(str(script), str(script)))
     assert len(mw._selection_levels(4)) == 1
+
+
+def test_a_level_does_not_carry_over_to_a_different_pick(tmp_path):
+    """Stepping into a library on one body must not make the next body
+    unselectable: its chain never touches that file, so the carried level
+    resolved to a frame with no open tab and read as "not selectable"."""
+    script = tmp_path / "s.scad"
+    script.write_text("cube(10);\ncuboid(8);\n")
+    opened = tmp_path / "opened.scad"
+    opened.write_text("// open in a tab\n")
+    unopened = tmp_path / "unopened.scad"
+    unopened.write_text("// exists, never opened\n")
+
+    # Body A steps into a library the user HAS open.
+    a = SimpleNamespace(position=_pos(str(opened), 0, 5),
+                        call_sites=(_pos(str(opened), 0, 5),
+                                    _pos(str(script), 0, 9)))
+    # Body B's chain goes through a file that is NOT open, at the same index.
+    b = SimpleNamespace(position=_pos(str(unopened), 0, 5),
+                        call_sites=(_pos(str(unopened), 0, 5),
+                                    _pos(str(script), 10, 20)))
+    mw = _build({1: a, 2: b}, _tab(str(script), str(script)),
+                others=[_tab(str(opened), str(opened), read_only=True)])
+
+    # Both start on the user's own line.
+    assert _span(mw, 1)[0].origin == str(script)
+    assert _span(mw, 2)[0].origin == str(script)
+
+    # Step body A in, to the opened library.
+    levels = mw._selection_levels(1)
+    # What _step_selection_level does: the level and the id it belongs to.
+    mw._selection_level = next(i for i, l in enumerate(levels) if l.origin == str(opened))
+    mw._selection_level_id = 1
+    assert _span(mw, 1)[0].origin == str(opened)
+
+    # Now pick body B. Carried over, level 0 is its unopened file and the
+    # pick would be refused; reset, it is the user's own line again.
+    span, _owner = _span(mw, 2)
+    assert span is not None, "a different pick must not inherit A's level"
+    assert span.origin == str(script)
