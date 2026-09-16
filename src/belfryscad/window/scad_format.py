@@ -489,6 +489,11 @@ def _line_len(text: str, offset: int) -> int:
     return (len(text) if end < 0 else end) - start
 
 
+def _col_at(text: str, pos: int) -> int:
+    """The column `pos` sits at, counting from 1."""
+    return pos - (text.rfind("\n", 0, pos) + 1)
+
+
 def _wrap_one_long_list(text: str, width: int, indent_size: int,
                         profile: FormatProfile):
     """Reflow the outermost over-long comma list, or None if none is.
@@ -521,8 +526,20 @@ def _wrap_one_long_list(text: str, width: int, indent_size: int,
         if start is None or end is None:
             continue
         always = profile.wrap_every_list and node["kind"] in _ARGUMENT_LISTS
-        if not always and _line_len(text, start) <= width:
-            continue
+        if not always:
+            if _line_len(text, start) <= width:
+                continue
+            # Measured against where the ITEMS end, not where the node
+            # does: a `FunctionDeclaration` spans its body too, so
+            # `function foo(a, b, c) = <long body>;` looked over-long and
+            # split `a, b, c` across three lines to fix a line whose
+            # length was all body. A list that itself fits is not what
+            # makes the line too long -- skipping it lets the round fall
+            # through to the one that really does overflow. This is also
+            # the rule as a person states it: keep the arguments inline
+            # unless there are a lot of them.
+            if _col_at(text, items[-1]["position"]["end_offset"]) <= width:
+                continue
         # The same span hazard `_space_separators` documents: a string
         # literal's span can end mid-string, dragging every offset around
         # it out of place. An unbalanced quote count is the tell.
