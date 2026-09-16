@@ -163,6 +163,72 @@ class Measurement:
         return f"{v:.3f}\u00b0  (legs {la:.3f}, {lb:.3f})"
 
 
+# Arrow-key nudging, shared by this viewport and every editable data
+# viewport. They live here rather than in data_viewers because that
+# module already imports this one.
+def _view_locked_axis(camera) -> int:
+    """Return 0/1/2 (X/Y/Z) for whichever world axis is most nearly parallel
+    to the camera's current view direction — the one axis a 2D mouse drag
+    can't usefully control (foreshortened to ~a point), so 3D vertex-
+    dragging locks it and moves the vertex only within the plane spanned by
+    the other two (most-perpendicular-to-view) axes."""
+    forward = camera.target - camera.eye_position()
+    norm = np.linalg.norm(forward)
+    if norm > 1e-9:
+        forward = forward / norm
+    return int(np.argmax(np.abs(forward)))
+
+
+def _key_nudge_magnitude(modifiers) -> float:
+    """Arrow-key nudge step size for the held modifiers: Cmd (`Control` on
+    macOS) for a fine 0.1-unit nudge, Shift for a coarse 10-unit nudge,
+    neither for the default 1-unit nudge. Shared by every editable
+    viewport's `keyPressEvent`."""
+    if modifiers & Qt.KeyboardModifier.ControlModifier:  # Cmd on macOS
+        return 0.1
+    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        return 10.0
+    return 1.0
+
+
+def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.ndarray | None:
+    """World-space delta (`magnitude` world units, from `_key_nudge_magnitude`)
+    for arrow-key vertex nudging, confined to the same axis-locked plane
+    Cmd+drag uses (`_view_locked_axis`/`_ray_plane_axis_locked`) rather
+    than a fixed pair of world axes -- important once the locked plane
+    isn't the always-top-down XY plane a 2D viewport uses, e.g. a 3D
+    grid/path orbited to look along +/-X or +/-Y instead of +/-Z. Unlike a
+    drag (which can move freely to anywhere in that plane), each key press
+    changes exactly one coordinate: of the plane's two free axes,
+    "Right"/"Left" moves along whichever one the camera's actual
+    screen-right direction (`view_matrix()` row 0 -- the same row the
+    gimbal-lock regression tests read) has the larger component in
+    (sign-matched), and "Up"/"Down" does the same using screen-up (row 1)
+    against the *other* free axis -- so a press always reads as a clean
+    single-axis nudge in the table, oriented to match the screen
+    regardless of camera orientation. Returns None for any other key."""
+    free_axes = [a for a in range(3) if a != lock_axis]
+    view = camera.view_matrix()
+    cam_right = view[0, :3]
+    cam_up = view[1, :3]
+
+    def _snap(v, axis):
+        delta = np.zeros(3)
+        delta[axis] = magnitude if v[axis] >= 0 else -magnitude
+        return delta
+
+    right_axis = max(free_axes, key=lambda a: abs(cam_right[a]))
+    up_axis = free_axes[0] if right_axis == free_axes[1] else free_axes[1]
+    right_delta = _snap(cam_right, right_axis)
+    up_delta = _snap(cam_up, up_axis)
+    return {
+        Qt.Key.Key_Right: right_delta,
+        Qt.Key.Key_Left: -right_delta,
+        Qt.Key.Key_Up: up_delta,
+        Qt.Key.Key_Down: -up_delta,
+    }.get(key)
+
+
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
@@ -943,6 +1009,33 @@ class Viewport(QOpenGLWidget):
     # ------------------------------------------------------------------
     # Mouse input
     # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        """Arrow keys nudge the selected object, the way they nudge a vertex
+        in an editable data viewport.
+
+        Same step sizes and the same screen-relative axes (`_key_nudge_*`),
+        so the keys mean one thing across the app: 1 unit, or 0.1 with Cmd
+        and 10 with Shift. Movement is confined to the plane facing the
+        camera, which is the plane the arrow keys can point within.
+
+        It commits through `translate_committed`, the signal a gizmo drag
+        emits on mouse-up, so a nudge is the same source rewrite and the
+        same single undo step -- and it needs no gizmo armed, which is the
+        point: nudging a part a millimetre should not require arming a
+        tool and finding a handle."""
+        if self._renderer.selected_id is not None:
+            magnitude = _key_nudge_magnitude(event.modifiers())
+            delta = _key_nudge_delta(self._renderer.camera,
+                                     _view_locked_axis(self._renderer.camera),
+                                     event.key(), magnitude)
+            if delta is not None:
+                self.translate_committed.emit(round(float(delta[0]), 4),
+                                              round(float(delta[1]), 4),
+                                              round(float(delta[2]), 4))
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
