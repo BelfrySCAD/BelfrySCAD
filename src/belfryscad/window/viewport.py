@@ -1084,17 +1084,23 @@ class Viewport(QOpenGLWidget):
         same single undo step -- and it needs no gizmo armed, which is the
         point: nudging a part a millimetre should not require arming a
         tool and finding a handle."""
-        if self._renderer.selected_id is not None:
-            # PageUp/PageDown walk the pick's call chain: up toward the
+        _chain_mods = (Qt.KeyboardModifier.ControlModifier
+                       | Qt.KeyboardModifier.MetaModifier)
+        if (self._renderer.selected_id is not None
+                and (event.modifiers() & _chain_mods) == _chain_mods):
+            # Ctrl+Meta+Up/Down walks the pick's call chain: up toward the
             # caller, down toward the callee, like a debugger's stack pane.
+            # It joins the Ctrl+Meta+1/2/3 family (Spin, Perspective,
+            # Stereo) already used for viewport-wide modes.
             #
-            # Not Alt+Up/Down, which already moves a LINE up or down in the
-            # code editor. Separate widgets, so there is no technical clash,
-            # but a chord should not mean two unrelated things in one app --
-            # the same reason the nudge helpers are shared rather than
-            # re-derived per viewport. PageUp/PageDown are unbound
-            # everywhere else here and already read as "up/down a level".
-            step = {Qt.Key.Key_PageUp: 1, Qt.Key.Key_PageDown: -1}.get(event.key())
+            # Two earlier choices were wrong because they were checked
+            # against the VIEWPORT's bindings rather than the app's: Alt+
+            # Up/Down moves a LINE in the code editor, and PageUp/PageDown
+            # pages the caret there. Separate widgets, so neither clashed
+            # technically -- but a chord should not mean two unrelated
+            # things in one app, which is the same reason the nudge helpers
+            # are shared rather than re-derived per viewport.
+            step = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
             if step is not None:
                 self.selection_level_step.emit(step)
                 event.accept()

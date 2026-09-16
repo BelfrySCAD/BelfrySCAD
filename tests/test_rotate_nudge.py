@@ -103,20 +103,27 @@ def test_up_down_pitch_about_the_screen_right_axis():
     assert right_axis != lock
 
 
-def test_chain_stepping_does_not_reuse_the_editors_alt_arrows():
-    """Alt+Up/Down already moves a LINE up or down in the code editor.
+def test_chain_stepping_uses_a_chord_no_other_pane_owns():
+    """Two earlier choices were wrong because they were checked against the
+    VIEWPORT's bindings rather than the app's: Alt+Up/Down moves a LINE in
+    the code editor, and PageUp/PageDown pages the caret there. Separate
+    widgets, so neither clashed technically -- but a chord should not mean
+    two unrelated things in one app.
 
-    Separate widgets, so nothing breaks technically -- but a chord should
-    not mean two unrelated things in one app, which is the same reason the
-    nudge helpers are shared rather than re-derived per viewport.
+    Ctrl+Meta+arrow joins the Ctrl+Meta+1/2/3 family already used for
+    viewport-wide modes.
     """
     import inspect
     from belfryscad.window.viewport import Viewport
 
     src = inspect.getsource(Viewport.keyPressEvent)
-    step = src[src.index("selection_level_step") - 600:src.index("selection_level_step")]
-    assert "Key_PageUp" in step and "Key_PageDown" in step
-    assert "AltModifier" not in step, "Alt+arrow belongs to the editor's line move"
+    head = src[:src.index("selection_level_step")]
+    assert "ControlModifier" in head and "MetaModifier" in head
+    # The key CONSTANTS, not the prose: the comment above the branch names
+    # both rejected chords on purpose.
+    assert "AltModifier" not in head, "Alt+arrow is the editor's line move"
+    assert "Key_PageUp" not in head and "Key_PageDown" not in head, \
+        "PageUp/PageDown pages the caret in the editor"
 
 
 def test_the_editor_still_owns_alt_arrow():
@@ -124,3 +131,9 @@ def test_the_editor_still_owns_alt_arrow():
     from belfryscad.window.editor import CodeEditor
     src = inspect.getsource(CodeEditor.keyPressEvent)
     assert "AltModifier" in src
+
+
+def test_the_chord_renders_as_the_expected_shortcut():
+    from PySide6.QtGui import QKeySequence
+    seq = QKeySequence(Qt.Modifier.CTRL | Qt.Modifier.META | Qt.Key.Key_Up)
+    assert seq.toString(QKeySequence.SequenceFormat.NativeText) == "\u2303\u2318\u2191"
