@@ -2445,9 +2445,6 @@ class MainWindow(QMainWindow):
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
-        # A gizmo drag or an arrow-key nudge asked for its node back; the
-        # ids only exist now, past the render_id guard.
-        self._apply_pending_reselect()
         # Stored only past the render_id guard above, so a superseded render
         # can never leave its geometry behind for Export to write -- the
         # handle has to stay in step with self._bodies, which is what the
@@ -2470,6 +2467,11 @@ class MainWindow(QMainWindow):
             return
 
         self._bodies = bodies
+        # AFTER load_geometry, which ends with `self.selected_id = None`
+        # (SceneRenderer). Re-selecting before it drew the gizmo for an
+        # instant and then had it wiped -- a nudge looked like it selected
+        # and deselected itself, with the arrows flickering in between.
+        self._apply_pending_reselect()
         self._update_measure_actions_enabled()
 
         # If the script set $vp* variables, apply them to the camera and skip auto-fit.
