@@ -242,7 +242,10 @@ for a fast text-only validation pass.
 It rebuilds when the pane becomes visible, when the tab changes, and on
 demand — deliberately **not** on text changes.
 
-**Text size** is `A−`/`A+` in the pane's own button row, stored in
+**Text size** is `A−`/`A+` in the pane's own button row (sized from the
+style's own `sizeHint` and the measured label width, never a hard-coded
+number -- 36px clipped the text on macOS, and an offscreen `sizeHint` does not
+report Aqua's real metrics), stored in
 `docs/fontSize` (`0` = follow the application default, which is what a fresh
 install wants) and clamped to 6..36. Documentation is prose read at length and
 the app's default size is set for labels and menus, which is #465.

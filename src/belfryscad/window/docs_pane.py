@@ -610,7 +610,12 @@ class DocsPane(QWidget):
         self._smaller_btn = QPushButton("A\u2212")
         self._bigger_btn = QPushButton("A+")
         for b in (self._smaller_btn, self._bigger_btn):
-            b.setFixedWidth(36)
+            # Never narrower than the style wants, nor than the label plus a
+            # bezel's worth of margin. A hard-coded 36 clipped the text on
+            # macOS, and an offscreen sizeHint does not report Aqua's real
+            # metrics -- so the floor is computed rather than guessed.
+            b.setMinimumWidth(max(b.sizeHint().width(),
+                                  b.fontMetrics().horizontalAdvance(b.text()) + 28))
         self._smaller_btn.clicked.connect(
             lambda: self.set_font_size(self.font_size() - 1))
         self._bigger_btn.clicked.connect(

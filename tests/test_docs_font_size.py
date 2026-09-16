@@ -118,3 +118,14 @@ def test_the_size_is_clamped_and_the_buttons_say_so(d):
 
 def test_resizing_before_anything_is_previewed_is_harmless(d):
     assert d["no_preview_ok"]
+
+
+def test_the_size_buttons_are_wide_enough_for_their_labels():
+    """A hard-coded 36px clipped "A+" on macOS. The floor is computed from
+    the style's own sizeHint and the label's measured width, so it cannot be
+    too narrow whatever the platform decides a button looks like."""
+    import inspect
+    from belfryscad.window.docs_pane import DocsPane
+    src = inspect.getsource(DocsPane.__init__)
+    assert "setFixedWidth" not in src, "a fixed width cannot adapt to the style"
+    assert "setMinimumWidth" in src and "horizontalAdvance" in src
