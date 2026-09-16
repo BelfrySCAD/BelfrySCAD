@@ -15,11 +15,13 @@ already moved past.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import (QColor, QDesktopServices, QFontInfo, QImage, QPalette, QTextBlockFormat, QTextCursor, QTextDocument,
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontInfo, QImage, QPalette, QTextBlockFormat, QTextCursor, QTextDocument,
                             QTextCharFormat, QTextFormat, QTextFrameFormat, QTextTable)
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMenu, QPushButton,
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu, QPushButton,
                                 QSplitter, QTextBrowser, QTreeWidget,
                                 QTreeWidgetItem, QVBoxLayout, QWidget)
+
+from belfryscad.window.preferences import load_preference, save_preferences
 
 _LEVEL_ORDER = {"error": 0, "warning": 1, "notice": 2}
 
@@ -602,9 +604,23 @@ class DocsPane(QWidget):
             Qt.TextInteractionFlag.TextBrowserInteraction)
         self._status.linkActivated.connect(self._on_status_link)
 
+        # Text size, as buttons in the pane rather than only a preference:
+        # the reader wants it bigger while they are reading, not after a
+        # trip to a dialog (#465). Persisted all the same.
+        self._smaller_btn = QPushButton("A\u2212")
+        self._bigger_btn = QPushButton("A+")
+        for b in (self._smaller_btn, self._bigger_btn):
+            b.setFixedWidth(36)
+        self._smaller_btn.clicked.connect(
+            lambda: self.set_font_size(self.font_size() - 1))
+        self._bigger_btn.clicked.connect(
+            lambda: self.set_font_size(self.font_size() + 1))
+
         top = QHBoxLayout()
         top.setContentsMargins(4, 4, 4, 0)
         top.addWidget(self._refresh_btn)
+        top.addWidget(self._smaller_btn)
+        top.addWidget(self._bigger_btn)
         top.addWidget(self._status, 1)
 
         split = QSplitter(Qt.Orientation.Vertical)
@@ -626,11 +642,16 @@ class DocsPane(QWidget):
         self._worker.progress.connect(self._on_progress)
         self._thread.start()
 
+        self._update_font_buttons()
+        self._apply_font_size()
+
         self._busy = False
         self._pending = None
         #: Last (text, path) built, so a placeholder click can rebuild the
         #: same content with one more image rendered.
         self._last_source = None
+        #: Last preview built, so a font-size change can rebuild from it.
+        self._last_preview = None
         #: Image paths shown as placeholders in the current document.
         self._pending_images = []
         #: Where to put the view back after a rebuild -- see _capture_scroll.
@@ -834,6 +855,53 @@ class DocsPane(QWidget):
         self._last_source = (source_text, src_file)
         self._queue(source_text, src_file, [])
 
+    # The pane's own text size. Documentation is prose read at length, and
+    # the app's default UI size is set for labels and menus -- #465.
+    _FONT_MIN, _FONT_MAX = 6, 36
+
+    def font_size(self) -> int:
+        """The point size the pane renders at. 0 means "whatever the
+        application default is", which is what a fresh install wants."""
+        stored = load_preference("docs/fontSize", int)
+        if stored:
+            return max(self._FONT_MIN, min(self._FONT_MAX, stored))
+        return round(QApplication.font().pointSizeF()) or 12
+
+    def set_font_size(self, points: int):
+        """Render at `points` and rebuild, keeping the reader's place.
+
+        The rebuild costs no parse and no image render: it is the same
+        formatting pass over the markdown already in hand and whatever
+        images are already on disk, which is exactly what a placeholder
+        click does. Headings scale with it because `_style_headings`
+        derives their sizes from the document's default font."""
+        points = max(self._FONT_MIN, min(self._FONT_MAX, points))
+        if points == self.font_size():
+            return
+        save_preferences({"docs/fontSize": points})
+        self._update_font_buttons()
+        if self._last_preview is None:
+            self._apply_font_size()
+            return
+        self._scroll_anchor = self._capture_scroll()
+        self._build_document(self._last_preview)
+        self._restore_scroll(self._scroll_anchor)
+        self._scroll_anchor = None
+
+    def _apply_font_size(self):
+        font = QFont(self._view.document().defaultFont())
+        font.setPointSize(self.font_size())
+        self._view.document().setDefaultFont(font)
+        # The error pane shows evaluator traces the same eyes have to read.
+        self._error_text.document().setDefaultFont(font)
+
+    def _update_font_buttons(self):
+        size = self.font_size()
+        self._smaller_btn.setEnabled(size > self._FONT_MIN)
+        self._bigger_btn.setEnabled(size < self._FONT_MAX)
+        for b in (self._smaller_btn, self._bigger_btn):
+            b.setToolTip(f"Text size ({size} pt)")
+
     def _on_refresh_clicked(self):
         self._invalidate_next = True
         self.refresh_requested.emit()
@@ -899,10 +967,25 @@ class DocsPane(QWidget):
         self._worker.request.emit(*args)
 
     def _on_ready(self, preview):
-        from belfryscad.docsgen.preview import markdown_for_qt
         self._busy = False
         self._clear_rendering()
+        #: Kept so a font-size change can rebuild the document without going
+        #: back to the worker: the build is pure formatting over markdown
+        #: and whatever images are already on disk.
+        self._last_preview = preview
+        self._build_document(preview)
+        self._show_errors(preview.errors)
+        # After the document has been laid out with its final formats, so
+        # the anchored block's geometry is the one actually on screen.
+        self._restore_scroll(self._scroll_anchor)
+        self._scroll_anchor = None
+        self._scan_animations()
+        self._start_pending()
+
+    def _build_document(self, preview):
+        from belfryscad.docsgen.preview import markdown_for_qt
         self._anchors = None      # rebuilt on the next anchor click
+        self._apply_font_size()
 
         # Relative image links resolve against the directory the generated
         # .md file would have sat in.
@@ -933,14 +1016,6 @@ class DocsPane(QWidget):
                 "*No documentation blocks found.*\n\n"
                 "A documented file starts with a `// LibFile:` or `// File:` "
                 "block. See the openscad_docsgen WRITING_DOCS guide.")
-
-        self._show_errors(preview.errors)
-        # After the document has been laid out with its final formats, so
-        # the anchored block's geometry is the one actually on screen.
-        self._restore_scroll(self._scroll_anchor)
-        self._scroll_anchor = None
-        self._scan_animations()
-        self._start_pending()
 
     def _on_failed(self, message: str):
         self._busy = False

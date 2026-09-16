@@ -56,6 +56,7 @@ _DEFAULTS = {
     "editor/fontFamily": "Menlo",
     "editor/fontSize": 13,
     "editor/indentSize": 4,
+    "docs/fontSize": 0,          # 0 = follow the application default
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
