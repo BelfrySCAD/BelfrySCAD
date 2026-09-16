@@ -31,6 +31,7 @@ inside a `(...)`/`[...]`).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 _TOKEN_RE = re.compile(r'''
       (?P<ws>\s+)
@@ -516,3 +517,174 @@ def _same_shape(before: str, after: str) -> bool:
         return _shape(before) == _shape(after)
     except (ParseError, Exception):
         return False
+
+
+# -- Finding the transform wrapper a gizmo should edit ----------------------
+
+@dataclass
+class TransformCall:
+    """A `name(...)` call found immediately before some offset."""
+    start: int              # offset of the `name` token
+    end: int                # offset just past the closing `)`
+    args: list              # positional argument texts, in order
+    named: dict             # name -> argument text
+
+
+def _skip_back_trivia(text: str, i: int) -> int:
+    """Back over whitespace and comments ending at `i`."""
+    while i > 0:
+        j = i
+        while j > 0 and text[j - 1] in " \t\r\n":
+            j -= 1
+        if j >= 2 and text[j - 2:j] == "*/":
+            k = text.rfind("/*", 0, j - 2)
+            if k < 0:
+                return j
+            j = k
+        else:
+            # A line comment only counts if the run back to the line start
+            # really is one -- "//" inside a string is not.
+            nl = text.rfind("\n", 0, j)
+            line = text[nl + 1:j]
+            pos = line.find("//")
+            if pos >= 0 and line[:pos].count('"') % 2 == 0:
+                j = nl + 1 + pos
+            else:
+                return j
+        if j == i:
+            return j
+        i = j
+    return i
+
+
+def _match_back_paren(text: str, close: int):
+    """Offset of the `(` matching the `)` at `close`, or None.
+
+    Counts nesting and steps over strings and comments, which a regex
+    cannot: `translate([f("a)b"), 0, 0])` closes where it looks like it
+    does not.
+    """
+    depth = 0
+    i = close
+    while i >= 0:
+        c = text[i]
+        if c == '"':
+            j = i - 1
+            while j >= 0:
+                if text[j] == '"' and (j == 0 or text[j - 1] != "\\"):
+                    break
+                j -= 1
+            i = j - 1
+            continue
+        if c == "/" and i > 0 and text[i - 1] == "*":
+            k = text.rfind("/*", 0, i)
+            if k < 0:
+                return None
+            i = k - 1
+            continue
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            depth -= 1
+            if depth == 0:
+                return i if c == "(" else None
+        i -= 1
+    return None
+
+
+def _split_args(text: str) -> list:
+    """Top-level comma split, ignoring commas inside brackets or strings."""
+    out, depth, cur, i = [], 0, [], 0
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < len(text):
+                if text[j] == '"' and text[j - 1] != "\\":
+                    break
+                j += 1
+            cur.append(text[i:j + 1])
+            i = j + 1
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if c == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    tail = "".join(cur).strip()
+    if tail or out:
+        out.append(tail)
+    return out
+
+
+def find_transform_call(source: str, before: int, name: str):
+    """The `name(...)` call ending immediately before `before`, or None.
+
+    Replaces a regex that matched only a literal three-element
+    `translate([a, b, c])` anchored to the node, and so missed a named
+    argument, a two-element vector, a comment between the wrapper and its
+    child, or any nesting -- inserting a SECOND wrapper each time instead
+    of updating the one that was there (#452).
+    """
+    i = _skip_back_trivia(source, before)
+    if i <= 0 or source[i - 1] != ")":
+        return None
+    open_paren = _match_back_paren(source, i - 1)
+    if open_paren is None:
+        return None
+    j = _skip_back_trivia(source, open_paren)
+    k = j
+    while k > 0 and (source[k - 1].isalnum() or source[k - 1] in "_$"):
+        k -= 1
+    if source[k:j] != name:
+        return None
+    if k > 0 and (source[k - 1].isalnum() or source[k - 1] in "_$."):
+        return None            # part of a longer identifier
+    args, named = [], {}
+    for piece in _split_args(source[open_paren + 1:i - 1]):
+        if not piece:
+            continue
+        eq = -1
+        depth = 0
+        for n, c in enumerate(piece):
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+            elif c == "=" and depth == 0 and (n + 1 >= len(piece) or piece[n + 1] != "="):
+                eq = n
+                break
+        if eq > 0:
+            named[piece[:eq].strip()] = piece[eq + 1:].strip()
+        else:
+            args.append(piece)
+    return TransformCall(k, i, args, named)
+
+
+def vector_arg(call: TransformCall, keyword: str, size: int, fill: float):
+    """`call`'s vector argument as `size` floats, or None if it is not a
+    plain numeric vector this can safely rewrite.
+
+    A shorter vector is padded with `fill` -- OpenSCAD reads
+    `translate([1,2])` as z=0 and `scale([2,2])` as z=1 -- so the rewrite
+    means what the original did.
+    """
+    text = call.named.get(keyword) or (call.args[0] if call.args else None)
+    if not text:
+        return None
+    text = text.strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        return None
+    parts = _split_args(text[1:-1])
+    if not parts or len(parts) > size:
+        return None
+    try:
+        vals = [float(p) for p in parts]
+    except ValueError:
+        return None            # an expression or a variable: not ours to rewrite
+    return vals + [fill] * (size - len(vals))
