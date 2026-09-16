@@ -242,6 +242,26 @@ for a fast text-only validation pass.
 It rebuilds when the pane becomes visible, when the tab changes, and on
 demand — deliberately **not** on text changes.
 
+**Text size** is `A−`/`A+` in the pane's own button row, stored in
+`docs/fontSize` (`0` = follow the application default, which is what a fresh
+install wants) and clamped to 6..36. Documentation is prose read at length and
+the app's default size is set for labels and menus, which is #465.
+
+It goes through the render rather than `QTextBrowser.zoomIn()`: **Qt's zoom
+moves the document's default font and leaves an explicitly sized run alone**,
+and `_style_headings` sets heading sizes explicitly — so zooming would grow the
+body text straight past the headings. Measured, not assumed: at 9pt default a
+level-1 heading is a fixed 14.4pt before and after `zoomIn(4)`.
+
+Instead `_on_ready` keeps the `preview` it built, `_build_document(preview)` is
+the formatting pass split out of it, and a size change re-runs just that with
+the reader's scroll position captured and restored. **No parse and no image
+render**: it is the same rebuild a placeholder click already does, over the
+markdown in hand and whatever images are on disk. The headings come out right
+because `_style_headings` derives their sizes from the document's default font,
+which `_apply_font_size` has just set. The error pane scales with it — that is
+evaluator output the same eyes have to read.
+
 **Images render on demand, not up front.** A plain refresh renders none of
 them: the document appears immediately with a click-to-render placeholder in
 place of each Example, and the status line says how many are outstanding.
