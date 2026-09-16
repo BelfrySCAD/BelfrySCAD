@@ -2472,7 +2472,7 @@ class MainWindow(QMainWindow):
         # (SceneRenderer). Re-selecting before it drew the gizmo for an
         # instant and then had it wiped -- a nudge looked like it selected
         # and deselected itself, with the arrows flickering in between.
-        self._apply_pending_reselect()
+        self._apply_pending_reselect(render_id)
         self._update_measure_actions_enabled()
 
         # If the script set $vp* variables, apply them to the camera and skip auto-fit.
@@ -5270,9 +5270,15 @@ class MainWindow(QMainWindow):
         cleared the selection, so one nudge deselected the object and there
         was no way to nudge it twice.
         """
-        self._pending_reselect = new_node_start
+        # Tied to the render this edit just started. A render already in
+        # flight when the edit landed carries the id map from BEFORE it, and
+        # if that one finished first it consumed the offset, matched
+        # nothing and cleared the selection -- the intermittent "deselects
+        # on the first nudge" (there is usually only a stale render in
+        # flight for the first one).
+        self._pending_reselect = (self._render_id, new_node_start)
 
-    def _apply_pending_reselect(self):
+    def _apply_pending_reselect(self, render_id=None):
         """Re-select whatever the edit landed on, now that the ids are new.
 
         Matched on the EDITABLE span, not the producing node's: for
@@ -5280,9 +5286,12 @@ class MainWindow(QMainWindow):
         and only the editable one is comparable with an offset in this
         buffer (#450, #451).
         """
-        target = self._pending_reselect
-        if target is None:
+        pending = self._pending_reselect
+        if pending is None:
             return
+        want_render, target = pending
+        if render_id is not None and render_id < want_render:
+            return          # an older render; leave it pending for the right one
         self._pending_reselect = None
         for orig_id in self.id_to_node:
             # Non-mutating: a scan must not leave the level set from
@@ -5294,6 +5303,10 @@ class MainWindow(QMainWindow):
                 self._selection_level_id = orig_id
                 self._selection_level = None
                 self._viewport.set_selection(orig_id)
+                # Refreshed here too: it is otherwise left at whatever the
+                # last CLICK set, so the tools could stay hidden (or shown)
+                # for a selection that is now the other kind.
+                self._viewport.set_selection_editable(not tab.editor.isReadOnly())
                 if self._rendered_tab:
                     self._rendered_tab.editor.set_selection(span.start_offset,
                                                             span.end_offset)
