@@ -314,8 +314,9 @@ def test_the_reselect_only_records_it_cannot_search_yet():
     -- spans at the old offsets, nothing matching, selection cleared. One
     nudge deselected the object and a second was impossible."""
     mw = SimpleNamespace(_pending_reselect=None)
+    mw._render_id = 7
     MainWindow._restore_selection_after_gizmo(mw, 42)
-    assert mw._pending_reselect == 42
+    assert mw._pending_reselect == (7, 42), "tied to the render that carries it"
 
 
 def test_the_reselect_happens_after_the_ids_AND_the_geometry():
@@ -329,7 +330,7 @@ def test_the_reselect_happens_after_the_ids_AND_the_geometry():
     """
     import inspect
     src = inspect.getsource(MainWindow._on_render_done)
-    consume = src.index("_apply_pending_reselect()")
+    consume = src.index("_apply_pending_reselect(render_id)")
     assert src.index("self.id_to_node = id_to_node") < consume, \
         "must run after the id map is replaced"
     assert src.index("load_geometry") < consume, \
@@ -353,10 +354,11 @@ def test_applying_it_selects_the_span_that_starts_there(tmp_path):
     selected = {}
     node = SimpleNamespace(position=_pos(str(script), 19, 27), call_sites=())
     mw = _build({7: node}, tab)
-    mw._pending_reselect = 19
+    mw._pending_reselect = (1, 19)
     mw._viewport = SimpleNamespace(set_selection=lambda i: selected.setdefault("id", i),
                                    update=lambda: None)
     tab.editor.set_selection = lambda a, b: selected.setdefault("span", (a, b))
+    mw._viewport.set_selection_editable = lambda v: selected.setdefault("editable", v)
     tab.editor.clear_selection = lambda: selected.setdefault("cleared", True)
 
     MainWindow._apply_pending_reselect(mw)
@@ -371,8 +373,9 @@ def test_nothing_matching_clears_rather_than_selecting_the_wrong_thing(tmp_path)
     tab = _tab(str(script), str(script))
     cleared = {}
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 9), call_sites=())}, tab)
-    mw._pending_reselect = 999
+    mw._pending_reselect = (1, 999)
     mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
                                    update=lambda: None)
     tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
     MainWindow._apply_pending_reselect(mw)
@@ -431,3 +434,52 @@ def test_each_pick_starts_at_its_own_default(tmp_path):
     shallow_span, _ = mw._selectable_span_for_id(2)
     assert deep_span.start_offset == 29
     assert shallow_span.start_offset == 20, "must not inherit the deeper level"
+
+
+def test_a_stale_render_does_not_consume_the_pending_reselect(tmp_path):
+    """The intermittent "deselects on the first nudge".
+
+    A render already in flight when the edit lands carries the id map from
+    BEFORE it. If that one finished first it consumed the offset, matched
+    nothing, and cleared the selection -- then the edit's own render had
+    nothing left to do. There is usually only a stale render in flight for
+    the first nudge, which is why it looked random.
+    """
+    script = tmp_path / "s.scad"
+    script.write_text("translate([1,0,0]) cube(10);\n")
+    tab = _tab(str(script), str(script))
+    cleared = {}
+    mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
+    mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
+                                   update=lambda: None)
+    tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
+    tab.editor.set_selection = lambda a, b: cleared.setdefault("span", (a, b))
+
+    mw._pending_reselect = (5, 19)          # wants render 5 or later
+
+    MainWindow._apply_pending_reselect(mw, render_id=4)      # an older one
+    assert cleared == {}, "a stale render must do nothing at all"
+    assert mw._pending_reselect == (5, 19), "and must leave it pending"
+
+    MainWindow._apply_pending_reselect(mw, render_id=5)      # the right one
+    assert cleared.get("id") == 1
+    assert mw._pending_reselect is None
+
+
+def test_a_later_render_can_still_satisfy_it(tmp_path):
+    """If the edit's own render is superseded, the one that replaced it is
+    rendering the same source and should honour the request."""
+    script = tmp_path / "s.scad"
+    script.write_text("translate([1,0,0]) cube(10);\n")
+    tab = _tab(str(script), str(script))
+    got = {}
+    mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
+    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
+                                   update=lambda: None)
+    tab.editor.set_selection = lambda a, b: None
+    tab.editor.clear_selection = lambda: None
+    mw._pending_reselect = (5, 19)
+    MainWindow._apply_pending_reselect(mw, render_id=9)
+    assert got.get("id") == 1

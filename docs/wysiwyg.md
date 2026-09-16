@@ -292,8 +292,18 @@ still the map from before the edit, with spans at the old offsets. Searching it
 there matched nothing and cleared the selection -- one nudge deselected the
 object, and a second was impossible.
 
+The request carries **which render must satisfy it**: `(render_id, offset)`,
+the id of the render the edit itself started. A render already in flight when
+the edit lands carries the id map from *before* it, and if that one finished
+first it consumed the offset, matched nothing and cleared the selection. There
+is usually only a stale render in flight for the *first* nudge after a click,
+which is why it looked intermittent. An older render now leaves the request
+pending; a later one still honours it, since it is rendering the same source.
+
 `_on_render_done` consumes it (`_apply_pending_reselect`), past the `render_id`
-guard so a superseded render never re-selects. The match is on the **editable**
+guard so a superseded render never re-selects. It also refreshes
+`set_selection_editable`, which is otherwise left at whatever the last *click*
+set. The match is on the **editable**
 span, since for library-built geometry the producing node's span is in another
 file entirely.
 
