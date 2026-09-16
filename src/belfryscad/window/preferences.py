@@ -57,7 +57,7 @@ _DEFAULTS = {
     "editor/fontSize": 13,
     "editor/indentSize": 4,
     "editor/showColumnGuide": True,
-    "editor/columnGuide": 80,
+    "editor/columnGuide": "80",
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
@@ -102,6 +102,28 @@ _DEFAULTS = {
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
 }
+
+def parse_guide_columns(value) -> list[int]:
+    """Column numbers out of a preference like `"67, 100"`.
+
+    Tolerant on purpose: this is a free-text field someone types into, so a
+    half-finished `"67, "` has to keep drawing the 67 rather than blanking
+    the guide while they reach for the next digit. Junk, duplicates and
+    anything outside 1..300 are dropped; the result is sorted.
+
+    Accepts a bare int too, which is what a settings file written before
+    this was a list still holds.
+    """
+    out = set()
+    for piece in str(value).replace(";", ",").split(","):
+        piece = piece.strip()
+        if not piece.isdigit():
+            continue
+        col = int(piece)
+        if 1 <= col <= 300:
+            out.add(col)
+    return sorted(out)
+
 
 def load_preference(key, type_=None):
     s = app_settings()
@@ -229,13 +251,21 @@ class PreferencesDialog(QDialog):
         guide_row.setSpacing(6)
         self._show_guide = QCheckBox("Show at column")
         self._show_guide.setChecked(s.value("editor/showColumnGuide", _DEFAULTS["editor/showColumnGuide"], type=bool))
-        self._guide_column = QSpinBox()
-        self._guide_column.setRange(1, 300)
-        self._guide_column.setValue(s.value("editor/columnGuide", _DEFAULTS["editor/columnGuide"], type=int))
+        # Free text rather than a spin box: one guide is the common case but
+        # not the only one -- 67 is where a BOSL2 example stops fitting beside
+        # its image, 100 is a comment-width cap, and both are worth seeing.
+        self._guide_column = QLineEdit()
+        self._guide_column.setText(str(s.value(
+            "editor/columnGuide", _DEFAULTS["editor/columnGuide"])))
+        self._guide_column.setPlaceholderText("80")
+        self._guide_column.setToolTip(
+            "One column, or several separated by commas: 67, 100")
+        self._guide_column.setMaximumWidth(120)
         self._guide_column.setEnabled(self._show_guide.isChecked())
         self._show_guide.toggled.connect(self._guide_column.setEnabled)
         self._show_guide.toggled.connect(lambda v: self._emit("editor/showColumnGuide", v))
-        self._guide_column.valueChanged.connect(lambda v: self._emit("editor/columnGuide", v))
+        self._guide_column.textChanged.connect(
+            lambda v: self._emit("editor/columnGuide", v))
         guide_row.addWidget(self._show_guide)
         guide_row.addWidget(self._guide_column)
         guide_row.addStretch()

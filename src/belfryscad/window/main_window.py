@@ -31,7 +31,8 @@ from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.about import open_documentation, show_about_dialog
 from belfryscad.window.export_options import ask_export_options, export_kwargs
 from belfryscad.window.font_list import show_font_list
-from belfryscad.window.preferences import PreferencesDialog, load_preference
+from belfryscad.window.preferences import (PreferencesDialog, load_preference,
+                                           parse_guide_columns)
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
@@ -1453,7 +1454,7 @@ class MainWindow(QMainWindow):
                 QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
                 load_preference("editor/indentSize", int),
                 load_preference("editor/showColumnGuide", bool),
-                load_preference("editor/columnGuide", int),
+                parse_guide_columns(load_preference("editor/columnGuide")),
             )
             self._apply_word_wrap_to_tab(tab)
         idx = self._tabs.addTab(tab, tab.display_name())
@@ -1789,7 +1790,7 @@ class MainWindow(QMainWindow):
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
             load_preference("editor/indentSize", int),
             load_preference("editor/showColumnGuide", bool),
-            load_preference("editor/columnGuide", int),
+            parse_guide_columns(load_preference("editor/columnGuide")),
         )
         self._apply_word_wrap_to_tab(tab)
         get_document_manager().register(path, tab.editor)
@@ -4612,7 +4613,7 @@ class MainWindow(QMainWindow):
         size = load_preference("editor/fontSize", int)
         indent = load_preference("editor/indentSize", int)
         show_guide = load_preference("editor/showColumnGuide", bool)
-        guide_col = load_preference("editor/columnGuide", int)
+        guide_cols = parse_guide_columns(load_preference("editor/columnGuide"))
         viewer_ipd = load_preference("viewport/viewerIPD", float)
         viewer_screen_dist = load_preference("viewport/viewerScreenDist", float)
         stereo_depth_scale = load_preference("viewport/stereoDepthScale", float)
@@ -4622,7 +4623,7 @@ class MainWindow(QMainWindow):
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
-                self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_col)
+                self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_cols)
         # Data-viewer dialogs (VNF/Path/Grid) each own a real Viewport/camera
         # too, so their stereo settings should track preference changes the
         # same way the main window's does, not just at dialog-open time.
@@ -4643,10 +4644,11 @@ class MainWindow(QMainWindow):
             vp.update()
 
     @staticmethod
-    def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool, guide_col: int):
+    def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool,
+                                  guide_cols: list[int]):
         tab.editor.setFont(font)
         tab.editor.set_indent_size(indent)
-        tab.editor._column_guide.set_column(guide_col)
+        tab.editor._column_guide.set_columns(guide_cols)
         tab.editor._column_guide.setVisible(show_guide)
         tab.editor.set_append_line_on_down(
             load_preference("editor/appendLineOnDownArrow", type_=bool))

@@ -58,7 +58,8 @@ Both this and the Column Guide draw their line(s) via the module-level `_draw_vl
 
 ## Column Guide
 
-A faint vertical line at column 80, implemented as `_ColumnGuide(QWidget)`, a transparent overlay on `CodeEditor.viewport()`:
+Faint vertical lines at **one or more columns** (default 80), implemented as `_ColumnGuide(QWidget)`, a transparent overlay on `CodeEditor.viewport()`:
+- **The preference is a list.** `editor/columnGuide` holds free text — `67, 100` — parsed by `preferences.parse_guide_columns()`, which is Qt-free and deliberately tolerant: the field applies on every keystroke, so a half-typed `67, ` has to keep drawing the 67 rather than blanking the guide while you reach for the next digit. Junk, duplicates and anything outside 1..300 are dropped, and a **bare int is accepted**, which is what a settings file written before #467 still holds — so there is no migration step. `set_columns(list)` replaced `set_column(int)`; `paintEvent` culls to the exposed rect and then draws one line per surviving column.
 - `WA_TransparentForMouseEvents` + `WA_TranslucentBackground` so only the line pixel shows and mouse events pass through
 - `update_geometry()` keeps the overlay sized to the full viewport rect; called from `CodeEditor.resizeEvent()` and `_reposition_scroll_overlays()` (see Indent Guides above for why the latter is needed)
 - x position = `cursorRect(cursor_at_pos_0).x() + QFontMetricsF(font).horizontalAdvance('0' * 80)`. `QFontMetricsF` (not `QFontMetrics`) is required — the integer version rounds character width up by ~0.2px, accumulating to ~2 columns of error over 80 characters.
@@ -351,7 +352,7 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Font size | `editor/fontSize` | `13` | Editor |
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
-| Column guide column | `editor/columnGuide` | `80` | Editor |
+| Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |
