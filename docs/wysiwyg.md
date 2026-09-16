@@ -151,11 +151,16 @@ call. With the statement selected there is no enclosing transform in front of
 it, so `find_transform_chain` came back empty and a drag stacked a new wrapper
 instead of updating the one that was there.
 
-**Stepping through the chain.** ⌥↑ walks the pick outwards, toward top level;
-⌥↓ walks it in, toward the callee -- the same sense as a debugger's stack pane,
-and Alt is free because `_key_nudge_magnitude` uses Cmd and Shift. The level
-resets whenever a different body is picked, so stepping into BOSL2 never carries
-over to the next thing clicked.
+**Stepping through the chain.** ⌃⌘↑ walks the pick outwards, toward top level;
+⌃⌘↓ walks it in, toward the callee -- the same sense as a debugger's stack pane.
+It joins the ⌃⌘1/2/3 family already used for viewport-wide modes.
+
+Two earlier choices were wrong, both because they were checked against the
+*viewport's* bindings rather than the app's: ⌥↑/⌥↓ moves a **line** in the code
+editor, and PageUp/PageDown pages the caret there. Separate widgets, so neither
+clashed technically -- but a chord should not mean two unrelated things in one
+app, which is the same reason the nudge helpers are shared rather than
+re-derived per viewport.
 
 `_selection_levels` builds the list: the node's own span when the user wrote it,
 then every chain frame naming a file that exists. Consecutive frames naming the

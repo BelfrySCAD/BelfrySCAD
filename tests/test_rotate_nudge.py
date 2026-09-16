@@ -101,3 +101,47 @@ def test_up_down_pitch_about_the_screen_right_axis():
     lock = _view_locked_axis(cam)
     right_axis, _up = _key_nudge_axes(cam, lock)
     assert right_axis != lock
+
+
+def test_chain_stepping_uses_a_chord_no_other_pane_owns():
+    """Two earlier choices were wrong because they were checked against the
+    VIEWPORT's bindings rather than the app's: Alt+Up/Down moves a LINE in
+    the code editor, and PageUp/PageDown pages the caret there. Separate
+    widgets, so neither clashed technically -- but a chord should not mean
+    two unrelated things in one app.
+
+    Ctrl+Meta+arrow joins the Ctrl+Meta+1/2/3 family already used for
+    viewport-wide modes.
+    """
+    import inspect
+    from belfryscad.window.viewport import Viewport
+
+    src = inspect.getsource(Viewport.keyPressEvent)
+    head = src[:src.index("selection_level_step")]
+    assert "ControlModifier" in head and "MetaModifier" in head
+    # The key CONSTANTS, not the prose: the comment above the branch names
+    # both rejected chords on purpose.
+    assert "AltModifier" not in head, "Alt+arrow is the editor's line move"
+    assert "Key_PageUp" not in head and "Key_PageDown" not in head, \
+        "PageUp/PageDown pages the caret in the editor"
+
+
+def test_the_editor_still_owns_alt_arrow():
+    import inspect
+    from belfryscad.window.editor import CodeEditor
+    src = inspect.getsource(CodeEditor.keyPressEvent)
+    assert "AltModifier" in src
+
+
+def test_the_chord_carries_both_modifiers_on_every_platform():
+    """NativeText is platform-specific -- macOS renders the symbols, Linux
+    and Windows spell it "Meta+Ctrl+Up" -- so assert what is actually
+    invariant rather than one platform's spelling."""
+    import sys as _sys
+    from PySide6.QtGui import QKeySequence
+    seq = QKeySequence(Qt.Modifier.CTRL | Qt.Modifier.META | Qt.Key.Key_Up)
+    text = seq.toString(QKeySequence.SequenceFormat.NativeText)
+    if _sys.platform == "darwin":
+        assert text == "\u2303\u2318\u2191"
+    else:
+        assert "Ctrl" in text and "Meta" in text and "Up" in text
