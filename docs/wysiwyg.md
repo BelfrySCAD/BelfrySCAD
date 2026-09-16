@@ -151,9 +151,15 @@ call. With the statement selected there is no enclosing transform in front of
 it, so `find_transform_chain` came back empty and a drag stacked a new wrapper
 instead of updating the one that was there.
 
-**Stepping through the chain.** ⌥↑ walks the pick outwards, toward top level;
-⌥↓ walks it in, toward the callee -- the same sense as a debugger's stack pane,
-and Alt is free because `_key_nudge_magnitude` uses Cmd and Shift. The level
+**Stepping through the chain.** PageUp walks the pick outwards, toward top
+level; PageDown walks it in, toward the callee -- the same sense as a
+debugger's stack pane.
+
+Not ⌥↑/⌥↓, which already moves a LINE up or down in the code editor.
+Separate widgets, so there is no technical clash, but a chord should not
+mean two unrelated things in one app -- the same reason the nudge helpers
+are shared rather than re-derived per viewport. PageUp/PageDown are unbound
+everywhere else and already read as "up/down a level". The level
 resets whenever a different body is picked, so stepping into BOSL2 never carries
 over to the next thing clicked.
 

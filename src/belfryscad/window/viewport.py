@@ -1084,12 +1084,17 @@ class Viewport(QOpenGLWidget):
         same single undo step -- and it needs no gizmo armed, which is the
         point: nudging a part a millimetre should not require arming a
         tool and finding a handle."""
-        if self._renderer.selected_id is not None and \
-                event.modifiers() & Qt.KeyboardModifier.AltModifier:
-            # Alt+Up/Down walks the pick's call chain: up toward the caller,
-            # down toward the callee, like a debugger's stack pane. Alt is
-            # free here -- _key_nudge_magnitude uses Cmd and Shift.
-            step = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+        if self._renderer.selected_id is not None:
+            # PageUp/PageDown walk the pick's call chain: up toward the
+            # caller, down toward the callee, like a debugger's stack pane.
+            #
+            # Not Alt+Up/Down, which already moves a LINE up or down in the
+            # code editor. Separate widgets, so there is no technical clash,
+            # but a chord should not mean two unrelated things in one app --
+            # the same reason the nudge helpers are shared rather than
+            # re-derived per viewport. PageUp/PageDown are unbound
+            # everywhere else here and already read as "up/down a level".
+            step = {Qt.Key.Key_PageUp: 1, Qt.Key.Key_PageDown: -1}.get(event.key())
             if step is not None:
                 self.selection_level_step.emit(step)
                 event.accept()

@@ -101,3 +101,26 @@ def test_up_down_pitch_about_the_screen_right_axis():
     lock = _view_locked_axis(cam)
     right_axis, _up = _key_nudge_axes(cam, lock)
     assert right_axis != lock
+
+
+def test_chain_stepping_does_not_reuse_the_editors_alt_arrows():
+    """Alt+Up/Down already moves a LINE up or down in the code editor.
+
+    Separate widgets, so nothing breaks technically -- but a chord should
+    not mean two unrelated things in one app, which is the same reason the
+    nudge helpers are shared rather than re-derived per viewport.
+    """
+    import inspect
+    from belfryscad.window.viewport import Viewport
+
+    src = inspect.getsource(Viewport.keyPressEvent)
+    step = src[src.index("selection_level_step") - 600:src.index("selection_level_step")]
+    assert "Key_PageUp" in step and "Key_PageDown" in step
+    assert "AltModifier" not in step, "Alt+arrow belongs to the editor's line move"
+
+
+def test_the_editor_still_owns_alt_arrow():
+    import inspect
+    from belfryscad.window.editor import CodeEditor
+    src = inspect.getsource(CodeEditor.keyPressEvent)
+    assert "AltModifier" in src
