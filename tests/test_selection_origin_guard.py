@@ -483,3 +483,46 @@ def test_a_later_render_can_still_satisfy_it(tmp_path):
     mw._pending_reselect = (5, 19)
     MainWindow._apply_pending_reselect(mw, render_id=9)
     assert got.get("id") == 1
+
+
+def test_the_reselect_matches_by_region_not_an_exact_offset(tmp_path):
+    """A body's span can change level between renders -- attributed to its
+    statement before the edit and to the call inside it afterwards, a
+    wrapper's width later. An exact predicted offset missed by ~24
+    characters and the selection was cleared."""
+    script = tmp_path / "s.scad"
+    script.write_text("cube(1);\ntranslate([1,0,0]) cube(10);\ncube(2);\n")
+    tab = _tab(str(script), str(script))
+    got = {}
+    mw = _build({
+        1: SimpleNamespace(position=_pos(str(script), 0, 8), call_sites=()),
+        2: SimpleNamespace(position=_pos(str(script), 28, 37), call_sites=()),
+        3: SimpleNamespace(position=_pos(str(script), 38, 46), call_sites=()),
+    }, tab)
+    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
+                                   update=lambda: None)
+    tab.editor.set_selection = lambda a, b: got.setdefault("span", (a, b))
+    tab.editor.clear_selection = lambda: got.setdefault("cleared", True)
+
+    # The edit began at 9; the body's span landed at 28, not the 9 an exact
+    # prediction would have asked for.
+    mw._pending_reselect = (1, 9)
+    MainWindow._apply_pending_reselect(mw, render_id=1)
+    assert got.get("id") == 2, "the first body at or after the edit"
+    assert "cleared" not in got
+
+
+def test_an_edit_after_every_body_clears(tmp_path):
+    script = tmp_path / "s.scad"
+    script.write_text("cube(1);\n")
+    tab = _tab(str(script), str(script))
+    got = {}
+    mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 8), call_sites=())}, tab)
+    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
+                                   update=lambda: None)
+    tab.editor.clear_selection = lambda: got.setdefault("cleared", True)
+    mw._pending_reselect = (1, 500)
+    MainWindow._apply_pending_reselect(mw, render_id=1)
+    assert got.get("cleared") is True and got.get("id") is None

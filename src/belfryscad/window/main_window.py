@@ -5242,18 +5242,12 @@ class MainWindow(QMainWindow):
             # a comment between it and the node stays where the user put it.
             head, tail = source[:call.start], source[call.end:]
             new_source = head + text.rstrip() + tail
-            if start >= call.end:
-                # The span sits after the wrapper and shifts with it.
-                new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
-            else:
-                # The span starts at (or inside) the wrapper, so it still
-                # begins where the wrapper does.
-                new_node_start = call.start
+            new_node_start = call.start
         else:
             # Outside the whole chain, not against the node.
             at = outer.start if outer is not None else start
             new_source = source[:at] + text + source[at:]
-            new_node_start = start + len(text)
+            new_node_start = at
 
         self._undo_stack.push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
@@ -5261,60 +5255,74 @@ class MainWindow(QMainWindow):
             merge_id=merge_id, label=label, viewport=self._viewport,
         ))
 
-    def _restore_selection_after_gizmo(self, new_node_start: int):
-        """Ask for the edited node to be re-selected once the render lands.
+    def _restore_selection_after_gizmo(self, edit_start: int):
+        """Ask for the edited statement's body back once the render lands.
 
-        It cannot be done here. `_render()` starts a QThread and returns, so
-        at this point `id_to_node` is still the map from BEFORE the edit,
-        whose spans are at the old offsets -- the search found nothing and
-        cleared the selection, so one nudge deselected the object and there
-        was no way to nudge it twice.
+        `edit_start` is where the edit BEGAN, not where the node is
+        predicted to end up. Predicting the exact offset does not survive
+        the body's span changing level between renders: a body attributed
+        to its statement before the edit can be attributed to the call
+        inside it afterwards, which lands a wrapper's width later. That was
+        the residual "still deselects" -- the request was 24 characters
+        short of the span that actually appeared.
+
+        Tied to the render this edit started; an older one carries the id
+        map from before it (see `_apply_pending_reselect`).
         """
-        # Tied to the render this edit just started. A render already in
-        # flight when the edit landed carries the id map from BEFORE it, and
-        # if that one finished first it consumed the offset, matched
-        # nothing and cleared the selection -- the intermittent "deselects
-        # on the first nudge" (there is usually only a stale render in
-        # flight for the first one).
-        self._pending_reselect = (self._render_id, new_node_start)
+        self._pending_reselect = (self._render_id, edit_start)
 
     def _apply_pending_reselect(self, render_id=None):
-        """Re-select whatever the edit landed on, now that the ids are new.
+        """Re-select the edited statement's body, now that the ids are new.
 
-        Matched on the EDITABLE span, not the producing node's: for
-        library-built geometry those are different spans in different files,
-        and only the editable one is comparable with an offset in this
-        buffer (#450, #451).
+        Matched by REGION, not by a predicted offset: the first body whose
+        editable span starts at or after where the edit began. A body's span
+        can change level between renders -- attributed to its statement
+        before the edit and to the call inside it afterwards, a wrapper's
+        width later -- so an exact offset misses. Bodies are ordered by
+        position, so the first one at or after the edit is the statement
+        that was edited.
+
+        Spans are the EDITABLE ones, not the producing nodes': for
+        library-built geometry those are in another file entirely
+        (#450, #451).
         """
         pending = self._pending_reselect
         if pending is None:
             return
-        want_render, target = pending
+        want_render, edit_start = pending
         if render_id is not None and render_id < want_render:
             return          # an older render; leave it pending for the right one
         self._pending_reselect = None
+
+        best = None
         for orig_id in self.id_to_node:
             # Non-mutating: a scan must not leave the level set from
             # whichever id it happened to touch last.
             span, tab = self._span_at_level(orig_id)
-            if span is not None and tab is not None and not tab.editor.isReadOnly() \
-                    and span.start_offset == target:
-                # The pick is new, so its level starts at its own default.
-                self._selection_level_id = orig_id
-                self._selection_level = None
-                self._viewport.set_selection(orig_id)
-                # Refreshed here too: it is otherwise left at whatever the
-                # last CLICK set, so the tools could stay hidden (or shown)
-                # for a selection that is now the other kind.
-                self._viewport.set_selection_editable(not tab.editor.isReadOnly())
-                if self._rendered_tab:
-                    self._rendered_tab.editor.set_selection(span.start_offset,
-                                                            span.end_offset)
-                self._viewport.update()
-                return
-        self._viewport.set_selection(None)
+            if span is None or tab is None or tab.editor.isReadOnly():
+                continue
+            if span.start_offset >= edit_start and (best is None
+                                                    or span.start_offset < best[1]):
+                best = (orig_id, span.start_offset, span, tab)
+
+        if best is None:
+            self._viewport.set_selection(None)
+            if self._rendered_tab:
+                self._rendered_tab.editor.clear_selection()
+            self._viewport.update()
+            return
+
+        orig_id, _start, span, tab = best
+        # A fresh pick, so its level starts at its own default.
+        self._selection_level_id = orig_id
+        self._selection_level = None
+        self._viewport.set_selection(orig_id)
+        # Refreshed here too: otherwise it keeps whatever the last CLICK
+        # set, so the tools could stay hidden for a selection that is now
+        # editable, or shown for one that is not.
+        self._viewport.set_selection_editable(not tab.editor.isReadOnly())
         if self._rendered_tab:
-            self._rendered_tab.editor.clear_selection()
+            self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
         self._viewport.update()
 
     def _on_translate_committed(self, dx: float, dy: float, dz: float):

@@ -292,7 +292,15 @@ still the map from before the edit, with spans at the old offsets. Searching it
 there matched nothing and cleared the selection -- one nudge deselected the
 object, and a second was impossible.
 
-The request carries **which render must satisfy it**: `(render_id, offset)`,
+The request records **where the edit began**, not where the node is predicted
+to land. Predicting an exact offset does not survive a body's span changing
+level between renders: one attributed to its statement before the edit can be
+attributed to the call inside it afterwards, a wrapper's width later, and the
+prediction then missed by about 24 characters and the selection was cleared.
+Bodies are ordered by position, so the first one whose span starts at or after
+the edit is the statement that was edited, whatever level it ended up at.
+
+The request also carries **which render must satisfy it**: `(render_id, offset)`,
 the id of the render the edit itself started. A render already in flight when
 the edit lands carries the id map from *before* it, and if that one finished
 first it consumed the offset, matched nothing and cleared the selection. There
