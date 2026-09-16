@@ -305,6 +305,40 @@ When a tool is active, axis handles are drawn over the selected shape. Dragging 
 | Scale | Handle per axis | Modify/insert `scale([x,y,z])` wrapper |
 | Scale (Shift+drag) | Any axis handle | Scale all three components uniformly |
 
+### A drag quantizes to the same numbers a nudge would
+
+A drag used to round to a fixed 0.1 (1 degree for Rotate) whatever you held,
+so dragging a part into place left `3.7` in the source where nudging it there
+would have left `4`, and the modifiers meant nothing at all while dragging.
+`_quantize(value, step)` now snaps every drag to the step the *keyboard* would
+have used, read from the same tables:
+
+| Tool | plain | Shift | Cmd |
+|---|---|---|---|
+| Translate | 1 | 10 | 0.1 |
+| Rotate | 15° | 90° | 1° |
+| Scale | ×0.1 | ×0.1 *(uniform)* | ×0.01 |
+
+**Scale has no coarse step because Shift is already spent there** -- on the
+scale gizmo it means "all three axes", and a modifier cannot mean two things
+at once. `_SCALE_DRAG_STEPS` keys on the same magnitude anyway so the lookup
+is uniform, it simply maps 10 and 1 to the same 0.1. A scale is a ratio, which
+is also why it does not inherit the 10/1/0.1 of a distance: those would leap
+past every useful value.
+
+The modifiers are read **live** from `QApplication.keyboardModifiers()` on each
+mouse-move, not captured at the press: a drag is long enough to change your
+mind about how fine you want it partway through.
+
+Two thresholds had to follow. `_commit_gizmo_drag` re-rounded a translate to
+one decimal, which threw a 0.01 drag away; and it dropped a scale within 0.05
+of 1.0, which threw away *every* Cmd-drag. The scale one now reads half the
+smallest step out of the table rather than repeating a constant.
+
+`_quantize` rounds its result to 4 places. That is against binary floating
+point, not against the drag: 0.1 has no exact representation, so three steps
+of it is `0.30000000000000004` and the source file would say so.
+
 ## How Tool Choice Resolves Edit Ambiguity
 
 The active tool declares which transform type to edit — no intent inference needed. For each tool activation on a selected node:
