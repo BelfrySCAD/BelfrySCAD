@@ -281,12 +281,12 @@ class _IndentGuides(QWidget):
 
 
 class _ColumnGuide(QWidget):
-    """Transparent overlay on the viewport that draws a vertical column guide."""
+    """Transparent overlay on the viewport that draws the column guides."""
 
     def __init__(self, editor: 'CodeEditor'):
         super().__init__(editor.viewport())
         self._editor = editor
-        self._column: int = 80
+        self._columns: list[int] = [80]
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(editor.viewport().rect())
@@ -298,22 +298,27 @@ class _ColumnGuide(QWidget):
         self.raise_()
         self.update()
 
-    def set_column(self, column: int):
-        self._column = column
+    def set_columns(self, columns: list[int]):
+        self._columns = list(columns)
         self.update()
 
     def paintEvent(self, event):
+        if not self._columns:
+            return
         cursor = QTextCursor(self._editor.document())
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         x0 = self._editor.cursorRect(cursor).x()
-        total_w = QFontMetricsF(self._editor.font()).horizontalAdvance('0' * self._column)
-        x = round(x0 + total_w)
-        if not (event.rect().left() <= x <= event.rect().right() + 1):
+        metrics = QFontMetricsF(self._editor.font())
+        xs = [round(x0 + metrics.horizontalAdvance("0" * c)) for c in self._columns]
+        xs = [x for x in xs if event.rect().left() <= x <= event.rect().right() + 1]
+        if not xs:
             return
         painter = QPainter(self)
         painter.setPen(QColor(guide_colors()[1]))
-        _draw_vline_avoiding_cursor(painter, x, event.rect().top(), event.rect().bottom(),
-                                     self._editor.cursorRect())
+        for x in xs:
+            _draw_vline_avoiding_cursor(painter, x, event.rect().top(),
+                                        event.rect().bottom(),
+                                        self._editor.cursorRect())
         painter.end()
 
 
