@@ -653,6 +653,13 @@ class MainWindow(QMainWindow):
         self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
         # Window-level render results (shared by viewport, export, gizmo, selection)
         self.id_to_node: dict = {}
+        # Which frame of the picked body's call chain is selected, and the
+        # id it belongs to. None means "the default level for this pick" --
+        # the last frame in the rendered script. Reset whenever the pick
+        # changes, so stepping into BOSL2 never carries over to the next
+        # thing clicked.
+        self._selection_level = None
+        self._selection_level_id = None
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
@@ -781,6 +788,7 @@ class MainWindow(QMainWindow):
         # go down to the smallest size a rendered image is ever wanted at.
         self._viewport.setMinimumSize(320, 200)
         self._viewport.selection_changed.connect(self._on_selection_changed)
+        self._viewport.selection_level_step.connect(self._step_selection_level)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
         self._viewport.measurement_dismissed.connect(self._on_measurement_dismissed)
@@ -1784,8 +1792,13 @@ class MainWindow(QMainWindow):
         for path in paths:
             self.open_file_by_path(path)
 
-    def open_file_by_path(self, path: str):
-        """Open a .scad file by path. If already open, switch to its tab."""
+    def open_file_by_path(self, path: str, render: bool = True):
+        """Open a .scad file by path. If already open, switch to its tab.
+
+        `render=False` opens it without rendering, for revealing a file
+        rather than working on it -- stepping the selection into a library
+        must not replace the geometry the selection belongs to.
+        """
         resolved = str(Path(path).resolve())
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -1812,7 +1825,8 @@ class MainWindow(QMainWindow):
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        self._render(tab, reframe=True)      # a new tab from a file
+        if render:
+            self._render(tab, reframe=True)      # a new tab from a file
 
     def _save_file(self):
         tab = self._current_tab()
@@ -4994,30 +5008,140 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
-    def _editable_node_for_id(self, orig_id):
-        """The AST node behind a picked geometry id, but only when it lives
-        in the file the user is looking at.
+    def _step_selection_level(self, delta: int):
+        """Walk the pick in (delta<0, toward the leaf) or out (delta>0,
+        toward top level) through its call chain.
 
-        Selection maps an id to the node that PRODUCED the geometry, which
-        for anything built by a library is a node inside that library --
-        including plain `cube(10)` once BOSL2 is included, since BOSL2
-        overrides the primitives with its own modules. Those nodes carry
-        byte offsets into the LIBRARY file, and every caller here splices
-        them into the user's buffer: a `translate()` landing at offset
-        85256 of a 59-character script is appended to the end of it,
-        wrapping nothing (#450).
+        Stepping into a frame whose file is not open opens it -- without
+        rendering, since rendering it would replace the very geometry the
+        selection belongs to. Installed libraries open read-only, so this
+        reveals BOSL2's layers without offering to edit them.
+        """
+        orig_id = self._viewport._renderer.selected_id
+        if orig_id is None:
+            return
+        levels = self._selection_levels(orig_id)
+        if len(levels) < 2:
+            return
+        if self._selection_level is None:
+            self._selection_level = self._default_selection_level(levels) or 0
+        target = max(0, min(self._selection_level + delta, len(levels) - 1))
+        if target == self._selection_level:
+            return
+        span = levels[target]
+        if self._tab_for_origin(span.origin) is None:
+            self.open_file_by_path(span.origin, render=False)
+            if self._tab_for_origin(span.origin) is None:
+                return                        # could not open it; stay put
+        self._selection_level = target
+        self._selection_level_id = orig_id
+        self._on_selection_changed(orig_id)
+        tab = self._tab_for_origin(span.origin)
+        if tab is not None:
+            idx = self._tabs.indexOf(tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+            self.log(f"Selection: {os.path.basename(span.origin)}:{span.line}"
+                     f"  (level {target + 1} of {len(levels)})")
 
-        So a node from anywhere else is not editable and not selectable,
-        and callers must treat None as "the user did not pick anything".
-        Refusing is the honest answer until selection can attribute
-        geometry to the user's own call site (#451)."""
+    def _selection_levels(self, orig_id):
+        """The frames a pick can be stepped through, innermost first.
+
+        The node's own span when the user wrote it, then every call frame
+        behind it that names a file that exists -- library frames included,
+        which is the point: a BOSL2 author stepping `cuboid` -> `attachable`
+        -> `_attach_transform` is reading the layers that built the shape.
+
+        Consecutive frames naming the same span collapse. A `cuboid()` call
+        is 24 frames and several are the same line twice (BOSL2's own
+        `translate` wrapper is a module too); stepping through duplicates
+        would just feel broken.
+        """
         node = self.id_to_node.get(orig_id)
         if node is None:
+            return []
+        levels = []
+        rendered = self._rendered_tab
+        if rendered is not None and self._tab_owns_origin(rendered, node.position.origin):
+            levels.append(node.position)
+        # getattr: an evaluator older than 1.21.0 has no chain (#450).
+        for frame in getattr(node, "call_sites", ()) or ():
+            if not frame.origin:
+                continue
+            last = levels[-1] if levels else None
+            if (last is not None and last.origin == frame.origin
+                    and last.start_offset == frame.start_offset):
+                continue
+            if self._tab_for_origin(frame.origin) is None and not os.path.exists(frame.origin):
+                continue
+            levels.append(frame)
+        return levels
+
+    def _tab_for_origin(self, origin):
+        """The open tab showing `origin`, or None."""
+        if not origin:
             return None
-        tab = self._rendered_tab
-        if tab is None or not self._tab_owns_origin(tab, node.position.origin):
+        for tab in self._all_tabs():
+            if self._tab_owns_origin(tab, origin):
+                return tab
+        return None
+
+    def _default_selection_level(self, levels):
+        """The last frame in the rendered script.
+
+        Innermost-first, so the first one the rendered tab owns is the
+        deepest line the user actually wrote -- their own call, not BOSL2's
+        insides, even when a library file happens to be open.
+        """
+        rendered = self._rendered_tab
+        if rendered is not None:
+            for i, span in enumerate(levels):
+                if self._tab_owns_origin(rendered, span.origin):
+                    return i
+        return 0 if levels else None
+
+    def _selectable_span_for_id(self, orig_id):
+        """The span to highlight for a picked id at the current step level,
+        and the tab that owns it, or (None, None).
+
+        See `_selection_levels` for what the levels are and
+        `_default_selection_level` for where a fresh pick starts.
+        """
+        levels = self._selection_levels(orig_id)
+        if not levels:
+            return None, None
+        # Reset here, not in the caller: a level belongs to the id it was
+        # stepped on, and carrying one over to a different pick selected a
+        # frame in a file that pick never touches -- which then resolves to
+        # no open tab and reads as "not selectable".
+        if orig_id != self._selection_level_id:
+            self._selection_level_id = orig_id
+            self._selection_level = None
+        if self._selection_level is None:
+            self._selection_level = self._default_selection_level(levels)
+        idx = max(0, min(self._selection_level, len(levels) - 1))
+        span = levels[idx]
+        tab = self._tab_for_origin(span.origin)
+        if tab is None:
+            return None, None
+        return span, tab
+
+    def _editable_span_for_id(self, orig_id):
+        """The span a gizmo or a nudge may rewrite, or None.
+
+        Everything `_selectable_span_for_id` finds, minus anything in a
+        read-only tab. An installed library opens read-only, so stepping
+        into BOSL2 shows you the line without offering to change it --
+        until you untick Edit > Read Only, which is the deliberate act that
+        makes a library editable.
+        """
+        span, tab = self._selectable_span_for_id(orig_id)
+        if span is None or tab is None or tab.editor.isReadOnly():
             return None
-        return node
+        return span
+
+    def _all_tabs(self):
+        return [self._tabs.widget(i) for i in range(self._tabs.count())]
 
     def _on_selection_changed(self, orig_id: int):
         rendered = self._rendered_tab
@@ -5026,11 +5150,16 @@ class MainWindow(QMainWindow):
         if orig_id < 0:
             rendered.editor.clear_selection()
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span, tab = self._selectable_span_for_id(orig_id)
+        if span is None:
             rendered.editor.clear_selection()
+            self._viewport.set_selection_editable(False)
             return
-        rendered.editor.set_selection(node.position.start_offset, node.position.end_offset)
+        tab.editor.set_selection(span.start_offset, span.end_offset)
+        if tab is not rendered:
+            rendered.editor.clear_selection()
+        # Read-only (an installed library) selects but does not edit.
+        self._viewport.set_selection_editable(not tab.editor.isReadOnly())
 
     # ------------------------------------------------------------------
     # Translate gizmo commit
@@ -5042,8 +5171,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         # Switch to rendered tab if it's not the current editor
@@ -5053,7 +5182,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"
@@ -5092,15 +5221,16 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(cmd)
 
     def _restore_selection_after_translate(self, new_node_start: int):
-        for orig_id, node in self.id_to_node.items():
-            # Offsets are only comparable within one file: a library node
-            # sitting at the same offset would otherwise re-select geometry
-            # the user cannot edit (#450).
-            if (node.position.start_offset == new_node_start
-                    and self._editable_node_for_id(orig_id) is not None):
+        for orig_id in self.id_to_node:
+            # The editable span, not the producing node's: for library-built
+            # geometry those are different spans in different files, and only
+            # the editable one is comparable with an offset in this buffer
+            # (#450, #451).
+            span = self._editable_span_for_id(orig_id)
+            if span is not None and span.start_offset == new_node_start:
                 self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
-                    self._rendered_tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+                    self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
                 self._viewport.update()
                 return
         self._viewport.set_selection(None)
@@ -5118,8 +5248,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         if self._current_tab() is not self._rendered_tab:
@@ -5128,7 +5258,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"
@@ -5178,8 +5308,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         if self._current_tab() is not self._rendered_tab:
@@ -5188,7 +5318,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"

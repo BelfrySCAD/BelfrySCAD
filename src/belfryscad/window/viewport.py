@@ -232,6 +232,7 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
+    selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
@@ -656,10 +657,26 @@ class Viewport(QOpenGLWidget):
         already = self._active_tool == tool_id
         self.set_active_tool(-1 if already else tool_id)
 
+    def set_selection_editable(self, editable: bool):
+        """Whether the selected shape's source can be written to.
+
+        False for a read-only file -- an installed library, until the user
+        unticks Edit > Read Only. Selection still works there, because
+        seeing which line built a shape is useful even when you are not
+        going to change it; the gizmos and arrow-key nudging are what
+        cannot apply."""
+        self._selection_editable = bool(editable)
+        if not self._selection_editable and self._active_tool in (0, 1, 2):
+            self.set_active_tool(-1)
+        self._sync_tool_buttons()
+        self.update()
+
     def _sync_tool_buttons(self):
-        """Show the tools only with a shape selected, and light whichever
-        is running."""
-        visible = self._renderer.selected_id is not None
+        """Show the tools only with an EDITABLE shape selected, and light
+        whichever is running. A read-only selection offers no tools, which
+        is the visible half of refusing the edit."""
+        visible = (self._renderer.selected_id is not None
+                   and getattr(self, "_selection_editable", True))
         for tool_id, btn in getattr(self, "_tool_btns", {}).items():
             btn.setVisible(visible)
             btn.setChecked(visible and self._active_tool == tool_id)
@@ -1024,7 +1041,18 @@ class Viewport(QOpenGLWidget):
         same single undo step -- and it needs no gizmo armed, which is the
         point: nudging a part a millimetre should not require arming a
         tool and finding a handle."""
-        if self._renderer.selected_id is not None:
+        if self._renderer.selected_id is not None and \
+                event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            # Alt+Up/Down walks the pick's call chain: up toward the caller,
+            # down toward the callee, like a debugger's stack pane. Alt is
+            # free here -- _key_nudge_magnitude uses Cmd and Shift.
+            step = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+            if step is not None:
+                self.selection_level_step.emit(step)
+                event.accept()
+                return
+        if (self._renderer.selected_id is not None
+                and getattr(self, "_selection_editable", True)):
             magnitude = _key_nudge_magnitude(event.modifiers())
             delta = _key_nudge_delta(self._renderer.camera,
                                      _view_locked_axis(self._renderer.camera),
