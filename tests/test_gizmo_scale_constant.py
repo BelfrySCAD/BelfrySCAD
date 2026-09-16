@@ -19,14 +19,14 @@ def test_nothing_hard_codes_the_gizmo_size_any_more():
         # Code only: a comment is allowed to mention the old number, and a
         # test that greps prose finds its own explanation.
         code = "\n".join(re.sub(r"#.*", "", ln)
-                         for ln in path.read_text().splitlines())
+                         for ln in path.read_text(encoding="utf-8").splitlines())
         assert "0.14" not in code, path
         uses += len(re.findall(r"distance \* GIZMO_SCALE", code))
     assert uses == 4, uses
 
 
 def test_the_viewport_reads_the_renderer_s_constant():
-    text = (_SRC / "window" / "viewport.py").read_text()
+    text = (_SRC / "window" / "viewport.py").read_text(encoding="utf-8")
     assert "GIZMO_SCALE" in text
     assert "import GIZMO_SCALE" in text or "GIZMO_SCALE," in text
 
@@ -34,7 +34,7 @@ def test_the_viewport_reads_the_renderer_s_constant():
 def test_the_pick_tolerance_does_not_scale_with_the_handle():
     """A smaller handle must stay just as easy to grab: the tolerance is in
     screen pixels, so it is unaffected by GIZMO_SCALE."""
-    text = (_SRC / "engine" / "renderer.py").read_text()
+    text = (_SRC / "engine" / "renderer.py").read_text(encoding="utf-8")
     picks = [m for m in re.finditer(r"def _pick_\w+_axis", text)]
     assert len(picks) == 2
     for m in picks:

@@ -58,4 +58,6 @@ def test_no_caller_still_passes_a_single_column():
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent / "src" / "belfryscad"
     for path in root.rglob("*.py"):
-        assert "set_column(" not in path.read_text(), path
+        # Explicit utf-8: Windows defaults to cp1252 and chokes on a source
+        # file with any non-Latin-1 byte in it.
+        assert "set_column(" not in path.read_text(encoding="utf-8"), path
