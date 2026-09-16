@@ -205,6 +205,27 @@ def _key_nudge_axes(camera, lock_axis: int):
     return right_axis, up_axis
 
 
+def _screen_roll_axis(camera):
+    """(axis, sign) for turning the model the way the viewer sees it.
+
+    CW/CCW *on screen* is rotation about the VIEW axis -- the one
+    `_view_locked_axis` picks out as useless for dragging, because it is
+    foreshortened to a point. Turning about it is exactly what a keyboard
+    can do well: the object spins in the screen plane.
+
+    `sign` makes a positive angle read as counter-clockwise. A rotation is
+    CCW when seen from the positive end of its axis, so an axis pointing
+    INTO the screen has to be driven negatively to look CCW to someone in
+    front of it.
+    """
+    forward = camera.target - camera.eye_position()
+    norm = np.linalg.norm(forward)
+    if norm > 1e-9:
+        forward = forward / norm
+    axis = int(np.argmax(np.abs(forward)))
+    return axis, (-1.0 if forward[axis] > 0 else 1.0)
+
+
 #: Rotation's own nudge steps, keyed by what `_key_nudge_magnitude` returns.
 #: Its 10/1/0.1 are world units, sized for distance; an angle wants quarter
 #: turns, 15-degree increments and single degrees. Same coarse/normal/fine
@@ -1082,13 +1103,23 @@ class Viewport(QOpenGLWidget):
             # not moving along, which is what makes the object appear to
             # follow the key rather than turn edge-on to it.
             angle = ROTATION_NUDGE_STEPS[_key_nudge_magnitude(event.modifiers())]
+            # Left/Right spin the model the way the viewer sees it: Left
+            # counter-clockwise, Right clockwise. That is the VIEW axis, the
+            # one dragging cannot use, which is what makes it the natural
+            # one for keys -- "turn this a quarter turn" is a screen-plane
+            # operation, not a turntable one.
+            roll_axis, roll_sign = _screen_roll_axis(self._renderer.camera)
+            # Up/Down tip it away from and toward the viewer, about the
+            # screen-right axis, sign-matched so Up always tilts the top away.
             lock = _view_locked_axis(self._renderer.camera)
-            right_axis, up_axis = _key_nudge_axes(self._renderer.camera, lock)
+            right_axis, _up_axis = _key_nudge_axes(self._renderer.camera, lock)
+            cam_right = self._renderer.camera.view_matrix()[0, :3]
+            pitch_sign = -1.0 if cam_right[right_axis] >= 0 else 1.0
             turn = {
-                Qt.Key.Key_Right: (up_axis, angle),
-                Qt.Key.Key_Left: (up_axis, -angle),
-                Qt.Key.Key_Down: (right_axis, angle),
-                Qt.Key.Key_Up: (right_axis, -angle),
+                Qt.Key.Key_Left: (roll_axis, roll_sign * angle),
+                Qt.Key.Key_Right: (roll_axis, -roll_sign * angle),
+                Qt.Key.Key_Up: (right_axis, pitch_sign * angle),
+                Qt.Key.Key_Down: (right_axis, -pitch_sign * angle),
             }.get(event.key())
             if turn is not None:
                 self.rotate_committed.emit(turn[0], float(turn[1]))

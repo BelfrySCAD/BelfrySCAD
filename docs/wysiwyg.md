@@ -206,11 +206,20 @@ returns, exactly as `_HEIGHT_NUDGE_STEPS` does for a heightfield). A 1-unit step
 is right for a wall thickness and useless for an angle; the coarse/normal/fine
 relationship is kept, so Shift and Cmd still mean one thing.
 
-Left/Right spins about the screen-**up** axis and Up/Down about the screen-
-**right** one -- each key turns about the axis it is *not* moving along, which
-is what makes the object appear to follow the key rather than tip edge-on to it.
-Both come from `_key_nudge_axes`, shared with the translate nudge, so Left means
-the same world axis whichever tool is armed.
+**Left is counter-clockwise and Right is clockwise, as the viewer sees it.**
+That is rotation about the **view** axis -- the one `_view_locked_axis` picks out
+as useless for *dragging*, because it is foreshortened to a point, and which is
+for that very reason the natural one for keys: "turn this a quarter turn" is a
+screen-plane operation, not a turntable one.
+
+`_screen_roll_axis` returns that axis and the sign that makes a positive angle
+read as counter-clockwise. The sign matters because a rotation looks CCW only
+from the positive end of its axis, so viewing the same model from behind flips
+it. Verified by rotating a marker from five viewpoints rather than by reasoning
+about the right-hand rule.
+
+Up/Down tip the model away from and toward the viewer, about the screen-right
+axis from `_key_nudge_axes` (shared with the translate nudge).
 
 ## Transform Gizmos
 
