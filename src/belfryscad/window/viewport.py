@@ -191,6 +191,29 @@ def _key_nudge_magnitude(modifiers) -> float:
     return 1.0
 
 
+def _key_nudge_axes(camera, lock_axis: int):
+    """The world axes the arrow keys drive: (screen-right, screen-up).
+
+    Shared so a translate nudge and a rotate nudge read the screen the same
+    way -- Left/Right always means the same world axis whichever tool is
+    armed.
+    """
+    free_axes = [a for a in range(3) if a != lock_axis]
+    cam_right = camera.view_matrix()[0, :3]
+    right_axis = max(free_axes, key=lambda a: abs(cam_right[a]))
+    up_axis = free_axes[0] if right_axis == free_axes[1] else free_axes[1]
+    return right_axis, up_axis
+
+
+#: Rotation's own nudge steps, keyed by what `_key_nudge_magnitude` returns.
+#: Its 10/1/0.1 are world units, sized for distance; an angle wants quarter
+#: turns, 15-degree increments and single degrees. Same coarse/normal/fine
+#: relationship, so the modifiers still mean one thing -- only the quantity
+#: changes with what is being nudged, exactly as _HEIGHT_NUDGE_STEPS does
+#: for a heightfield.
+ROTATION_NUDGE_STEPS = {10.0: 90.0, 1.0: 15.0, 0.1: 1.0}
+
+
 def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.ndarray | None:
     """World-space delta (`magnitude` world units, from `_key_nudge_magnitude`)
     for arrow-key vertex nudging, confined to the same axis-locked plane
@@ -217,8 +240,7 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
         delta[axis] = magnitude if v[axis] >= 0 else -magnitude
         return delta
 
-    right_axis = max(free_axes, key=lambda a: abs(cam_right[a]))
-    up_axis = free_axes[0] if right_axis == free_axes[1] else free_axes[1]
+    right_axis, up_axis = _key_nudge_axes(camera, lock_axis)
     right_delta = _snap(cam_right, right_axis)
     up_delta = _snap(cam_up, up_axis)
     return {
@@ -1049,6 +1071,27 @@ class Viewport(QOpenGLWidget):
             step = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
             if step is not None:
                 self.selection_level_step.emit(step)
+                event.accept()
+                return
+        if (self._renderer.selected_id is not None
+                and getattr(self, "_selection_editable", True)
+                and self._active_tool == 1):
+            # Rotate tool armed: the arrows turn the object instead of
+            # moving it. Left/Right spins about the screen-UP axis and
+            # Up/Down about the screen-RIGHT one -- the axis each key is
+            # not moving along, which is what makes the object appear to
+            # follow the key rather than turn edge-on to it.
+            angle = ROTATION_NUDGE_STEPS[_key_nudge_magnitude(event.modifiers())]
+            lock = _view_locked_axis(self._renderer.camera)
+            right_axis, up_axis = _key_nudge_axes(self._renderer.camera, lock)
+            turn = {
+                Qt.Key.Key_Right: (up_axis, angle),
+                Qt.Key.Key_Left: (up_axis, -angle),
+                Qt.Key.Key_Down: (right_axis, angle),
+                Qt.Key.Key_Up: (right_axis, -angle),
+            }.get(event.key())
+            if turn is not None:
+                self.rotate_committed.emit(turn[0], float(turn[1]))
                 event.accept()
                 return
         if (self._renderer.selected_id is not None
