@@ -6,6 +6,8 @@ matched only a literal three-element `translate([a, b, c])`. Anything else
 call -- missed, and the drag inserted a SECOND wrapper instead of updating
 the one already there (#452).
 """
+import re
+
 import pytest
 
 from belfryscad.window.scad_format import find_transform_call, vector_texts
@@ -221,3 +223,41 @@ def test_an_untouched_component_is_not_reformatted():
     texts = vector_texts(call, "v", 3, "0")
     out = [nudge_component(t, a, "add") for t, a in zip(texts, (1, 0, 0))]
     assert out == ["1", "1e3", "0"]
+
+
+# -- The commit path itself ------------------------------------------------
+
+def test_commit_transform_calls_only_methods_that_exist():
+    """A regression guard with an embarrassing origin.
+
+    The parser had thorough tests and the rewrite was correct, but nothing
+    exercised `_commit_transform` itself -- so when a refactor deleted the
+    callback it passes to `_GizmoCmd`, every suite stayed green and every
+    gizmo drag raised AttributeError in the running app.
+
+    Checking the attributes it names is enough to catch that class of
+    breakage without a GUI.
+    """
+    import inspect
+    from belfryscad.window.main_window import MainWindow
+
+    src = inspect.getsource(MainWindow._commit_transform)
+    referenced = set(re.findall(r"self\.(_[A-Za-z_][A-Za-z0-9_]*)", src))
+    missing = [name for name in referenced if not hasattr(MainWindow, name)]
+    # Instance attributes assigned in __init__ are not class attributes, so
+    # only flag names that look like methods.
+    missing = [n for n in missing
+               if n not in {"_rendered_tab", "_viewport", "_tabs", "_undo_stack",
+                            "_render", "_selection_level", "_selection_level_id"}]
+    assert not missing, f"_commit_transform calls missing methods: {missing}"
+
+
+def test_every_gizmo_handler_reaches_commit_transform():
+    import inspect
+    from belfryscad.window.main_window import MainWindow
+
+    for name in ("_on_translate_committed", "_on_rotate_committed",
+                 "_on_scale_committed"):
+        fn = getattr(MainWindow, name, None)
+        assert fn is not None, f"{name} is gone"
+        assert "_commit_transform" in inspect.getsource(fn)
