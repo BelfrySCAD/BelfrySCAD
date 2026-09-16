@@ -200,6 +200,18 @@ editable data viewports key for key: 1 unit, 0.1 with Cmd, 10 with Shift
 A nudge emits `translate_committed`, the same signal a gizmo drag emits on
 mouse-up, so it is the same source rewrite and the same single undo step.
 
+**With the Rotate tool armed the arrows turn instead of moving**, in steps of
+90/15/1 degrees (`ROTATION_NUDGE_STEPS`, keyed by what `_key_nudge_magnitude`
+returns, exactly as `_HEIGHT_NUDGE_STEPS` does for a heightfield). A 1-unit step
+is right for a wall thickness and useless for an angle; the coarse/normal/fine
+relationship is kept, so Shift and Cmd still mean one thing.
+
+Left/Right spins about the screen-**up** axis and Up/Down about the screen-
+**right** one -- each key turns about the axis it is *not* moving along, which
+is what makes the object appear to follow the key rather than tip edge-on to it.
+Both come from `_key_nudge_axes`, shared with the translate nudge, so Left means
+the same world axis whichever tool is armed.
+
 ## Transform Gizmos
 
 When a tool is active, axis handles are drawn over the selected shape. Dragging a handle edits the AST directly:
