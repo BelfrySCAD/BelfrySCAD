@@ -263,6 +263,18 @@ A merged rewrite replaces exactly the wrapper's own span, so a comment between
 it and the node stays where the user put it. A named argument is normalised to
 positional on rewrite.
 
+**Re-selecting after a commit.** A drag or a nudge asks for its node back
+through `_restore_selection_after_gizmo`, which only *records* the offset:
+`_render()` starts a QThread and returns, so at that moment `id_to_node` is
+still the map from before the edit, with spans at the old offsets. Searching it
+there matched nothing and cleared the selection -- one nudge deselected the
+object, and a second was impossible.
+
+`_on_render_done` consumes it (`_apply_pending_reselect`) once the new map is
+in place, past the `render_id` guard so a superseded render never re-selects.
+The match is on the **editable** span, since for library-built geometry the
+producing node's span is in another file entirely.
+
 ## Value Overlay
 
 During translate/rotate/scale, a text readout of the current value is shown in the viewport (`Viewport._delta_label`, bottom-centre).
