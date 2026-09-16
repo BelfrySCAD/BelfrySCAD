@@ -5110,31 +5110,42 @@ class MainWindow(QMainWindow):
                     return i
         return 0 if levels else None
 
-    def _selectable_span_for_id(self, orig_id):
-        """The span to highlight for a picked id at the current step level,
-        and the tab that owns it, or (None, None).
+    def _span_at_level(self, orig_id, level=None):
+        """(span, tab) for `orig_id` at `level`, or at its own default.
 
-        See `_selection_levels` for what the levels are and
-        `_default_selection_level` for where a fresh pick starts.
+        Pure: it reads no shared state and writes none. Every scan over the
+        id map must use this. `_selectable_span_for_id` mutating the stored
+        level as a side effect of a *query* was how a level leaked between
+        objects: `_apply_pending_reselect` walks every id looking for one
+        span, and left the level set from whichever it happened to touch
+        last. Carried onto the next pick it was silently clamped into that
+        object's shorter list -- landing on the whole statement instead of
+        the inner call, where there is no enclosing transform to merge with,
+        so a drag stacked a wrapper instead of updating one.
         """
         levels = self._selection_levels(orig_id)
         if not levels:
             return None, None
-        # Reset here, not in the caller: a level belongs to the id it was
-        # stepped on, and carrying one over to a different pick selected a
-        # frame in a file that pick never touches -- which then resolves to
-        # no open tab and reads as "not selectable".
-        if orig_id != self._selection_level_id:
-            self._selection_level_id = orig_id
-            self._selection_level = None
-        if self._selection_level is None:
-            self._selection_level = self._default_selection_level(levels)
-        idx = max(0, min(self._selection_level, len(levels) - 1))
+        if level is None:
+            level = self._default_selection_level(levels)
+        idx = max(0, min(level if level is not None else 0, len(levels) - 1))
         span = levels[idx]
         tab = self._tab_for_origin(span.origin)
         if tab is None:
             return None, None
         return span, tab
+
+    def _selectable_span_for_id(self, orig_id):
+        """The span to highlight for the CURRENT pick, honouring any level
+        the user has stepped to, and the tab that owns it.
+
+        The level belongs to the id it was stepped on, so a different pick
+        starts at that pick's own default.
+        """
+        if orig_id != self._selection_level_id:
+            self._selection_level_id = orig_id
+            self._selection_level = None
+        return self._span_at_level(orig_id, self._selection_level)
 
     def _editable_span_for_id(self, orig_id):
         """The span a gizmo or a nudge may rewrite, or None.
@@ -5260,8 +5271,14 @@ class MainWindow(QMainWindow):
             return
         self._pending_reselect = None
         for orig_id in self.id_to_node:
-            span = self._editable_span_for_id(orig_id)
-            if span is not None and span.start_offset == target:
+            # Non-mutating: a scan must not leave the level set from
+            # whichever id it happened to touch last.
+            span, tab = self._span_at_level(orig_id)
+            if span is not None and tab is not None and not tab.editor.isReadOnly() \
+                    and span.start_offset == target:
+                # The pick is new, so its level starts at its own default.
+                self._selection_level_id = orig_id
+                self._selection_level = None
                 self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
                     self._rendered_tab.editor.set_selection(span.start_offset,

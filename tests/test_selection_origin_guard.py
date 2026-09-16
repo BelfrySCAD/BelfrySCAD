@@ -38,6 +38,7 @@ class _FakeWindow:
     _tab_for_origin = MainWindow._tab_for_origin
     _selection_levels = MainWindow._selection_levels
     _default_selection_level = MainWindow._default_selection_level
+    _span_at_level = MainWindow._span_at_level
     _selectable_span_for_id = MainWindow._selectable_span_for_id
     _editable_span_for_id = MainWindow._editable_span_for_id
 
@@ -376,3 +377,57 @@ def test_nothing_matching_clears_rather_than_selecting_the_wrong_thing(tmp_path)
     tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
     MainWindow._apply_pending_reselect(mw)
     assert cleared.get("id") is None and cleared.get("cleared") is True
+
+
+def test_a_scan_does_not_disturb_the_stored_level(tmp_path):
+    """`_apply_pending_reselect` walks every id looking for one span. Doing
+    that through the level-mutating query left the level set from whichever
+    id it touched last; carried onto the next pick it was silently clamped
+    into that object's shorter list, landing on the whole statement rather
+    than the inner call -- where there is no enclosing transform to merge
+    with, so a drag stacked a wrapper instead of updating one.
+    """
+    script = tmp_path / "s.scad"
+    script.write_text("translate([25,0,0]) cube(10);\ncuboid(8);\n")
+    lib = tmp_path / "lib.scad"
+    lib.write_text("// stand-in\n")
+    tab = _tab(str(script), str(script))
+
+    short = SimpleNamespace(position=_pos(str(lib), 0, 5),
+                            call_sites=(_pos(str(script), 20, 29),))
+    long_ = SimpleNamespace(position=_pos(str(lib), 0, 5),
+                            call_sites=(_pos(str(lib), 0, 5),
+                                        _pos(str(lib), 0, 4),
+                                        _pos(str(script), 29, 39)))
+    mw = _build({1: short, 2: long_}, tab)
+
+    # The user is on id 2, stepped nowhere: its own default.
+    mw._selectable_span_for_id(2)
+    before = (mw._selection_level, mw._selection_level_id)
+
+    # A scan over every id must leave that alone.
+    for oid in mw.id_to_node:
+        mw._span_at_level(oid)
+    assert (mw._selection_level, mw._selection_level_id) == before
+
+
+def test_each_pick_starts_at_its_own_default(tmp_path):
+    """Two objects with different chain lengths: the level from one must
+    never be reused for the other."""
+    script = tmp_path / "s.scad"
+    script.write_text("translate([25,0,0]) cube(10);\ncuboid(8);\n")
+    lib = tmp_path / "lib.scad"
+    lib.write_text("// stand-in\n")
+    tab = _tab(str(script), str(script))
+
+    deep = SimpleNamespace(position=_pos(str(lib), 0, 5),
+                           call_sites=(_pos(str(lib), 0, 5), _pos(str(lib), 0, 4),
+                                       _pos(str(script), 29, 39)))
+    shallow = SimpleNamespace(position=_pos(str(lib), 0, 5),
+                              call_sites=(_pos(str(script), 20, 29),))
+    mw = _build({1: deep, 2: shallow}, tab)
+
+    deep_span, _ = mw._selectable_span_for_id(1)
+    shallow_span, _ = mw._selectable_span_for_id(2)
+    assert deep_span.start_offset == 29
+    assert shallow_span.start_offset == 20, "must not inherit the deeper level"
