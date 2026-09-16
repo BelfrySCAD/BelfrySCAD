@@ -70,15 +70,22 @@ def _recolored_icon_pixmap(name: str, size: int, color: Qt.GlobalColor, prefix: 
     return recolored
 
 
+#: The plane frame each rotation ring measures its drag angle in, as
+#: `arctan2(radial . perp2, radial . perp1)`.
+#:
+#: **`perp1 x perp2` must equal the ring's own axis.** That is what makes a
+#: positive angle a right-handed turn about it, which is what `rotate()`
+#: writes. The Y ring had `X, Z` -- and `X x Z` is *minus* Y, so dragging it
+#: turned the model backwards while X and Z were correct.
 _RING_PERP1 = [
-    np.array([0.0, 1.0, 0.0], dtype=np.float64),  # X ring: perp1 = Y
-    np.array([1.0, 0.0, 0.0], dtype=np.float64),  # Y ring: perp1 = X
-    np.array([1.0, 0.0, 0.0], dtype=np.float64),  # Z ring: perp1 = X
+    np.array([0.0, 1.0, 0.0], dtype=np.float64),  # X ring: Y x Z = X
+    np.array([0.0, 0.0, 1.0], dtype=np.float64),  # Y ring: Z x X = Y
+    np.array([1.0, 0.0, 0.0], dtype=np.float64),  # Z ring: X x Y = Z
 ]
 _RING_PERP2 = [
-    np.array([0.0, 0.0, 1.0], dtype=np.float64),  # X ring: perp2 = Z
-    np.array([0.0, 0.0, 1.0], dtype=np.float64),  # Y ring: perp2 = Z
-    np.array([0.0, 1.0, 0.0], dtype=np.float64),  # Z ring: perp2 = Y
+    np.array([0.0, 0.0, 1.0], dtype=np.float64),
+    np.array([1.0, 0.0, 0.0], dtype=np.float64),
+    np.array([0.0, 1.0, 0.0], dtype=np.float64),
 ]
 
 
