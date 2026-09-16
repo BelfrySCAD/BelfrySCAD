@@ -235,6 +235,24 @@ def _screen_roll_axis(camera):
 ROTATION_NUDGE_STEPS = {10.0: 90.0, 1.0: 15.0, 0.1: 1.0}
 
 
+#: Scale's own drag steps, keyed the same way. A scale is a ratio, so the
+#: 10/1/0.1 of a distance would leap straight past every useful value.
+#: Shift is not in the table: on the scale gizmo it already means "all three
+#: axes", and a modifier cannot mean two things at once.
+_SCALE_DRAG_STEPS = {10.0: 0.1, 1.0: 0.1, 0.1: 0.01}
+
+
+def _quantize(value: float, step: float) -> float:
+    """`value` snapped to the nearest multiple of `step`.
+
+    What makes a drag land on the same numbers a nudge would, so a source
+    file does not end up with a hand-dragged 3.7000000000000002 beside a
+    nudged 4. The final round is against binary floating point: 0.1 has no
+    exact representation, so 3 * 0.1 is not 0.3 without it."""
+    return round(round(value / step) * step, 4)
+
+
+
 def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.ndarray | None:
     """World-space delta (`magnitude` world units, from `_key_nudge_magnitude`)
     for arrow-key vertex nudging, confined to the same axis-locked plane
@@ -1482,13 +1500,20 @@ class Viewport(QOpenGLWidget):
             self._renderer.drag_scale_axis = axis
 
     def _update_gizmo_drag(self, pos: QPoint):
+        # Read live, not from the press: a drag is long enough to change
+        # your mind about how fine you want it partway through.
+        from PySide6.QtWidgets import QApplication
+        mods = QApplication.keyboardModifiers()
+        magnitude = _key_nudge_magnitude(mods)
+
         if self._active_tool == 0:
             t = self._axis_plane_hit(pos.x(), pos.y())
             if t is None:
                 return
-            delta = round(t - self._drag_start_1d, 1)
+            delta = _quantize(t - self._drag_start_1d, magnitude)
             self._renderer.drag_offset = self._drag_axis_world * delta
-            self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta:+.1f}")
+            self._show_delta(
+                f"{'XYZ'[self._gizmo_drag_axis]}  {delta:+g}")
         elif self._active_tool == 1:
             t = self._axis_ring_hit(pos.x(), pos.y())
             if t is None:
@@ -1496,22 +1521,22 @@ class Viewport(QOpenGLWidget):
             raw = t - self._drag_start_1d
             while raw >  180: raw -= 360
             while raw < -180: raw += 360
-            delta_deg = round(raw)
+            delta_deg = _quantize(raw, ROTATION_NUDGE_STEPS[magnitude])
             self._renderer.drag_rotation_angle = float(delta_deg)
-            self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta_deg:+.0f}°")
+            self._show_delta(f"{'XYZ'[self._gizmo_drag_axis]}  {delta_deg:+g}\u00b0")
         else:
             t = self._axis_plane_hit(pos.x(), pos.y())
             if t is None:
                 return
             gizmo_len = self._renderer.camera.distance * 0.14
             raw_factor = 1.0 + (t - self._drag_start_1d) / max(gizmo_len, 1e-6)
-            factor = max(0.1, round(raw_factor, 1))
-            from PySide6.QtWidgets import QApplication
-            uniform = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+            step = _SCALE_DRAG_STEPS[magnitude]
+            factor = max(step, _quantize(raw_factor, step))
+            uniform = bool(mods & Qt.KeyboardModifier.ShiftModifier)
             self._renderer.drag_scale_factor = factor
             self._renderer.drag_scale_uniform = uniform
             axis_name = "XYZ" if uniform else "XYZ"[self._gizmo_drag_axis]
-            self._show_delta(f"{axis_name}  ×{factor:.1f}")
+            self._show_delta(f"{axis_name}  \u00d7{factor:g}")
         self.update()
 
     def _show_delta(self, text: str):
@@ -1531,9 +1556,11 @@ class Viewport(QOpenGLWidget):
             self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
             self._gizmo_drag_axis = -1
             self.update()
-            dx = round(float(offset[0]), 1)
-            dy = round(float(offset[1]), 1)
-            dz = round(float(offset[2]), 1)
+            # Already quantized during the drag; round only against the
+            # float32 the renderer stored it in.
+            dx = round(float(offset[0]), 4)
+            dy = round(float(offset[1]), 4)
+            dz = round(float(offset[2]), 4)
             if abs(dx) + abs(dy) + abs(dz) > 1e-4:
                 self.translate_committed.emit(dx, dy, dz)
         elif self._active_tool == 1:
@@ -1554,7 +1581,9 @@ class Viewport(QOpenGLWidget):
             self._renderer.drag_scale_uniform = False
             self._gizmo_drag_axis = -1
             self.update()
-            if abs(factor - 1.0) > 0.05:
+            # Half the finest step: 0.05 silently threw away every Cmd-drag,
+            # which quantizes to 0.01.
+            if abs(factor - 1.0) > min(_SCALE_DRAG_STEPS.values()) / 2:
                 self.scale_committed.emit(axis, factor, uniform)
 
     def _axis_ring_hit(self, px: float, py: float) -> float | None:
