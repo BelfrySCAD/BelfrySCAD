@@ -1249,6 +1249,18 @@ def _flatten_spans(items):
             runs.append((p, q, flag))
     return runs
 
+def _modifier_label(modifier) -> str:
+    """How this platform writes a modifier on its own -- U+21E7/U+2318 on
+    macOS, Shift+/Ctrl+ elsewhere. Qt renders a bare modifier as the empty
+    string, so it is spelled against a real key and the key taken back off;
+    asking Qt at all is what keeps Cmd-vs-Ctrl out of the code."""
+    with_key = QKeySequence(modifier | Qt.Key.Key_Up).toString(
+        QKeySequence.SequenceFormat.NativeText)
+    arrow = QKeySequence(Qt.Key.Key_Up).toString(
+        QKeySequence.SequenceFormat.NativeText)
+    return with_key.removesuffix(arrow).rstrip("+")
+
+
 class CodeEditor(QPlainTextEdit):
     #: See set_append_line_on_down(). Off unless a preference turns it on,
     #: so an editor built without one behaves the way the platform does.
@@ -1261,6 +1273,7 @@ class CodeEditor(QPlainTextEdit):
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
     source_edited_externally = Signal()        # emits after an "Edit as..." Save writes back to source
     value_nudged = Signal(int, int, str)       # (start, end, replacement) from an armed nudge
+    value_nudge_status = Signal(str)           # status-bar text while armed, "" when not
     use_library_requested = Signal()           # emits to open the Use Library picker
 
     def __init__(self, parent=None):
@@ -1604,6 +1617,14 @@ class CodeEditor(QPlainTextEdit):
         self.disarm_value_nudge()
         super().mousePressEvent(event)
 
+    def focusOutEvent(self, event):
+        # Switching tabs or clicking the viewport ends it too -- otherwise
+        # the status bar keeps promising arrow keys this editor no longer
+        # receives. The context menu is a popup and takes no focus, so
+        # arming through it survives.
+        self.disarm_value_nudge()
+        super().focusOutEvent(event)
+
     def arm_value_nudge(self, span):
         """Arm arrow-key nudging on `span` until Escape or a click.
 
@@ -1613,11 +1634,32 @@ class CodeEditor(QPlainTextEdit):
         """
         self._nudge_span = span
         self.set_selection(span[0], span[1])
+        self.value_nudge_status.emit(self._nudge_status_text())
 
     def disarm_value_nudge(self):
         if self._nudge_span is not None:
             self._nudge_span = None
             self.clear_selection()
+            self.value_nudge_status.emit("")
+
+    def _nudge_status_text(self) -> str:
+        """What the status bar says while a value is armed.
+
+        Arming is modal and leaves no other mark on the window -- without a
+        message the arrow keys would silently mean something new. It names
+        the step sizes because they change with what is armed: degrees for
+        an angle, units for anything else.
+        """
+        from belfryscad.window.scad_format import is_angle_value
+        start, end = self._nudge_span
+        text = self.toPlainText()
+        coarse = _modifier_label(Qt.KeyboardModifier.ShiftModifier)
+        fine = _modifier_label(Qt.KeyboardModifier.ControlModifier)
+        steps = (("15\u00b0", "90\u00b0", "1\u00b0")
+                 if is_angle_value(text, start) else ("1", "10", "0.1"))
+        return ("Adjusting %s \u2014 \u2191/\u2193 by %s, %s %s, %s %s "
+                "\u2014 Esc to stop"
+                % (text[start:end], steps[0], coarse, steps[1], fine, steps[2]))
 
     def _handle_value_nudge(self, event) -> bool:
         """Up/Down step the armed value; Escape disarms. True if consumed."""

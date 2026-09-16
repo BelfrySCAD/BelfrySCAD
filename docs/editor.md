@@ -93,7 +93,8 @@ The available variables come from the innermost debug frame: `{**outer_scope, **
 **Adjust Value...** (writable tabs only): arms the number or expression under
 the click for Up/Down stepping in place, Escape or a click to end it. The item
 is shown only when there is a value under the click, so the label need not
-name it. The span
+name it. While armed the status bar carries the value, the step sizes and the
+Escape; `focusOutEvent` disarms, so it never outlives the editor's focus. The span
 comes from `scad_format.find_value_span` and the step size from
 `is_angle_value`; the window applies each step as one merged undo entry and
 renders on a 400ms debounce. Full rules in `docs/wysiwyg.md` under
