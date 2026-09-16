@@ -827,3 +827,170 @@ def nudge_component(text: str, amount: float, mode: str) -> str:
     needs_parens = any(c in text for c in "+-") and not text.lstrip("-").replace(".", "").isdigit()
     base = f"({text})" if needs_parens else text
     return f"{base} * {_fmt_num(amount)}"
+
+
+# -- Finding the value under the cursor ------------------------------------
+
+def _arg_spans(text: str, start: int, end: int):
+    """Spans of the top-level comma-separated arguments in `text[start:end]`,
+    as absolute offsets with surrounding whitespace trimmed off.
+
+    Position-aware, unlike `_split_args`, which strips each piece and so
+    loses the offsets a caret has to be matched against.
+    """
+    spans, depth, seg = [], 0, start
+    i = start
+    while i < end:
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < end and not (text[i] == '"' and text[i - 1] != "\\"):
+                i += 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            spans.append((seg, i))
+            seg = i + 1
+        i += 1
+    spans.append((seg, end))
+    out = []
+    for a, b in spans:
+        while a < b and text[a] in " \t\r\n":
+            a += 1
+        while b > a and text[b - 1] in " \t\r\n":
+            b -= 1
+        if b > a:
+            out.append((a, b))
+    return out
+
+
+def _enclosing_group(text: str, offset: int):
+    """(open_index, close_index) of the innermost `(...)` or `[...]` that
+    contains `offset`, or None. Strings and nesting are respected."""
+    depth, opener = 0, None
+    i, stack = 0, []
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < len(text) and not (text[i] == '"' and text[i - 1] != "\\"):
+                i += 1
+        elif c in "([":
+            stack.append(i)
+        elif c in ")]":
+            if stack:
+                start = stack.pop()
+                if start < offset <= i:
+                    return start, i
+        i += 1
+    return None
+
+
+_NUMBER_CHARS = "0123456789."
+
+
+def _split_argument_name(text: str, start: int, end: int):
+    """`(name, start, end)` with a leading `name =` dropped, so `angle=90`
+    nudges the 90 rather than growing an `angle=90 + 15`, and the name is
+    still available to decide the step size. Only a bare identifier followed
+    by a single `=` counts -- `a == b` is a comparison, not an argument."""
+    i = start
+    while i < end and (text[i].isalnum() or text[i] in "_$"):
+        i += 1
+    if i == start:
+        return None, start, end
+    j = i
+    while j < end and text[j] in " \t":
+        j += 1
+    if j >= end or text[j] != "=" or text[j + 1:j + 2] == "=":
+        return None, start, end
+    j += 1
+    while j < end and text[j] in " \t":
+        j += 1
+    if j >= end:
+        return None, start, end
+    return text[start:i], j, end
+
+
+def find_value_span(text: str, offset: int):
+    """(start, end) of the number or expression the cursor sits in, or None.
+
+    Two shapes, in order:
+
+    * inside a `(...)` or `[...]` -- the comma-separated argument containing
+      the cursor, so `translate([1, 2, 3])` nudges the component the caret
+      is in and `left(wall/2)` nudges the whole expression;
+    * otherwise the number token under or just before the cursor, which
+      covers `wall = 3;` and `$fn = 64;`.
+
+    Deliberately not transform-aware: what encloses the value does not
+    matter, which is why `cube(10)` and `$fn` work as well as `xrot(45)`.
+    """
+    group = _enclosing_group(text, offset)
+    if group is not None:
+        open_i, close_i = group
+        for seg_start, seg_end in _arg_spans(text, open_i + 1, close_i):
+            if seg_start <= offset <= seg_end:
+                return _split_argument_name(text, seg_start, seg_end)[1:]
+        return None
+
+    i = offset
+    if i > 0 and (i >= len(text) or text[i] not in _NUMBER_CHARS):
+        i -= 1
+    if i < 0 or i >= len(text) or text[i] not in _NUMBER_CHARS:
+        return None
+    start = i
+    while start > 0 and text[start - 1] in _NUMBER_CHARS:
+        start -= 1
+    end = i
+    while end < len(text) and text[end] in _NUMBER_CHARS:
+        end += 1
+    if start > 0 and text[start - 1] == "-":
+        start -= 1
+    return start, end
+
+
+#: Calls whose arguments are angles, so a nudge steps in degrees rather
+#: than units. BOSL2's axis-specific spellings included.
+ROTATION_CALLS = ("rotate", "rot", "xrot", "yrot", "zrot")
+
+#: Argument names that hold an angle whatever the call is, so
+#: `rotate_extrude(angle=90)` and `cyl(chamfang=30)` step in degrees too.
+_ANGLE_ARGS = ("a", "angle", "ang", "chamfang", "spin", "twist")
+
+
+def enclosing_call_name(text: str, offset: int):
+    """The identifier of the call whose argument list contains `offset`, or
+    None. Used only to choose a step size -- nothing about finding or
+    rewriting the value depends on it."""
+    group = _enclosing_group(text, offset)
+    while group is not None:
+        open_i, _close = group
+        j = open_i
+        while j > 0 and text[j - 1] in " \t\r\n":
+            j -= 1
+        k = j
+        while k > 0 and (text[k - 1].isalnum() or text[k - 1] in "_$"):
+            k -= 1
+        if k < j:
+            return text[k:j]
+        if open_i == 0:
+            return None
+        group = _enclosing_group(text, open_i)
+    return None
+
+
+def is_angle_value(text: str, offset: int) -> bool:
+    """Whether the value at `offset` is an angle -- inside a rotation call,
+    or bound to an `a=`/`angle=` argument."""
+    if enclosing_call_name(text, offset) in ROTATION_CALLS:
+        return True
+    group = _enclosing_group(text, offset)
+    if group is None:
+        return False
+    for seg_start, seg_end in _arg_spans(text, group[0] + 1, group[1]):
+        if seg_start <= offset <= seg_end:
+            return _split_argument_name(text, seg_start, seg_end)[0] in _ANGLE_ARGS
+    return False

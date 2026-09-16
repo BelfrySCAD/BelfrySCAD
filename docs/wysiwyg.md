@@ -239,6 +239,50 @@ about the right-hand rule.
 Up/Down tip the model away from and toward the viewer, about the screen-right
 axis from `_key_nudge_axes` (shared with the translate nudge).
 
+### Nudging a number in the editor
+
+The same idea without the viewport: **right-click a number or an expression in
+the code editor and pick "Nudge <it>"**, and Up/Down step that value in place.
+Escape or a click anywhere ends it. This reaches what a gizmo cannot -- a
+`$fn`, a wall thickness, a `left(wall/2)` whose value is not a literal at all --
+and it is the whole of issue #459.
+
+`find_value_span(source, offset)` decides what the caret is "on". The rules are
+the ones a person would expect and each one exists because the obvious
+alternative is wrong:
+
+- **A vector nudges per component.** `translate([1, 2, 3])` with the caret on
+  the `2` gives the `2`, not the vector. `_arg_spans` splits on commas with
+  string, comment and bracket nesting respected, and -- unlike `_split_args`,
+  which strips whitespace and so cannot say *where* an argument was -- returns
+  real offsets.
+- **The caret on a comma or a bracket takes the whole group.** Clicking
+  precisely on a digit is not a reasonable thing to ask of a mouse.
+- **An expression is a value.** `left(wall/2)` offers `wall/2`, and a step
+  appends: `left(wall/2 + 1)`. `nudge_component` only recomputes when the text
+  is a plain number; anything else keeps its meaning and grows a delta, so a
+  nudged expression still tracks `wall`. The user asked for exactly this.
+- **A named argument gives its value, not the binding.** `_split_argument_name`
+  drops a leading `name =`, so `angle=90` steps to `angle=105` instead of
+  growing an `angle=90 + 15`. A bare identifier and a single `=` are required,
+  so `f(a == b)` stays whole.
+
+`is_angle_value` decides the step size. An angle is a value inside a rotation
+call (`ROTATION_CALLS`: `rotate`, and BOSL2's `rot`/`xrot`/`yrot`/`zrot`) *or*
+one bound to an angle-named argument (`_ANGLE_ARGS`), which is what makes
+`rotate_extrude(angle=90)` and `linear_extrude(twist=90)` behave -- the name is
+the only signal there, since the call is not a rotation. An angle steps
+90/15/1 degrees, everything else 10/1/0.1 units -- the same table the viewport's
+rotate nudge uses, so there is one definition of what Shift and Cmd mean.
+
+The window's `_on_value_nudged` pushes one `_GizmoCmd` per step with
+`merge_id=1004`, so holding the key is a single undo. **The render is
+debounced** (`_VALUE_NUDGE_RENDER_DELAY_MS`, 400ms): an arrow key repeats faster
+than any real model renders. Re-arming after each step uses the *new* text's
+length, since a step can change it (`45` to `-45`, `10` to `9.9`).
+
+Read-only tabs offer no menu item, for the same reason they offer no gizmos.
+
 ## Transform Gizmos
 
 When a tool is active, axis handles are drawn over the selected shape. Dragging a handle edits the AST directly:

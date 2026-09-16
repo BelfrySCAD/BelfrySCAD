@@ -666,6 +666,13 @@ class MainWindow(QMainWindow):
         # Offset a pending gizmo/nudge edit wants re-selected once its
         # render lands. See _restore_selection_after_gizmo.
         self._pending_reselect = None
+        # Debounced render for armed value nudging; see _on_value_nudged.
+        self._value_nudge_tab = None
+        self._value_nudge_timer = QTimer(self)
+        self._value_nudge_timer.setSingleShot(True)
+        self._value_nudge_timer.timeout.connect(
+            lambda: self._render(self._value_nudge_tab)
+            if self._value_nudge_tab is not None else None)
         self._bodies = None
         self._last_csg_tree: list | None = None  # resolved+generated CSGNode tree from the last successful render, for "Dump CSG Tree to Console"
         self._last_profile_result = None  # ProfileResult from the last "Render with Profiling" run, for "Show Profile Report…"
@@ -1436,6 +1443,8 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.value_nudged.connect(
+            lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.use_library_requested.connect(self._open_use_library)
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
@@ -1770,6 +1779,8 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.value_nudged.connect(
+            lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.use_library_requested.connect(self._open_use_library)
         self._apply_preferences_to_tab(
             tab,
@@ -5186,6 +5197,32 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Translate gizmo commit
     # ------------------------------------------------------------------
+
+    _VALUE_NUDGE_RENDER_DELAY_MS = 400
+
+    def _on_value_nudged(self, tab, start: int, end: int, new_text: str):
+        """Apply one armed-nudge step: rewrite the span, then re-render.
+
+        One undo entry per step, merged with the previous one (`merge_id`)
+        so holding an arrow key is a single undo rather than forty.
+
+        The render is debounced: a nudge is meant to be repeated, and a
+        full render per keystroke is unusable on a real model. Same idea as
+        the Customizer's own debounce, but shorter -- an arrow key repeats
+        faster than a person edits a field.
+        """
+        source = tab.editor.toPlainText()
+        if end > len(source):
+            return
+        new_source = source[:start] + new_text + source[end:]
+        self._undo_stack.push(_GizmoCmd(
+            tab, tab.editor, source, new_source, lambda: None,
+            start, lambda _offset: None,
+            merge_id=1004, label="Nudge Value", viewport=self._viewport,
+        ))
+        tab.editor.arm_value_nudge((start, start + len(new_text)))
+        self._value_nudge_tab = tab
+        self._value_nudge_timer.start(self._VALUE_NUDGE_RENDER_DELAY_MS)
 
     def _commit_transform(self, name: str, keyword: str, fill: str,
                           amounts, mode: str, label: str, merge_id: int):
