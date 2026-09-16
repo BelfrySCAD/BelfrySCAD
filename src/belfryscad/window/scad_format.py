@@ -720,3 +720,75 @@ def find_transform_chain(source: str, before: int) -> list:
         name, call = found
         chain.append((name, call))
         at = call.start
+
+
+def vector_texts(call: TransformCall, keyword: str, size: int, fill: str):
+    """Each component of `call`'s vector argument as its ORIGINAL text,
+    padded to `size` with `fill`, or None if there is no vector there.
+
+    Unlike `vector_arg` this does not insist the components are numbers:
+    an expression is kept verbatim so a nudge can be appended to it rather
+    than replacing it (or, worse, stacking another wrapper around the whole
+    thing).
+    """
+    text = call.named.get(keyword) or (call.args[0] if call.args else None)
+    if not text:
+        return None
+    text = text.strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        return None
+    parts = [p.strip() for p in _split_args(text[1:-1]) if p.strip() != "" or True]
+    parts = [p for p in parts if p != ""]
+    if not parts or len(parts) > size:
+        return None
+    return parts + [fill] * (size - len(parts))
+
+
+def _fmt_num(v: float) -> str:
+    return f"{v:.4g}"
+
+
+#: A trailing ` + 5` / ` - 2.5` / ` * 3` this function itself appended, so a
+#: second nudge extends it instead of chaining `base/2 + 1 + 1 + 1`.
+_TRAILING_DELTA = re.compile(r'^(?P<head>.*?)\s*(?P<op>[+\-*])\s*(?P<num>\d+\.?\d*(?:[eE][+-]?\d+)?)$')
+
+
+def nudge_component(text: str, amount: float, mode: str) -> str:
+    """`text` adjusted by `amount`, keeping an expression intact.
+
+    `mode` is "add" (translate, rotate) or "mul" (scale). A plain number is
+    recomputed; anything else has the adjustment appended, because
+    replacing `wall/2` with `7.5` throws away the relationship the user
+    wrote -- and wrapping the whole call in another transform, which is
+    what used to happen, accumulates wrappers on every drag.
+
+    Scale parenthesises: `w+1` scaled by 2 is `(w+1)*2`, never `w+1*2`.
+    """
+    text = text.strip()
+    # An untouched component keeps its own spelling. Recomputing it would
+    # reformat text the drag never moved -- 1e3 to 1000, 1.500 to 1.5 --
+    # which is the churn docs/wysiwyg.md records against the old rewrite.
+    if amount == (0 if mode == "add" else 1):
+        return text
+    try:
+        return _fmt_num(float(text) + amount) if mode == "add" \
+            else _fmt_num(float(text) * amount)
+    except ValueError:
+        pass
+    if mode == "add":
+        m = _TRAILING_DELTA.match(text)
+        if m and m.group("op") in "+-":
+            base = float(m.group("num")) * (1 if m.group("op") == "+" else -1)
+            total = base + amount
+            if total == 0:
+                return m.group("head")
+            sign = "+" if total > 0 else "-"
+            return f"{m.group('head')} {sign} {_fmt_num(abs(total))}"
+        sign = "+" if amount > 0 else "-"
+        return f"{text} {sign} {_fmt_num(abs(amount))}"
+    m = _TRAILING_DELTA.match(text)
+    if m and m.group("op") == "*":
+        return f"{m.group('head')} * {_fmt_num(float(m.group('num')) * amount)}"
+    needs_parens = any(c in text for c in "+-") and not text.lstrip("-").replace(".", "").isdigit()
+    base = f"({text})" if needs_parens else text
+    return f"{base} * {_fmt_num(amount)}"

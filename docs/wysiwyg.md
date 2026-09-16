@@ -270,24 +270,26 @@ During translate/rotate/scale, a text readout of the current value is shown in t
 
 ## Source Rewrite Rules (Intent Preservation)
 
-**[NOT IMPLEMENTED]** as described. What ships is a single regex merge with no intent classification at all — see `MainWindow._on_translate_committed` / `_on_rotate_committed` / `_on_scale_committed`:
+A drag commit keeps each component's **own text** and adjusts it:
 
-| What precedes the node | Actual behaviour |
+| Component | Rewrite |
 |---|---|
-| A matching wrapper whose components are **all plain numeric literals** | Add the delta and rewrite **all three** components via `f"{v:.4g}"` |
-| Anything else — no wrapper, or one containing a variable or expression | Insert a **new** wrapper immediately before the node |
+| A number (`10`, `1.5`) | Recomputed: `translate([10,0,0])` dragged +1 becomes `[11, 0, 0]` |
+| An expression (`wall/2`) | The adjustment is appended: `wall/2 + 1`. The relationship survives |
+| A delta this already added (`wall/2 + 1`) | Folded, not chained: another +1 gives `wall/2 + 2`, and -1 gives back `wall/2` |
+| Untouched by this drag | **Left exactly as written.** `1e3` stays `1e3`, `1.500` stays `1.500` |
 
-Two consequences: components are reformatted even when unchanged (`1.500` → `1.5`, `1e3` → `1000`), and expression-positioned geometry accumulates nested transforms rather than having its expression edited.
+Scale multiplies instead of adding, and parenthesises: `scale([w+1,1,1])` doubled is `(w+1) * 2`, never `w+1 * 2`.
 
-Nothing reads or writes a variable's declaration site. Note the reformatting is now fixable without the classification below: `openscad_cpp_evaluator.parse_ast()` (≥0.16.0) exposes every node's `start_offset`/`end_offset`, so original number text can be sliced and reused verbatim — and the existing regex already captures each component's text in its match groups.
+That last row matters as much as the others: the old rewrite pushed all three components through `f"{v:.4g}"` whatever the drag touched, so a drag along x reformatted y and z as a side effect.
 
-> Original intent — a drag commit rewrites the minimum source text based on the transform argument's form:
+**What is still not implemented** is the variable *declaration* case: nothing reads or writes a variable's declaration site, so `x = base/2` used in `translate([x,0,0])` has the delta appended inline rather than at the declaration.
+
+> Original intent for that case:
 >
 > | Argument form | Rewrite strategy |
 > |---|---|
-> | Literal value (`[10, 0, 0]`) | Replace the affected component(s) in place; preserve named vs. positional style |
 > | Variable set to a literal (`x = 10`) | Update the literal at the variable's declaration site |
 > | Variable set to an expression (`x = base/2`) | Append a delta at the declaration site: `x = base/2 + 5` |
-> | Inline expression (`[base/2, 0, 0]`) | Append a delta inline: `[base/2 + 5, 0, 0]` |
 >
 > Editing a variable declaration affects all sites referencing it — intentional, preserving the user's parametric relationships.
