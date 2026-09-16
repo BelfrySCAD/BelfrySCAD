@@ -122,15 +122,17 @@ buffer -- top-level geometry in a `use`d file has no call here to point at.
 Read through `getattr`, so an older evaluator (no `call_site`) still refuses
 rather than breaking.
 
-Two things follow from what the call site actually *is*. It is the **top-level
-statement** that entered the chain, so clicking the cuboid in
-`translate([20,0,0]) cuboid(8, rounding=1);` selects that whole statement, not
-the `cuboid(...)` within it -- which is the right span to wrap, and the right
-thing to highlight. And because the span therefore starts *before* any existing
-`translate(...)`, the gizmo's backwards-looking merge regex cannot see one: a
-drag adds an outer wrapper rather than merging. That composes correctly (and is
-what the Transform Edit Rules below say *should* happen) but repeated drags
-accumulate wrappers. See #452.
+The call site is the **innermost** call still in the user's file, not the
+top-level statement that entered the chain: clicking the cuboid in
+`translate([20,0,0]) cuboid(8, rounding=1);` selects `cuboid(8, rounding=1);`,
+which is the line that placed that object. It also keeps the span *inside* the
+enclosing `translate(...)`, which is what lets the gizmo's backwards-looking
+merge regex find that wrapper and update it instead of adding another.
+
+The consequence to know: geometry from a module called twice attributes to the
+same line in that module's body both times, so a drag on either instance moves
+both. Telling instances apart is what walking the selection outwards is for
+(#455); this is the innermost answer, deliberately.
 
 **[NOT IMPLEMENTED]** — everything in this subsection below. `_do_selection` ray-casts to one `originalID` and stores it; there is no parent/child navigation, and selecting again simply replaces the selection.
 
