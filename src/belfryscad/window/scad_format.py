@@ -148,6 +148,9 @@ def format_scad(text: str, indent_size: int = 4,
     cur = ""
     indent = 0
     paren_depth = 0
+    # `[...]` nesting on its own. A newline inside one is the author's
+    # arrangement of data; inside a `(...)` it is argument layout.
+    bracket_depth = 0
     # Extra indent for a modifier's child, e.g. the `cube(1)` in
     # `translate(...) cube(1);`. Separate from `indent`, which only braces
     # move, and reset by the `;` that ends the statement.
@@ -182,10 +185,31 @@ def format_scad(text: str, indent_size: int = 4,
         kind, txt = tokens[i]
 
         if kind == "ws":
-            if paren_depth > 0 or in_path:
+            if in_path:
                 cur += txt
+            elif paren_depth > 0:
+                # A newline inside an ARGUMENT list is layout this pass is
+                # about to decide for itself, so collapse it and let the
+                # profile re-wrap -- otherwise a list some other profile
+                # already broke apart survives every later reformat, and
+                # switching profiles does nothing. Inside a `[...]` it is
+                # the author's own arrangement of data (a matrix in rows, a
+                # path a point per line) and is left alone.
+                if "\n" in txt and bracket_depth == 0:
+                    closing = (i + 1 < n and tokens[i + 1][0] == "sym"
+                               and tokens[i + 1][1] in ")],;")
+                    if (cur and not closing
+                            and not cur.endswith((" ", "(", "["))):
+                        cur += " "
+                else:
+                    cur += txt
             elif "\n" in txt:
                 saw_newline_since_flush = True
+                # Mid-statement: with break_chained_child off nothing
+                # flushed here, so without this `translate(...)` and its
+                # child were glued into `translate(...)cuboid(`.
+                if cur.strip() and not cur.endswith(" "):
+                    cur += " "
                 if not cur.strip() and txt.count("\n") >= 2:
                     if profile.collapse_blank_lines:
                         if out and out[-1] != "":
@@ -239,12 +263,16 @@ def format_scad(text: str, indent_size: int = 4,
                 cur = indent_str()
             cur += txt
             paren_depth += 1
+            if txt == "[":
+                bracket_depth += 1
             i += 1
             continue
 
         if kind == "sym" and txt in ")]":
             cur += txt
             paren_depth = max(0, paren_depth - 1)
+            if txt == "]":
+                bracket_depth = max(0, bracket_depth - 1)
             i += 1
             # A modifier's child goes on its own line, indented under it:
             # `translate(...) cube(1);` reads as one thing acting on

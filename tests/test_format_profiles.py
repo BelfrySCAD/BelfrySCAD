@@ -139,3 +139,53 @@ def test_brace_style_is_not_a_setting():
     assert not any("brace" in f for f in FormatProfile.__dataclass_fields__)
     for name in PROFILES:
         assert "module m() {" in fmt(name), name
+
+
+# -- Switching profiles on already-formatted code --------------------------
+
+SHAPES = {
+    "chain": "module m() {\n    translate([1,0,0]) cuboid(10, rounding=2, anchor=TOP);\n}\n",
+    "long": "cuboid(" + ", ".join(f"arg{i}=val{i}" for i in range(12)) + ");\n",
+    "nested": "module m() {\n    f(a, [1, 2, 3], b);\n}\n",
+    "data": "path = [[0, 0],\n        [1, 1],\n        [2, 4]];\n",
+}
+
+
+@pytest.mark.parametrize("shape", list(SHAPES))
+@pytest.mark.parametrize("second", list(PROFILES))
+@pytest.mark.parametrize("first", list(PROFILES))
+def test_any_profile_reformats_any_other_profiles_output(shape, first, second):
+    """Reformatting Expanded output as Compact used to leave it Expanded:
+    a multi-line argument list was copied through verbatim and then skipped
+    by the wrap pass as "already wrapped by hand". A profile has to be
+    reachable from wherever the text currently is, or the submenu is a
+    one-way door."""
+    src = SHAPES[shape]
+    once = format_scad(src, 4, PROFILES[first], 80)
+    assert format_scad(once, 4, PROFILES[second], 80) == \
+        format_scad(src, 4, PROFILES[second], 80)
+
+
+def test_compact_does_not_glue_a_call_to_its_child():
+    """With the chain break off, nothing flushed at the `)`, and a newline
+    at depth 0 added no space -- giving `translate([1, 0, 0])cuboid(`."""
+    expanded = format_scad(SHAPES["chain"], 4, PROFILES["Expanded"], 80)
+    out = format_scad(expanded, 4, PROFILES["Compact"], 80)
+    assert ")cuboid" not in out, out
+    assert "translate([1, 0, 0]) cuboid(10, rounding=2, anchor=TOP);" in out, out
+
+
+def test_no_space_is_left_before_a_closing_bracket():
+    expanded = format_scad(SHAPES["long"], 4, PROFILES["Expanded"], 80)
+    out = format_scad(expanded, 4, PROFILES["Compact"], 200)
+    assert " )" not in out and " ;" not in out, out
+
+
+def test_a_hand_arranged_data_vector_keeps_its_rows():
+    """The collapse is for argument layout, which a profile decides. The
+    rows of a matrix, or a path a point per line, are the author's meaning
+    and survive every profile."""
+    for name in PROFILES:
+        out = format_scad(SHAPES["data"], 4, PROFILES[name], 80)
+        assert out.count("\n") >= 3, (name, out)
+        assert "[1, 1]" in out
