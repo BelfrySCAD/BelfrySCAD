@@ -317,14 +317,31 @@ def test_the_reselect_only_records_it_cannot_search_yet():
     assert mw._pending_reselect == 42
 
 
-def test_the_reselect_happens_after_the_new_ids_land():
-    """Ordering is the whole fix: _on_render_done must consume it only
-    after assigning id_to_node."""
+def test_the_reselect_happens_after_the_ids_AND_the_geometry():
+    """Ordering is the whole fix, and there are two constraints, not one.
+
+    It has to run after `self.id_to_node = id_to_node`, or it searches the
+    map from before the edit. And it has to run after `load_geometry`,
+    which ends with `self.selected_id = None` -- selecting before that drew
+    the gizmo for an instant and then had it wiped, which is what "the
+    arrows flicker and then it deselects" looked like.
+    """
     import inspect
     src = inspect.getsource(MainWindow._on_render_done)
-    assign = src.index("self.id_to_node = id_to_node")
     consume = src.index("_apply_pending_reselect()")
-    assert assign < consume, "the reselect must run after the map is replaced"
+    assert src.index("self.id_to_node = id_to_node") < consume, \
+        "must run after the id map is replaced"
+    assert src.index("load_geometry") < consume, \
+        "must run after load_geometry, which clears selected_id"
+
+
+def test_load_geometry_really_does_clear_the_selection():
+    """The premise of the ordering above, asserted rather than assumed --
+    if SceneRenderer stops clearing, the constraint can be relaxed."""
+    import inspect
+    from belfryscad.engine.renderer import SceneRenderer
+    src = inspect.getsource(SceneRenderer.load_geometry)
+    assert "self.selected_id = None" in src
 
 
 def test_applying_it_selects_the_span_that_starts_there(tmp_path):
