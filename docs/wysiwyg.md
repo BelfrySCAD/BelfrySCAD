@@ -266,6 +266,15 @@ This replaced a regex that matched only a literal three-element
 vector, a comment between wrapper and child, or anything nested all missed, and
 step 3 then inserted a *second* wrapper instead of updating the first (#452).
 
+The span does not always sit *after* its wrappers. The evaluator attributes
+some bodies to the statement rather than to the call inside it, and then the
+span **begins with** the very transform a drag should update -- scanning only
+backwards finds nothing in front of it, and the drag wrapped the statement in a
+second one. `transform_at` is the forward counterpart to `find_transform_call`,
+tried when the backwards walk yields no wrapper of the right kind. When the
+wrapper is at the span's own start the node does not shift, so `new_node_start`
+is `call.start` rather than the shifted offset.
+
 A vector that is not plain numbers -- `translate([x, 0, 0])`, `[1+1, 0, 0]` --
 is found but deliberately **not** rewritten: the drag wraps instead, because
 replacing an expression with a number would throw the user's own work away.
