@@ -102,6 +102,35 @@ renders on a 400ms debounce. Full rules in `docs/wysiwyg.md` under
 "Nudging a number in the editor". Read-only tabs get no item at all, matching
 the gizmo and viewport-nudge gating.
 
+**Reflow Comment…** (writable tabs, on a whole-line `//` comment): rewraps a
+comment block to a width you are asked for, repeating each line's own prefix —
+vim's `gq`, which is what editing BOSL2 documentation otherwise means doing by
+hand (#467). The three pieces live in `scad_format.py`, Qt-free:
+
+- `comment_prefix(line)` captures the `indent + // + spacing` verbatim. A
+  *trailing* comment (`cube(1); // why`) returns None — the code before it is
+  not prose to be rewrapped.
+- `comment_block_at(lines, i)` expands the cursor to the run of lines sharing
+  its **exact** prefix. Exact matters: in a doc block the header is `// ` and
+  the body `//   `, so reflowing from inside the body leaves
+  `// Description:` alone. Matching on "both are comments" would fold the
+  header into the paragraph and destroy the block. With a selection the
+  editor uses the selected lines instead, and refuses if any of them is not a
+  whole-line comment.
+- `reflow_comment(lines, width)` wraps via `textwrap`, re-applying the prefix
+  as `initial_indent`/`subsequent_indent`. `break_long_words` and
+  `break_on_hyphens` are both off — a URL or a `some_function()` split across
+  lines stops being either. A bare `//` is a paragraph break, kept as-is with
+  the paragraphs either side wrapped separately; each line's *own* prefix is
+  stripped to detect that, since `//` does not start with `//   `.
+
+**The width is asked, not assumed** (`ask_reflow_width`): it is the whole point
+of the operation and differs between a code comment and a paragraph of prose.
+The dialog opens on `default_reflow_width()` — the rightmost column guide, or
+80 with guides off — and the answer is remembered for the session, so
+reflowing a run of blocks is one keystroke each after the first. Cancelling
+changes nothing.
+
 **Go to Definition** (for any identifier, always shown):
 
 Right-click an identifier shows "Go to Definition of 'name'", only for words matching `\$?[A-Za-z_][A-Za-z0-9_]*` (plain identifiers and `$`-prefixed specials).

@@ -280,6 +280,14 @@ class _IndentGuides(QWidget):
         painter.end()
 
 
+def _blocks(doc):
+    """Every QTextBlock in `doc`, in order."""
+    block = doc.begin()
+    while block.isValid():
+        yield block
+        block = block.next()
+
+
 class _ColumnGuide(QWidget):
     """Transparent overlay on the viewport that draws the column guides."""
 
@@ -1310,6 +1318,7 @@ class CodeEditor(QPlainTextEdit):
         self.document().contentsChanged.connect(self.clear_coverage)
         self._selection_extra: list = []
         self._nudge_span: tuple | None = None  # armed value span, see arm_value_nudge
+        self._last_reflow_width: int | None = None  # session memory, see ask_reflow_width
         self._exec_selection: list = []
         self._find_selections: list = []
         self._bracket_selections: list = []
@@ -1911,6 +1920,73 @@ class CodeEditor(QPlainTextEdit):
             new_text = new_text[:-1]
         self.replace_span(start, end, new_text)
         self.source_edited_externally.emit()
+
+    def default_reflow_width(self) -> int:
+        """The column a reflow *offers* to wrap at: the rightmost column
+        guide, or 80 with guides off or unset.
+
+        Only a default. Somebody keeping a guide at 67 and another at 100
+        means the 67 for code and the 100 for prose (#467), so the wider one
+        is the better guess -- but it stays a guess, and the dialog is where
+        the answer comes from."""
+        return max(self._column_guide._columns, default=80) or 80
+
+    def ask_reflow_width(self) -> int | None:
+        """Ask which column to wrap to, or None if cancelled.
+
+        Asked rather than assumed: the width is the whole point of the
+        operation and it changes between a code comment and a paragraph of
+        documentation. The answer is remembered for the session, so
+        reflowing a run of blocks is one keystroke each after the first."""
+        from PySide6.QtWidgets import QInputDialog
+        width, ok = QInputDialog.getInt(
+            self, "Reflow Comment", "Wrap to column:",
+            self._last_reflow_width or self.default_reflow_width(), 20, 300)
+        if not ok:
+            return None
+        self._last_reflow_width = width
+        return width
+
+    def _reflow_comment(self, first: int, last: int, width: int | None = None):
+        """Rewrap comment lines `first..last` (inclusive block numbers),
+        repeating each line's own `//` prefix. Asks for the width unless
+        given one."""
+        from belfryscad.window.scad_format import reflow_comment
+        if width is None:
+            width = self.ask_reflow_width()
+            if width is None:
+                return
+        doc = self.document()
+        lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
+        new_lines = reflow_comment(lines, width)
+        if new_lines == lines:
+            return
+        start_block = doc.findBlockByNumber(first)
+        end_block = doc.findBlockByNumber(last)
+        self.replace_span(start_block.position(),
+                          end_block.position() + len(end_block.text()),
+                          "\n".join(new_lines))
+        self.source_edited_externally.emit()
+
+    def _reflow_target(self, cursor):
+        """(first, last) block numbers to reflow, or None if there is no
+        whole-line comment to act on.
+
+        With a selection, the comment lines it covers. Without one, the run
+        of lines around the cursor sharing its exact prefix -- which is what
+        stops a `// Description:` header being folded into the body under
+        it."""
+        from belfryscad.window.scad_format import comment_block_at, comment_prefix
+        doc = self.document()
+        first, last = self._selected_block_range(cursor)
+        if cursor.hasSelection():
+            lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
+            if not all(comment_prefix(ln) is not None for ln in lines):
+                return None
+            return first, last
+        all_lines = [b.text() for b in _blocks(doc)]
+        block = comment_block_at(all_lines, first)
+        return None if block is None else (block[0], block[1] - 1)
 
     def _selected_block_range(self, cursor):
         """(first, last) block numbers the cursor's selection covers.
@@ -2532,6 +2608,15 @@ class CodeEditor(QPlainTextEdit):
             menu.addAction(use_act)
 
         sel_cursor = self.textCursor()
+        if not self.isReadOnly():
+            _reflow = self._reflow_target(sel_cursor)
+            if _reflow is not None:
+                menu.addSeparator()
+                _ract = QAction("Reflow Comment\u2026", self)
+                _ract.triggered.connect(
+                    lambda checked=False, r=_reflow: self._reflow_comment(*r))
+                menu.addAction(_ract)
+
         if not self.isReadOnly() and sel_cursor.hasSelection():
             selected_text = sel_cursor.selectedText().replace(' ', '\n')
             from belfryscad.window.scad_format import can_format
