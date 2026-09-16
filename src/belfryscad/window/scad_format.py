@@ -994,3 +994,96 @@ def is_angle_value(text: str, offset: int) -> bool:
         if seg_start <= offset <= seg_end:
             return _split_argument_name(text, seg_start, seg_end)[0] in _ANGLE_ARGS
     return False
+
+
+# ---------------------------------------------------------------------------
+# Reflowing a comment block (#467)
+#
+# Rewraps a run of `//` comment lines to a width, repeating each line's own
+# leading pattern -- what vim's `gq` does. Editing BOSL2 documentation means
+# rewrapping by hand otherwise, which is the whole ask.
+
+#: `indent + // + spaces`, captured so a wrapped line can repeat it verbatim.
+_COMMENT_PREFIX = re.compile(r"^([ \t]*//+[ \t]*)(.*)$")
+
+
+def comment_prefix(line: str) -> str | None:
+    """The `//`-and-spacing a comment line begins with, or None if the line
+    is not a whole-line comment. `"//   Makes a widget."` gives `"//   "`.
+
+    Trailing comments (`cube(1); // why`) deliberately return None: the code
+    before them is not text to be rewrapped."""
+    m = _COMMENT_PREFIX.match(line)
+    return m.group(1) if m else None
+
+
+def comment_block_at(lines: list[str], index: int) -> tuple[int, int] | None:
+    """The half-open run of lines around `index` sharing its exact prefix.
+
+    Exact, not merely "both are comments", and that is the point: in
+
+        // Description:
+        //   Makes a widget of the given size, with a hole
+        //   that goes all the way through.
+
+    the body is `//   ` and the header is `// `, so reflowing from inside the
+    body rewraps the two body lines and leaves the header alone. A looser
+    rule would fold the header into the paragraph and destroy the block."""
+    if not (0 <= index < len(lines)):
+        return None
+    prefix = comment_prefix(lines[index])
+    if prefix is None:
+        return None
+    start = index
+    while start > 0 and comment_prefix(lines[start - 1]) == prefix:
+        start -= 1
+    end = index + 1
+    while end < len(lines) and comment_prefix(lines[end]) == prefix:
+        end += 1
+    return start, end
+
+
+def reflow_comment(lines: list[str], width: int) -> list[str]:
+    """`lines` (all sharing one prefix) rewrapped to `width` columns total.
+
+    A comment line with nothing after the `//` is a paragraph break: it is
+    kept as-is and the paragraphs on either side wrap separately, so a doc
+    comment's structure survives. Long words are never broken -- a URL or a
+    `some_function()` split across lines would stop being either."""
+    import textwrap
+
+    if not lines:
+        return []
+    prefix = comment_prefix(lines[0]) or ""
+    # The prefix is re-applied by textwrap, so measure the body against what
+    # is left of the width. A prefix wider than the target would give a
+    # negative width and raise; one column always remains.
+    body_width = max(1, width - len(prefix.expandtabs()))
+
+    out: list[str] = []
+    para: list[str] = []
+
+    def flush():
+        if not para:
+            return
+        out.extend(textwrap.wrap(
+            " ".join(para), width=body_width,
+            initial_indent=prefix, subsequent_indent=prefix,
+            break_long_words=False, break_on_hyphens=False,
+        ) or [prefix.rstrip()])
+        para.clear()
+
+    for line in lines:
+        # Strip each line's OWN prefix, not the block's: a bare `//` is a
+        # paragraph break, and it does not start with a `//   ` body prefix,
+        # so measuring against the block's would leave the slashes behind
+        # and wrap them into the text as a word.
+        own = comment_prefix(line)
+        body = line[len(own):].strip() if own is not None else line.strip()
+        if body:
+            para.append(body)
+        else:
+            flush()
+            out.append(prefix.rstrip())          # a blank comment line
+    flush()
+    return out
