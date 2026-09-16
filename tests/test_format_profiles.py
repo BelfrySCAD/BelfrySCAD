@@ -189,3 +189,49 @@ def test_a_hand_arranged_data_vector_keeps_its_rows():
         out = format_scad(SHAPES["data"], 4, PROFILES[name], 80)
         assert out.count("\n") >= 3, (name, out)
         assert "[1, 1]" in out
+
+
+# -- Wrap the list that overflows, not one that merely shares its line -----
+
+LONG_BODY = ("function foo(a, b, c) = "
+             "[for (i = [0:c]) a*i + b*i*i + c*i*i*i + 1000000*i + 42*a*b*c];\n")
+
+
+@pytest.mark.parametrize("name", ["Compact", "Default"])
+def test_a_short_parameter_list_stays_inline_however_long_the_body(name):
+    """`a, b, c` was being split across three lines to fix a line that was
+    87 wide because of its BODY -- and the result was still 66 wide. A
+    FunctionDeclaration's node span covers the body, so the old width test
+    measured the wrong thing."""
+    out = format_scad(LONG_BODY, 4, PROFILES[name], 80)
+    assert "function foo(a, b, c) =" in out, out
+    assert out.count("\n") == 1, out
+
+
+def test_a_long_parameter_list_still_wraps():
+    """"Unless there are a lot of them" -- the list itself is what must
+    overflow, and here it does."""
+    src = ("function foo(" + ", ".join(f"p{i}=d{i}" for i in range(20))
+           + ") = p0;\n")
+    out = format_scad(src, 4, PROFILES["Compact"], 80)
+    assert out.count("\n") > 2, out
+    assert max(len(ln) for ln in out.splitlines()) <= 80, out
+
+
+def test_a_long_argument_list_still_wraps():
+    src = "cuboid(" + ", ".join(f"arg{i}=val{i}" for i in range(12)) + ");\n"
+    out = format_scad(src, 4, PROFILES["Compact"], 80)
+    assert out.count("\n") > 1, out
+
+
+def test_a_module_signature_is_not_split_for_a_long_body_either():
+    src = ("module bar(a, b, c) { translate([a,b,c]) "
+           "cuboid(size=[1000,2000,3000], rounding=2); }\n")
+    out = format_scad(src, 4, PROFILES["Compact"], 80)
+    assert "module bar(a, b, c) {" in out, out
+
+
+def test_expanded_still_wraps_a_short_list_on_purpose():
+    """The skip is part of the width test, so wrap_every_list bypasses it."""
+    out = format_scad(LONG_BODY, 4, PROFILES["Expanded"], 80)
+    assert "function foo(\n    a,\n    b,\n    c\n)" in out, out

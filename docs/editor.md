@@ -138,6 +138,15 @@ single space**, letting the wrap pass decide afresh — while a newline inside a
 are the author's meaning rather than argument layout. `tests/test_format_profiles.py`
 walks all nine profile pairs across four shapes.
 
+**A list is wrapped only when the list itself overflows**, measured from where
+its last item ends rather than where its node does. A `FunctionDeclaration`'s
+span covers the body, so `function foo(a, b, c) = <87-char body>;` looked
+over-long and split `a, b, c` across three lines — to fix a line that was
+still 66 wide afterwards. Skipping such a list lets the round fall through to
+the one that really does overrun. It is also the rule as a person states it:
+keep the arguments inline unless there are a lot of them. `wrap_every_list`
+bypasses it, since Expanded's whole point is wrapping a list that fits.
+
 Two smaller faults fell out of the same change. With `break_chained_child`
 off nothing flushed at the `)`, and a newline at depth 0 added no space, so
 `translate([1, 0, 0])cuboid(` came out glued; and collapsing the newline
