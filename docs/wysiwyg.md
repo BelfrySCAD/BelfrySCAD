@@ -111,36 +111,41 @@ through now, and it returns None unless `position.origin` is the file the
 rendered tab is showing (`_tab_owns_origin`, matching `file_path` or the temp
 copy the worker parsed, the same pair the coverage overlay matches on).
 
-**With evaluator >=1.21.0 it resolves to the user's own call instead.** Each
-`id_to_node` entry carries a `call_site`: the call in the user's file that
-reached the geometry, which the evaluator already captured at resolve time as
-`CSGNode::warnEntry` so a warning raised during generate could name the user's
-line. `_editable_span_for_id` returns the producing node's span when the user
-wrote it, that call site when they did not, and None when neither is in this
-buffer -- top-level geometry in a `use`d file has no call here to point at.
+**With evaluator >=1.21.0 the pick resolves through the call chain.** Each
+`id_to_node` entry carries `call_sites`: every frame behind the geometry,
+innermost first, library frames included. A single `cuboid()` is 24 of them,
+most inside BOSL2's own `attachable`/`_attach_transform` layers.
 
-Read through `getattr`, so an older evaluator (no `call_site`) still refuses
+`_selectable_span_for_id` picks the level and returns it with the tab that owns
+it. The default is **the last frame in the rendered script** -- an ordinary user
+wants their own line, not BOSL2's insides, even when a library file happens to
+be open. Failing that it takes the innermost frame in any *other* open tab, so a
+library a BOSL2 author has opened is still reachable when the chain never
+re-enters the script. None when nothing is reachable: top-level geometry in a
+`use`d file that is not open has no line to show.
+
+Read through `getattr`, so an older evaluator (no `call_sites`) still refuses
 rather than breaking.
 
-The call site is the **innermost** call still in the user's file, not the
-top-level statement that entered the chain: clicking the cuboid in
-`translate([20,0,0]) cuboid(8, rounding=1);` selects `cuboid(8, rounding=1);`,
-which is the line that placed that object. It also keeps the span *inside* the
-enclosing `translate(...)`, which is what lets the gizmo's backwards-looking
-merge regex find that wrapper and update it instead of adding another.
+**A read-only file selects but does not edit.** `_editable_span_for_id` is
+everything selectable minus anything in a read-only tab, and installed libraries
+open read-only (`_load_into_tab`). So stepping into BOSL2 shows the line that
+built the shape without offering to change it. Unticking **Edit ▸ Read Only** is
+the deliberate act that makes it editable -- which is what a BOSL2 author does.
+
+The viewport is told which it has: `set_selection_editable` hides the transform
+tools and disarms any running one, and arrow-key nudging declines, so a
+read-only selection offers nothing that would fail. The viewport itself knows
+nothing about tabs; `_on_selection_changed` tells it.
+
+Because the span is the innermost frame *in the script*, it sits inside any
+enclosing `translate(...)` -- which is what lets the gizmo's backwards-looking
+merge regex find that wrapper and update it rather than adding a second.
 
 The consequence to know: geometry from a module called twice attributes to the
 same line in that module's body both times, so a drag on either instance moves
-both. Telling instances apart is what walking the selection outwards is for
-(#455); this is the innermost answer, deliberately.
-
-**[NOT IMPLEMENTED]** — everything in this subsection below. `_do_selection` ray-casts to one `originalID` and stores it; there is no parent/child navigation, and selecting again simply replaces the selection.
-
-> The selection can be walked up or down the AST hierarchy — up expands to a parent node (e.g. `cube()` → enclosing `translate()` → `difference()`), highlighting the entire subtree's geometry and the corresponding source span; down moves back toward the leaf.
->
-> When walking down from a node with multiple children, select the child whose geometry is closest to the original ray-cast hit point.
->
-> Multiple objects can be selected only as a complete subtree — walking up to a parent selects all its children as a unit. Arbitrary disjoint selections are not supported.
+both. Telling instances apart is what stepping *outwards* through the chain is
+for (#455).
 
 **[DIFFERS]** Selected objects are tinted green, not outlined — the fallback below is what shipped; no stencil-buffer outline exists (`SceneRenderer._highlight_color`, applied per-buffer in the draw loop).
 

@@ -4994,45 +4994,61 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
-    def _editable_span_for_id(self, orig_id):
-        """The source span to select and edit for a picked geometry id, or
-        None when the pick belongs to no file the user is editing.
-
-        Two different spans can be the answer:
+    def _selectable_span_for_id(self, orig_id):
+        """The source span to highlight for a picked geometry id, and the
+        tab it lives in, or (None, None).
 
         `id_to_node` names the node that PRODUCED the geometry, which is the
-        right span when the user wrote it themselves. For anything a library
-        builds it is a node inside that library -- including a plain
-        `cube(10)` once BOSL2 is included, since BOSL2 overrides the
-        primitives with its own modules -- and those nodes carry byte
-        offsets into the LIBRARY file. Splicing one into the user's buffer
-        put a `translate()` at offset 85256 of a 59-character script, which
-        lands at the end of it wrapping nothing (#450).
+        right span when the user wrote it. For anything a library builds it
+        is a node inside that library -- including a plain `cube(10)` once
+        BOSL2 is included, since BOSL2 overrides the primitives -- so the
+        answer there is a frame from the node's call chain instead.
 
-        So for those, the answer is the node's `call_site`: the call in the
-        user's own file that reached the geometry, which the evaluator
-        records alongside the producing node (#451). `cuboid(10, rounding=2)`
-        selects the user's own `cuboid(...)` call rather than `vnf.scad`.
+        The chain runs innermost-first and includes the library's own
+        frames. The default level is **the last one in the rendered
+        script**: an ordinary user wants their own line, not BOSL2's
+        insides, even when a library file happens to be open. Stepping
+        deeper is a separate action (#455).
 
-        Still None when neither is the edited file -- top-level geometry in
-        a `use`d file has no call site here to point at, and guessing would
-        put the edit somewhere the user cannot see.
+        Falls back to the innermost frame in any OTHER open tab, so a
+        library file the user has opened is still reachable when the chain
+        never re-enters the script.
         """
         node = self.id_to_node.get(orig_id)
         if node is None:
+            return None, None
+        rendered = self._rendered_tab
+        if rendered is not None and self._tab_owns_origin(rendered, node.position.origin):
+            return node.position, rendered
+        # getattr: an evaluator older than 1.21.0 has no chain, and there
+        # refusing (as #450 does) is the correct behaviour.
+        chain = getattr(node, "call_sites", ()) or ()
+        if rendered is not None:
+            for frame in chain:
+                if self._tab_owns_origin(rendered, frame.origin):
+                    return frame, rendered
+        for frame in chain:
+            for tab in self._all_tabs():
+                if tab is not rendered and self._tab_owns_origin(tab, frame.origin):
+                    return frame, tab
+        return None, None
+
+    def _editable_span_for_id(self, orig_id):
+        """The span a gizmo or a nudge may rewrite, or None.
+
+        Everything `_selectable_span_for_id` finds, minus anything in a
+        read-only tab. An installed library opens read-only, so stepping
+        into BOSL2 shows you the line without offering to change it --
+        until you untick Edit > Read Only, which is the deliberate act that
+        makes a library editable.
+        """
+        span, tab = self._selectable_span_for_id(orig_id)
+        if span is None or tab is None or tab.editor.isReadOnly():
             return None
-        tab = self._rendered_tab
-        if tab is None:
-            return None
-        if self._tab_owns_origin(tab, node.position.origin):
-            return node.position
-        # getattr, not attribute access: the pin is still on an evaluator
-        # without call_site until 1.21.0 is released, and there the old
-        # behaviour (refuse) is the correct one.
-        call = getattr(node, "call_site", None)
-        if call is not None and self._tab_owns_origin(tab, call.origin):
-            return call
-        return None
+        return span
+
+    def _all_tabs(self):
+        return [self._tabs.widget(i) for i in range(self._tabs.count())]
 
     def _on_selection_changed(self, orig_id: int):
         rendered = self._rendered_tab
@@ -5041,11 +5057,16 @@ class MainWindow(QMainWindow):
         if orig_id < 0:
             rendered.editor.clear_selection()
             return
-        span = self._editable_span_for_id(orig_id)
+        span, tab = self._selectable_span_for_id(orig_id)
         if span is None:
             rendered.editor.clear_selection()
+            self._viewport.set_selection_editable(False)
             return
-        rendered.editor.set_selection(span.start_offset, span.end_offset)
+        tab.editor.set_selection(span.start_offset, span.end_offset)
+        if tab is not rendered:
+            rendered.editor.clear_selection()
+        # Read-only (an installed library) selects but does not edit.
+        self._viewport.set_selection_editable(not tab.editor.isReadOnly())
 
     # ------------------------------------------------------------------
     # Translate gizmo commit

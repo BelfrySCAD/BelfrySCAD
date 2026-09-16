@@ -656,10 +656,26 @@ class Viewport(QOpenGLWidget):
         already = self._active_tool == tool_id
         self.set_active_tool(-1 if already else tool_id)
 
+    def set_selection_editable(self, editable: bool):
+        """Whether the selected shape's source can be written to.
+
+        False for a read-only file -- an installed library, until the user
+        unticks Edit > Read Only. Selection still works there, because
+        seeing which line built a shape is useful even when you are not
+        going to change it; the gizmos and arrow-key nudging are what
+        cannot apply."""
+        self._selection_editable = bool(editable)
+        if not self._selection_editable and self._active_tool in (0, 1, 2):
+            self.set_active_tool(-1)
+        self._sync_tool_buttons()
+        self.update()
+
     def _sync_tool_buttons(self):
-        """Show the tools only with a shape selected, and light whichever
-        is running."""
-        visible = self._renderer.selected_id is not None
+        """Show the tools only with an EDITABLE shape selected, and light
+        whichever is running. A read-only selection offers no tools, which
+        is the visible half of refusing the edit."""
+        visible = (self._renderer.selected_id is not None
+                   and getattr(self, "_selection_editable", True))
         for tool_id, btn in getattr(self, "_tool_btns", {}).items():
             btn.setVisible(visible)
             btn.setChecked(visible and self._active_tool == tool_id)
@@ -1024,7 +1040,8 @@ class Viewport(QOpenGLWidget):
         same single undo step -- and it needs no gizmo armed, which is the
         point: nudging a part a millimetre should not require arming a
         tool and finding a handle."""
-        if self._renderer.selected_id is not None:
+        if (self._renderer.selected_id is not None
+                and getattr(self, "_selection_editable", True)):
             magnitude = _key_nudge_magnitude(event.modifiers())
             delta = _key_nudge_delta(self._renderer.camera,
                                      _view_locked_axis(self._renderer.camera),
