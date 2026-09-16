@@ -257,33 +257,39 @@ During translate/rotate/scale, a text readout of the current value is shown in t
 ## Transform Edit Rules
 
 - **Nested transforms of the same type**: modify the innermost matching wrapper. The backwards scan starts at the node, so the innermost is the only one it reaches.
-- **Transform composition order** — **[DIFFERS]**. A new wrapper is inserted immediately before the selected node, i.e. *inside* any existing transform wrappers, not outside them (`source[:start] + insert + source[start:]`).
-  > Original intent: new wrappers are always inserted outside any existing transform wrappers on the selected node.
+- **Transform composition order**: a new wrapper goes **outside** any the node is already wrapped in, and a merge updates the **outermost** wrapper of that type. This is what makes a world-aligned handle tell the truth — inserted inside, a drag on the world-x handle of `rotate([0,0,45]) cube(10)` moved the object along the *rotated* x (#453).
+
+  `find_transform_chain` walks out while each enclosing call is one of `TRANSFORM_WRAPPERS` (translate, rotate, scale, mirror, resize, multmatrix, color) and **stops at anything else**. A `for` is a wrapper too, but hoisting a drag outside the loop would move every iteration rather than the one the user grabbed; the same goes for `if`, a `difference()` operand and a user module's call.
+
+  An *inner* wrapper of the same type is deliberately left alone: merging into the `translate` in `rotate([0,0,45]) translate([1,0,0]) cube(10)` would move along the rotated axis, so a new outer one is added instead.
 - **Live drag preview** — **[NOT IMPLEMENTED]**. There is no ghost mesh; only the delta readout updates during a drag. The AST edit and re-render still happen on mouse-up, as one undo step.
   > Original intent: wireframe ghost copy of the mesh during drag.
-- **Gizmo orientation** — **[DIFFERS]**. Handles are world-axis aligned (`Viewport._AXIS_DIRS` is the identity basis), positioned at the selection's bounding-box centre. A rotated object gets world-aligned handles, not ones following its own frame.
-  > Original intent: handles drawn in local (post-transform) space.
+- **Gizmo orientation**: handles are world-axis aligned (`Viewport._AXIS_DIRS` is the identity basis), at the selection's bounding-box centre, and since #453 the *edit* is world-aligned to match — a drag on the world-x handle moves the object along world x whatever it is wrapped in.
+
+  Local-frame handles were the original intent and are not what shipped. They would need the object's accumulated transform, and nothing keeps it: bodies reach the renderer already baked into world space and `ColoredBody` carries no matrix, so it would have to be reconstructed from source or added to the evaluator. Aligning the edit to the handles instead needed neither, and leaves the two agreeing — which was the actual complaint.
 
 ## Source Rewrite Rules (Intent Preservation)
 
-**[NOT IMPLEMENTED]** as described. What ships is a single regex merge with no intent classification at all — see `MainWindow._on_translate_committed` / `_on_rotate_committed` / `_on_scale_committed`:
+A drag commit keeps each component's **own text** and adjusts it:
 
-| What precedes the node | Actual behaviour |
+| Component | Rewrite |
 |---|---|
-| A matching wrapper whose components are **all plain numeric literals** | Add the delta and rewrite **all three** components via `f"{v:.4g}"` |
-| Anything else — no wrapper, or one containing a variable or expression | Insert a **new** wrapper immediately before the node |
+| A number (`10`, `1.5`) | Recomputed: `translate([10,0,0])` dragged +1 becomes `[11, 0, 0]` |
+| An expression (`wall/2`) | The adjustment is appended: `wall/2 + 1`. The relationship survives |
+| A delta this already added (`wall/2 + 1`) | Folded, not chained: another +1 gives `wall/2 + 2`, and -1 gives back `wall/2` |
+| Untouched by this drag | **Left exactly as written.** `1e3` stays `1e3`, `1.500` stays `1.500` |
 
-Two consequences: components are reformatted even when unchanged (`1.500` → `1.5`, `1e3` → `1000`), and expression-positioned geometry accumulates nested transforms rather than having its expression edited.
+Scale multiplies instead of adding, and parenthesises: `scale([w+1,1,1])` doubled is `(w+1) * 2`, never `w+1 * 2`.
 
-Nothing reads or writes a variable's declaration site. Note the reformatting is now fixable without the classification below: `openscad_cpp_evaluator.parse_ast()` (≥0.16.0) exposes every node's `start_offset`/`end_offset`, so original number text can be sliced and reused verbatim — and the existing regex already captures each component's text in its match groups.
+That last row matters as much as the others: the old rewrite pushed all three components through `f"{v:.4g}"` whatever the drag touched, so a drag along x reformatted y and z as a side effect.
 
-> Original intent — a drag commit rewrites the minimum source text based on the transform argument's form:
+**What is still not implemented** is the variable *declaration* case: nothing reads or writes a variable's declaration site, so `x = base/2` used in `translate([x,0,0])` has the delta appended inline rather than at the declaration.
+
+> Original intent for that case:
 >
 > | Argument form | Rewrite strategy |
 > |---|---|
-> | Literal value (`[10, 0, 0]`) | Replace the affected component(s) in place; preserve named vs. positional style |
 > | Variable set to a literal (`x = 10`) | Update the literal at the variable's declaration site |
 > | Variable set to an expression (`x = base/2`) | Append a delta at the declaration site: `x = base/2 + 5` |
-> | Inline expression (`[base/2, 0, 0]`) | Append a delta inline: `[base/2 + 5, 0, 0]` |
 >
 > Editing a variable declaration affects all sites referencing it — intentional, preserving the user's parametric relationships.

@@ -18,7 +18,8 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.scad_format import find_transform_call, vector_arg
+from belfryscad.window.scad_format import (find_transform_chain,
+                                           nudge_component, vector_texts)
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
                                         _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
@@ -5166,22 +5167,23 @@ class MainWindow(QMainWindow):
     # Translate gizmo commit
     # ------------------------------------------------------------------
 
-    def _commit_transform(self, name: str, keyword: str, identity, fill: float,
-                          combine, label: str, merge_id: int):
+    def _commit_transform(self, name: str, keyword: str, fill: str,
+                          amounts, mode: str, label: str, merge_id: int):
         """Wrap or update a `name(...)` transform around the selected node.
 
         One implementation for translate/rotate/scale, which differed only
-        in the op name and how an existing vector combines with the drag.
+        in the op name, the identity, and whether a drag adds to an
+        existing component or multiplies it (`mode`).
 
         The wrapper is found by parsing backwards from the span
-        (`find_transform_call`) rather than by matching a regex against the
-        raw text. The regex only recognised a literal three-element
-        `name([a, b, c])`, so a named argument, a two-element vector, a
-        comment in between, or anything nested missed and got a SECOND
-        wrapper instead of an update (#452).
+        (`find_transform_chain`) rather than matching a regex, and a new one
+        goes OUTSIDE anything already wrapping the node so a world-aligned
+        handle tells the truth (#452, #453).
 
-        `combine(vals)` returns the new vector; `vals` is the existing one,
-        or `identity` when there is nothing to update.
+        Components keep their own text: a number is recomputed, an
+        expression has the adjustment appended (`wall/2` -> `wall/2 + 1`),
+        so a parametric model keeps its relationships instead of being
+        overwritten with a constant or gaining a wrapper per drag.
         """
         if not self._rendered_tab:
             return
@@ -5199,22 +5201,25 @@ class MainWindow(QMainWindow):
 
         source = self._rendered_tab.editor.toPlainText()
         start = span.start_offset
-        call = find_transform_call(source, start, name)
-        vals = vector_arg(call, keyword, 3, fill) if call is not None else None
 
-        def _fmt(v: float) -> str:
-            return f"{v:.4g}"
+        chain = find_transform_chain(source, start)
+        outer_name, outer = chain[-1] if chain else (None, None)
+        call = outer if outer_name == name else None
+        texts = vector_texts(call, keyword, 3, fill) if call is not None else None
 
-        new_vals = combine(list(vals) if vals is not None else list(identity))
-        text = f"{name}([{_fmt(new_vals[0])}, {_fmt(new_vals[1])}, {_fmt(new_vals[2])}]) "
-        if vals is not None:
-            # Replace the wrapper we found, keeping everything after it --
+        base = texts if texts is not None else [fill] * 3
+        parts = [nudge_component(base[i], amounts[i], mode) for i in range(3)]
+        text = f"{name}([{parts[0]}, {parts[1]}, {parts[2]}]) "
+        if texts is not None:
+            # Update that wrapper in place, keeping everything after it --
             # a comment between it and the node stays where the user put it.
             head, tail = source[:call.start], source[call.end:]
             new_source = head + text.rstrip() + tail
             new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
         else:
-            new_source = source[:start] + text + source[start:]
+            # Outside the whole chain, not against the node.
+            at = outer.start if outer is not None else start
+            new_source = source[:at] + text + source[at:]
             new_node_start = start + len(text)
 
         self._undo_stack.push(_GizmoCmd(
@@ -5224,26 +5229,19 @@ class MainWindow(QMainWindow):
         ))
 
     def _on_translate_committed(self, dx: float, dy: float, dz: float):
-        self._commit_transform(
-            "translate", "v", (0.0, 0.0, 0.0), 0.0,
-            lambda v: [v[0] + dx, v[1] + dy, v[2] + dz],
-            "Translate", 1001)
+        self._commit_transform("translate", "v", "0", (dx, dy, dz), "add",
+                               "Translate", 1001)
 
     def _on_rotate_committed(self, axis: int, angle_deg: float):
-        def combine(v):
-            v[axis] += angle_deg
-            return v
-        self._commit_transform("rotate", "a", (0.0, 0.0, 0.0), 0.0,
-                               combine, "Rotate", 1002)
+        amounts = [0.0, 0.0, 0.0]
+        amounts[axis] = angle_deg
+        self._commit_transform("rotate", "a", "0", amounts, "add", "Rotate", 1002)
 
     def _on_scale_committed(self, axis: int, factor: float, uniform: bool):
-        def combine(v):
-            if uniform:
-                return [x * factor for x in v]
-            v[axis] *= factor
-            return v
-        self._commit_transform("scale", "v", (1.0, 1.0, 1.0), 1.0,
-                               combine, "Scale", 1003)
+        amounts = [factor] * 3 if uniform else [1.0, 1.0, 1.0]
+        if not uniform:
+            amounts[axis] = factor
+        self._commit_transform("scale", "v", "1", amounts, "mul", "Scale", 1003)
 
     # ------------------------------------------------------------------
     # Coordinate display
