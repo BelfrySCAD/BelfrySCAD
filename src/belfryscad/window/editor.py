@@ -1260,6 +1260,7 @@ class CodeEditor(QPlainTextEdit):
     print_to_console = Signal(str)             # emits formatted assignment string
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
     source_edited_externally = Signal()        # emits after an "Edit as..." Save writes back to source
+    value_nudged = Signal(int, int, str)       # (start, end, replacement) from an armed nudge
     use_library_requested = Signal()           # emits to open the Use Library picker
 
     def __init__(self, parent=None):
@@ -1290,6 +1291,7 @@ class CodeEditor(QPlainTextEdit):
         self._coverage_selections: list = []
         self.document().contentsChanged.connect(self.clear_coverage)
         self._selection_extra: list = []
+        self._nudge_span: tuple | None = None  # armed value span, see arm_value_nudge
         self._exec_selection: list = []
         self._find_selections: list = []
         self._bracket_selections: list = []
@@ -1597,6 +1599,55 @@ class CodeEditor(QPlainTextEdit):
         self._coverage_selections = []
         self._refresh_extra_selections()
 
+    def mousePressEvent(self, event):
+        # Clicking elsewhere ends the nudge, as it ends any other selection.
+        self.disarm_value_nudge()
+        super().mousePressEvent(event)
+
+    def arm_value_nudge(self, span):
+        """Arm arrow-key nudging on `span` until Escape or a click.
+
+        Armed rather than stepped from a submenu: a nudge is meant to be
+        repeated, and picking a fixed step off a menu each time is no
+        faster than typing the number.
+        """
+        self._nudge_span = span
+        self.set_selection(span[0], span[1])
+
+    def disarm_value_nudge(self):
+        if self._nudge_span is not None:
+            self._nudge_span = None
+            self.clear_selection()
+
+    def _handle_value_nudge(self, event) -> bool:
+        """Up/Down step the armed value; Escape disarms. True if consumed."""
+        span = self._nudge_span
+        if span is None:
+            return False
+        if event.key() == Qt.Key.Key_Escape:
+            self.disarm_value_nudge()
+            return True
+        direction = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+        if direction is None:
+            return False
+        from belfryscad.window.scad_format import is_angle_value, nudge_component
+        from belfryscad.window.viewport import (ROTATION_NUDGE_STEPS,
+                                                _key_nudge_magnitude)
+        text = self.toPlainText()
+        start, end = span
+        if end > len(text):
+            self.disarm_value_nudge()
+            return True
+        magnitude = _key_nudge_magnitude(event.modifiers())
+        # An angle wants quarter turns, 15s and single degrees; a length
+        # wants units. Same coarse/normal/fine relationship either way.
+        step = (ROTATION_NUDGE_STEPS[magnitude] if is_angle_value(text, start)
+                else magnitude) * direction
+        new_text = nudge_component(text[start:end], step, "add")
+        self._nudge_span = (start, start + len(new_text))
+        self.value_nudged.emit(start, end, new_text)
+        return True
+
     def set_selection(self, start_offset: int, end_offset: int):
         fmt = QTextCharFormat()
         fmt.setBackground(QColor("#ADD6FF"))
@@ -1622,6 +1673,9 @@ class CodeEditor(QPlainTextEdit):
         return super().event(event)
 
     def keyPressEvent(self, event):
+        if self._handle_value_nudge(event):
+            event.accept()
+            return
         if self._completer.popup().isVisible():
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
                 idx = self._completer.popup().currentIndex()
@@ -2524,6 +2578,15 @@ class CodeEditor(QPlainTextEdit):
             last = menu.actions()[-1] if menu.actions() else None
             if last is not None and not last.isSeparator():
                 menu.addSeparator()
+
+        if not self.isReadOnly():
+            from belfryscad.window.scad_format import find_value_span
+            _vspan = find_value_span(text, offset)
+            if _vspan is not None:
+                if menu.actions() and not menu.actions()[-1].isSeparator():
+                    menu.addSeparator()
+                _act = menu.addAction(f"Nudge {text[_vspan[0]:_vspan[1]]}")
+                _act.triggered.connect(lambda _c=False, sp=_vspan: self.arm_value_nudge(sp))
 
         if view_literals:
             view_sub = QMenu("View as...", self)
