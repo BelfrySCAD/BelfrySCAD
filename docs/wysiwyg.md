@@ -339,6 +339,20 @@ smallest step out of the table rather than repeating a constant.
 point, not against the drag: 0.1 has no exact representation, so three steps
 of it is `0.30000000000000004` and the source file would say so.
 
+### Handle size
+
+`GIZMO_SCALE` (in `engine/renderer.py`) is the handle length as a fraction of
+the camera distance, so the gizmo holds the same apparent size however far out
+you are zoomed. Both the drawing and the two hit tests read it, and so does the
+viewport's scale drag, which needs the same length to turn a drag into a ratio.
+It was a bare `0.14` in those four places -- which is how a handle and the
+region that picks it drift apart -- and is now `0.07`, half the old size.
+
+**The pick tolerance is deliberately not derived from it**: both
+`_pick_translate_axis` and `_pick_rotate_axis` accept a hit within 12 *screen
+pixels* of the handle, so a smaller handle is drawn smaller without becoming
+harder to grab.
+
 ## How Tool Choice Resolves Edit Ambiguity
 
 The active tool declares which transform type to edit — no intent inference needed. For each tool activation on a selected node:

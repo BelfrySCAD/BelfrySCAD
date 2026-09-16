@@ -178,6 +178,13 @@ void main() {
 }
 """
 
+#: Gizmo size as a fraction of the camera distance, so the handles hold the
+#: same apparent size however far out you are zoomed. Both the drawing and
+#: the hit tests read it -- it lived as a bare 0.14 in four places, which is
+#: how a handle and the region that picks it drift apart.
+GIZMO_SCALE = 0.07
+
+
 _GIZMO_VERT = """
 #version 330 core
 in vec3 in_position;
@@ -1808,7 +1815,7 @@ class SceneRenderer:
         if bbox is None:
             return
         center, _ = bbox
-        scale = self.camera.distance * 0.14
+        scale = self.camera.distance * GIZMO_SCALE
 
         if self.gizmo_type == 0:
             if np.any(self.drag_offset != 0):
@@ -2208,7 +2215,7 @@ class SceneRenderer:
         center, _ = bbox
         if np.any(self.drag_offset != 0):
             center = center + self.drag_offset
-        scale = self.camera.distance * 0.14
+        scale = self.camera.distance * GIZMO_SCALE
 
         aspect = w / h if h > 0 else 1.0
         view = self.camera.view_matrix()
@@ -2250,7 +2257,7 @@ class SceneRenderer:
         if bbox is None:
             return -1
         center, _ = bbox
-        scale = self.camera.distance * 0.14
+        scale = self.camera.distance * GIZMO_SCALE
 
         aspect = w / h if h > 0 else 1.0
         view = self.camera.view_matrix()

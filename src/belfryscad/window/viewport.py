@@ -12,7 +12,7 @@ from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon)
 
-from belfryscad.engine.renderer import SceneRenderer
+from belfryscad.engine.renderer import GIZMO_SCALE, SceneRenderer
 from belfryscad.window.debugger import _debug_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -1528,7 +1528,7 @@ class Viewport(QOpenGLWidget):
             t = self._axis_plane_hit(pos.x(), pos.y())
             if t is None:
                 return
-            gizmo_len = self._renderer.camera.distance * 0.14
+            gizmo_len = self._renderer.camera.distance * GIZMO_SCALE
             raw_factor = 1.0 + (t - self._drag_start_1d) / max(gizmo_len, 1e-6)
             step = _SCALE_DRAG_STEPS[magnitude]
             factor = max(step, _quantize(raw_factor, step))
