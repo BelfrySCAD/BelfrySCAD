@@ -675,6 +675,66 @@ TRANSFORM_WRAPPERS = ("translate", "rotate", "scale", "mirror", "resize",
                       "multmatrix", "color")
 
 
+def transform_at(source: str, at: int, name: str):
+    """A `name(...)` call that BEGINS at `at`, or None.
+
+    The counterpart to `find_transform_call`, which only ever looks
+    backwards. A selected span does not always sit after its wrappers: when
+    the evaluator attributes a body to the statement rather than to the call
+    inside it, the span *starts with* the very transform a drag should
+    update. Scanning backwards from there finds nothing, and the drag then
+    wrapped the statement in a second one.
+    """
+    j = at
+    while j < len(source) and (source[j].isalnum() or source[j] in "_$"):
+        j += 1
+    if source[at:j] != name:
+        return None
+    k = j
+    while k < len(source) and source[k] in " \t\r\n":
+        k += 1
+    if k >= len(source) or source[k] != "(":
+        return None
+    depth = 0
+    i = k
+    while i < len(source):
+        c = source[i]
+        if c == '"':
+            i += 1
+            while i < len(source) and not (source[i] == '"' and source[i - 1] != "\\"):
+                i += 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                return _build_transform_call(source, at, k, end)
+        i += 1
+    return None
+
+
+def _build_transform_call(source: str, start: int, open_paren: int, end: int):
+    args, named = [], {}
+    for piece in _split_args(source[open_paren + 1:end - 1]):
+        if not piece:
+            continue
+        eq, depth = -1, 0
+        for n, c in enumerate(piece):
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+            elif c == "=" and depth == 0 and (n + 1 >= len(piece) or piece[n + 1] != "="):
+                eq = n
+                break
+        if eq > 0:
+            named[piece[:eq].strip()] = piece[eq + 1:].strip()
+        else:
+            args.append(piece)
+    return TransformCall(start, end, args, named)
+
+
 def find_transform_chain(source: str, before: int) -> list:
     """The transform calls wrapping the node at `before`, innermost first.
 

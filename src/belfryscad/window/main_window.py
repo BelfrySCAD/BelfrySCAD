@@ -19,7 +19,8 @@ from belfryscad.export_name import default_export_name, resolve_export_name, see
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.scad_format import (find_transform_chain,
-                                           nudge_component, vector_texts)
+                                           nudge_component, transform_at,
+                                           vector_texts)
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
                                         _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
@@ -5224,6 +5225,13 @@ class MainWindow(QMainWindow):
         chain = find_transform_chain(source, start)
         outer_name, outer = chain[-1] if chain else (None, None)
         call = outer if outer_name == name else None
+        if call is None:
+            # The span may BEGIN with the transform rather than sit after
+            # it: the evaluator attributes some bodies to the statement
+            # rather than to the call inside it, and then the wrapper to
+            # update is the first thing in the span, not behind it. Scanning
+            # only backwards wrapped the statement in a second one.
+            call = transform_at(source, start, name)
         texts = vector_texts(call, keyword, 3, fill) if call is not None else None
 
         base = texts if texts is not None else [fill] * 3
@@ -5234,7 +5242,13 @@ class MainWindow(QMainWindow):
             # a comment between it and the node stays where the user put it.
             head, tail = source[:call.start], source[call.end:]
             new_source = head + text.rstrip() + tail
-            new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
+            if start >= call.end:
+                # The span sits after the wrapper and shifts with it.
+                new_node_start = len(head) + len(text.rstrip()) + (start - call.end)
+            else:
+                # The span starts at (or inside) the wrapper, so it still
+                # begins where the wrapper does.
+                new_node_start = call.start
         else:
             # Outside the whole chain, not against the node.
             at = outer.start if outer is not None else start

@@ -261,3 +261,50 @@ def test_every_gizmo_handler_reaches_commit_transform():
         fn = getattr(MainWindow, name, None)
         assert fn is not None, f"{name} is gone"
         assert "_commit_transform" in inspect.getsource(fn)
+
+
+# -- The span may BEGIN with the wrapper (#469 follow-up) -------------------
+
+from belfryscad.window.scad_format import transform_at
+
+
+@pytest.mark.parametrize("src, expected", [
+    ("translate([25, 25, 0]) cuboid(10);", "translate([25, 25, 0])"),
+    ("translate(v=[1,2,3]) cube(1);", "translate(v=[1,2,3])"),
+    ("translate  ([1,2,3]) cube(1);", "translate  ([1,2,3])"),
+    ("translate([max(1,2), 0, 0]) cube(1);", "translate([max(1,2), 0, 0])"),
+    ('translate([f("a)b"), 0, 0]) cube(1);', 'translate([f("a)b"), 0, 0])'),
+])
+def test_a_transform_beginning_at_the_span(src, expected):
+    call = transform_at(src, 0, "translate")
+    assert call is not None
+    assert src[call.start:call.end] == expected
+
+
+@pytest.mark.parametrize("src", [
+    "mytranslate([1,2,3]) cube(1);",     # longer identifier
+    "rotate([0,0,45]) cube(1);",         # different transform
+    "cube(1);",                          # not a transform at all
+    "translate cube(1);",                # no argument list
+])
+def test_not_a_transform_at_the_span(src):
+    assert transform_at(src, 0, "translate") is None
+
+
+def test_the_statement_case_merges_instead_of_stacking():
+    """The reported failure: some bodies are attributed to the statement,
+    not to the call inside it, so the span STARTS with the wrapper. Scanning
+    only backwards found nothing and wrapped it again."""
+    src = "translate([25, 25, 0]) cuboid(10, rounding = 2);"
+    start = 0                                  # span is the whole statement
+    assert find_transform_chain(src, start) == [], "nothing behind it to find"
+
+    call = transform_at(src, start, "translate")
+    assert call is not None
+    texts = vector_texts(call, "v", 3, "0")
+    assert texts == ["25", "25", "0"]
+
+    out = [nudge_component(t, a, "add") for t, a in zip(texts, (0, 8.1, 0))]
+    merged = src[:call.start] + f"translate([{out[0]}, {out[1]}, {out[2]}])" + src[call.end:]
+    assert merged == "translate([25, 33.1, 0]) cuboid(10, rounding = 2);"
+    assert merged.count("translate") == 1, "one wrapper, not two"
