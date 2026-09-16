@@ -138,6 +138,19 @@ tools and disarms any running one, and arrow-key nudging declines, so a
 read-only selection offers nothing that would fail. The viewport itself knows
 nothing about tabs; `_on_selection_changed` tells it.
 
+**The level query is pure.** `_span_at_level(orig_id, level=None)` reads no
+shared state and writes none; `_selectable_span_for_id` is the only thing that
+touches the stored level, and only when the picked id changes. Every scan over
+the id map uses the pure one.
+
+That split exists because the mutating version leaked: `_apply_pending_reselect`
+walks every id looking for one span, and left the level set from whichever id it
+touched last. Carried onto the next pick it was silently **clamped** into that
+object's shorter list -- landing on the whole statement instead of the inner
+call. With the statement selected there is no enclosing transform in front of
+it, so `find_transform_chain` came back empty and a drag stacked a new wrapper
+instead of updating the one that was there.
+
 **Stepping through the chain.** ⌥↑ walks the pick outwards, toward top level;
 ⌥↓ walks it in, toward the callee -- the same sense as a debugger's stack pane,
 and Alt is free because `_key_nudge_magnitude` uses Cmd and Shift. The level
