@@ -133,7 +133,15 @@ def test_the_editor_still_owns_alt_arrow():
     assert "AltModifier" in src
 
 
-def test_the_chord_renders_as_the_expected_shortcut():
+def test_the_chord_carries_both_modifiers_on_every_platform():
+    """NativeText is platform-specific -- macOS renders the symbols, Linux
+    and Windows spell it "Meta+Ctrl+Up" -- so assert what is actually
+    invariant rather than one platform's spelling."""
+    import sys as _sys
     from PySide6.QtGui import QKeySequence
     seq = QKeySequence(Qt.Modifier.CTRL | Qt.Modifier.META | Qt.Key.Key_Up)
-    assert seq.toString(QKeySequence.SequenceFormat.NativeText) == "\u2303\u2318\u2191"
+    text = seq.toString(QKeySequence.SequenceFormat.NativeText)
+    if _sys.platform == "darwin":
+        assert text == "\u2303\u2318\u2191"
+    else:
+        assert "Ctrl" in text and "Meta" in text and "Up" in text
