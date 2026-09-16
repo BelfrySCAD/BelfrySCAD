@@ -126,6 +126,24 @@ Three things worth knowing about the shape of that table:
 `guide_width()` is shared with the comment reflow below, which is why it is
 named for the guide rather than for either feature.
 
+**A profile has to be reachable from wherever the text currently is**, or the
+submenu is a one-way door. It is not enough for each profile to be right on
+freshly written code: reformatting Expanded output as Compact left it
+Expanded, because the tokenizer copies whitespace inside parens through
+verbatim and `_wrap_one_long_list` then skips a list that already contains
+newlines as "wrapped by hand". So the tokenizer tracks `bracket_depth`
+separately from `paren_depth` and **collapses a newline inside a `(...)` to a
+single space**, letting the wrap pass decide afresh — while a newline inside a
+`[...]` is left alone, since the rows of a matrix or a path a point per line
+are the author's meaning rather than argument layout. `tests/test_format_profiles.py`
+walks all nine profile pairs across four shapes.
+
+Two smaller faults fell out of the same change. With `break_chained_child`
+off nothing flushed at the `)`, and a newline at depth 0 added no space, so
+`translate([1, 0, 0])cuboid(` came out glued; and collapsing the newline
+before a closer produced `anchor=TOP )`, so the collapse looks ahead for
+`)`, `]`, `,` or `;`.
+
 **Adjust Value...** (writable tabs only): arms the number or expression under
 the click for Up/Down stepping in place, Escape or a click to end it. The item
 is shown only when there is a value under the click, so the label need not
