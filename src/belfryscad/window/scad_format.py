@@ -151,6 +151,11 @@ def format_scad(text: str, indent_size: int = 4,
     # `[...]` nesting on its own. A newline inside one is the author's
     # arrangement of data; inside a `(...)` it is argument layout.
     bracket_depth = 0
+    # A `//` comment is running and the newline that ends it has not been
+    # seen yet. Collapsing THAT newline swallows the rest of the argument
+    # list into the comment: `max(a,  // why` + `b);` became
+    # `max(a,  // why b);`, which still parses and computes something else.
+    open_line_comment = False
     # Extra indent for a modifier's child, e.g. the `cube(1)` in
     # `translate(...) cube(1);`. Separate from `indent`, which only braces
     # move, and reset by the `;` that ends the statement.
@@ -195,7 +200,14 @@ def format_scad(text: str, indent_size: int = 4,
                 # switching profiles does nothing. Inside a `[...]` it is
                 # the author's own arrangement of data (a matrix in rows, a
                 # path a point per line) and is left alone.
-                if "\n" in txt and bracket_depth == 0:
+                # ...nor the newline BEFORE one: pulling a comment up onto
+                # the previous line re-attaches it to a different node, so
+                # the rewrite is no longer purely whitespace.
+                next_is_comment = (i + 1 < n
+                                   and tokens[i + 1][0] in ("linecomment",
+                                                            "blockcomment"))
+                if ("\n" in txt and bracket_depth == 0
+                        and not open_line_comment and not next_is_comment):
                     closing = (i + 1 < n and tokens[i + 1][0] == "sym"
                                and tokens[i + 1][1] in ")],;")
                     if (cur and not closing
@@ -203,6 +215,8 @@ def format_scad(text: str, indent_size: int = 4,
                         cur += " "
                 else:
                     cur += txt
+                if "\n" in txt:
+                    open_line_comment = False
             elif "\n" in txt:
                 saw_newline_since_flush = True
                 # Mid-statement: with break_chained_child off nothing
@@ -224,6 +238,7 @@ def format_scad(text: str, indent_size: int = 4,
         if kind == "linecomment":
             if paren_depth > 0:
                 cur += txt
+                open_line_comment = True
             elif cur.strip():
                 cur = cur.rstrip() + "  " + txt
                 flush()
@@ -348,7 +363,10 @@ def format_scad(text: str, indent_size: int = 4,
         spaced = formatted
     # Reflow last, so it sees the normalised `, ` spacing and measures the
     # lines it will actually produce.
-    return _wrap_long_lists(spaced, width, indent_size, profile)
+    # Break at the expression's own joints first; wrapping an argument list
+    # is the fallback for what is still too long after that.
+    broken = _break_function_bodies(spaced, width, indent_size)
+    return _wrap_long_lists(broken, width, indent_size, profile)
 
 
 # ---------------------------------------------------------------------------
@@ -1202,3 +1220,119 @@ def reflow_comment(lines: list[str], width: int) -> list[str]:
             out.append(prefix.rstrip())          # a blank comment line
     flush()
     return out
+
+
+# ---------------------------------------------------------------------------
+# Breaking a function body at its own structure
+#
+# A function whose body does not fit used to be joined onto the signature
+# line and then rescued by wrapping whatever argument list happened to be
+# there, which reads worse than the input it replaced:
+#
+#     function substr_match(str, start, pattern) = assert(
+#         _is_liststr(str), "str must be a string or list"
+#     ) assert(...) len(str)-start <len(pattern)? false : _substr_match_recurse(
+#         str, start, pattern, len(pattern)
+#     );
+#
+# Breaking at the expression's own joints instead gives BOSL2's own house
+# style, which is what Default is meant to look like: the body on its own
+# indented line, each leading `assert()`/`echo()` clause on a line, and a
+# ternary chain broken after each `:`.
+
+#: Clauses that may precede a function body proper, each taking a line.
+_BODY_PREFIX_CALLS = ("assert", "echo")
+
+
+def _depth_split(tokens):
+    """Yield `(index, kind, text, depth)` for `tokens`, depth counting any
+    bracket. A `:` only ends a ternary arm at depth 0 -- inside `[0:c]` it
+    is a range, and inside a call it belongs to someone else."""
+    depth = 0
+    for i, (kind, txt) in enumerate(tokens):
+        if kind == "sym" and txt in "([{":
+            depth += 1
+        elif kind == "sym" and txt in ")]}":
+            depth -= 1
+            yield i, kind, txt, depth
+            continue
+        yield i, kind, txt, depth
+
+
+def _split_function_line(line: str, indent_size: int) -> list[str] | None:
+    """`line` as signature + body lines, or None if it is not a function
+    declaration this can help."""
+    stripped = line.lstrip()
+    if not stripped.startswith("function "):
+        return None
+    outer = line[:len(line) - len(stripped)]
+    inner = outer + " " * indent_size
+
+    tokens = _tokenize(stripped)
+    eq = None
+    for i, kind, txt, depth in _depth_split(tokens):
+        if depth == 0 and kind == "sym" and txt == "=":
+            eq = i
+            break
+    if eq is None:
+        return None
+
+    head = "".join(t for _, t in tokens[:eq]).rstrip()
+    body_tokens = tokens[eq + 1:]
+    # Drop the leading whitespace token the body starts with.
+    while body_tokens and body_tokens[0][0] == "ws":
+        body_tokens.pop(0)
+    if not body_tokens:
+        return None
+
+    lines = [outer + head + " ="]
+    cut = 0
+    # Leading assert()/echo() clauses, one per line.
+    while True:
+        # Skip the whitespace between clauses -- without this only the
+        # first assert() was recognised and the second kept whatever
+        # followed it on the same line.
+        while cut < len(body_tokens) and body_tokens[cut][0] == "ws":
+            cut += 1
+        rest = body_tokens[cut:]
+        if not (rest and rest[0][0] == "word" and rest[0][1] in _BODY_PREFIX_CALLS):
+            break
+        close = None
+        for i, kind, txt, depth in _depth_split(rest):
+            if kind == "sym" and txt == ")" and depth == 0:
+                close = i
+                break
+        if close is None:
+            break
+        lines.append(inner + "".join(t for _, t in rest[:close + 1]).strip())
+        cut += close + 1
+
+    # What is left splits after each depth-0 `:` -- the colon stays at the
+    # end of its line, which is how the file being matched writes it.
+    rest = body_tokens[cut:]
+    piece: list[str] = []
+    for i, kind, txt, depth in _depth_split(rest):
+        piece.append(txt)
+        if depth == 0 and kind == "sym" and txt == ":":
+            lines.append(inner + "".join(piece).strip())
+            piece = []
+    if piece:
+        lines.append(inner + "".join(piece).strip())
+
+    return lines if len(lines) > 1 else None
+
+
+def _break_function_bodies(text: str, width: int, indent_size: int) -> str:
+    """Break every over-long function declaration at its own structure.
+
+    Runs before `_wrap_long_lists`, so wrapping an argument list stays the
+    last resort rather than the first thing tried."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        if len(line) <= width:
+            out.append(line)
+            continue
+        pieces = _split_function_line(line, indent_size)
+        out.extend(pieces if pieces else [line])
+    joined = "\n".join(out)
+    return joined if _same_shape(text, joined) else text
