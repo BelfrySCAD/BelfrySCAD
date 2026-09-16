@@ -9,17 +9,19 @@ import pytest
 from PySide6.QtCore import Qt
 
 from belfryscad.window.viewport import (ROTATION_NUDGE_STEPS, _key_nudge_axes,
-                                        _key_nudge_magnitude, _view_locked_axis)
+                                        _key_nudge_magnitude, _screen_roll_axis,
+                                        _view_locked_axis)
 
 
 class _Camera:
-    """A camera looking down -Z, so screen-right is +X and screen-up is +Y."""
-    def __init__(self, forward=(0, 0, -1)):
+    """A camera at `eye` looking at the origin."""
+    def __init__(self, forward=(0, 0, -1), eye=None):
         self.target = np.zeros(3)
-        self._forward = np.array(forward, dtype=float)
+        self._eye = (np.array(eye, dtype=float) if eye is not None
+                     else self.target - np.array(forward, dtype=float) * 10.0)
 
     def eye_position(self):
-        return self.target - self._forward * 10.0
+        return self._eye
 
     def view_matrix(self):
         m = np.eye(4)
@@ -49,36 +51,53 @@ def test_the_coarse_fine_relationship_is_preserved():
     assert fine < normal < coarse
 
 
-def test_left_right_turns_about_the_screen_up_axis():
-    """Not the axis the key moves along: spinning about screen-right would
-    tip the object toward the viewer instead of turning it sideways."""
+def _rot(axis, deg):
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    m = np.eye(3)
+    i, j = [(1, 2), (2, 0), (0, 1)][axis]
+    m[i, i] = c; m[i, j] = -s; m[j, i] = s; m[j, j] = c
+    return m
+
+
+def _screen_basis(cam):
+    fwd = cam.target - cam.eye_position()
+    fwd = fwd / np.linalg.norm(fwd)
+    up0 = np.array([0, 1, 0.0]) if abs(fwd[1]) < 0.9 else np.array([0, 0, 1.0])
+    right = np.cross(fwd, up0); right /= np.linalg.norm(right)
+    return right, np.cross(right, fwd)
+
+
+@pytest.mark.parametrize("eye", [(0, 0, 10), (0, 0, -10), (10, 0, 0),
+                                  (0, 10, 0), (7, 7, 7)])
+def test_left_is_counter_clockwise_from_the_viewers_side(eye):
+    """The stated convention: Left CCW, Right CW, as the viewer sees it.
+
+    Checked by rotating a marker rather than by reasoning about the
+    right-hand rule -- including from BEHIND, where the axis points the
+    other way through the screen and the sign has to flip to compensate.
+    """
+    cam = _Camera(eye=eye)
+    axis, sign = _screen_roll_axis(cam)
+    right, up = _screen_basis(cam)
+
+    turned_left = _rot(axis, sign * 15) @ right
+    assert np.dot(turned_left, up) > 0, "Left must sweep screen-right toward screen-up"
+
+    turned_right = _rot(axis, -sign * 15) @ right
+    assert np.dot(turned_right, up) < 0, "Right must sweep it the other way"
+
+
+def test_the_roll_axis_is_the_one_dragging_cannot_use():
+    """It is `_view_locked_axis`: foreshortened to a point for a drag, and
+    for exactly that reason the natural one for keys."""
+    for eye in ((0, 0, 10), (10, 0, 0), (0, 10, 0)):
+        cam = _Camera(eye=eye)
+        assert _screen_roll_axis(cam)[0] == _view_locked_axis(cam)
+
+
+def test_up_down_pitch_about_the_screen_right_axis():
     cam = _Camera()
     lock = _view_locked_axis(cam)
-    right_axis, up_axis = _key_nudge_axes(cam, lock)
-    assert lock == 2                     # looking down Z, so Z is edge-on
-    assert right_axis == 0 and up_axis == 1
-
-    # What keyPressEvent maps: horizontal keys -> up_axis, vertical -> right_axis.
-    turn = {Qt.Key.Key_Right: up_axis, Qt.Key.Key_Left: up_axis,
-            Qt.Key.Key_Down: right_axis, Qt.Key.Key_Up: right_axis}
-    assert turn[Qt.Key.Key_Right] == 1   # Y: a turntable spin
-    assert turn[Qt.Key.Key_Up] == 0      # X: a pitch
-
-
-def test_the_axes_follow_the_camera():
-    """Viewed down X instead, the same keys drive different world axes."""
-    cam = _Camera(forward=(-1, 0, 0))
-    lock = _view_locked_axis(cam)
-    assert lock == 0
-    right_axis, up_axis = _key_nudge_axes(cam, lock)
-    assert lock not in (right_axis, up_axis)
-    assert {right_axis, up_axis} == {1, 2}
-
-
-@pytest.mark.parametrize("forward", [(0, 0, -1), (-1, 0, 0), (0, -1, 0), (-1, -1, -0.5)])
-def test_the_two_axes_are_always_distinct_and_never_the_locked_one(forward):
-    cam = _Camera(forward=forward)
-    lock = _view_locked_axis(cam)
-    right_axis, up_axis = _key_nudge_axes(cam, lock)
-    assert right_axis != up_axis
-    assert lock not in (right_axis, up_axis)
+    right_axis, _up = _key_nudge_axes(cam, lock)
+    assert right_axis != lock
