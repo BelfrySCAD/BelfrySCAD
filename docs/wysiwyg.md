@@ -339,6 +339,21 @@ smallest step out of the table rather than repeating a constant.
 point, not against the drag: 0.1 has no exact representation, so three steps
 of it is `0.30000000000000004` and the source file would say so.
 
+### Which way a ring turns
+
+`_axis_ring_hit` reports the drag angle as
+`arctan2(radial . perp2, radial . perp1)` in a per-ring plane frame, and
+**`perp1 x perp2` must equal that ring's own axis**. That is what makes a
+positive drag angle a positive `rotate()` -- the number actually written into
+the source.
+
+The Y ring had `perp1 = X, perp2 = Z`, and `X x Z` is *minus* Y, so dragging it
+turned the model backwards while X and Z were correct. It is `Z, X` now
+(`Z x X = Y`). A sign error in one frame of three is what a shared invariant
+catches and three hand-written frames do not, so
+`tests/test_rotate_ring_handedness.py` asserts the cross product for all three
+rather than the one that was wrong.
+
 ### Handle size
 
 `GIZMO_SCALE` (in `engine/renderer.py`) is the handle length as a fraction of
