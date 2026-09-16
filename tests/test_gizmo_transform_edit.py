@@ -8,7 +8,15 @@ the one already there (#452).
 """
 import pytest
 
-from belfryscad.window.scad_format import find_transform_call, vector_arg
+from belfryscad.window.scad_format import find_transform_call, vector_texts
+
+
+def _is_number(text):
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
 
 
 def _find(src, name="translate", child="cube("):
@@ -28,7 +36,7 @@ def _find(src, name="translate", child="cube("):
 def test_wrappers_that_can_be_updated(src, expected):
     call = _find(src)
     assert call is not None, "wrapper not found"
-    assert vector_arg(call, "v", 3, 0.0) == expected
+    assert [float(t) for t in vector_texts(call, "v", 3, "0")] == expected
 
 
 @pytest.mark.parametrize("src", [
@@ -45,23 +53,24 @@ def test_not_a_translate_wrapper(src):
     "translate([1+1, 0, 0]) cube(1);",     # an expression
     "translate([1,2,3,4]) cube(1);",       # too many components
 ])
-def test_found_but_not_safely_rewritable(src):
-    """The call is there, but its vector is not ours to rewrite: a drag
-    must wrap rather than silently discard an expression."""
+def test_found_with_a_component_that_is_not_a_number(src):
+    """The call is there and its components come back verbatim: a drag
+    appends to an expression rather than replacing it (#459)."""
     call = _find(src)
     assert call is not None
-    assert vector_arg(call, "v", 3, 0.0) is None
+    texts = vector_texts(call, "v", 3, "0")
+    assert texts is None or any(not _is_number(t) for t in texts)
 
 
 def test_scale_pads_with_one_not_zero():
     """`scale([2,2])` means z=1. Padding with 0 would flatten the model."""
     call = _find("scale([2,2]) cube(1);", name="scale")
-    assert vector_arg(call, "v", 3, 1.0) == [2.0, 2.0, 1.0]
+    assert vector_texts(call, "v", 3, "1") == ["2", "2", "1"]
 
 
 def test_rotate_reads_its_own_keyword():
     call = _find("rotate(a=[0,0,45]) cube(1);", name="rotate")
-    assert vector_arg(call, "a", 3, 0.0) == [0.0, 0.0, 45.0]
+    assert vector_texts(call, "a", 3, "0") == ["0", "0", "45"]
 
 
 def test_a_string_argument_does_not_confuse_the_paren_match():
@@ -71,7 +80,7 @@ def test_a_string_argument_does_not_confuse_the_paren_match():
     call = _find(src)
     assert call is not None
     assert call.start == 0
-    assert vector_arg(call, "v", 3, 0.0) is None    # an expression, so not rewritten
+    assert not _is_number(vector_texts(call, "v", 3, "0")[0])  # an expression
 
 
 def test_nested_calls_match_the_right_paren():
@@ -120,7 +129,10 @@ def _apply(source, name="translate", kw="v", fill=0.0, delta=(1.0, 0.0, 0.0),
     chain = find_transform_chain(source, start)
     outer_name, outer = chain[-1] if chain else (None, None)
     call = outer if outer_name == name else None
-    vals = vector_arg(call, kw, 3, fill) if call else None
+    vals = None
+    if call:
+        t = vector_texts(call, kw, 3, str(fill))
+        vals = [float(x) for x in t] if t and all(_is_number(x) for x in t) else None
     base = vals if vals else [0.0, 0.0, 0.0]
     new = [base[i] + delta[i] for i in range(3)]
     text = f"{name}([{new[0]:.4g}, {new[1]:.4g}, {new[2]:.4g}]) "
