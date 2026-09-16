@@ -666,30 +666,6 @@ def find_transform_call(source: str, before: int, name: str):
     return TransformCall(k, i, args, named)
 
 
-def vector_arg(call: TransformCall, keyword: str, size: int, fill: float):
-    """`call`'s vector argument as `size` floats, or None if it is not a
-    plain numeric vector this can safely rewrite.
-
-    A shorter vector is padded with `fill` -- OpenSCAD reads
-    `translate([1,2])` as z=0 and `scale([2,2])` as z=1 -- so the rewrite
-    means what the original did.
-    """
-    text = call.named.get(keyword) or (call.args[0] if call.args else None)
-    if not text:
-        return None
-    text = text.strip()
-    if not (text.startswith("[") and text.endswith("]")):
-        return None
-    parts = _split_args(text[1:-1])
-    if not parts or len(parts) > size:
-        return None
-    try:
-        vals = [float(p) for p in parts]
-    except ValueError:
-        return None            # an expression or a variable: not ours to rewrite
-    return vals + [fill] * (size - len(vals))
-
-
 #: Calls a new transform may be inserted OUTSIDE of. Everything else stops
 #: the walk, and deliberately: `for (i=[0:3]) translate(...) cube();` is a
 #: wrapper too, but hoisting a drag outside the loop would move every
@@ -726,10 +702,9 @@ def vector_texts(call: TransformCall, keyword: str, size: int, fill: str):
     """Each component of `call`'s vector argument as its ORIGINAL text,
     padded to `size` with `fill`, or None if there is no vector there.
 
-    Unlike `vector_arg` this does not insist the components are numbers:
-    an expression is kept verbatim so a nudge can be appended to it rather
-    than replacing it (or, worse, stacking another wrapper around the whole
-    thing).
+    Components are kept verbatim, expressions included, so a nudge can be
+    appended to one rather than replacing it (or, worse, stacking another
+    wrapper around the whole call).
     """
     text = call.named.get(keyword) or (call.args[0] if call.args else None)
     if not text:
