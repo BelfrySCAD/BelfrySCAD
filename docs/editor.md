@@ -91,6 +91,41 @@ The available variables come from the innermost debug frame: `{**outer_scope, **
 
 `MainWindow._on_debug_paused` and `_on_debug_error_break` call `_set_debug_locals_on_visible(locals_dict)`, which first clears locals from all editors via `_clear_all_debug_locals()`, then sets them on `_current_tab().editor` — the editor that is actually visible after `_show_debug_line` may have switched to an included file's tab. All resume/step/stop/finish/restart handlers call `_clear_all_debug_locals()` to sweep every open editor clean.
 
+**Reformat Selection** / **Reformat Selection As ▸ …**: pretty-prints the
+selection. The plain item uses the profile named by `editor/formatProfile`
+(Preferences ▸ Editor ▸ Reformat style); the submenu reaches another one for a
+single use without a trip to Preferences.
+
+`scad_format.FormatProfile` is four booleans, and `PROFILES` the three
+built-ins (#466):
+
+| | Compact | Default | Expanded |
+|---|---|---|---|
+| `break_chained_child` — `let(a=1) cube(a);` across lines | ✗ | ✓ | ✓ |
+| `wrap_every_list` — wrap whatever the length | ✗ | ✗ | ✓ |
+| `wrap_one_per_line` — vs a greedy fill | ✗ | ✗ | ✓ |
+| `collapse_blank_lines` | ✓ | ✓ | ✗ |
+
+Three things worth knowing about the shape of that table:
+
+- **Brace style is not a setting.** K&R everywhere, so no profile disagrees
+  with another about code all three lay out the same way — a parameter with
+  one value in every column is just the behaviour.
+- **`wrap_every_list` fires on `_ARGUMENT_LISTS`, not every separated list.**
+  `ListComprehension` is excluded: `translate([1, 0, 0])` is *one* argument
+  that happens to be a vector, and the same greedy-fill comment that has
+  always been there explains why — a 60-point path one number per line is
+  three screens of scrolling.
+- **Default is byte-identical to the old behaviour** except for the wrap
+  column, which moved from a hard-coded `WRAP_WIDTH = 80` to
+  `CodeEditor.guide_width()` — the rightmost column guide. The formatter and
+  the line you are eyeing now agree; before, someone with a guide at 67 was
+  reformatted to 80 regardless. `WRAP_WIDTH` survives as the fallback for a
+  caller with no guide to offer.
+
+`guide_width()` is shared with the comment reflow below, which is why it is
+named for the guide rather than for either feature.
+
 **Adjust Value...** (writable tabs only): arms the number or expression under
 the click for Up/Down stepping in place, Escape or a click to end it. The item
 is shown only when there is a value under the click, so the label need not
@@ -126,7 +161,7 @@ hand (#467). The three pieces live in `scad_format.py`, Qt-free:
 
 **The width is asked, not assumed** (`ask_reflow_width`): it is the whole point
 of the operation and differs between a code comment and a paragraph of prose.
-The dialog opens on `default_reflow_width()` — the rightmost column guide, or
+The dialog opens on `guide_width()` — the rightmost column guide, or
 80 with guides off — and the answer is remembered for the session, so
 reflowing a run of blocks is one keystroke each after the first. Cancelling
 changes nothing.
@@ -382,6 +417,7 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
 | Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
+| Reformat style | `editor/formatProfile` | `"Default"` | Editor — Compact / Default / Expanded |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |

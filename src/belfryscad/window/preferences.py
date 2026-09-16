@@ -57,6 +57,7 @@ _DEFAULTS = {
     "editor/fontSize": 13,
     "editor/indentSize": 4,
     "docs/fontSize": 0,          # 0 = follow the application default
+    "editor/formatProfile": "Default",   # see scad_format.PROFILES
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
@@ -246,6 +247,21 @@ class PreferencesDialog(QDialog):
         self._tint_covered.setToolTip("Off: only spans that never ran are marked (red).")
         self._tint_covered.toggled.connect(lambda v: self._emit("coverage/tintCovered", bool(v)))
         form.addRow("Coverage:", self._tint_covered)
+
+        # Which reformatting profile the plain "Reformat Selection" uses.
+        # The context menu can still reach the others one at a time (#466).
+        from belfryscad.window.scad_format import PROFILES
+        self._format_profile = QComboBox()
+        self._format_profile.addItems(list(PROFILES))
+        _cur = s.value("editor/formatProfile", _DEFAULTS["editor/formatProfile"])
+        if self._format_profile.findText(_cur) >= 0:
+            self._format_profile.setCurrentText(_cur)
+        self._format_profile.setToolTip(
+            "Compact keeps a statement on one line; Expanded gives every "
+            "argument its own. Both wrap at your rightmost column guide.")
+        self._format_profile.currentTextChanged.connect(
+            lambda v: self._emit("editor/formatProfile", v))
+        form.addRow("Reformat style:", self._format_profile)
 
         # Column guide
         guide_row = QHBoxLayout()

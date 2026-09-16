@@ -1,6 +1,11 @@
 """Reformat/pretty-print an OpenSCAD source fragment for the code editor's
 "Reformat Selection" context-menu item (see editor.py's contextMenuEvent).
 
+How freely lines may be broken is a `FormatProfile` (#466) -- Compact,
+Default or Expanded -- and the wrap column is a parameter the editor fills
+from its rightmost column guide rather than the old hard-coded 80. Brace
+style is not a setting: K&R in every profile.
+
 Scope is deliberately limited to *structural* formatting -- statement/block
 indentation, brace placement (K&R-style, `} else {` merged onto one line),
 one statement per line (including `include`/`use`, whose `<path>` has no
@@ -32,6 +37,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+#: Fallback wrap column when a caller has no column guide to offer.
+WRAP_WIDTH = 80
 
 _TOKEN_RE = re.compile(r'''
       (?P<ws>\s+)
@@ -90,9 +98,51 @@ def _is_declaration(line: str) -> bool:
     return re.match(r"\s*(module|function)\b", line) is not None
 
 
-def format_scad(text: str, indent_size: int = 4) -> str:
+@dataclass(frozen=True)
+class FormatProfile:
+    """What a reformat is allowed to spend vertical space on (#466).
+
+    Brace style is deliberately NOT a setting: K&R everywhere, so a profile
+    cannot disagree with another about code all three format the same way.
+    A parameter with one value in every profile is just the behaviour.
+    """
+
+    #: `let(a = 1) cube(a);` -- put the child statement on its own indented
+    #: line. The rule that produces most of the vertical space people object
+    #: to, since it fires on every transform chain as well.
+    break_chained_child: bool = True
+    #: Wrap an argument list whatever its length, rather than only one that
+    #: overruns. Argument and parameter lists only: a bare vector literal is
+    #: data, and one element per line turns a 60-point path into three
+    #: screens of scrolling.
+    wrap_every_list: bool = False
+    #: One argument per line when wrapping, instead of a greedy fill.
+    wrap_one_per_line: bool = False
+    #: Collapse a run of blank lines to one.
+    collapse_blank_lines: bool = True
+
+
+#: The built-in profiles, in the order the menu offers them.
+PROFILES: dict[str, FormatProfile] = {
+    "Compact": FormatProfile(break_chained_child=False),
+    "Default": FormatProfile(),
+    "Expanded": FormatProfile(wrap_every_list=True, wrap_one_per_line=True,
+                          collapse_blank_lines=False),
+}
+
+DEFAULT_PROFILE = "Default"
+
+
+def format_scad(text: str, indent_size: int = 4,
+                profile: FormatProfile | None = None,
+                width: int = WRAP_WIDTH) -> str:
     """Reformat `text` (assumed to already pass can_format) -- see module
-    docstring for exactly what is and isn't normalized."""
+    docstring for exactly what is and isn't normalized.
+
+    `profile` chooses how freely lines may be broken (see FormatProfile);
+    `width` is the column to wrap at, which callers take from the editor's
+    rightmost column guide so the formatter and the guide agree."""
+    profile = profile or PROFILES[DEFAULT_PROFILE]
     tokens = _tokenize(text)
     out: list[str] = []
     cur = ""
@@ -137,8 +187,11 @@ def format_scad(text: str, indent_size: int = 4) -> str:
             elif "\n" in txt:
                 saw_newline_since_flush = True
                 if not cur.strip() and txt.count("\n") >= 2:
-                    if out and out[-1] != "":
-                        out.append("")
+                    if profile.collapse_blank_lines:
+                        if out and out[-1] != "":
+                            out.append("")
+                    elif out:
+                        out.extend([""] * (txt.count("\n") - 1))
             elif cur and not cur.endswith(" "):
                 cur += " "
             i += 1
@@ -209,7 +262,8 @@ def format_scad(text: str, indent_size: int = 4) -> str:
                     j += 1
                 if (j < n and tokens[j][0] in ("word", "num", "string")
                         and tokens[j][1] != "else"
-                        and not _is_declaration(cur)):
+                        and not _is_declaration(cur)
+                        and profile.break_chained_child):
                     flush()
                     chain += 1
             continue
@@ -266,7 +320,7 @@ def format_scad(text: str, indent_size: int = 4) -> str:
         spaced = formatted
     # Reflow last, so it sees the normalised `, ` spacing and measures the
     # lines it will actually produce.
-    return _wrap_long_lists(spaced, WRAP_WIDTH, indent_size)
+    return _wrap_long_lists(spaced, width, indent_size, profile)
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +342,13 @@ _SEPARATED_LISTS = {
     "ModuleDeclaration": "parameters",
     "FunctionDeclaration": "parameters",
 }
+
+#: Of those, the ones `wrap_every_list` fires on regardless of length: the
+#: argument and parameter lists a person would call "the arguments".
+#: `ListComprehension` is excluded on purpose -- `translate([1, 0, 0])` is
+#: one argument that happens to be a vector, and data does not read better
+#: one number per line.
+_ARGUMENT_LISTS = frozenset(_SEPARATED_LISTS) - {"ListComprehension"}
 
 
 def _walk(node, out: list) -> None:
@@ -385,7 +446,6 @@ def _space_separators(text: str) -> str:
 
 #: Longest line the reflow pass leaves alone. A list that already fits is
 #: never touched, so short calls keep the shape the user gave them.
-WRAP_WIDTH = 80
 
 
 def _line_indent(text: str, offset: int) -> str:
@@ -401,7 +461,8 @@ def _line_len(text: str, offset: int) -> int:
     return (len(text) if end < 0 else end) - start
 
 
-def _wrap_one_long_list(text: str, width: int, indent_size: int):
+def _wrap_one_long_list(text: str, width: int, indent_size: int,
+                        profile: FormatProfile):
     """Reflow the outermost over-long comma list, or None if none is.
 
     One per call, with the caller re-parsing in between: wrapping an outer
@@ -429,7 +490,10 @@ def _wrap_one_long_list(text: str, width: int, indent_size: int):
             continue
         pos = node.get("position") or {}
         start, end = pos.get("start_offset"), pos.get("end_offset")
-        if start is None or end is None or _line_len(text, start) <= width:
+        if start is None or end is None:
+            continue
+        always = profile.wrap_every_list and node["kind"] in _ARGUMENT_LISTS
+        if not always and _line_len(text, start) <= width:
             continue
         # The same span hazard `_space_separators` documents: a string
         # literal's span can end mid-string, dragging every offset around
@@ -454,23 +518,28 @@ def _wrap_one_long_list(text: str, width: int, indent_size: int):
     pieces = [text[i["position"]["start_offset"]:i["position"]["end_offset"]]
               for i in items]
 
-    # Greedy fill rather than one item per line: a long vector of numbers
-    # reads as a block of data, and one element per line turns a 60-point
-    # path into three screens of scrolling.
-    lines: list[str] = []
-    cur = inner
-    for k, piece in enumerate(pieces):
-        chunk = piece + ("," if k < len(pieces) - 1 else "")
-        if cur != inner and len(cur) + 1 + len(chunk) > width:
-            lines.append(cur)
-            cur = inner + chunk
-        else:
-            cur = cur + chunk if cur == inner else cur + " " + chunk
-    lines.append(cur)
+    chunks = [p + ("," if k < len(pieces) - 1 else "")
+              for k, p in enumerate(pieces)]
+    if profile.wrap_one_per_line:
+        lines = [inner + chunk for chunk in chunks]
+    else:
+        # Greedy fill rather than one item per line: a long vector of
+        # numbers reads as a block of data, and one element per line turns a
+        # 60-point path into three screens of scrolling.
+        lines = []
+        cur = inner
+        for chunk in chunks:
+            if cur != inner and len(cur) + 1 + len(chunk) > width:
+                lines.append(cur)
+                cur = inner + chunk
+            else:
+                cur = cur + chunk if cur == inner else cur + " " + chunk
+        lines.append(cur)
     return text[:start] + prefix + "\n" + "\n".join(lines) + "\n" + outer + suffix + text[end:]
 
 
-def _wrap_long_lists(text: str, width: int = WRAP_WIDTH, indent_size: int = 4) -> str:
+def _wrap_long_lists(text: str, width: int = WRAP_WIDTH, indent_size: int = 4,
+                     profile: FormatProfile | None = None) -> str:
     """Reflow every over-long argument list and vector literal.
 
     Verified the way `_space_separators` is: a rewrite that changes the
@@ -478,9 +547,10 @@ def _wrap_long_lists(text: str, width: int = WRAP_WIDTH, indent_size: int = 4) -
     is a backstop against a rewrite that never settles, not something a
     real selection is expected to reach.
     """
+    profile = profile or PROFILES[DEFAULT_PROFILE]
     out = text
     for _ in range(200):
-        nxt = _wrap_one_long_list(out, width, indent_size)
+        nxt = _wrap_one_long_list(out, width, indent_size, profile)
         if nxt is None or nxt == out or not _same_shape(out, nxt):
             break
         out = nxt
