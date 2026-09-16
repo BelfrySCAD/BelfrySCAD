@@ -4994,30 +4994,45 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
-    def _editable_node_for_id(self, orig_id):
-        """The AST node behind a picked geometry id, but only when it lives
-        in the file the user is looking at.
+    def _editable_span_for_id(self, orig_id):
+        """The source span to select and edit for a picked geometry id, or
+        None when the pick belongs to no file the user is editing.
 
-        Selection maps an id to the node that PRODUCED the geometry, which
-        for anything built by a library is a node inside that library --
-        including plain `cube(10)` once BOSL2 is included, since BOSL2
-        overrides the primitives with its own modules. Those nodes carry
-        byte offsets into the LIBRARY file, and every caller here splices
-        them into the user's buffer: a `translate()` landing at offset
-        85256 of a 59-character script is appended to the end of it,
-        wrapping nothing (#450).
+        Two different spans can be the answer:
 
-        So a node from anywhere else is not editable and not selectable,
-        and callers must treat None as "the user did not pick anything".
-        Refusing is the honest answer until selection can attribute
-        geometry to the user's own call site (#451)."""
+        `id_to_node` names the node that PRODUCED the geometry, which is the
+        right span when the user wrote it themselves. For anything a library
+        builds it is a node inside that library -- including a plain
+        `cube(10)` once BOSL2 is included, since BOSL2 overrides the
+        primitives with its own modules -- and those nodes carry byte
+        offsets into the LIBRARY file. Splicing one into the user's buffer
+        put a `translate()` at offset 85256 of a 59-character script, which
+        lands at the end of it wrapping nothing (#450).
+
+        So for those, the answer is the node's `call_site`: the call in the
+        user's own file that reached the geometry, which the evaluator
+        records alongside the producing node (#451). `cuboid(10, rounding=2)`
+        selects the user's own `cuboid(...)` call rather than `vnf.scad`.
+
+        Still None when neither is the edited file -- top-level geometry in
+        a `use`d file has no call site here to point at, and guessing would
+        put the edit somewhere the user cannot see.
+        """
         node = self.id_to_node.get(orig_id)
         if node is None:
             return None
         tab = self._rendered_tab
-        if tab is None or not self._tab_owns_origin(tab, node.position.origin):
+        if tab is None:
             return None
-        return node
+        if self._tab_owns_origin(tab, node.position.origin):
+            return node.position
+        # getattr, not attribute access: the pin is still on an evaluator
+        # without call_site until 1.21.0 is released, and there the old
+        # behaviour (refuse) is the correct one.
+        call = getattr(node, "call_site", None)
+        if call is not None and self._tab_owns_origin(tab, call.origin):
+            return call
+        return None
 
     def _on_selection_changed(self, orig_id: int):
         rendered = self._rendered_tab
@@ -5026,11 +5041,11 @@ class MainWindow(QMainWindow):
         if orig_id < 0:
             rendered.editor.clear_selection()
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             rendered.editor.clear_selection()
             return
-        rendered.editor.set_selection(node.position.start_offset, node.position.end_offset)
+        rendered.editor.set_selection(span.start_offset, span.end_offset)
 
     # ------------------------------------------------------------------
     # Translate gizmo commit
@@ -5042,8 +5057,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         # Switch to rendered tab if it's not the current editor
@@ -5053,7 +5068,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"
@@ -5092,15 +5107,16 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(cmd)
 
     def _restore_selection_after_translate(self, new_node_start: int):
-        for orig_id, node in self.id_to_node.items():
-            # Offsets are only comparable within one file: a library node
-            # sitting at the same offset would otherwise re-select geometry
-            # the user cannot edit (#450).
-            if (node.position.start_offset == new_node_start
-                    and self._editable_node_for_id(orig_id) is not None):
+        for orig_id in self.id_to_node:
+            # The editable span, not the producing node's: for library-built
+            # geometry those are different spans in different files, and only
+            # the editable one is comparable with an offset in this buffer
+            # (#450, #451).
+            span = self._editable_span_for_id(orig_id)
+            if span is not None and span.start_offset == new_node_start:
                 self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
-                    self._rendered_tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
+                    self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
                 self._viewport.update()
                 return
         self._viewport.set_selection(None)
@@ -5118,8 +5134,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         if self._current_tab() is not self._rendered_tab:
@@ -5128,7 +5144,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"
@@ -5178,8 +5194,8 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self._editable_node_for_id(orig_id)
-        if node is None:
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
             return
 
         if self._current_tab() is not self._rendered_tab:
@@ -5188,7 +5204,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
 
         source = self._rendered_tab.editor.toPlainText()
-        start = node.position.start_offset
+        start = span.start_offset
 
         def _fmt(v: float) -> str:
             return f"{v:.4g}"

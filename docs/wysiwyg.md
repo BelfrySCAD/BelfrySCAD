@@ -111,11 +111,26 @@ through now, and it returns None unless `position.origin` is the file the
 rendered tab is showing (`_tab_owns_origin`, matching `file_path` or the temp
 copy the worker parsed, the same pair the coverage overlay matches on).
 
-So selecting library-built geometry currently does nothing rather than something
-wrong. Making it do something useful means attributing geometry to the user's
-own call site instead of the producing node -- the evaluator already keeps the
-frame chain that error traces print (`callStack_`/`traceLines`), it is simply
-not recorded per `originalID`.
+**With evaluator >=1.21.0 it resolves to the user's own call instead.** Each
+`id_to_node` entry carries a `call_site`: the call in the user's file that
+reached the geometry, which the evaluator already captured at resolve time as
+`CSGNode::warnEntry` so a warning raised during generate could name the user's
+line. `_editable_span_for_id` returns the producing node's span when the user
+wrote it, that call site when they did not, and None when neither is in this
+buffer -- top-level geometry in a `use`d file has no call here to point at.
+
+Read through `getattr`, so an older evaluator (no `call_site`) still refuses
+rather than breaking.
+
+Two things follow from what the call site actually *is*. It is the **top-level
+statement** that entered the chain, so clicking the cuboid in
+`translate([20,0,0]) cuboid(8, rounding=1);` selects that whole statement, not
+the `cuboid(...)` within it -- which is the right span to wrap, and the right
+thing to highlight. And because the span therefore starts *before* any existing
+`translate(...)`, the gizmo's backwards-looking merge regex cannot see one: a
+drag adds an outer wrapper rather than merging. That composes correctly (and is
+what the Transform Edit Rules below say *should* happen) but repeated drags
+accumulate wrappers. See #452.
 
 **[NOT IMPLEMENTED]** — everything in this subsection below. `_do_selection` ray-casts to one `originalID` and stores it; there is no parent/child navigation, and selecting again simply replaces the selection.
 
