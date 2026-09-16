@@ -232,6 +232,7 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
+    selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
@@ -1040,6 +1041,16 @@ class Viewport(QOpenGLWidget):
         same single undo step -- and it needs no gizmo armed, which is the
         point: nudging a part a millimetre should not require arming a
         tool and finding a handle."""
+        if self._renderer.selected_id is not None and \
+                event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            # Alt+Up/Down walks the pick's call chain: up toward the caller,
+            # down toward the callee, like a debugger's stack pane. Alt is
+            # free here -- _key_nudge_magnitude uses Cmd and Shift.
+            step = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+            if step is not None:
+                self.selection_level_step.emit(step)
+                event.accept()
+                return
         if (self._renderer.selected_id is not None
                 and getattr(self, "_selection_editable", True)):
             magnitude = _key_nudge_magnitude(event.modifiers())

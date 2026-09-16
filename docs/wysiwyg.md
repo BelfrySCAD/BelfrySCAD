@@ -138,6 +138,24 @@ tools and disarms any running one, and arrow-key nudging declines, so a
 read-only selection offers nothing that would fail. The viewport itself knows
 nothing about tabs; `_on_selection_changed` tells it.
 
+**Stepping through the chain.** ⌥↑ walks the pick outwards, toward top level;
+⌥↓ walks it in, toward the callee -- the same sense as a debugger's stack pane,
+and Alt is free because `_key_nudge_magnitude` uses Cmd and Shift. The level
+resets whenever a different body is picked, so stepping into BOSL2 never carries
+over to the next thing clicked.
+
+`_selection_levels` builds the list: the node's own span when the user wrote it,
+then every chain frame naming a file that exists. Consecutive frames naming the
+same span collapse -- a `cuboid()` chain is 24 frames and repeats lines (BOSL2's
+`translate` wrapper is itself a module), so stepping through duplicates would
+just feel broken.
+
+Stepping into a frame whose file is not open **opens it without rendering**
+(`open_file_by_path(..., render=False)`). Rendering it would replace the very
+geometry the selection belongs to. Installed libraries open read-only, so this
+reveals BOSL2's layers without offering to edit them, and the console names the
+file, line and level so the walk is legible.
+
 Because the span is the innermost frame *in the script*, it sits inside any
 enclosing `translate(...)` -- which is what lets the gizmo's backwards-looking
 merge regex find that wrapper and update it rather than adding a second.

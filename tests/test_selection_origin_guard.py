@@ -26,30 +26,42 @@ def _tab(file_path=None, parse_path=None, read_only=False):
                            editor=SimpleNamespace(isReadOnly=lambda: read_only))
 
 
-def _mw(id_to_node, rendered, others=()):
-    tabs = [rendered, *others]
-    return SimpleNamespace(
-        id_to_node=id_to_node,
-        _rendered_tab=rendered,
-        _all_tabs=lambda: tabs,
-        _tab_owns_origin=lambda t, origin: MainWindow._tab_owns_origin(None, t, origin),
-        _selectable_span_for_id=lambda oid: MainWindow._selectable_span_for_id(
-            _mw.current, oid),
-    )
+class _FakeWindow:
+    """Just enough MainWindow for the selection lookups.
+
+    The methods under test are pure functions of tabs and the id map, so
+    they are borrowed from the real class rather than reimplemented -- a
+    stub that drifted from MainWindow would test nothing.
+    """
+
+    _tab_owns_origin = MainWindow._tab_owns_origin
+    _tab_for_origin = MainWindow._tab_for_origin
+    _selection_levels = MainWindow._selection_levels
+    _default_selection_level = MainWindow._default_selection_level
+    _selectable_span_for_id = MainWindow._selectable_span_for_id
+    _editable_span_for_id = MainWindow._editable_span_for_id
+
+    def __init__(self, id_to_node, rendered, others=()):
+        self.id_to_node = id_to_node
+        self._rendered_tab = rendered
+        self._tabs_list = [t for t in (rendered, *others) if t is not None]
+        self._selection_level = None
+        self._selection_level_id = None
+
+    def _all_tabs(self):
+        return self._tabs_list
 
 
 def _build(id_to_node, rendered, others=()):
-    mw = _mw(id_to_node, rendered, others)
-    _mw.current = mw
-    return mw
+    return _FakeWindow(id_to_node, rendered, others)
 
 
 def _span(mw, oid):
-    return MainWindow._selectable_span_for_id(mw, oid)
+    return mw._selectable_span_for_id(oid)
 
 
 def _editable(mw, oid):
-    return MainWindow._editable_span_for_id(mw, oid)
+    return mw._editable_span_for_id(oid)
 
 
 def test_tab_owns_its_own_file_and_the_temp_copy_that_was_parsed(tmp_path):
@@ -195,3 +207,59 @@ def test_the_offsets_that_would_corrupt_are_never_returned(tmp_path):
     assert bad > len(source)
     corrupted = source[:bad] + "translate([1, 0, 0]) " + source[bad:]
     assert corrupted.endswith("translate([1, 0, 0]) "), "a transform wrapping nothing"
+
+
+def test_stepping_walks_the_chain_and_stops_at_both_ends(tmp_path):
+    """Alt+Up/Down moves through the levels: out toward top level, in toward
+    the callee. A BOSL2 author stepping in reaches the library's own layers."""
+    script = tmp_path / "s.scad"
+    src = "include <BOSL2/std.scad>\ncuboid(10);\n"
+    script.write_text(src)
+    libdir = tmp_path / "BOSL2"
+    libdir.mkdir()
+    inner = libdir / "vnf.scad"
+    outer = libdir / "shapes3d.scad"
+    inner.write_text("// stand-in\n")
+    outer.write_text("// stand-in\n")
+
+    chain = (_pos(str(inner), 100, 110),
+             _pos(str(outer), 200, 210),
+             _pos(str(script), 25, 36))
+    node = SimpleNamespace(position=_pos(str(inner), 100, 110), call_sites=chain)
+
+    tabs = {p: _tab(str(p), str(p), read_only=(p is not script))
+            for p in (script, inner, outer)}
+    mw = _build({3: node}, tabs[script], others=[tabs[inner], tabs[outer]])
+
+    levels = mw._selection_levels(3)
+    assert [l.origin for l in levels] == [str(inner), str(outer), str(script)]
+
+    # A fresh pick starts at the user's own line, deepest-in-script.
+    assert mw._default_selection_level(levels) == 2
+    span, owner = _span(mw, 3)
+    assert span is chain[2] and owner is tabs[script]
+
+    # Stepping IN reaches the library, which is read-only: selectable only.
+    mw._selection_level = 1
+    span, owner = _span(mw, 3)
+    assert span is chain[1] and owner is tabs[outer]
+    assert _editable(mw, 3) is None
+
+    # Clamps rather than running off either end.
+    mw._selection_level = 99
+    assert _span(mw, 3)[0] is chain[2]
+    mw._selection_level = -5
+    assert _span(mw, 3)[0] is chain[0]
+
+
+def test_repeated_frames_collapse_into_one_level(tmp_path):
+    """A cuboid() chain names the same line twice -- BOSL2's own translate
+    wrapper is a module too -- and stepping through duplicates feels broken."""
+    script = tmp_path / "s.scad"
+    script.write_text("cuboid(10);\n")
+    same = _pos(str(script), 0, 11)
+    dup = _pos(str(script), 0, 11)
+    node = SimpleNamespace(position=_pos(str(script), 0, 11),
+                           call_sites=(same, dup))
+    mw = _build({4: node}, _tab(str(script), str(script)))
+    assert len(mw._selection_levels(4)) == 1
