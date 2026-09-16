@@ -99,6 +99,24 @@ ray cast → hit triangle → run_original_id lookup → AST node → highlight 
 
 Command-click always lands on the leaf geometry node (innermost primitive).
 
+**A pick outside the edited file is refused.** An `originalID` maps to the node
+that PRODUCED the geometry, which for anything a library builds is a node inside
+that library -- including a plain `cube(10)` once BOSL2 is included, since BOSL2
+overrides the primitives with its own modules. Those nodes carry byte offsets
+into the *library* file, and every consumer here splices at
+`node.position.start_offset` in the *user's* buffer: a `translate()` for a node
+at offset 85256 of a 59-character script was appended to the end of it, wrapping
+nothing. `MainWindow._editable_node_for_id` is the one lookup all of them go
+through now, and it returns None unless `position.origin` is the file the
+rendered tab is showing (`_tab_owns_origin`, matching `file_path` or the temp
+copy the worker parsed, the same pair the coverage overlay matches on).
+
+So selecting library-built geometry currently does nothing rather than something
+wrong. Making it do something useful means attributing geometry to the user's
+own call site instead of the producing node -- the evaluator already keeps the
+frame chain that error traces print (`callStack_`/`traceLines`), it is simply
+not recorded per `originalID`.
+
 **[NOT IMPLEMENTED]** — everything in this subsection below. `_do_selection` ray-casts to one `originalID` and stores it; there is no parent/child navigation, and selecting again simply replaces the selection.
 
 > The selection can be walked up or down the AST hierarchy — up expands to a parent node (e.g. `cube()` → enclosing `translate()` → `difference()`), highlighting the entire subtree's geometry and the corresponding source span; down moves back toward the leaf.
@@ -129,6 +147,18 @@ Each click ray-casts to a surface point (`SceneRenderer.ray_cast_point`), then `
 The edges offered are filtered by `feature_edges_of_triangle()`, which keeps an edge only if it is a boundary or its dihedral angle is sharp. Without that, a flat square face — two triangles — would offer its triangulation diagonal as a snap target, which moves when `$fn` changes and means nothing.
 
 Finished measurements draw as overlay lines (`Viewport.upload_lines`) with a `_MeasureLabel` per measurement. A label is dismissed by clicking it; Escape peels one measurement at a time rather than clearing them all.
+
+## Nudging
+
+Arrow keys move the selected object without arming any tool, matching the
+editable data viewports key for key: 1 unit, 0.1 with Cmd, 10 with Shift
+(`_key_nudge_magnitude`), along the two world axes the screen most nearly shows
+(`_key_nudge_delta` with `_view_locked_axis`). Those three helpers moved from
+`data_viewers.py` to `viewport.py` so both sides share one definition --
+`data_viewers` already imports `viewport`, so the dependency only runs one way.
+
+A nudge emits `translate_committed`, the same signal a gizmo drag emits on
+mouse-up, so it is the same source rewrite and the same single undo step.
 
 ## Transform Gizmos
 

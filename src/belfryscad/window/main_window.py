@@ -4979,6 +4979,46 @@ class MainWindow(QMainWindow):
     # Selection
     # ------------------------------------------------------------------
 
+    def _tab_owns_origin(self, tab, origin) -> bool:
+        """Whether `origin` is the file `tab` is showing.
+
+        A rendered tab's own top-level code reports under the temp copy the
+        worker parsed, a library opened in a tab under its real path --
+        the same pair the coverage overlay matches on, realpathed for the
+        same reason (libshim's symlinked name must match the real file)."""
+        if not origin:
+            return False
+        real = os.path.realpath(origin)
+        for cand in (getattr(tab, "_last_parse_path", None), tab.file_path):
+            if cand and os.path.realpath(cand) == real:
+                return True
+        return False
+
+    def _editable_node_for_id(self, orig_id):
+        """The AST node behind a picked geometry id, but only when it lives
+        in the file the user is looking at.
+
+        Selection maps an id to the node that PRODUCED the geometry, which
+        for anything built by a library is a node inside that library --
+        including plain `cube(10)` once BOSL2 is included, since BOSL2
+        overrides the primitives with its own modules. Those nodes carry
+        byte offsets into the LIBRARY file, and every caller here splices
+        them into the user's buffer: a `translate()` landing at offset
+        85256 of a 59-character script is appended to the end of it,
+        wrapping nothing (#450).
+
+        So a node from anywhere else is not editable and not selectable,
+        and callers must treat None as "the user did not pick anything".
+        Refusing is the honest answer until selection can attribute
+        geometry to the user's own call site (#451)."""
+        node = self.id_to_node.get(orig_id)
+        if node is None:
+            return None
+        tab = self._rendered_tab
+        if tab is None or not self._tab_owns_origin(tab, node.position.origin):
+            return None
+        return node
+
     def _on_selection_changed(self, orig_id: int):
         rendered = self._rendered_tab
         if rendered is None:
@@ -4986,7 +5026,7 @@ class MainWindow(QMainWindow):
         if orig_id < 0:
             rendered.editor.clear_selection()
             return
-        node = self.id_to_node.get(orig_id)
+        node = self._editable_node_for_id(orig_id)
         if node is None:
             rendered.editor.clear_selection()
             return
@@ -5002,7 +5042,7 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self.id_to_node.get(orig_id)
+        node = self._editable_node_for_id(orig_id)
         if node is None:
             return
 
@@ -5053,7 +5093,11 @@ class MainWindow(QMainWindow):
 
     def _restore_selection_after_translate(self, new_node_start: int):
         for orig_id, node in self.id_to_node.items():
-            if node.position.start_offset == new_node_start:
+            # Offsets are only comparable within one file: a library node
+            # sitting at the same offset would otherwise re-select geometry
+            # the user cannot edit (#450).
+            if (node.position.start_offset == new_node_start
+                    and self._editable_node_for_id(orig_id) is not None):
                 self._viewport.set_selection(orig_id)
                 if self._rendered_tab:
                     self._rendered_tab.editor.set_selection(node.position.start_offset, node.position.end_offset)
@@ -5074,7 +5118,7 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self.id_to_node.get(orig_id)
+        node = self._editable_node_for_id(orig_id)
         if node is None:
             return
 
@@ -5134,7 +5178,7 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return
-        node = self.id_to_node.get(orig_id)
+        node = self._editable_node_for_id(orig_id)
         if node is None:
             return
 
