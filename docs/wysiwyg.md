@@ -242,7 +242,8 @@ axis from `_key_nudge_axes` (shared with the translate nudge).
 ### Nudging a number in the editor
 
 The same idea without the viewport: **right-click a number or an expression in
-the code editor and pick "Nudge <it>"**, and Up/Down step that value in place.
+the code editor and pick "Adjust Value..."**, and Up/Down step that value in
+place.
 Escape or a click anywhere ends it. This reaches what a gizmo cannot -- a
 `$fn`, a wall thickness, a `left(wall/2)` whose value is not a literal at all --
 and it is the whole of issue #459.
