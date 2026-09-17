@@ -46,6 +46,12 @@ jobs:
       #
       # Drop a package from this list if it starts publishing ARM64 wheels;
       # an extra name here is harmless, a missing one fails the build loudly.
+      # If this starts failing on or after 2026-09-21, suspect the runner
+      # image: windows-11-arm migrates to Visual Studio 2026 by default that
+      # day (actions/runner-images#14602). These three are the only things
+      # we compile, so a toolset change lands here first. The MSVC ABI has
+      # been stable for CPython extensions since VS2015, so a rebuild on a
+      # newer toolset should just work -- but this is where to look.
       - name: Build the wheels that are not published for ARM64
         if: matrix.arch == 'arm64'
         run: |
@@ -76,9 +82,63 @@ jobs:
           ls dist/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
+          path: dist/*.msi
+
+  probe-windows-vs2026:
+    # PROBE, dispatch-only, outside release.needs.
+    #
+    # windows-11-arm migrates to Visual Studio 2026 by default over the week
+    # beginning 2026-09-21 (actions/runner-images#14602). The three wheels we
+    # build from sdist are the only things this project compiles, so a
+    # toolset change surfaces there first and nowhere else.
+    #
+    # windows-11-vs2026-arm is the label that image is already available
+    # under, so the migration can be tested before it happens rather than
+    # discovered by a red release.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-11-vs2026-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Show the toolchain
+        run: |
+          python -c "import platform; print('machine:', platform.machine()); print('compiler:', platform.python_compiler())"
+          if (Test-Path "C:\Program Files\Microsoft Visual Studio") { Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Name }
+
+      - run: uv sync --frozen --python 3.12
+
+      - name: Build the wheels that are not published for ARM64
+        run: |
+          uv run --python 3.12 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
+
+      - name: Build Windows installer
+        env:
+          PIP_FIND_LINKS: ${{ github.workspace }}\wheelhouse
+        run: |
+          uv run --python 3.12 briefcase create windows app
+          uv run --python 3.12 briefcase build windows app
+          uv run --python 3.12 briefcase package windows app
+
+      - name: Name the installer for its architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          MSI="$(ls dist/*.msi)"
+          mv "$MSI" "${MSI%.msi}-arm64-vs2026.msi"
+          ls dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-vs2026
           path: dist/*.msi
 
   build-linux:
@@ -199,7 +259,7 @@ jobs:
         run: uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: dist/*.AppImage
@@ -230,7 +290,7 @@ jobs:
       # Cached because the runtime and SDK together are well over a
       # gigabyte, and they change only when the pinned version does.
       - name: Cache the Flatpak runtime
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/flatpak
           key: flatpak-24.08-${{ matrix.arch }}
@@ -304,7 +364,7 @@ jobs:
         run: uv run --no-sync --python 3.12 briefcase package linux flatpak
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: linux-flatpak-${{ matrix.arch }}
           path: dist/*.flatpak
@@ -325,7 +385,7 @@ jobs:
       - run: uv build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pypi-dist
           path: dist/*
@@ -353,7 +413,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: pypi-dist
           path: dist
@@ -383,7 +443,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: pypi-dist
           path: dist
@@ -400,13 +460,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
