@@ -61,6 +61,10 @@ out["outside_selection"] = menu_at("", "//   Makes a widget",
                                     sel=("cube(10);", "cube(10);"))
 out["on_code"] = menu_at("wall = 3", "cube(10)")
 
+ed.setReadOnly(True)
+out["read_only"] = menu_at("//   Makes a widget", "//   Makes a widget")
+ed.setReadOnly(False)
+
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
@@ -103,3 +107,16 @@ def test_right_clicking_outside_a_selection_acts_on_the_click(m):
 def test_a_code_line_offers_neither(m):
     assert not has(m["on_code"], "Reflow")
     assert not has(m["on_code"], "Reformat")
+
+
+def test_a_read_only_buffer_says_so(m):
+    """It silently loses Use Library, Reflow, Reformat and Edit as..., and
+    nothing said why -- a library file opens read-only, so this is what a
+    BOSL2 developer sees all day."""
+    assert any(i == "Read Only Buffer" for i in m["read_only"]), m["read_only"]
+    assert not has(m["read_only"], "Reflow")
+
+
+def test_an_editable_buffer_does_not_carry_the_hint(m):
+    for key in ("caret_away", "caret_on", "on_code"):
+        assert not any(i == "Read Only Buffer" for i in m[key]), key
