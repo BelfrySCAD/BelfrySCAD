@@ -93,8 +93,10 @@ def test_it_still_works_when_they_coincide(m):
 
 
 def test_right_clicking_inside_a_selection_offers_to_reformat_it(m):
-    assert has(m["in_selection"], "Reformat Selection")
-    assert has(m["in_selection"], "Reformat Selection As")
+    """One item, not two: the plain "Reformat Selection" and the
+    "Reformat Selection As" submenu beside it did the same thing (#502)."""
+    assert [i for i in m["in_selection"] if "Reformat" in i] == \
+        ["Reformat Selection"], m["in_selection"]
 
 
 def test_right_clicking_outside_a_selection_acts_on_the_click(m):

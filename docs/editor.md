@@ -110,10 +110,12 @@ The available variables come from the innermost debug frame: `{**outer_scope, **
 
 `MainWindow._on_debug_paused` and `_on_debug_error_break` call `_set_debug_locals_on_visible(locals_dict)`, which first clears locals from all editors via `_clear_all_debug_locals()`, then sets them on `_current_tab().editor` — the editor that is actually visible after `_show_debug_line` may have switched to an included file's tab. All resume/step/stop/finish/restart handlers call `_clear_all_debug_locals()` to sweep every open editor clean.
 
-**Reformat Selection** / **Reformat Selection As ▸ …**: pretty-prints the
-selection. The plain item uses the profile named by `editor/formatProfile`
-(Preferences ▸ Editor ▸ Reformat style); the submenu reaches another one for a
-single use without a trip to Preferences.
+**Reformat Selection ▸ …**: pretty-prints the selection with the profile
+picked. One submenu and no plain item beside it: the plain item reformatted
+with whatever profile an `editor/formatProfile` preference named, so the menu
+offered the same three reformats twice under two names, and which one the
+unnamed item would do was invisible from the menu. Submenu and preference
+both went (#502).
 
 `scad_format.FormatProfile` is four booleans, and `PROFILES` the three
 built-ins (#466):
@@ -494,7 +496,6 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
 | Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
-| Reformat style | `editor/formatProfile` | `"Default"` | Editor — Compact / Default / Expanded |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |
