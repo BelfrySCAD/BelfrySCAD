@@ -46,6 +46,12 @@ jobs:
       #
       # Drop a package from this list if it starts publishing ARM64 wheels;
       # an extra name here is harmless, a missing one fails the build loudly.
+      # If this starts failing on or after 2026-09-21, suspect the runner
+      # image: windows-11-arm migrates to Visual Studio 2026 by default that
+      # day (actions/runner-images#14602). These three are the only things
+      # we compile, so a toolset change lands here first. The MSVC ABI has
+      # been stable for CPython extensions since VS2015, so a rebuild on a
+      # newer toolset should just work -- but this is where to look.
       - name: Build the wheels that are not published for ARM64
         if: matrix.arch == 'arm64'
         run: |
