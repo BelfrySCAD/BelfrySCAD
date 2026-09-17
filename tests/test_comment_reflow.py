@@ -2,6 +2,11 @@
 
 Editing BOSL2 documentation means rewrapping by hand otherwise. This is
 vim's `gq` with the prefix detection that makes it usable on doc comments.
+
+The lines to rewrap are always SELECTED ones -- see
+CodeEditor._reflow_target. Working out the block from the caret's prefix
+alone could not tell a docsgen `//   .` spacer or a markdown table from
+prose, and rewrapped both into the paragraph.
 """
 import json
 import os
@@ -10,8 +15,7 @@ import sys
 
 import pytest
 
-from belfryscad.window.scad_format import (comment_block_at, comment_prefix,
-                                           reflow_comment)
+from belfryscad.window.scad_format import comment_prefix, reflow_comment
 
 
 # -- What counts as a comment line -----------------------------------------
@@ -49,25 +53,6 @@ DOC = [
     "//   size = The width.",
     "module widget() {}",
 ]
-
-
-def test_a_doc_body_stops_at_its_own_header():
-    """The body is `//   ` and the header `// `. Matching on "both are
-    comments" would fold the header into the paragraph and destroy the
-    block, so the prefix must match exactly."""
-    assert comment_block_at(DOC, 1) == (1, 3)
-    assert comment_block_at(DOC, 2) == (1, 3)
-
-
-def test_a_header_is_its_own_block():
-    assert comment_block_at(DOC, 0) == (0, 1)
-    assert comment_block_at(DOC, 3) == (3, 4)
-
-
-def test_code_is_not_a_block():
-    assert comment_block_at(DOC, 5) is None
-    assert comment_block_at(DOC, 99) is None
-    assert comment_block_at(DOC, -1) is None
 
 
 # -- The rewrap itself -----------------------------------------------------
@@ -198,21 +183,23 @@ ed = editor([67, 100])
 out["default_is_widest_guide"] = ed.guide_width()
 out["default_with_no_guides"] = editor([]).guide_width()
 
-# Targets: body expands to its own prefix run; code offers nothing.
-out["body_target"] = list(ed._reflow_target(at(ed, 1)))
+# Targets: a comment selection reflows; a caret alone, a code line and a
+# selection reaching into code all offer nothing.
+out["body_target"] = list(ed._reflow_target(at(ed, 1, sel_to=2)))
+out["caret_only"] = ed._reflow_target(at(ed, 1))
 out["code_target"] = ed._reflow_target(at(ed, 4, 2))
 out["selection_over_code"] = ed._reflow_target(at(ed, 1, sel_to=4))
 
 # Reflow at the answered width, twice: the second must default to the first.
-answer(50); ed._reflow_comment(*ed._reflow_target(at(ed, 1)))
+answer(50); ed._reflow_comment(*ed._reflow_target(at(ed, 1, sel_to=2)))
 out["after_50"] = ed.toPlainText()
 ed2 = editor([67, 100]); ed2._last_reflow_width = ed._last_reflow_width
-answer(40); ed2._reflow_comment(*ed2._reflow_target(at(ed2, 1)))
+answer(40); ed2._reflow_comment(*ed2._reflow_target(at(ed2, 1, sel_to=2)))
 out["after_40"] = ed2.toPlainText()
 
 # Cancel changes nothing.
 ed3 = editor([67, 100]); before = ed3.toPlainText()
-answer(None); ed3._reflow_comment(*ed3._reflow_target(at(ed3, 1)))
+answer(None); ed3._reflow_comment(*ed3._reflow_target(at(ed3, 1, sel_to=2)))
 out["cancel_unchanged"] = ed3.toPlainText() == before
 
 print(json.dumps(out)); sys.stdout.flush()
@@ -240,8 +227,17 @@ def test_the_answer_is_remembered_for_the_next_reflow(driven):
     assert driven["defaults"][1] == 50, "second offers what was answered"
 
 
-def test_the_cursor_alone_picks_out_the_body_of_a_doc_block(driven):
+def test_the_selected_comment_lines_are_what_reflows(driven):
     assert driven["body_target"] == [1, 2]
+
+
+def test_a_caret_with_no_selection_offers_nothing(driven):
+    """#467 follow-up. Reflow used to work out the block from the caret's
+    prefix, which cannot tell prose from the rest of a `//   ` body: a
+    docsgen `//   .` spacer became a stray full stop mid-sentence and a
+    markdown table was folded into the paragraph. The author says which
+    lines are prose by selecting them."""
+    assert driven["caret_only"] is None
 
 
 def test_a_code_line_offers_no_reflow(driven):

@@ -5,6 +5,10 @@ Reflow Comment, and no Reformat Selection either. macOS moves the caret to a
 right-click and Windows does not, so `self.textCursor()` was the clicked line
 on one platform and some other line on the other -- which is why this was
 invisible here.
+
+Reflow later became selection-only (#467 follow-up), so the click-versus-caret
+rule now decides whether the click falls INSIDE the selection; the caret-alone
+cases assert the item is absent.
 """
 import json
 import os
@@ -60,6 +64,9 @@ out["in_selection"] = menu_at("", "cube(10)", sel=("cube(10);", "cube(10);"))
 out["outside_selection"] = menu_at("", "//   Makes a widget",
                                     sel=("cube(10);", "cube(10);"))
 out["on_code"] = menu_at("wall = 3", "cube(10)")
+out["in_comment_selection"] = menu_at(
+    "", "//   Makes a widget",
+    sel=("//   Makes a widget", "//   Second body line."))
 
 ed.setReadOnly(True)
 out["read_only"] = menu_at("//   Makes a widget", "//   Makes a widget")
@@ -83,13 +90,17 @@ def has(items, word):
     return any(word in i for i in items)
 
 
-def test_reflow_is_offered_where_you_clicked_not_where_the_caret_is(m):
-    """The reported bug. Windows leaves the caret alone on a right-click."""
-    assert has(m["caret_away"], "Reflow"), m["caret_away"]
+def test_a_caret_in_a_comment_offers_no_reflow(m):
+    """Reflow is selection-only: working the block out from the caret's
+    prefix folded docsgen spacers and markdown tables into the paragraph."""
+    assert not has(m["caret_away"], "Reflow"), m["caret_away"]
+    assert not has(m["caret_on"], "Reflow"), m["caret_on"]
 
 
-def test_it_still_works_when_they_coincide(m):
-    assert has(m["caret_on"], "Reflow")
+def test_reflow_is_offered_for_a_comment_selection_clicked_inside(m):
+    """What the click-versus-caret fix now decides. Windows leaves the
+    caret alone on a right-click, so the click position is what counts."""
+    assert has(m["in_comment_selection"], "Reflow"), m["in_comment_selection"]
 
 
 def test_right_clicking_inside_a_selection_offers_to_reformat_it(m):
@@ -103,7 +114,7 @@ def test_right_clicking_outside_a_selection_acts_on_the_click(m):
     """It used to offer Reformat Selection for a selection somewhere else
     entirely, which would have rewritten a span you could not see."""
     assert not has(m["outside_selection"], "Reformat"), m["outside_selection"]
-    assert has(m["outside_selection"], "Reflow"), m["outside_selection"]
+    assert not has(m["outside_selection"], "Reflow"), m["outside_selection"]
 
 
 def test_a_code_line_offers_neither(m):
