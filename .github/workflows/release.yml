@@ -481,6 +481,10 @@ jobs:
       - name: Upload the installers, one at a time
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job never checks the repository out -- it only downloads
+          # artifacts -- so `gh` has no git remote to infer the repo from
+          # and every upload died with "fatal: not a git repository".
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           for f in artifacts/*; do
