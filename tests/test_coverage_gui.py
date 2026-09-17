@@ -112,6 +112,17 @@ by = {(s["line"], s["kind"]): s["hits"] for s in w._coverage.spans.values()
       if os.path.basename(s["origin"]) == "lib.scad"}
 out["false_arm_hit_by_test"] = by.get((1, "branch"), None)
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -238,6 +249,17 @@ for s in sels:
         out["sphere_is_uncovered"] = s.format.background().color().red() > 200
 out["cube_present"] = "cube(1);" in covered_text
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -380,6 +402,17 @@ except Exception:
 out["duplicate_refused"] = dlg.result_test() is None
 out["duplicate_complained"] = any("already a test" in str(b) for b in _boxes)
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -468,6 +501,17 @@ d._accept()
 out["bad_toml_refused"] = d.result_test() is None
 out["bad_toml_complained"] = any("not valid TOML" in str(b) for b in _boxes)
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -521,6 +565,17 @@ r = dlg.result_test()
 out["round_trip"] = [r.name, r.script, r.timeout, r.set_vars,
                      r.assert_echoes, r.assert_no_warnings]
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -601,6 +656,17 @@ for i in range(tree.topLevelItemCount()):
     ran[os.path.basename(it.data(0, USER_ROLE))] = it.text(1)
 out["per_file_counts"] = ran
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 

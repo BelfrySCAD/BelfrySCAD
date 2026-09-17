@@ -30,6 +30,17 @@ out["diag"] = diag[0] if diag else ""
 tab.editor.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Y, Qt.KeyboardModifier.NoModifier, "Y"))
 out["diag_count_after_two_edits"] = len([m for m in logged if "DEBUG_MODIFIED" in m])
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
@@ -87,6 +98,17 @@ out["text_intact"] = tab.editor.toPlainText() == "cube(1);\\n"
 tab.editor.setPlainText("cube(2);\\n")
 out["modified_after_edit"] = tab.is_modified
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 

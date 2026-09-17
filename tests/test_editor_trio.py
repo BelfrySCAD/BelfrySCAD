@@ -66,7 +66,17 @@ w._act_auto_reload.setChecked(True)
 renders.clear(); w._write_file(tab, path); out["renders_on_save_auto_on"] = len(renders)
 w._act_auto_reload.setChecked(False)
 print(json.dumps(out)); sys.stdout.flush()
-# MainWindow owns threads that abort Qt's teardown; the answers are out, skip it.
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 

@@ -59,6 +59,17 @@ w._apply_preferences()                             # same value: no render
 app.processEvents()
 out["no_rerender_without_change"] = len(renders) == 2
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
