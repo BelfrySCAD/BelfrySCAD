@@ -465,9 +465,34 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Create the draft release
         uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/*
           generate_release_notes: true
           draft: true
+
+      # Uploaded here, one at a time, rather than by the action's `files:`.
+      # The action fires every upload concurrently, and v1.36.0's two
+      # largest -- a 299MB AppImage and a 223MB flatpak -- died on undici's
+      # header timeout twice: once as a bare "Error saving asset", once as
+      # "Headers Timeout Error" after 12 minutes. Both installers had built
+      # fine; only the concurrency was wrong. A release that has to be
+      # finished by hand is worse than one that takes a few minutes longer.
+      - name: Upload the installers, one at a time
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for f in artifacts/*; do
+            for attempt in 1 2 3; do
+              if gh release upload "$GITHUB_REF_NAME" "$f" --clobber; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::upload failed three times: $f"
+                exit 1
+              fi
+              echo "retrying $f (attempt $((attempt + 1)))"
+              sleep 15
+            done
+          done
