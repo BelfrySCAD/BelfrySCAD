@@ -40,6 +40,17 @@ pane.set_auto_update(True)
 out["back_on_schedules_render"] = field_change(13)
 out["pref_persisted_on"] = load_preference("customizer/autoUpdate", type_=bool)
 print(json.dumps(out)); sys.stdout.flush()
+# Close before exiting: MainWindow's closeEvent is what stops the docs
+# pane thread, cancels an in-flight render and waits for the render jobs.
+# os._exit alone races them, and on Windows that race is an 0xC0000005
+# crash in an otherwise passing test (#496). Exit hard afterwards anyway,
+# to skip PySide's own teardown.
+try:
+    w.skip_unsaved_prompts = True
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
 os._exit(0)
 '''
 
