@@ -161,14 +161,18 @@ jobs:
           path: dist/*.AppImage
 
   build-flatpak:
-    # x86_64 only, for the same reason the AppImage is: moderngl and
-    # glcontext publish no aarch64 wheels, and the Flatpak build sandbox has
-    # no compiler to build them from source either.
-    #
-    # Unlike the AppImage job this needs no container and no pinned
-    # briefcase -- flatpak-builder runs on the stock runner, and the runtime
-    # fixes the glibc floor instead of inheriting the host's.
-    runs-on: ubuntu-latest
+    # Both architectures. Unlike the AppImage, ARM works here: the Flatpak
+    # SDK has a compiler, so the two dependencies with no aarch64 wheels --
+    # moderngl and glcontext -- build from sdist in about a minute.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            arch: x86_64
+          - runs-on: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
 
@@ -185,12 +189,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-24.08-${{ runner.os }}
+          key: flatpak-24.08-${{ matrix.arch }}
 
       - name: Install the runtime and SDK
         run: |
           flatpak install --user --noninteractive flathub \
               org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      # glcontext has no aarch64 wheel, so uv builds it from sdist here on
+      # the host to give briefcase its dependencies. Its x11 backend needs
+      # X11/Xlib.h and its headless backend EGL/egl.h; moderngl links
+      # nothing. Harmless on x86_64, where a wheel means nothing compiles.
+      - name: Install headers for the from-source builds
+        run: |
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgl1-mesa-dev
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -201,7 +213,23 @@ jobs:
 
       - name: Build the Flatpak
         run: |
+          set -euo pipefail
           uv run --no-sync --python 3.12 briefcase create linux flatpak
+
+          # briefcase's Flatpak template overrides CC to gcc -- clang is not
+          # in the SDK, and python-standalone is configured with it -- but
+          # not CXX, so a C++ extension still reaches for clang++ and dies.
+          # Nothing compiles on x86_64 (every dependency has a wheel), which
+          # is why this has gone unnoticed upstream; on aarch64 moderngl and
+          # glcontext build from sdist and hit it immediately.
+          #
+          # Fix submitted as beeware/briefcase-linux-flatpak-template#85.
+          # Drop this once it lands and the pinned template carries it.
+          MANIFEST="$(find build -name manifest.yml | head -1)"
+          test -n "$MANIFEST" || { echo "manifest not found"; exit 1; }
+          sed -i 's|CC="gcc -pthread" /app/bin/python3|CC="gcc -pthread" CXX="g++ -pthread" /app/bin/python3|' "$MANIFEST"
+          grep -q 'CXX=' "$MANIFEST" || { echo "CXX patch did not apply"; exit 1; }
+
           uv run --no-sync --python 3.12 briefcase build linux flatpak
 
       # The same lesson the AppImage job learned the hard way in #430: a
@@ -234,7 +262,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: linux-flatpak-x86_64
+          name: linux-flatpak-${{ matrix.arch }}
           path: dist/*.flatpak
 
   build-pypi:
