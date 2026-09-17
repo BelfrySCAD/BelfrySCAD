@@ -217,21 +217,24 @@ renders on a 400ms debounce. Full rules in `docs/wysiwyg.md` under
 "Nudging a number in the editor". Read-only tabs get no item at all, matching
 the gizmo and viewport-nudge gating.
 
-**Reflow Comment…** (writable tabs, on a whole-line `//` comment): rewraps a
-comment block to a width you are asked for, repeating each line's own prefix —
-vim's `gq`, which is what editing BOSL2 documentation otherwise means doing by
-hand (#467). The three pieces live in `scad_format.py`, Qt-free:
+**Reflow Comment…** (writable tabs, **selected** whole-line `//` comments):
+rewraps the selection to a width you are asked for, repeating each line's own
+prefix — vim's `gq`, which is what editing BOSL2 documentation otherwise means
+doing by hand (#467). The two pieces live in `scad_format.py`, Qt-free:
 
 - `comment_prefix(line)` captures the `indent + // + spacing` verbatim. A
   *trailing* comment (`cube(1); // why`) returns None — the code before it is
-  not prose to be rewrapped.
-- `comment_block_at(lines, i)` expands the cursor to the run of lines sharing
-  its **exact** prefix. Exact matters: in a doc block the header is `// ` and
-  the body `//   `, so reflowing from inside the body leaves
-  `// Description:` alone. Matching on "both are comments" would fold the
-  header into the paragraph and destroy the block. With a selection the
-  editor uses the selected lines instead, and refuses if any of them is not a
-  whole-line comment.
+  not prose to be rewrapped. `CodeEditor._reflow_target` requires every
+  selected line to have one, so a selection reaching into code offers nothing.
+**The selection is the whole input.** Reflow used to work from the caret too,
+via a `comment_block_at` that expanded to the run of lines sharing the caret's
+**exact** prefix — which kept `// Description:` out of the `//   ` body under
+it, but could say nothing about what was *inside* that body. A docsgen `//   .`
+spacer came back as a stray full stop mid-sentence, a markdown table was folded
+into the paragraph, and a `//   ` line lost its trailing spaces. What a line
+means is not recoverable from its prefix, so the author says so by selecting it
+(#467 follow-up); `comment_block_at` went with the caret path.
+
 - `reflow_comment(lines, width)` wraps via `textwrap`, re-applying the prefix
   as `initial_indent`/`subsequent_indent`. `break_long_words` and
   `break_on_hyphens` are both off — a URL or a `some_function()` split across

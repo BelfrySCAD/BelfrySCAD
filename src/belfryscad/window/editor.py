@@ -2001,24 +2001,27 @@ class CodeEditor(QPlainTextEdit):
         self.source_edited_externally.emit()
 
     def _reflow_target(self, cursor, use_selection=None):
-        """(first, last) block numbers to reflow, or None if there is no
-        whole-line comment to act on.
+        """(first, last) block numbers to reflow, or None.
 
-        With a selection, the comment lines it covers. Without one, the run
-        of lines around the cursor sharing its exact prefix -- which is what
-        stops a `// Description:` header being folded into the body under
-        it."""
-        from belfryscad.window.scad_format import comment_block_at, comment_prefix
+        The lines must be SELECTED, and every one of them a whole-line
+        comment. Reflow used to work from the caret too, taking the run of
+        lines around it sharing its exact prefix -- which kept a
+        `// Description:` header out of the body, but could not tell prose
+        from the rest of a `//   ` body. A docsgen `//   .` spacer became a
+        stray full stop mid-sentence and a markdown table was folded into
+        the paragraph, destroying both (#467). What the author meant by a
+        given line is not recoverable from its prefix, so the author says
+        so by selecting it.
+        """
+        from belfryscad.window.scad_format import comment_prefix
+        if not (cursor.hasSelection() if use_selection is None else use_selection):
+            return None
         doc = self.document()
         first, last = self._selected_block_range(cursor)
-        if cursor.hasSelection() if use_selection is None else use_selection:
-            lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
-            if not all(comment_prefix(ln) is not None for ln in lines):
-                return None
-            return first, last
-        all_lines = [b.text() for b in _blocks(doc)]
-        block = comment_block_at(all_lines, first)
-        return None if block is None else (block[0], block[1] - 1)
+        lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
+        if not all(comment_prefix(ln) is not None for ln in lines):
+            return None
+        return first, last
 
     def _selected_block_range(self, cursor):
         """(first, last) block numbers the cursor's selection covers.

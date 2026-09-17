@@ -1150,32 +1150,6 @@ def comment_prefix(line: str) -> str | None:
     return m.group(1) if m else None
 
 
-def comment_block_at(lines: list[str], index: int) -> tuple[int, int] | None:
-    """The half-open run of lines around `index` sharing its exact prefix.
-
-    Exact, not merely "both are comments", and that is the point: in
-
-        // Description:
-        //   Makes a widget of the given size, with a hole
-        //   that goes all the way through.
-
-    the body is `//   ` and the header is `// `, so reflowing from inside the
-    body rewraps the two body lines and leaves the header alone. A looser
-    rule would fold the header into the paragraph and destroy the block."""
-    if not (0 <= index < len(lines)):
-        return None
-    prefix = comment_prefix(lines[index])
-    if prefix is None:
-        return None
-    start = index
-    while start > 0 and comment_prefix(lines[start - 1]) == prefix:
-        start -= 1
-    end = index + 1
-    while end < len(lines) and comment_prefix(lines[end]) == prefix:
-        end += 1
-    return start, end
-
-
 def reflow_comment(lines: list[str], width: int) -> list[str]:
     """`lines` (all sharing one prefix) rewrapped to `width` columns total.
 
