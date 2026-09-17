@@ -60,6 +60,21 @@ jobs:
           uv run --python 3.12 briefcase build windows app
           uv run --python 3.12 briefcase package windows app
 
+      # briefcase names the msi without the architecture, so both legs
+      # produce BelfrySCAD-<version>.msi. The release job downloads every
+      # artifact with merge-multiple, where identical names collide and one
+      # silently overwrites the other -- v1.35.0 shipped with the ARM64
+      # installer lost that way, and nothing failed. The flatpaks were
+      # unaffected only because briefcase puts the arch in their filenames.
+      - name: Name the installer for its architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          MSI="$(ls dist/*.msi)"
+          test -n "$MSI" || { echo "no msi produced"; exit 1; }
+          mv "$MSI" "${MSI%.msi}-${{ matrix.arch }}.msi"
+          ls dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
