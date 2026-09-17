@@ -84,6 +84,34 @@ def test_every_line_fits_the_width():
     assert max(len(ln) for ln in out) <= 40
 
 
+def test_a_line_uses_the_whole_width_not_width_minus_the_prefix():
+    """#507, reported verbatim. textwrap's `width` already covers
+    initial_indent, so subtracting the prefix first counted it twice and
+    wrapped a `//   ` comment at 95 columns when 100 was asked for."""
+    line = ("//   This table shows the results from different combinations of "
+            "font size, finite `max_width`, and finite `max_height`:")
+    out = reflow_comment([line], 100)
+    assert out[0] == ("//   This table shows the results from different combinations of "
+                      "font size, finite `max_width`, and")
+    assert len(out[0]) == 99
+
+
+@pytest.mark.parametrize("width", [40, 60, 72, 100])
+@pytest.mark.parametrize("prefix", ["//", "//   ", "    //   ", "//!  "])
+def test_no_wrapped_line_could_have_taken_the_next_word(width, prefix):
+    """The general form of #507: `<= width` is not enough, since a wrap that
+    stops early satisfies it too. Every break must be one the next word
+    genuinely did not fit through -- which is what the old tests, all of
+    them upper bounds, could not see."""
+    out = reflow_comment([prefix + " " + "alpha beta gamma delta epsilon " * 6], width)
+    assert max(len(ln) for ln in out) <= max(width, len(prefix.rstrip()))
+    for here, nxt in zip(out, out[1:]):
+        body = nxt[len(comment_prefix(nxt) or ""):].strip()
+        if not body:
+            continue
+        assert len(here) + 1 + len(body.split()[0]) > width, (here, body.split()[0])
+
+
 def test_short_lines_are_joined_not_left_ragged():
     out = reflow_comment(["//   one", "//   two", "//   three"], 60)
     assert out == ["//   one two three"]

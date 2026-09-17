@@ -1188,10 +1188,12 @@ def reflow_comment(lines: list[str], width: int) -> list[str]:
     if not lines:
         return []
     prefix = comment_prefix(lines[0]) or ""
-    # The prefix is re-applied by textwrap, so measure the body against what
-    # is left of the width. A prefix wider than the target would give a
-    # negative width and raise; one column always remains.
-    body_width = max(1, width - len(prefix.expandtabs()))
+    # textwrap's `width` is the width of the FINISHED line, indent included,
+    # so the prefix must NOT be subtracted first -- doing so counted it
+    # twice and wrapped `//   ` text at 95 columns when 100 was asked for
+    # (#507). A prefix at or past the target would leave no room for text;
+    # one column always remains.
+    wrap_width = max(len(prefix.expandtabs()) + 1, width)
 
     out: list[str] = []
     para: list[str] = []
@@ -1200,7 +1202,7 @@ def reflow_comment(lines: list[str], width: int) -> list[str]:
         if not para:
             return
         out.extend(textwrap.wrap(
-            " ".join(para), width=body_width,
+            " ".join(para), width=wrap_width,
             initial_indent=prefix, subsequent_indent=prefix,
             break_long_words=False, break_on_hyphens=False,
         ) or [prefix.rstrip()])
