@@ -1151,7 +1151,7 @@ class FindBar(QWidget):
         c = QTextCursor(self._editor.document())
         c.setPosition(self._matches[self._current].selectionEnd())
         self._editor.setTextCursor(c)
-        self._editor.ensureCursorVisible()
+        self._editor.center_unless_comfortable()
         self._caret_after_step = c.position()
 
     def _find_next(self):
@@ -1926,6 +1926,32 @@ class CodeEditor(QPlainTextEdit):
             new_text = new_text[:-1]
         self.replace_span(start, end, new_text)
         self.source_edited_externally.emit()
+
+    #: Lines of context a jumped-to line should keep above and below it.
+    #: Three is enough to see the statement a match sits in without the
+    #: view lurching for a match that was already comfortably on screen.
+    SCROLL_MARGIN_LINES = 3
+
+    def center_unless_comfortable(self, margin_lines: int | None = None):
+        """Scroll so the caret keeps `margin_lines` of context, or centre it.
+
+        ensureCursorVisible() scrolls the MINIMUM, so a match found just
+        past the edge lands flush against it with nothing around it to read
+        (#505). Same rule the undo jump has used since #389 -- off-screen
+        centres, on-screen leaves the scroll alone -- except that "on
+        screen" here means far enough in to see context, not merely inside
+        the viewport by a pixel.
+
+        Nothing special is needed for a match near the first or last line:
+        centreCursor() cannot scroll past the document, so it stops with the
+        caret as near the middle as the document allows.
+        """
+        margin = (self.SCROLL_MARGIN_LINES if margin_lines is None
+                  else margin_lines) * max(1, self.fontMetrics().lineSpacing())
+        self.ensureCursorVisible()      # on screen at all, first
+        rect = self.cursorRect()
+        if rect.top() < margin or rect.bottom() > self.viewport().height() - margin:
+            self.centerCursor()
 
     def guide_width(self) -> int:
         """The rightmost column guide, or 80 with guides off or unset.
