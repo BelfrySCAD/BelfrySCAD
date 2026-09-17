@@ -1978,7 +1978,7 @@ class CodeEditor(QPlainTextEdit):
                           "\n".join(new_lines))
         self.source_edited_externally.emit()
 
-    def _reflow_target(self, cursor):
+    def _reflow_target(self, cursor, use_selection=None):
         """(first, last) block numbers to reflow, or None if there is no
         whole-line comment to act on.
 
@@ -1989,7 +1989,7 @@ class CodeEditor(QPlainTextEdit):
         from belfryscad.window.scad_format import comment_block_at, comment_prefix
         doc = self.document()
         first, last = self._selected_block_range(cursor)
-        if cursor.hasSelection():
+        if cursor.hasSelection() if use_selection is None else use_selection:
             lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
             if not all(comment_prefix(ln) is not None for ln in lines):
                 return None
@@ -2617,9 +2617,18 @@ class CodeEditor(QPlainTextEdit):
                 lambda checked=False: self.use_library_requested.emit())
             menu.addAction(use_act)
 
-        sel_cursor = self.textCursor()
+        # What the menu acts on is WHERE YOU CLICKED, not where the caret
+        # happens to be. macOS moves the caret to a right-click and Windows
+        # does not, so reading self.textCursor() looked right on one
+        # platform and pointed at a different line on the other.
+        click = self.cursorForPosition(event.pos())
+        sel = self.textCursor()
+        in_selection = (sel.hasSelection()
+                        and sel.selectionStart() <= click.position() <= sel.selectionEnd())
+        sel_cursor = sel if in_selection else click
+
         if not self.isReadOnly():
-            _reflow = self._reflow_target(sel_cursor)
+            _reflow = self._reflow_target(sel_cursor, use_selection=in_selection)
             if _reflow is not None:
                 menu.addSeparator()
                 _ract = QAction("Reflow Comment\u2026", self)
@@ -2627,7 +2636,7 @@ class CodeEditor(QPlainTextEdit):
                     lambda checked=False, r=_reflow: self._reflow_comment(*r))
                 menu.addAction(_ract)
 
-        if not self.isReadOnly() and sel_cursor.hasSelection():
+        if not self.isReadOnly() and in_selection:
             selected_text = sel_cursor.selectedText().replace(' ', '\n')
             from belfryscad.window.scad_format import can_format
             if can_format(selected_text):
@@ -2717,7 +2726,7 @@ class CodeEditor(QPlainTextEdit):
             build_lexical_view_menu, build_editor_menu, build_new_literal_menu,
         )
         text = self.toPlainText()
-        offset = self.cursorForPosition(event.pos()).position()
+        offset = click.position()
 
         view_literals = find_viewable_literals(text, offset)
         edit_literals = find_editable_literals(text, offset) if not self.isReadOnly() else {}
