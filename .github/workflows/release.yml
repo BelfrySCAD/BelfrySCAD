@@ -14,7 +14,17 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    # Both architectures. ARM64 needs two things x86_64 does not, both
+    # below; briefcase itself has supported ARM64 Windows all along.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: windows-latest
+            arch: x86_64
+          - runs-on: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
 
@@ -25,7 +35,26 @@ jobs:
 
       - run: uv sync --frozen --python 3.12
 
+      # briefcase installs the app's requirements into the EMBEDDED python
+      # as wheels only -- it never compiles -- so a dependency with no
+      # published win_arm64 wheel comes back as
+      #     Could not find a version that satisfies the requirement moderngl
+      #     (from versions: none)
+      # even though the runner just built it fine for the venv. moderngl,
+      # glcontext and setproctitle are the three; all compile with MSVC
+      # ARM64 in seconds. Build them here and hand pip a local wheelhouse.
+      #
+      # Drop a package from this list if it starts publishing ARM64 wheels;
+      # an extra name here is harmless, a missing one fails the build loudly.
+      - name: Build the wheels that are not published for ARM64
+        if: matrix.arch == 'arm64'
+        run: |
+          uv run --python 3.12 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
+
       - name: Build Windows installer
+        env:
+          # Empty on x86_64, where every dependency has a wheel already.
+          PIP_FIND_LINKS: ${{ matrix.arch == 'arm64' && format('{0}\wheelhouse', github.workspace) || '' }}
         run: |
           uv run --python 3.12 briefcase create windows app
           uv run --python 3.12 briefcase build windows app
@@ -34,7 +63,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: windows-x86_64
+          name: windows-${{ matrix.arch }}
           path: dist/*.msi
 
   build-linux:
