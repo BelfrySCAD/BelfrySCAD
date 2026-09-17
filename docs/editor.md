@@ -491,7 +491,7 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 
 | Setting | Key | Default | Tab |
 |---|---|---|---|
-| Font family | `editor/fontFamily` | `"Menlo"` | Editor |
+| Font family | `editor/fontFamily` | `"Menlo"` | Editor — every installed monospaced family (`font_list.fixed_pitch_families`), plus the saved value if this machine lacks it |
 | Font size | `editor/fontSize` | `13` | Editor |
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |

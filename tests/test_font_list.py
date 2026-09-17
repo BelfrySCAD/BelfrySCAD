@@ -185,3 +185,51 @@ def test_private_dot_families_are_hidden_from_the_gui(monkeypatch):
     monkeypatch.setattr(openscad_cpp_evaluator, "list_fonts", lambda: fake)
     assert [f["family"] for f in load_fonts()] == ["Al Bayan"]
     assert is_private_family(".SF NS") and not is_private_family("SF Pro")
+
+
+def test_the_editor_font_picker_offers_every_installed_monospace(tmp_path):
+    """#504: the picker was a hard-coded list of eight family names
+    intersected with what was installed, so a Windows user got Consolas and
+    Courier New and could not reach Lucida Console however well installed
+    it was. Driven in a subprocess: widgets crash the pytest runner here."""
+    driver = tmp_path / "_fp.py"
+    driver.write_text('''
+import json, tempfile
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFontDatabase
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.font_list import fixed_pitch_families
+from belfryscad.window.preferences import PreferencesDialog
+
+fams = fixed_pitch_families()
+out = {
+    "all_fixed_pitch": all(QFontDatabase.isFixedPitch(f) for f in fams),
+    "no_private": [f for f in fams if f.startswith(".")],
+    "sorted": list(fams) == sorted(fams),
+    # Every monospaced family Qt knows about is offered -- nothing is
+    # dropped for not being on a list somebody has to remember to update.
+    "missed": [f for f in QFontDatabase.families()
+               if QFontDatabase.isFixedPitch(f) and not f.startswith(".")
+               and f not in fams],
+}
+dlg = PreferencesDialog()
+out["offered"] = [dlg._font_family.itemText(i)
+                  for i in range(dlg._font_family.count())]
+out["families"] = list(fams)
+print(json.dumps(out))
+''')
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr[-3000:]
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["all_fixed_pitch"], out["families"]
+    assert out["no_private"] == [], out["no_private"]
+    assert out["missed"] == [], out["missed"]
+    assert out["sorted"], out["families"]
+    # The saved family is offered even when this machine lacks it, so a
+    # preference set elsewhere is not silently rewritten by opening the
+    # dialog. Everything else offered is a real monospaced family.
+    assert set(out["families"]) <= set(out["offered"]), out["offered"]

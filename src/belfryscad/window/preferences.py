@@ -181,12 +181,11 @@ class PreferencesDialog(QDialog):
 
         # Font family
         self._font_family = QComboBox()
-        mono_fonts = [
-            "Menlo", "Monaco", "Courier New", "Consolas",
-            "Source Code Pro", "JetBrains Mono", "Fira Code", "SF Mono",
-        ]
-        available = set(QFontDatabase.families())
-        filtered = [f for f in mono_fonts if f in available] or ["Courier New"]
+        # Every monospaced family actually installed, not a hand-kept list
+        # of eight names -- see font_list.fixed_pitch_families (#504).
+        from belfryscad.window.font_list import fixed_pitch_families
+        filtered = list(fixed_pitch_families()) or [
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()]
         # Add current value even if not in the preset list
         current_family = s.value("editor/fontFamily", _DEFAULTS["editor/fontFamily"])
         if current_family not in filtered:

@@ -19,6 +19,7 @@ painted, so opening the list costs nothing extra and scrolling only pays
 for the rows that come into view.
 """
 import zlib
+from functools import lru_cache
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
@@ -104,6 +105,27 @@ def is_private_family(family: str) -> bool:
     on one Mac. Issue #402.
     """
     return family.startswith(".")
+
+
+@lru_cache(maxsize=1)
+def fixed_pitch_families() -> tuple:
+    """Every installed monospaced family, for the editor's font picker.
+
+    Qt answers this directly: isFixedPitch is its reading of the same
+    `post.isFixedPitch` flag the font itself carries, so there is nothing
+    to hand-maintain. The picker used to offer a hard-coded list of eight
+    names intersected with what was installed, which on Windows came to
+    Consolas and Courier New and left Lucida Console, DejaVu Sans Mono and
+    Liberation Mono unreachable however well installed they were (#504).
+
+    Cached because it costs a metrics lookup per family -- 232ms for 185
+    families on one Mac, against 53ms for the family list alone -- and
+    fonts do not come and go while the app is running.
+    """
+    from PySide6.QtGui import QFontDatabase
+    return tuple(sorted(f for f in QFontDatabase.families()
+                        if not is_private_family(f)
+                        and QFontDatabase.isFixedPitch(f)))
 
 
 def load_fonts() -> list:
