@@ -82,6 +82,19 @@ Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath
 
 Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
 
+**Every item acts on the position that was clicked**, taken once as
+`click = self.cursorForPosition(event.pos())`, not on `self.textCursor()`.
+macOS moves the caret to a right-click and Windows does not, so reading the
+caret was the clicked line on one platform and an unrelated line on the other
+-- which is how Reflow Comment came to be missing entirely on Windows (#467)
+while looking correct here. The literal menus already did this; the newer
+items did not, and the inconsistency was the bug.
+
+A selection counts only when the click falls **inside** it
+(`in_selection`). Otherwise the menu treats the click as a plain caret
+position, so right-clicking elsewhere no longer offers to reformat a span
+you cannot see.
+
 **Debug variable inspection** (when debugger is paused and the word under the cursor is a known variable — locals, globals, constants, or `$`-specials):
 - **`Variable: x`** / **`Value: <value>`** — two disabled (grayed-out) header items: the variable name and its value formatted by `_fmt()` and truncated to 30 characters with `…` if longer. Appear before the standard cut/copy/paste items, followed by a separator.
 - **Print 'x' to Console** — emits `CodeEditor.print_value_to_console(name, value)`, connected to `MainWindow._on_debug_print_value`, which calls `self._console.append_value(name, value, _pretty_assignment(name, value))`. The original Python value is stored for the console right-click viewer menu.
