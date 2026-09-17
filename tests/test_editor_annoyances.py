@@ -253,3 +253,69 @@ def test_enter_steps_once_and_forwards(driven):
     out entirely."""
     assert driven["enter_labels"] == ["1/2", "2/2", "1/2", "2/2"]
     assert driven["shift_enter_labels"] == ["1/2", "2/2"]
+
+
+def test_find_gives_a_match_context_instead_of_hugging_the_edge(tmp_path):
+    """#505: ensureCursorVisible() scrolls the minimum, so a match one line
+    past the edge landed flush against it with nothing to read around it.
+    Driven in a subprocess: widgets crash the pytest runner here."""
+    driver = tmp_path / "_scroll.py"
+    driver.write_text('''
+import json, tempfile
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QTextCursor
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.editor import CodeEditor
+
+ed = CodeEditor(); ed.resize(800, 400); ed.show()
+ed.setPlainText("\\n".join("line %d needle_%d" % (i, i) for i in range(400)))
+app.processEvents()
+visible = ed.viewport().height() // ed.fontMetrics().lineSpacing()
+
+def jump(n, how):
+    ed.verticalScrollBar().setValue(0); app.processEvents()
+    c = QTextCursor(ed.document())
+    c.setPosition(ed.document().findBlockByNumber(n).position())
+    ed.setTextCursor(c)
+    getattr(ed, how)(); app.processEvents()
+    top = ed.cursorForPosition(ed.viewport().rect().topLeft()).blockNumber()
+    return {"above": n - top, "below": (top + visible) - n}
+
+out = {"visible": visible, "margin": CodeEditor.SCROLL_MARGIN_LINES}
+out["minimum"] = jump(visible + 1, "ensureCursorVisible")
+out["margined"] = jump(visible + 1, "center_unless_comfortable")
+out["near_top"] = jump(2, "center_unless_comfortable")
+out["near_end"] = jump(398, "center_unless_comfortable")
+
+# A match already well inside the view must not move the scroll at all.
+ed.verticalScrollBar().setValue(0); app.processEvents()
+c = QTextCursor(ed.document())
+c.setPosition(ed.document().findBlockByNumber(visible // 2).position())
+ed.setTextCursor(c)
+before = ed.verticalScrollBar().value()
+ed.center_unless_comfortable(); app.processEvents()
+out["comfortable_moved"] = ed.verticalScrollBar().value() != before
+print(json.dumps(out))
+''')
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr[-3000:]
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    margin = out["margin"]
+
+    # The complaint: the minimum scroll leaves nothing below the match.
+    assert out["minimum"]["below"] <= 1, out["minimum"]
+
+    # The fix: context on both sides.
+    assert out["margined"]["above"] >= margin, out["margined"]
+    assert out["margined"]["below"] >= margin, out["margined"]
+
+    # "Not scrolled if scrolling is impractical": the document ends.
+    assert out["near_top"]["above"] == 2, out["near_top"]
+    assert out["near_end"]["below"] >= 0, out["near_end"]
+
+    # A match already comfortably on screen leaves the view alone.
+    assert out["comfortable_moved"] is False
