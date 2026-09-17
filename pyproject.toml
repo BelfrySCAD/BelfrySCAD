@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "belfryscad"
-version = "1.33.0"
+version = "1.34.0"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -45,7 +45,7 @@ dev = [
 [tool.briefcase]
 project_name = "BelfrySCAD"
 bundle = "com.belfrydw"
-version = "1.33.0"
+version = "1.34.0"
 description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 author = "Revar Desmera"
 author_email = "revarbat@gmail.com"
@@ -106,3 +106,32 @@ use_full_install_path = false
 
 [tool.briefcase.app.belfryscad.linux.appimage]
 manylinux = "manylinux_2_28"
+
+[tool.briefcase.app.belfryscad.linux.flatpak]
+flatpak_runtime = "org.freedesktop.Platform"
+flatpak_runtime_version = "24.08"
+flatpak_sdk = "org.freedesktop.Sdk"
+
+# Briefcase's defaults are close but wrong in two places for this app.
+#
+# It grants xdg-documents/xdg-data/xdg-config/xdg-cache, which covers the
+# library folder (~/.local/share/OpenSCAD/libraries) but not a script that
+# says import("../parts/bracket.stl"). A path written in source was never
+# chosen in a file dialog, so no portal can authorise it -- the model simply
+# fails to render, pointing at a file the user can see in their terminal.
+finish_arg."filesystem=home" = true
+
+# And it forces XWayland (socket=x11 + nosocket=wayland). PySide6's Linux
+# wheel does ship libqwayland.so and libqt-plugin-wayland-egl.so, so the
+# native path exists; XWayland costs fractional-scale displays a blurry
+# upscale and weakens trackpad gesture delivery, both of which this app
+# cares about. fallback-x11 keeps X11-only systems working unchanged.
+#
+# moderngl attaches to Qt's own GL context here (viewport.py's
+# create_context() has no standalone=True), so EGL-under-Wayland needs no
+# code change; the GLX/EGL fallback in headless_render.py is the separate
+# standalone path.
+finish_arg."socket=wayland" = true
+finish_arg."socket=fallback-x11" = true
+finish_arg."nosocket=wayland" = false
+finish_arg."socket=x11" = false

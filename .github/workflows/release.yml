@@ -160,6 +160,83 @@ jobs:
           name: linux-x86_64
           path: dist/*.AppImage
 
+  build-flatpak:
+    # x86_64 only, for the same reason the AppImage is: moderngl and
+    # glcontext publish no aarch64 wheels, and the Flatpak build sandbox has
+    # no compiler to build them from source either.
+    #
+    # Unlike the AppImage job this needs no container and no pinned
+    # briefcase -- flatpak-builder runs on the stock runner, and the runtime
+    # fixes the glibc floor instead of inheriting the host's.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub \
+              https://flathub.org/repo/flathub.flatpakrepo
+
+      # Cached because the runtime and SDK together are well over a
+      # gigabyte, and they change only when the pinned version does.
+      - name: Cache the Flatpak runtime
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: flatpak-24.08-${{ runner.os }}
+
+      - name: Install the runtime and SDK
+        run: |
+          flatpak install --user --noninteractive flathub \
+              org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - run: uv sync --frozen --python 3.12
+
+      - name: Build the Flatpak
+        run: |
+          uv run --no-sync --python 3.12 briefcase create linux flatpak
+          uv run --no-sync --python 3.12 briefcase build linux flatpak
+
+      # The same lesson the AppImage job learned the hard way in #430: a
+      # build that succeeds proves nothing about a binary that starts. Run
+      # it, and then start Qt for real -- --version never loads a platform
+      # plugin, which is how a QApplication() segfault shipped four times
+      # with that job green.
+      #
+      # offscreen rather than xvfb: the point is to load Qt's plugin stack
+      # inside the sandbox, and offscreen does that without the Flatpak
+      # needing an X server handed in.
+      - name: Check the Flatpak runs
+        run: |
+          set -euo pipefail
+          flatpak run --user com.belfrydw.belfryscad --version
+
+          # --command, because the Flatpak's own command is the app: without
+          # it the -c would be handed to BelfrySCAD as an argument instead of
+          # to Python. Paths are the ones the briefcase template installs to.
+          flatpak run --user \
+              --command=/app/bin/python3 \
+              --env=QT_QPA_PLATFORM=offscreen \
+              --env=PYTHONPATH=/app/briefcase/app:/app/briefcase/app_packages \
+              com.belfrydw.belfryscad \
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
+
+      - name: Package the Flatpak
+        run: uv run --no-sync --python 3.12 briefcase package linux flatpak
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: linux-flatpak-x86_64
+          path: dist/*.flatpak
+
   build-pypi:
     # Pure Python -- one sdist and one py3-none-any wheel, so no matrix.
     # Runs on workflow_dispatch as well, to prove the sdist/wheel still
@@ -245,7 +322,7 @@ jobs:
           packages-dir: dist
 
   release:
-    needs: [build-windows, build-linux, build-pypi]
+    needs: [build-windows, build-linux, build-flatpak, build-pypi]
     # Only a tag publishes. A workflow_dispatch run exists to prove the
     # builds still work, and must not create a release.
     if: startsWith(github.ref, 'refs/tags/')
