@@ -76,7 +76,7 @@ jobs:
           ls dist/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
           path: dist/*.msi
@@ -199,7 +199,7 @@ jobs:
         run: uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: dist/*.AppImage
@@ -230,7 +230,7 @@ jobs:
       # Cached because the runtime and SDK together are well over a
       # gigabyte, and they change only when the pinned version does.
       - name: Cache the Flatpak runtime
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/flatpak
           key: flatpak-24.08-${{ matrix.arch }}
@@ -304,7 +304,7 @@ jobs:
         run: uv run --no-sync --python 3.12 briefcase package linux flatpak
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: linux-flatpak-${{ matrix.arch }}
           path: dist/*.flatpak
@@ -325,7 +325,7 @@ jobs:
       - run: uv build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pypi-dist
           path: dist/*
@@ -353,7 +353,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: pypi-dist
           path: dist
@@ -383,7 +383,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: pypi-dist
           path: dist
@@ -400,13 +400,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
