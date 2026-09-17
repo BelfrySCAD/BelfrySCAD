@@ -1897,13 +1897,9 @@ class CodeEditor(QPlainTextEdit):
         current indentation (so reformatting a nested block doesn't yank it
         out to column 0).
 
-        `profile_name` picks how freely lines may be broken (#466); without
-        one, whatever the user set as their usual."""
+        `profile_name` picks how freely lines may be broken (#466)."""
         from belfryscad.window.scad_format import (DEFAULT_PROFILE, PROFILES,
                                                    format_scad)
-        if profile_name is None:
-            from belfryscad.window.preferences import load_preference
-            profile_name = load_preference("editor/formatProfile")
         profile = PROFILES.get(profile_name) or PROFILES[DEFAULT_PROFILE]
         block = self.document().findBlock(start)
         prefix = block.text()[:start - block.position()]
@@ -2651,16 +2647,10 @@ class CodeEditor(QPlainTextEdit):
                 from belfryscad.window.scad_format import PROFILES
                 menu.addSeparator()
                 _s, _e = sel_cursor.selectionStart(), sel_cursor.selectionEnd()
-                act = QAction("Reformat Selection", self)
-                act.triggered.connect(
-                    lambda checked=False, s=_s, e=_e, t=selected_text:
-                        self._reformat_selection(s, e, t)
-                )
-                menu.addAction(act)
-                # The plain item above uses whatever profile the user set as
-                # their usual; the submenu is for reaching for a different
-                # one this once, without a trip to Preferences (#466).
-                as_menu = menu.addMenu("Reformat Selection As")
+                # One submenu, not a plain item beside it: the plain item ran
+                # whichever profile a preference named, so the menu offered
+                # the same reformat twice under two names (#502).
+                as_menu = menu.addMenu("Reformat Selection")
                 for _name in PROFILES:
                     _a = as_menu.addAction(_name)
                     _a.triggered.connect(
