@@ -87,6 +87,60 @@ jobs:
           name: windows-${{ matrix.arch }}
           path: dist/*.msi
 
+  probe-windows-vs2026:
+    # PROBE, dispatch-only, outside release.needs.
+    #
+    # windows-11-arm migrates to Visual Studio 2026 by default over the week
+    # beginning 2026-09-21 (actions/runner-images#14602). The three wheels we
+    # build from sdist are the only things this project compiles, so a
+    # toolset change surfaces there first and nowhere else.
+    #
+    # windows-11-vs2026-arm is the label that image is already available
+    # under, so the migration can be tested before it happens rather than
+    # discovered by a red release.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-11-vs2026-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Show the toolchain
+        run: |
+          python -c "import platform; print('machine:', platform.machine()); print('compiler:', platform.python_compiler())"
+          if (Test-Path "C:\Program Files\Microsoft Visual Studio") { Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Name }
+
+      - run: uv sync --frozen --python 3.12
+
+      - name: Build the wheels that are not published for ARM64
+        run: |
+          uv run --python 3.12 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
+
+      - name: Build Windows installer
+        env:
+          PIP_FIND_LINKS: ${{ github.workspace }}\wheelhouse
+        run: |
+          uv run --python 3.12 briefcase create windows app
+          uv run --python 3.12 briefcase build windows app
+          uv run --python 3.12 briefcase package windows app
+
+      - name: Name the installer for its architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          MSI="$(ls dist/*.msi)"
+          mv "$MSI" "${MSI%.msi}-arm64-vs2026.msi"
+          ls dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-vs2026
+          path: dist/*.msi
+
   build-linux:
     # x86_64 only. An aarch64 AppImage was tried and does not work:
     #
