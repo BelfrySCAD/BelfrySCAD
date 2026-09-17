@@ -90,6 +90,12 @@ caret was the clicked line on one platform and an unrelated line on the other
 while looking correct here. The literal menus already did this; the newer
 items did not, and the inconsistency was the bug.
 
+**A read-only buffer says so**, as a disabled `Read Only Buffer` item where
+the missing entries would have been. Read-only loses Use Library…, Reflow
+Comment…, Reformat Selection and Edit as… all at once, and nothing said why —
+a file in the libraries folder opens read-only, so that is the menu a library
+developer sees all day.
+
 A selection counts only when the click falls **inside** it
 (`in_selection`). Otherwise the menu treats the click as a plain caret
 position, so right-clicking elsewhere no longer offers to reformat a span

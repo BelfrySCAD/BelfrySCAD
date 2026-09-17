@@ -2606,6 +2606,14 @@ class CodeEditor(QPlainTextEdit):
 
         menu = self.createStandardContextMenu()
 
+        # A read-only buffer silently loses half this menu -- Use Library,
+        # Reflow Comment, Reformat Selection, Edit as... -- and nothing says
+        # why. Say so, where the missing items would have been.
+        if self.isReadOnly():
+            menu.addSeparator()
+            _ro = menu.addAction("Read Only Buffer")
+            _ro.setEnabled(False)
+
         # Near the top, and not conditional on what is under the cursor:
         # everything below this point comes and goes with the word clicked,
         # so an item added at the end would sit in a different place each
