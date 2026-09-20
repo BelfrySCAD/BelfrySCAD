@@ -375,7 +375,10 @@ class _RenderCallback(QObject):
         if self._render_id == self._mw._render_id:
             self._file_tab.root_scope = root_scope
             self._file_tab._last_parse_path = parse_path
-            self._file_tab.editor.update_user_names(root_scope)
+            # parse_path too: the argument hint reads a declaration back
+            # off disk, and code in THIS buffer was parsed from a temp copy,
+            # so it has to know which origin means "read the live text".
+            self._file_tab.editor.update_user_names(root_scope, parse_path)
 
     @Slot(object, object, float, object, object, object, object, object)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,

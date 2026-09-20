@@ -3,7 +3,7 @@ import re
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
-    QMenu, QCompleter, QApplication, QMessageBox, QStyle,
+    QMenu, QCompleter, QApplication, QMessageBox, QStyle, QToolTip,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
@@ -1854,6 +1854,10 @@ class CodeEditor(QPlainTextEdit):
             self._update_completer_popup()
         elif self._completer.popup().isVisible():
             self._completer.popup().hide()
+        if text == '(':
+            self.show_argument_hint()
+        elif text == ')':
+            QToolTip.hideText()
 
     def replace_span(self, start: int, end: int, new_text: str):
         """Replace document text in [start, end) with new_text. Native Qt
@@ -2244,8 +2248,15 @@ class CodeEditor(QPlainTextEdit):
         words = sorted(set(self._BUILTIN_WORDS + self._user_names))
         self._completer_model.setStringList(words)
 
-    def update_user_names(self, scope):
-        """Extract user-defined names from a root scope and refresh the completer."""
+    def update_user_names(self, scope, parse_path: str | None = None):
+        """Extract user-defined names from a root scope and refresh the completer.
+
+        The scope is kept as well as mined: the argument hint (#517) needs
+        it to find where a name was declared, since the completer's flat
+        word list cannot say what a callable's parameters are.
+        """
+        self._scope = scope
+        self._scope_parse_path = parse_path
         if scope is None:
             self._user_names = []
             self._user_callables = set()
@@ -2269,6 +2280,39 @@ class CodeEditor(QPlainTextEdit):
         is_variable = name in self._user_variables
         return is_callable and not is_variable
 
+    def _word_before(self, pos_in_block: int, block_text: str) -> str:
+        """The identifier ending at `pos_in_block`, ignoring spaces between
+        it and the cursor -- `cuboid (` is as valid a call as `cuboid(`."""
+        i = pos_in_block
+        while i > 0 and block_text[i - 1].isspace():
+            i -= 1
+        end = i
+        while i > 0 and (block_text[i - 1].isalnum() or block_text[i - 1] == '_'):
+            i -= 1
+        return block_text[i:end]
+
+    def show_argument_hint(self):
+        """Tooltip the signature of the call just opened, if it is known.
+
+        The feature request that prompted this (#517) valued it above
+        completion itself: "to save me from having to view documentation on
+        syntax", especially for long argument lists like `text()`. Silent
+        when the name is unknown -- a tooltip that says "no idea" on every
+        stray paren would be worse than none.
+        """
+        from belfryscad.window.signatures import signature_for
+
+        cursor = self.textCursor()
+        name = self._word_before(cursor.positionInBlock() - 1, cursor.block().text())
+        if not name:
+            return
+        sig = signature_for(name, getattr(self, "_scope", None),
+                            live_text=self.toPlainText(),
+                            live_origin=getattr(self, "_scope_parse_path", None))
+        if not sig:
+            return
+        QToolTip.showText(self.mapToGlobal(self.cursorRect().bottomLeft()), sig, self)
+
     def _text_under_cursor(self) -> str:
         cursor = self.textCursor()
         block_text = cursor.block().text()
@@ -2284,10 +2328,16 @@ class CodeEditor(QPlainTextEdit):
         prefix = self._text_under_cursor()
         cursor = self.textCursor()
         cursor.movePosition(cursor.MoveOperation.Left, cursor.MoveMode.KeepAnchor, len(prefix))
-        if self._is_callable_completion(completion):
+        opened = self._is_callable_completion(completion)
+        if opened:
             completion += "("
         cursor.insertText(completion)
         self.setTextCursor(cursor)
+        # Accepting a completion types the '(' for you, so it should hint
+        # exactly as typing it by hand does -- otherwise the faster path is
+        # the one that tells you less.
+        if opened:
+            self.show_argument_hint()
 
     def _update_completer_popup(self):
         prefix = self._text_under_cursor()
