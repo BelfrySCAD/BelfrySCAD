@@ -2198,6 +2198,46 @@ class CodeEditor(QPlainTextEdit):
         _BUILTIN_KEYWORDS | _BUILTIN_MODULES | _BUILTIN_FUNCTIONS
         | _BUILTIN_CONSTANTS | _BUILTIN_DOLLAR_VARS
     )
+
+    #: The whole language reference on one Wikibooks page, so a single URL
+    #: plus `#name` reaches almost every builtin's own section -- no
+    #: per-builtin page table to write or keep correct. A name with no
+    #: matching heading (the type-test functions have none of their own)
+    #: simply lands at the top of the right page, which is still an answer
+    #: rather than "no definition found". See issue #525.
+    OPENSCAD_MANUAL_URL = (
+        "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/The_OpenSCAD_Language"
+    )
+
+    @classmethod
+    def builtin_kind(cls, word: str) -> str | None:
+        """What kind of builtin `word` is, or None if it is not one.
+
+        The sets already exist for syntax highlighting, so "is this a
+        builtin?" is a question the editor could always answer -- Go to
+        Definition just never asked it, and reported a builtin as having no
+        definition at all."""
+        if word in cls._BUILTIN_MODULES:
+            return "module"
+        if word in cls._BUILTIN_FUNCTIONS:
+            return "function"
+        if word in cls._BUILTIN_KEYWORDS:
+            return "keyword"
+        if word in cls._BUILTIN_CONSTANTS:
+            return "constant"
+        if word in cls._BUILTIN_DOLLAR_VARS:
+            return "special variable"
+        return None
+
+    @classmethod
+    def openscad_manual_url(cls, word: str) -> str:
+        """Manual URL for a builtin. `$`-names get the page without an
+        anchor: Wikibooks mangles `$` in heading ids, and they are
+        documented in prose under a shared section rather than one each."""
+        if word.startswith("$"):
+            return cls.OPENSCAD_MANUAL_URL
+        return f"{cls.OPENSCAD_MANUAL_URL}#{word}"
+
     _BUILTIN_CALLABLES = _BUILTIN_MODULES | _BUILTIN_FUNCTIONS
 
     def _update_completer_words(self):
@@ -2715,17 +2755,30 @@ class CodeEditor(QPlainTextEdit):
 
         if is_identifier:
             menu.addSeparator()
-            act = QAction(f"Go to Definition of '{word}'", self)
-            act.triggered.connect(
-                lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
-            )
-            menu.addAction(act)
+            kind = self.builtin_kind(word)
+            if kind is not None:
+                # A builtin has no .scad definition anywhere, so offering
+                # "Go to Definition" for one promises a jump that cannot
+                # happen. Name what it is and point at the manual instead.
+                act = QAction(f"OpenSCAD Manual for {kind} '{word}'\u2026", self)
+                act.triggered.connect(
+                    lambda checked=False, w=word:
+                        QDesktopServices.openUrl(QUrl(self.openscad_manual_url(w)))
+                )
+                menu.addAction(act)
+            else:
+                act = QAction(f"Go to Definition of '{word}'", self)
+                act.triggered.connect(
+                    lambda checked=False, w=word: self.go_to_definition_requested.emit(w)
+                )
+                menu.addAction(act)
 
             # Only worth offering where BOSL2 names are what is under the
             # cursor -- in a plain OpenSCAD script every identifier would
-            # get a menu item that leads nowhere.
-            if re.search(r'^\s*(?:include|use)\s*<\s*BOSL2/',
-                         self.toPlainText(), re.M):
+            # get a menu item that leads nowhere. Builtins are excluded for
+            # the same reason: BOSL2 will never document cube() or is_num().
+            if kind is None and re.search(r'^\s*(?:include|use)\s*<\s*BOSL2/',
+                                          self.toPlainText(), re.M):
                 doc_act = QAction(f"BOSL2 Documentation for '{word}'…", self)
                 doc_act.triggered.connect(
                     lambda checked=False, w=word: self._open_bosl2_docs(w)
