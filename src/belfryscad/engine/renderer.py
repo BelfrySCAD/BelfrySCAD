@@ -384,6 +384,13 @@ class Camera:
 
     DEFAULT_FOV = 22.5
 
+    #: Fraction of the viewport left empty on EACH side by the projection
+    #: fit (`_frame_bounds_projected`), so a fitted model has some air
+    #: around it instead of touching the edge. Only that fit reads it --
+    #: the bounding-sphere path keeps exact `radius/sin(fov/2)` reference
+    #: parity, because every docsgen image depends on that distance.
+    FIT_MARGIN = 0.10
+
     def __init__(self):
         self.azimuth = 295.0
         self.elevation = 35.0
@@ -604,8 +611,16 @@ class Camera:
         left_eye  = _look_at(eye - right_vec * half, self.target, up)
         return right_eye, left_eye  # left panel = right eye (cross-eye)
 
-    def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray):
+    def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray,
+                      aspect: float | None = None):
         """Fit the bounding sphere, the way the reference's own viewAll does.
+
+        With `aspect` (viewport width/height) given, fits the model's
+        PROJECTION in the current orientation instead -- see
+        `_frame_bounds_projected`. Without it, the bounding-sphere fit
+        below, which is what `--viewall` and every docsgen image must keep
+        using: its distance is deliberately identical to OpenSCAD's and was
+        measured against it.
 
         `radius / sin(fov/2)` is the exact distance at which a sphere of that
         radius fills the view cone -- no fudge factor needed, and `sin` is
@@ -621,9 +636,89 @@ class Camera:
         the line above, exactly as its `autocenter` branch does.
         """
         center = (bb_min + bb_max) / 2
-        radius = np.linalg.norm(bb_max - bb_min) / 2
         self.target = center.astype(np.float32)
+        if aspect is not None and aspect > 0:
+            self._frame_bounds_projected(bb_min, bb_max, aspect)
+            return
+        radius = np.linalg.norm(bb_max - bb_min) / 2
         self.distance = max(radius / math.sin(math.radians(self.fov / 2)), 1.0)
+
+    def _frame_bounds_projected(self, bb_min: np.ndarray, bb_max: np.ndarray,
+                                 aspect: float) -> None:
+        """Fit what the model actually covers on screen right now.
+
+        The bounding-sphere fit is orientation-independent by construction:
+        it uses the bbox DIAGONAL, so it frames the model as if it might be
+        rotated to any angle. For a compact model that is barely different
+        from fitting the projection, which is why it went unnoticed. For a
+        high-aspect-ratio one it is badly wrong -- `cube([2,2,200])` viewed
+        down Z is a 2x2 square, and the sphere fit backs off to distance
+        ~513 to accommodate a 200-long axis pointing straight at the eye.
+        The thing you are looking at ends up a speck (issue #518).
+
+        Here each bbox corner is projected onto the camera basis and asked
+        what distance it needs to stay inside the frustum, and the largest
+        answer wins. `fov` is VERTICAL (see projection_matrix ->
+        _perspective), so the horizontal half-angle is `aspect` times the
+        vertical tangent. `FIT_MARGIN` of the viewport is kept clear on each
+        side, so the model has air around it rather than touching the edge.
+
+        Deliberately a departure from OpenSCAD, whose View All behaves like
+        the sphere fit. The reporter noticed and said so; this is the
+        divergence they asked for. `--viewall` and docsgen do NOT come
+        through here -- they call frame_bounds with no aspect and keep exact
+        reference parity, because every published example image depends on
+        that distance.
+        """
+        center = ((bb_min + bb_max) / 2).astype(np.float64)
+        # Basis from the CURRENT orientation. Direction depends only on
+        # azimuth/elevation/roll, never on distance, so it is safe to read
+        # before distance is solved for.
+        eye = self.eye_position().astype(np.float64)
+        fwd = eye - center                      # camera-ward, so +z is toward the eye
+        norm = np.linalg.norm(fwd)
+        if norm < 1e-9:
+            fwd = np.array([1.0, 0.0, 0.0])
+        else:
+            fwd = fwd / norm
+        up_world = self._rolled_up(-fwd).astype(np.float64)
+        right = np.cross(-fwd, up_world)
+        rnorm = np.linalg.norm(right)
+        if rnorm < 1e-9:
+            # Looking straight along world up: any perpendicular will do.
+            right = np.array([1.0, 0.0, 0.0])
+        else:
+            right = right / rnorm
+        up = np.cross(right, -fwd)
+
+        # Shrink the frustum by the margin rather than scaling the answer
+        # afterwards: in perspective the depth term below is an absolute
+        # offset along the view axis, so multiplying the final distance
+        # would pad the depth too and overshoot for a deep model.
+        usable = 1.0 - 2.0 * self.FIT_MARGIN
+        tan_v = math.tan(math.radians(self.fov / 2)) * usable
+        tan_h = tan_v * aspect
+        if tan_v <= 0 or tan_h <= 0:
+            return
+        need = 1.0
+        for cx in (bb_min[0], bb_max[0]):
+            for cy in (bb_min[1], bb_max[1]):
+                for cz in (bb_min[2], bb_max[2]):
+                    d = np.array([cx, cy, cz], dtype=np.float64) - center
+                    x, y = float(np.dot(d, right)), float(np.dot(d, up))
+                    # Toward the eye is positive, so a corner nearer the
+                    # camera needs MORE distance to stay in frame.
+                    toward = float(np.dot(d, fwd))
+                    if self.orthographic:
+                        # No perspective divide: the ortho half-height is
+                        # distance * tan(fov/2) flat (projection_matrix),
+                        # so depth does not enter.
+                        need = max(need, abs(y) / tan_v, abs(x) / tan_h)
+                    else:
+                        need = max(need,
+                                   abs(y) / tan_v + toward,
+                                   abs(x) / tan_h + toward)
+        self.distance = max(need, 1.0)
 
 
 def _axis_extent(camera: Camera) -> float:
