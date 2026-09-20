@@ -3,9 +3,10 @@ from PySide6.QtWidgets import (
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
 )
-from PySide6.QtGui import (QAction, QCursor, QKeySequence, QFont, QIcon, QShortcut,
-                           QUndoCommand, QTextCursor)
-from PySide6.QtCore import Qt, QSize, QSettings, QThread, QObject, QTimer, Signal, Slot
+from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFont,
+                           QIcon, QShortcut, QUndoCommand, QTextCursor)
+from PySide6.QtCore import (Qt, QSize, QSettings, QThread, QObject, QTimer, QUrl,
+                            Signal, Slot)
 from belfryscad.settings import app_settings
 import os
 import threading
@@ -3086,10 +3087,34 @@ class MainWindow(QMainWindow):
         if tab:
             tab.editor.show_find(replace=True)
 
+    def _definition_miss(self, message: str):
+        """Report a Go to Definition miss somewhere the user will actually
+        see it. It used to go only to the console, which is closable and
+        closed by default for many people -- indistinguishable from a menu
+        item that does nothing, which is exactly how issue #525 was
+        reported."""
+        self.log(message)
+        self.statusBar().showMessage(message, 6000)
+
     def _go_to_definition(self, tab, word: str):
+        # A builtin has no .scad definition to jump to, and saying "no
+        # definition found" about cube() or is_num() reads as a broken
+        # feature rather than as an answer (issue #525). The editor's
+        # context menu offers the manual directly for these, but the same
+        # name can arrive here from a keyboard shortcut or an older menu,
+        # so answer it here too rather than relying on the caller.
+        kind = CodeEditor.builtin_kind(word)
+        if kind is not None:
+            url = CodeEditor.openscad_manual_url(word)
+            self.log(f"Go to Definition: '{word}' is an OpenSCAD builtin "
+                     f"{kind} -- opening the language reference.")
+            QDesktopServices.openUrl(QUrl(url))
+            return
+
         scope = getattr(tab, 'root_scope', None)
         if scope is None:
-            self.log(f"Go to Definition: no AST available (render or debug first)")
+            self._definition_miss(f"Go to Definition: no AST available for "
+                                  f"'{word}' -- render or debug first.")
             return
 
         node = (scope.lookup_variable(word)
@@ -3097,7 +3122,9 @@ class MainWindow(QMainWindow):
                 or scope.lookup_module(word))
 
         if node is None:
-            self.log(f"Go to Definition: no definition found for '{word}'")
+            self._definition_miss(
+                f"Go to Definition: nothing named '{word}' is defined in this "
+                f"script or anything it includes.")
             return
 
         pos = node.position
