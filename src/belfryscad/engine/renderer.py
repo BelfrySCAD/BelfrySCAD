@@ -110,16 +110,19 @@ void main() {
     // path.)
     gl_FragDepth = gl_FragCoord.z + (gl_FrontFacing ? 0.0 : 0.000002);
     vec3 n = normalize(v_normal);
-    if (!gl_FrontFacing) {
-        // Magenta means "you are seeing inside a solid, which is a bug" --
-        // except under the torch, where it is exactly what was asked for.
-        // Under either beam, a visible backface is the point, not a bug.
-        if (!flat_preview && beam_pass != 2) {
-            fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-            return;
-        }
-        n = -n;
-    }
+    // Magenta means "you are seeing inside a solid, which is a bug" --
+    // except under the torch, where it is exactly what was asked for.
+    // Under either beam, a visible backface is the point, not a bug.
+    bool inverted = !gl_FrontFacing && !flat_preview && beam_pass != 2;
+    // Flip on EVERY backface, inverted or not. The interpolated normal
+    // points away from the viewer there, so leaving it alone lights the
+    // surface as if from behind and the magenta comes out flat -- which is
+    // what it used to do, by returning a constant before the lighting ran.
+    // Shading it is what makes the shape of the hole readable, and it is
+    // what the reference does too: OpenSCAD draws its backface pass as
+    // ordinary lit geometry with the colour overridden
+    // (ThrownTogetherRenderer.cc:218), not as an unlit constant.
+    if (!gl_FrontFacing) n = -n;
     vec3 L = normalize(light_dir);
     float diff_key  = max(dot(n, L), 0.0);
     float diff_fill = max(dot(n, normalize(-light_dir * vec3(1.0, 1.0, 0.3))), 0.0);
@@ -127,7 +130,7 @@ void main() {
     // this multiply is a no-op there; multi-color CSG-merge bodies (see
     // ColoredBody.tri_colors) bake their real per-triangle color into
     // in_vcolor and use a neutral (1,1,1,1) object_color instead.
-    vec3 col = object_color.rgb * v_vcolor.rgb;
+    vec3 col = inverted ? vec3(1.0, 0.0, 1.0) : object_color.rgb * v_vcolor.rgb;
     vec3 lit = 0.35 * col
              + 0.50 * diff_key  * col
              + 0.20 * diff_fill * col;
@@ -147,7 +150,9 @@ void main() {
 
     if (beam_pass == 2) lit *= beam_dim;
 
-    float alpha = object_color.a * v_vcolor.a;
+    // The inverted-normal cue stays opaque whatever the object's own alpha
+    // is: it is a warning, and a warning you can see through is not one.
+    float alpha = inverted ? 1.0 : object_color.a * v_vcolor.a;
     if (beam_pass == 2) {
         // Ramps back to alpha 1.0 at the rim, which is what makes the hole
         // the opaque pass cut invisible: the same surface is redrawn there
