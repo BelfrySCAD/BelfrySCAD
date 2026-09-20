@@ -13,9 +13,13 @@ blocks.py import this unchanged.
 
 Two deliberate differences from upstream, both invisible in the output:
 
-  * `ThrownTogether` and `Render` render the same as `preview` -- the
-    evaluator always performs full CSG, so there is no cheaper preview mode
-    to select between.
+  * `Render` renders the same as `preview` -- the evaluator always performs
+    full CSG, so there is no cheaper preview mode to select between.
+    `ThrownTogether` is NOT in that category and is honoured: it is not a
+    cheaper preview but a different picture, one that exposes face
+    backsides in magenta so an example can show that a surface is open or a
+    mesh non-manifold. It was lumped in with `Render` here once, which made
+    the flag a silent no-op (#524).
   * `enabled_features` (OpenSCAD's `--enable=`) is ignored. Every feature
     docsgen would enable is either standard in this evaluator or one of its
     own documented extensions, so there is nothing to switch on.
@@ -103,6 +107,10 @@ class ImageRequest:
         # set $preview -- and only `--render ""` for Render, which clears
         # it. Verified against OpenSCAD 2026.02.01 for all three.
         self.preview = "Render" not in image_meta
+        # Substring, so the `ThrownTogether=true` spelling BOSL2 uses in
+        # places (vnf.scad's vnf_halfspace example) is caught as well as the
+        # bare flag.
+        self.thrown_together = "ThrownTogether" in image_meta
         self.show_edges = "Edges" in image_meta
         self.show_axes = "NoAxes" not in image_meta
         self.show_scales = "NoScales" not in image_meta
@@ -386,7 +394,8 @@ class ImageManager:
                 imgsize="{},{}".format(*req.imgsize),
                 camera=camera, autocenter=no_vp, viewall=no_vp,
                 projection="o" if req.orthographic else "p",
-                view=",".join(view), colorscheme=req.color_scheme)
+                view=",".join(view), colorscheme=req.color_scheme,
+                thrown_together=req.thrown_together)
         except ValueError as e:
             errorlog.add_entry(req.src_file, req.src_line, str(e), ErrorLog.FAIL)
             return None

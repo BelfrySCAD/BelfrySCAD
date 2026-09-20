@@ -162,7 +162,12 @@ class _RenderOptions:
     render_png_animation so option parsing/validation happens once
     regardless of frame count."""
 
-    def __init__(self, imgsize, camera, autocenter, viewall, projection, view, colorscheme):
+    def __init__(self, imgsize, camera, autocenter, viewall, projection, view, colorscheme,
+                 thrown_together=False):
+        # OpenSCAD's --preview=throwntogether. NOT a cheaper preview: it is
+        # a different picture, drawn to expose face backsides and so reveal
+        # non-manifold geometry. See apply_view_options. (#524)
+        self.thrown_together = bool(thrown_together)
         self.w, self.h = _parse_imgsize(imgsize)
         self.ortho = _parse_projection(projection) if projection is not None else False
         self.view_opts = _parse_view(view) if view is not None else set()
@@ -229,7 +234,15 @@ def apply_view_options(renderer, opts: _RenderOptions):
     # Match OpenSCAD's preview, which is what a docs build asks for: an open
     # surface is lit with the object colour, not flagged magenta. See
     # SceneRenderer.light_backfaces.
-    renderer.light_backfaces = True
+    #
+    # Except under ThrownTogether, where showing those backsides IS the
+    # point -- it is how a doc example demonstrates that a surface is open
+    # or a mesh non-manifold. Verified against OpenSCAD 2026.02.01 on
+    # BOSL2's own gyroid example: `--preview ""` renders it entirely in the
+    # object colour, `--preview throwntogether` renders the backfaces
+    # magenta. Ours matched the first in both cases, which is the bug
+    # (#524).
+    renderer.light_backfaces = not getattr(opts, "thrown_together", False)
     renderer.camera.orthographic = opts.ortho
     renderer.show_axes = "axes" in opts.view_opts
     renderer.show_crosshairs = "crosshairs" in opts.view_opts
