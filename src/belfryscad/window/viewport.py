@@ -639,7 +639,7 @@ class Viewport(QOpenGLWidget):
         # on-screen (see Camera.pan_to_keep_visible, called separately by
         # the vertex-move handlers in data_viewers.py).
         if reframe:
-            self._renderer.camera.frame_bounds(bb_min, bb_max)
+            self._renderer.camera.frame_bounds(bb_min, bb_max, self._fit_aspect())
         if self._measurements:
             self._refresh_measure_labels()
         self.camera_changed.emit()
@@ -1014,6 +1014,13 @@ class Viewport(QOpenGLWidget):
         self._view_anim = anim
         anim.start()
 
+    def _fit_aspect(self) -> float | None:
+        """Viewport width/height for Camera.frame_bounds, or None when the
+        widget has no size yet (first load, before the first resize) -- in
+        which case the bounding-sphere fit is the right fallback."""
+        w, h = self.width(), self.height()
+        return (w / h) if (w > 0 and h > 0) else None
+
     def _frame_all(self, cam):
         # Prefer the bounds cached by the last frame_scene() call (always
         # available for data viewers, whose line/point-only geometry has no
@@ -1021,7 +1028,7 @@ class Viewport(QOpenGLWidget):
         # from mesh buffers (today's main-window behavior, still needed for
         # the very first load before frame_scene has ever been called).
         if self._last_bb_min is not None and self._last_bb_max is not None:
-            cam.frame_bounds(self._last_bb_min, self._last_bb_max)
+            cam.frame_bounds(self._last_bb_min, self._last_bb_max, self._fit_aspect())
             return
         buffers = self._renderer._buffers
         if not buffers:
@@ -1032,7 +1039,7 @@ class Viewport(QOpenGLWidget):
         ], axis=0)
         bb_min = all_verts.min(axis=0)
         bb_max = all_verts.max(axis=0)
-        cam.frame_bounds(bb_min, bb_max)
+        cam.frame_bounds(bb_min, bb_max, self._fit_aspect())
 
     def zoom(self, direction: int):
         """Zoom by one step -- the View menu's Zoom In/Out and their

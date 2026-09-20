@@ -9,6 +9,7 @@ the Path/Region editors' right-click-on-a-line "Add Vertex" feature.
 """
 import math
 import numpy as np
+import pytest
 from pytest import approx
 
 from belfryscad.engine.renderer import (
@@ -644,3 +645,74 @@ class TestAxisSpans:
 
     def test_a_degenerate_axis_draws_nothing(self):
         assert _axis_spans(0.0, 10.0) == []
+
+
+# --- #518: View All fits the projection, not the bounding sphere ----------
+
+def _fits(cam, bb_min, bb_max, aspect):
+    """Largest |NDC| any bbox corner reaches. <= 1 means fully on screen."""
+    import itertools
+    mvp = cam.projection_matrix(aspect) @ cam.view_matrix()
+    worst = 0.0
+    for c in itertools.product(*zip(bb_min, bb_max)):
+        v = mvp @ np.array([*c, 1.0], dtype=np.float32)
+        assert abs(v[3]) > 1e-9
+        worst = max(worst, abs(v[0] / v[3]), abs(v[1] / v[3]))
+    return worst
+
+
+def test_framing_without_an_aspect_keeps_reference_parity():
+    """--viewall and every docsgen image depend on this exact distance --
+    radius/sin(fov/2), measured against OpenSCAD. Passing no aspect must
+    still take that path untouched."""
+    from belfryscad.engine.renderer import Camera
+    lo, hi = np.array([-1.0, -1.0, -100.0]), np.array([1.0, 1.0, 100.0])
+    cam = Camera()
+    cam.frame_bounds(lo, hi)
+    expected = np.linalg.norm(hi - lo) / 2 / math.sin(math.radians(cam.fov / 2))
+    assert cam.distance == pytest.approx(expected)
+
+
+def test_framing_with_an_aspect_fits_the_projection():
+    """The reporter's case: a 2x2x200 column seen down Z is a 2x2 square,
+    and the sphere fit backs off far enough to swing the 200 axis through
+    the view. Fitting the projection should come in dramatically closer --
+    and still show all of it."""
+    from belfryscad.engine.renderer import Camera
+    lo, hi = np.array([-1.0, -1.0, -100.0]), np.array([1.0, 1.0, 100.0])
+    aspect = 700 / 560
+
+    sphere = Camera(); sphere.azimuth, sphere.elevation = 0.0, 90.0
+    sphere.frame_bounds(lo, hi)
+
+    fitted = Camera(); fitted.azimuth, fitted.elevation = 0.0, 90.0
+    fitted.frame_bounds(lo, hi, aspect)
+
+    assert fitted.distance < sphere.distance / 4
+    assert _fits(sphere, lo, hi, aspect) < 0.05   # a speck, which is the bug
+    # Fills the viewport bar FIT_MARGIN on each side.
+    assert _fits(fitted, lo, hi, aspect) == pytest.approx(
+        1.0 - 2 * Camera.FIT_MARGIN, abs=1e-3)
+
+
+@pytest.mark.parametrize("az,el", [(295, 35), (0, 90), (0, 0), (45, 20), (0, -90), (137, -62)])
+@pytest.mark.parametrize("ortho", [False, True])
+@pytest.mark.parametrize("bb", [
+    ([-1.0, -1.0, -100.0], [1.0, 1.0, 100.0]),     # tall column
+    ([-10.0, -10.0, -10.0], [10.0, 10.0, 10.0]),   # compact
+    ([-100.0, -100.0, -1.0], [100.0, 100.0, 1.0]), # flat plate
+])
+def test_the_projection_fit_never_clips(az, el, ortho, bb):
+    """Tighter is only right if nothing falls off the edge. Every corner
+    must land inside the frustum, in both projections, at any orientation."""
+    from belfryscad.engine.renderer import Camera
+    lo, hi = np.array(bb[0]), np.array(bb[1])
+    aspect = 700 / 560
+    cam = Camera()
+    cam.azimuth, cam.elevation, cam.orthographic = az, el, ortho
+    cam.frame_bounds(lo, hi, aspect)
+    fill = _fits(cam, lo, hi, aspect)
+    assert fill <= 1.0 - 2 * Camera.FIT_MARGIN + 1e-3, "nothing may clip"
+    # And it is a FIT, not just a safe distance: the binding dimension
+    # should actually reach the margin rather than stopping short.
+    assert fill == pytest.approx(1.0 - 2 * Camera.FIT_MARGIN, abs=1e-3)

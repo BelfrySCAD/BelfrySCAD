@@ -58,6 +58,11 @@ out["after_rerender"] = cam()
 # View All must still have bounds to work from.
 w._viewport._frame_all(w._viewport._renderer.camera)
 out["after_view_all"] = cam()
+
+# Framing now fits the model's PROJECTION, so it reads the viewport's
+# shape -- which makes "is it deterministic?" the question worth asking.
+w._viewport._frame_all(w._viewport._renderer.camera)
+out["after_view_all_again"] = cam()
 w.close()
 print(json.dumps(out))
 '''
@@ -93,5 +98,13 @@ def test_view_all_still_works_after_an_unframed_render(tmp_path):
     out = _run(tmp_path)
 
     assert out["after_view_all"] != out["posed"], "View All reframes"
-    assert out["after_view_all"] == out["after_open"], \
-        "and lands where opening the file did -- same model, same bounds"
+    assert out["after_view_all"][1] == [0.0, 0.0, 0.0], \
+        "and recentres on the model"
+    # Deliberately NOT "lands where opening the file did". Since #518 the
+    # fit is of the model's projection, so it depends on the viewport's
+    # aspect -- and the viewport is still being laid out when the
+    # open-triggered render completes (measured: 1.067 there against 0.856
+    # once settled). Two correct answers to two different questions. What
+    # must hold is that the same request at the same size is repeatable.
+    assert out["after_view_all_again"] == out["after_view_all"], \
+        "View All is deterministic at a given viewport size"
