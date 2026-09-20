@@ -86,9 +86,22 @@ is a commitment to build it — it is the list of what is not there.
 - **Viewport Control dock** (`ViewportControl`) — numeric camera entry
   (eye, centre, rotation, FOV) instead of dragging.
 - **Color List dock** (`ColorList`) — browsable list of OpenSCAD's named colours.
-- **Editor autocompletion** (`ScadApi`) — completion of modules, functions and
-  variables as you type. The editor is a `QPlainTextEdit`, so there is no
-  completer to hang this on; this is the largest single item here.
+
+**Done since this list was written:**
+
+- **Editor autocompletion** (`ScadApi`). This entry claimed the editor had
+  "no completer to hang this on" and called it the largest item here. That
+  was wrong when written — taken from the OpenSCAD side of the diff without
+  reading `editor.py` closely enough. A `QCompleter` was already in place
+  and already fed both the builtin word sets and every name the parsed
+  scope knows, which with BOSL2 included is 948 functions and 271 modules.
+  What was genuinely missing was the argument hint, added in #528 (issue
+  #517): typing `(` now tooltips the call's parameter list, read from the
+  builtin table for builtins and from the declaration itself for everything
+  else. See `window/signatures.py`.
+- **Go to Definition on a builtin** (#526, issue #525) now opens the
+  language reference instead of reporting no definition, and misses reach
+  the status bar rather than only the console.
 
 **Decided against — do not re-propose:**
 
@@ -126,8 +139,12 @@ is a commitment to build it — it is the list of what is not there.
 
 ### View and viewport
 
-- Thrown Together (preview-adjacent but a distinct mode: backfaces in pink
-  for CSG debugging)
+- Thrown Together as a **view mode** (preview-adjacent but distinct:
+  backfaces in magenta for CSG debugging). Note the docs renderer *does*
+  honour the `ThrownTogether` example flag as of #527 (issue #524), and the
+  viewport already draws backfaces magenta and shades them (#520, issue
+  #519) — so what is missing is only the View-menu toggle that forces that
+  display on for an otherwise-closed model, not the rendering behind it.
 - Center, Reset View, an explicit Orthogonal item (we have a Perspective toggle)
 - Separate Hide Editor toolbar / Hide 3D View toolbar (we have one Show Toolbar)
 - Show Warnings and Errors in 3D View
