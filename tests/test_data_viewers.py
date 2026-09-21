@@ -2333,7 +2333,12 @@ view._undo_stack.undo(); app.processEvents()
 out["after_undo_shape"] = [len(view._value), len(view._value[0])]
 
 ro = HeightfieldViewer("r", [[0.0, 1.0], [2.0, 3.0]], None, editable=False)
-out["readonly_buttons"] = [b.text() for b in ro.findChildren(QPushButton) if b.text()]
+# The viewer's own actions. findChildren walks the whole tree, which
+# includes the embedded Viewport -- its busy-cancel overlay is not a
+# viewer action, and every other viewport button is icon-only and so
+# was already filtered out by the text test.
+out["readonly_buttons"] = [b.text() for b in ro.findChildren(QPushButton)
+                           if b.text() and b.objectName() != "busyCancel"]
 print(json.dumps(out))
 """
 

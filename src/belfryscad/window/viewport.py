@@ -394,20 +394,32 @@ class Viewport(QOpenGLWidget):
         # rather than only bound to Escape (#530). Its own widget rather
         # than text in the label: the label's text is rewritten ten times a
         # second by the spinner, and a clickable region has to survive that.
-        self._busy_cancel = QLabel("✕", self)
+        # A QPushButton, like the perspective toggle above -- NOT a QLabel
+        # with mousePressEvent reassigned. That was the first version, and
+        # it was the only such monkeypatch in the codebase: binding a
+        # Viewport method onto a child widget's Qt virtual gives the child
+        # a Python reference back to its parent, and Windows CI died in
+        # an unrelated MainWindow test with an access violation
+        # (0xC0000005) during teardown. A real button has a real signal.
+        self._busy_cancel = QPushButton("✕", self)
+        # Named so a widget-tree scan can tell a viewport overlay from a
+        # dialog action -- the perspective toggle never needed this only
+        # because it carries an icon and no text.
+        self._busy_cancel.setObjectName("busyCancel")
+        self._busy_cancel.setFlat(True)
         self._busy_cancel.setStyleSheet(
-            "QLabel { background: rgba(0,0,0,160); color: white;"
-            " padding: 8px 12px; border-radius: 8px;"
+            "QPushButton { background: rgba(0,0,0,160); color: white;"
+            " border: none; padding: 8px 12px; border-radius: 8px;"
             " font-family: Menlo; font-size: 18px; }"
-            "QLabel:hover { background: rgba(200,40,40,220); }"
+            "QPushButton:hover { background: rgba(200,40,40,220); }"
         )
         self._busy_cancel.setToolTip("Cancel (Esc)")
-        # The whole window is under a wait cursor while busy; an arrow here
-        # is what says this one thing is still clickable, which is exactly
-        # what the request asked for.
-        self._busy_cancel.setCursor(Qt.CursorShape.ArrowCursor)
+        # The whole window is under a wait cursor while busy; a pointing
+        # hand here is what says this one thing is still clickable, which
+        # is what the request asked for. Matches the perspective toggle.
+        self._busy_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self._busy_cancel.hide()
-        self._busy_cancel.mousePressEvent = self._on_busy_cancel_clicked
+        self._busy_cancel.clicked.connect(self.busy_cancel_requested)
         self._busy_timer = QTimer(self)
         self._busy_timer.timeout.connect(self._update_busy_overlay)
 
@@ -796,12 +808,6 @@ class Viewport(QOpenGLWidget):
             "target": cam.target.tolist(),
             "fov": cam.fov,
         }
-
-    def _on_busy_cancel_clicked(self, event):
-        """The close box was clicked. MainWindow owns what cancelling
-        means -- a render and a debug session are stopped differently --
-        so this only reports the click."""
-        self.busy_cancel_requested.emit()
 
     def set_render_busy(self, busy: bool):
         self._render_busy = busy

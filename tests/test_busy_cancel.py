@@ -46,10 +46,10 @@ lab, can = vp._busy_label.geometry(), vp._busy_cancel.geometry()
 out["side_by_side"] = can.left() >= lab.right()
 out["same_top"] = lab.top() == can.top()
 out["pair_centred"] = abs(((lab.left() + can.right()) // 2) - vp.width() // 2) <= 2
-out["arrow_cursor"] = vp._busy_cancel.cursor().shape() == Qt.CursorShape.ArrowCursor
+out["hand_cursor"] = vp._busy_cancel.cursor().shape() == Qt.CursorShape.PointingHandCursor
 out["has_tooltip"] = bool(vp._busy_cancel.toolTip())
 
-vp._on_busy_cancel_clicked(None)
+vp._busy_cancel.click()
 out["click_emits"] = bool(fired)
 
 vp.set_render_busy(False); app.processEvents()
@@ -97,10 +97,10 @@ def test_sits_beside_the_counter_without_shifting_it_off_centre(out):
 
 
 def test_says_it_is_clickable(out):
-    """The whole window is under a wait cursor while busy; an arrow here is
-    what tells the user this one thing still responds -- which is what the
-    request asked for."""
-    assert out["arrow_cursor"] is True
+    """The whole window is under a wait cursor while busy; a pointing hand
+    here is what tells the user this one thing still responds -- which is
+    what the request asked for."""
+    assert out["hand_cursor"] is True
     assert out["has_tooltip"] is True
 
 
