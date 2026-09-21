@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from belfryscad.window.about import (
-    DOCS_URL, about_html, about_info, about_text,
+    DOCS_URL, ISSUES_URL, about_html, about_info, about_text,
 )
 
 
@@ -49,6 +49,13 @@ def test_the_links_point_at_the_wiki_and_the_tracker():
     assert DOCS_URL.startswith("https://github.com/BelfrySCAD/BelfrySCAD/wiki")
 
 
+def test_the_tracker_url_is_the_issue_list():
+    """`Help ▸ Report an Issue…` opens this. It has to be the issue LIST --
+    /issues/new would preselect a template the project does not have, and
+    a bare repo URL leaves the reporter to go looking."""
+    assert ISSUES_URL == "https://github.com/BelfrySCAD/BelfrySCAD/issues"
+
+
 def test_plain_text_carries_the_same_versions_for_pasting():
     """The Copy button exists so a version reaches an issue without being
     retyped."""
@@ -68,10 +75,27 @@ import json
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QAction
 app = QApplication([])
+# Never touch the developer's real settings: MainWindow reads them, and
+# simply constructing one can write. test_settings_isolation enforces this
+# for every GUI-driving test, and caught this driver the moment it grew a
+# MainWindow.
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-about-"), seed=False)
 from belfryscad.window.about import show_about_dialog, about_info
 
 dlg = show_about_dialog(None)
 out = {"title": dlg.windowTitle()}
+
+# The Help menu's own entries. Report an Issue is only useful if it is
+# THERE -- the About dialog has always carried the link, which meant
+# reporting a bug required thinking to look in About first.
+from belfryscad.window.main_window import MainWindow
+w = MainWindow(); w.skip_unsaved_prompts = True
+help_menu = next(m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))
+                 if m.title().replace("&", "") == "Help")
+out["help_entries"] = [a.text().replace("&", "") for a in help_menu.actions() if a.text()]
+w.close()
 from PySide6.QtWidgets import QLabel, QPushButton
 out["body_has_version"] = any(about_info()["version"] in w.text() for w in dlg.findChildren(QLabel))
 out["buttons"] = sorted(b.text().replace("&", "") for b in dlg.findChildren(QPushButton))
@@ -85,3 +109,5 @@ print(json.dumps(out))
     assert out["title"] == "About BelfrySCAD"
     assert out["body_has_version"] is True
     assert "Copy Versions" in out["buttons"]
+    assert "Report an Issue…" in out["help_entries"], out["help_entries"]
+    assert "Documentation" in out["help_entries"]
