@@ -305,6 +305,7 @@ class Viewport(QOpenGLWidget):
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
+    busy_cancel_requested = Signal()                     # the busy overlay's close box was clicked (#530)
     perspective_toggled = Signal(bool)                    # emitted on click, new perspective state
     measurement_taken   = Signal(object)                  # a finished Measurement
     measurement_dismissed = Signal(int)                   # index into the list
@@ -389,6 +390,36 @@ class Viewport(QOpenGLWidget):
             " font-family: Menlo; font-size: 18px; }"
         )
         self._busy_label.hide()
+        # A close box on the busy overlay, so cancelling is discoverable
+        # rather than only bound to Escape (#530). Its own widget rather
+        # than text in the label: the label's text is rewritten ten times a
+        # second by the spinner, and a clickable region has to survive that.
+        # A QPushButton, like the perspective toggle above -- NOT a QLabel
+        # with mousePressEvent reassigned. That was the first version, and
+        # it was the only such monkeypatch in the codebase: binding a
+        # Viewport method onto a child widget's Qt virtual gives the child
+        # a Python reference back to its parent, and Windows CI died in
+        # an unrelated MainWindow test with an access violation
+        # (0xC0000005) during teardown. A real button has a real signal.
+        self._busy_cancel = QPushButton("✕", self)
+        # Named so a widget-tree scan can tell a viewport overlay from a
+        # dialog action -- the perspective toggle never needed this only
+        # because it carries an icon and no text.
+        self._busy_cancel.setObjectName("busyCancel")
+        self._busy_cancel.setFlat(True)
+        self._busy_cancel.setStyleSheet(
+            "QPushButton { background: rgba(0,0,0,160); color: white;"
+            " border: none; padding: 8px 12px; border-radius: 8px;"
+            " font-family: Menlo; font-size: 18px; }"
+            "QPushButton:hover { background: rgba(200,40,40,220); }"
+        )
+        self._busy_cancel.setToolTip("Cancel (Esc)")
+        # The whole window is under a wait cursor while busy; a pointing
+        # hand here is what says this one thing is still clickable, which
+        # is what the request asked for. Matches the perspective toggle.
+        self._busy_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._busy_cancel.hide()
+        self._busy_cancel.clicked.connect(self.busy_cancel_requested)
         self._busy_timer = QTimer(self)
         self._busy_timer.timeout.connect(self._update_busy_overlay)
 
@@ -785,10 +816,12 @@ class Viewport(QOpenGLWidget):
             self._busy_start = time.monotonic()
             self._update_busy_overlay()
             self._busy_label.show()
+            self._busy_cancel.show()
             self._busy_timer.start(100)
         else:
             self._busy_timer.stop()
             self._busy_label.hide()
+            self._busy_cancel.hide()
 
     def set_debug_busy(self, busy: bool):
         self._debug_busy = busy
@@ -797,10 +830,12 @@ class Viewport(QOpenGLWidget):
             self._busy_start = time.monotonic()
             self._update_busy_overlay()
             self._busy_label.show()
+            self._busy_cancel.show()
             self._busy_timer.start(100)
         else:
             self._busy_timer.stop()
             self._busy_label.hide()
+            self._busy_cancel.hide()
 
     def set_debug_paused(self, paused: bool):
         self._debug_busy = False
@@ -832,9 +867,16 @@ class Viewport(QOpenGLWidget):
         stale the moment the viewport is resized while the label is
         showing; nothing else re-triggers a reposition mid-render/mid-pause."""
         margin = 12
-        x = max(margin, (self.width() - self._busy_label.width()) // 2)
+        gap = 6
+        self._busy_label.adjustSize()
+        self._busy_cancel.adjustSize()
+        # Centre the PAIR, so the countdown does not shift sideways when
+        # the close box appears -- it is the same overlay, just wider.
+        total = self._busy_label.width() + gap + self._busy_cancel.width()
+        x = max(margin, (self.width() - total) // 2)
         y = margin
         self._busy_label.move(x, y)
+        self._busy_cancel.move(x + self._busy_label.width() + gap, y)
 
     def _on_perspective_button_clicked(self):
         cam = self._renderer.camera
