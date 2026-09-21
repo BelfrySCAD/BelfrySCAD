@@ -837,6 +837,8 @@ class MainWindow(QMainWindow):
         self._viewport.scale_committed.connect(self._on_scale_committed)
         self._viewport.camera_changed.connect(self._update_camera_label)
         self._viewport.size_changed.connect(self._update_size_label)
+        # The busy overlay's close box; Escape does the same thing (#530).
+        self._viewport.busy_cancel_requested.connect(self._cancel_busy)
         self._viewport.perspective_toggled.connect(self._on_viewport_perspective_toggled)
         self.setCentralWidget(self._viewport)
 
@@ -4800,18 +4802,39 @@ class MainWindow(QMainWindow):
             self._act_measure_angle.setChecked(False)
             self._set_measure_mode(None)
             return
+        if event.key() == Qt.Key.Key_Escape and self._cancel_busy():
+            return
+        super().keyPressEvent(event)
+
+    def _cancel_busy(self) -> bool:
+        """Stop whatever the busy overlay is counting, if anything.
+
+        Escape and the overlay's close box (#530) are the same action, so
+        they share one implementation -- they were separate for about ten
+        minutes and immediately disagreed about whether a debug session
+        counts.
+
+        A render first: it is the one that is merely slow, where a debug
+        session is a deliberate state the user is sitting in.
+        """
         # _render_cancel outlives the render it belongs to -- it is only
         # replaced when the next one starts -- so it says "a render has run
         # at some point", not "one is running now". _render_busy() is the
         # question actually being asked; without it every Escape after the
         # first render claimed to cancel one.
-        if (event.key() == Qt.Key.Key_Escape and self._render_cancel is not None
-                and self._render_busy()):
+        if self._render_cancel is not None and self._render_busy():
             self._render_cancel.set()
             self._set_render_busy(False)
             self.log("Render cancelled.")
-            return
-        super().keyPressEvent(event)
+            return True
+        if self._debug_session is not None and self._debug_session.is_running():
+            # Through the same handler the Stop button uses, so the panes,
+            # execution-line highlights and signal disconnections are all
+            # torn down exactly as they are for a deliberate stop.
+            self._on_debug_stop()
+            self.log("Debug session stopped.")
+            return True
+        return False
 
     def closeEvent(self, event):
         # Prompt to save any modified tabs before quitting
