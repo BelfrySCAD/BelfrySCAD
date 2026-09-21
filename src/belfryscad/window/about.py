@@ -117,3 +117,16 @@ def open_documentation():
     from PySide6.QtGui import QDesktopServices
 
     QDesktopServices.openUrl(QUrl(DOCS_URL))
+
+
+def open_issue_tracker():
+    """Help ▸ Report an Issue -- the GitHub issue list, in the user's browser.
+
+    The About dialog has linked ISSUES_URL all along, which meant reporting
+    a bug required first thinking to look in About. A Help entry is where
+    people actually go.
+    """
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    QDesktopServices.openUrl(QUrl(ISSUES_URL))
