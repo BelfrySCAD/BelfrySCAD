@@ -130,6 +130,28 @@ def _fmt_elapsed(elapsed_ms: float) -> str:
     return f"({elapsed_ms:.0f} ms)"
 
 
+def _replace_text_keeping_scroll(editor, text: str) -> None:
+    """Replace the editor's text without throwing away the scroll position.
+
+    `setPlainText()` replaces the whole document, and Qt resets the
+    scrollbars to the top when it does. Every undo/redo path here wants the
+    view left where the user had it -- and worse, `_TextEditCmd._set_cursor`
+    decides whether to recentre by asking if the cursor is on screen, which
+    is meaningless once the viewport has already jumped. That test was
+    always answering "no", so every undo recentred (#531), defeating the
+    #389 fix that put the test there.
+
+    Clamped to `maximum()` because the new text may be shorter than the old
+    one, in which case the saved offset no longer exists.
+    """
+    vbar = editor.verticalScrollBar()
+    hbar = editor.horizontalScrollBar()
+    v, h = vbar.value(), hbar.value()
+    editor.setPlainText(text)
+    vbar.setValue(min(v, vbar.maximum()))
+    hbar.setValue(min(h, hbar.maximum()))
+
+
 class _TextEditCmd(QUndoCommand):
     """Undo command for raw text edits in the code editor."""
     _MERGE_WINDOW = 3.0   # seconds: edits this close are merged into one undo step
@@ -177,7 +199,7 @@ class _TextEditCmd(QUndoCommand):
 
     def undo(self):
         self._tab._suppress_text_undo = True
-        self._editor.setPlainText(self._before)
+        _replace_text_keeping_scroll(self._editor, self._before)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._before
         self._tab._last_cursor = self._cursor_before
@@ -188,7 +210,7 @@ class _TextEditCmd(QUndoCommand):
             self._first_redo = False
             return   # text is already correct; user just typed it
         self._tab._suppress_text_undo = True
-        self._editor.setPlainText(self._after)
+        _replace_text_keeping_scroll(self._editor, self._after)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._after
         self._tab._last_cursor = self._cursor_after
@@ -224,7 +246,7 @@ class _GizmoCmd(QUndoCommand):
 
     def undo(self):
         self._tab._suppress_text_undo = True
-        self._editor.setPlainText(self._before)
+        _replace_text_keeping_scroll(self._editor, self._before)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._before
         self._render()
@@ -235,7 +257,7 @@ class _GizmoCmd(QUndoCommand):
 
     def redo(self):
         self._tab._suppress_text_undo = True
-        self._editor.setPlainText(self._after)
+        _replace_text_keeping_scroll(self._editor, self._after)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._after
         self._render()
