@@ -106,6 +106,35 @@ class TestParseHelpers:
         with pytest.raises(ValueError):
             _parse_view("axes,nonsense")
 
+    def test_view_backfaces(self):
+        assert _parse_view("edges,backfaces") == {"edges", "backfaces"}
+
+    def test_view_rejects_throwntogether(self):
+        """Deliberately not a spelling: only the backface part of OpenSCAD's
+        throwntogether preview is implemented, so the name would promise the
+        CSG-skipping part too."""
+        with pytest.raises(ValueError):
+            _parse_view("throwntogether")
+
+    @pytest.mark.parametrize("view,lit", [
+        (None, True), ("edges", True), ("backfaces", False),
+        ("edges,backfaces", False),
+    ])
+    def test_backfaces_unlights_backfaces(self, view, lit):
+        """`--view backfaces` is the only CLI route to the magenta
+        inverted-normal cue -- everywhere else headless rendering lights
+        backfaces with the object colour, to match the preview a docs build
+        asks for. Without it an open mesh cannot be pictured as open."""
+        from types import SimpleNamespace
+        from belfryscad.headless_render import _RenderOptions, apply_view_options
+        opts = _RenderOptions.parse(imgsize="64,64", camera=None, autocenter=False,
+                                    viewall=False, projection=None, view=view,
+                                    colorscheme=None)
+        renderer = SimpleNamespace(camera=SimpleNamespace(orthographic=None),
+                                   set_viewport=lambda w, h: None)
+        apply_view_options(renderer, opts)
+        assert renderer.light_backfaces is lit
+
     @pytest.mark.parametrize("spec,expected", [
         ("o", True), ("ortho", True), ("orthographic", True),
         ("p", False), ("perspective", False),

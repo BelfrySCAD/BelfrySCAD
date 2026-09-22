@@ -395,7 +395,7 @@ class ImageManager:
                 camera=camera, autocenter=no_vp, viewall=no_vp,
                 projection="o" if req.orthographic else "p",
                 view=",".join(view), colorscheme=req.color_scheme,
-                thrown_together=req.thrown_together)
+                show_backfaces=req.thrown_together)
         except ValueError as e:
             errorlog.add_entry(req.src_file, req.src_line, str(e), ErrorLog.FAIL)
             return None

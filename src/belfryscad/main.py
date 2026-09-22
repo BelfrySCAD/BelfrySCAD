@@ -78,7 +78,10 @@ def _parse_args(argv):
     parser.add_argument("--viewall", action="store_true", help="Fit the camera to the whole object (.png only)")
     parser.add_argument("--projection", metavar="(o)rtho|(p)erspective", help="Camera projection for .png export")
     parser.add_argument("--view", metavar="OPTS",
-                         help="Comma-separated: axes, crosshairs, edges, scales, wireframe (.png only)")
+                         help="Comma-separated: axes, backfaces, crosshairs, edges, "
+                              "scales, wireframe (.png only). backfaces paints face "
+                              "backsides magenta, which is how an open surface or a "
+                              "non-manifold mesh shows up as one")
     parser.add_argument("--colorscheme", metavar="NAME", help="Color theme for .png export")
     parser.add_argument("--ai", metavar="PROMPT",
                         help="Send PROMPT to the AI chat once the window is "
