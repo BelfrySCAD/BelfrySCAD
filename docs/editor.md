@@ -148,6 +148,13 @@ Three things worth knowing about the shape of that table:
 `guide_width()` is shared with the comment reflow below, which is why it is
 named for the guide rather than for either feature.
 
+**Neither reformatting nor reflowing re-renders.** Both write back through
+`replace_span` but, unlike "Edit as..." and the AI proposals, deliberately do
+*not* emit `source_edited_externally`: they move whitespace and comment text,
+so the geometry cannot have changed, and a render mid-edit reports syntax
+errors for lines the user has not finished writing — commenting out the first
+of two paragraphs and reflowing it flagged the second one (#537).
+
 **A profile has to be reachable from wherever the text currently is**, or the
 submenu is a one-way door. It is not enough for each profile to be right on
 freshly written code: reformatting Expanded output as Compact left it
@@ -404,7 +411,7 @@ Note `QBuffer(QByteArray())` segfaults here — the temporary is freed immediate
 
 Plan mode is enforced in `propose_script_edit`/`propose_new_script` themselves, not in the UI, because the claude-CLI transport calls those same handlers over MCP with no Qt code in the loop to gate anything. The refusal is checked before other validation, since the mode is why nothing will happen either way. Applied-immediately changes still go through `replace_span`, so Undo takes them back like any other edit. "Capped" is `_MAX_CHAINED_FOLLOWUPS`; Auto is the only mode that lifts it, which is what makes it genuinely autonomous rather than just quieter.
 
-**Review before apply**: `propose_*` tools never mutate anything. They compute a `difflib` unified diff, hand a `Proposal` to the pane (queuing it in the review bar and logging the diff to the transcript as a collapsible block), and return a synthetic result telling the model the change is queued for the user, so it can finish its turn normally without the stream having to block on a UI click. The actual mutation happens out-of-band when the user clicks Accept: `MainWindow._on_ai_proposal_accepted` applies edits through `replace_span` + `source_edited_externally` — the same path "Edit as..."/"Reformat Selection" use, so it lands as one clean undo step and triggers a re-render. An accepted *new* script opens as an unsaved tab (`file_path = None`); nothing is ever written to disk unprompted.
+**Review before apply**: `propose_*` tools never mutate anything. They compute a `difflib` unified diff, hand a `Proposal` to the pane (queuing it in the review bar and logging the diff to the transcript as a collapsible block), and return a synthetic result telling the model the change is queued for the user, so it can finish its turn normally without the stream having to block on a UI click. The actual mutation happens out-of-band when the user clicks Accept: `MainWindow._on_ai_proposal_accepted` applies edits through `replace_span` + `source_edited_externally` — the same path "Edit as..." uses, so it lands as one clean undo step and triggers a re-render (Reformat Selection shares `replace_span` but not the render — see above). An accepted *new* script opens as an unsaved tab (`file_path = None`); nothing is ever written to disk unprompted.
 
 Each `FileTab` carries a `chat_id` from a monotonic counter (not `id(tab)`, whose reuse after a tab closes could let a stale tool-call reference silently hit a different tab). Ids are in-memory only — chat sessions don't outlive the app.
 
