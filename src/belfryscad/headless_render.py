@@ -18,7 +18,8 @@ import os
 import sys
 from pathlib import Path
 
-_VALID_VIEW_OPTIONS = {"axes", "crosshairs", "edges", "scales", "wireframe"}
+_VALID_VIEW_OPTIONS = {"axes", "crosshairs", "edges", "scales", "wireframe",
+                       "throwntogether"}
 
 
 def _parse_imgsize(spec: str):
@@ -235,14 +236,17 @@ def apply_view_options(renderer, opts: _RenderOptions):
     # surface is lit with the object colour, not flagged magenta. See
     # SceneRenderer.light_backfaces.
     #
-    # Except under ThrownTogether, where showing those backsides IS the
+    # Except under ThrownTogether -- the docsgen tag, or `--view
+    # throwntogether` from the CLI, which is the only way to reach it
+    # without a docs build -- where showing those backsides IS the
     # point -- it is how a doc example demonstrates that a surface is open
     # or a mesh non-manifold. Verified against OpenSCAD 2026.02.01 on
     # BOSL2's own gyroid example: `--preview ""` renders it entirely in the
     # object colour, `--preview throwntogether` renders the backfaces
     # magenta. Ours matched the first in both cases, which is the bug
     # (#524).
-    renderer.light_backfaces = not getattr(opts, "thrown_together", False)
+    renderer.light_backfaces = not (getattr(opts, "thrown_together", False)
+                                    or "throwntogether" in opts.view_opts)
     renderer.camera.orthographic = opts.ortho
     renderer.show_axes = "axes" in opts.view_opts
     renderer.show_crosshairs = "crosshairs" in opts.view_opts
