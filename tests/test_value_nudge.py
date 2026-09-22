@@ -121,7 +121,7 @@ def test_the_window_applies_a_nudge_and_debounces_the_render():
     import inspect
     from belfryscad.window.main_window import MainWindow
     src = inspect.getsource(MainWindow._on_value_nudged)
-    assert "_undo_stack.push" in src, "one undo entry per step"
+    assert "_stack_for(tab).push" in src, "one undo entry, on THIS tab's stack"
     assert "merge_id=1004" in src, "holding the key is one undo, not forty"
     assert "_value_nudge_timer.start" in src, "a render per keystroke is unusable"
 

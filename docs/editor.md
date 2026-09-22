@@ -380,6 +380,22 @@ Code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Each operat
 
 All Cmd+Z / Cmd+Shift+Z route through `QUndoStack`, which disables `QPlainTextEdit`'s built-in undo (`setUndoRedoEnabled(False)`).
 
+**One stack per tab, in a window-wide `QUndoGroup`** (#540). `FileTab` owns
+its `undo_stack`; `MainWindow._adopt_undo_stack` puts a new tab's stack in
+the group, `_tab_changed` makes the visible tab's stack the active one, and
+`_close_tab` takes it out again. The Undo/Redo actions come from the
+**group** (`createUndoAction`), so they follow whatever tab you are looking
+at, and every push goes through `_stack_for(tab)` — the tab the command is
+about, which `_TextEditCmd` and `_GizmoCmd` already carried.
+
+Before this there was a single window-wide stack, so undoing past the start
+of one tab's history carried on undoing *another* tab's text, with nothing
+on screen to say so. `addStack` does not make a stack active, which is why
+`_adopt_undo_stack` activates the first one itself: a window's first tab can
+be added before anything is listening for `currentChanged`. A tab never
+moves between windows — `_tear_off_tab` closes it and opens a fresh one in
+the new window — so a stack belongs to one group for life.
+
 **Where the cursor lands after undo** is where it stood when the undone edit began. `_TextEditCmd` takes that from the tab's `_last_cursor`, which `_on_editor_changed` writes at the end of every edit and, since #389, `_on_editor_cursor_moved` also writes on every cursor move that is *not* part of an edit. Qt emits `cursorPositionChanged` before `contentsChanged` for a keystroke, so that handler ignores a move whose document revision no longer matches the last recorded one — that move belongs to the edit about to be captured. Consecutive keystrokes merge into one undo step only while each begins where the previous one ended; move the cursor between them and the next edit is its own step, so one undo no longer throws away both. An undo whose target is off-screen centres it (`centerCursor()`); one already in view leaves the scroll alone. The parse-error squiggle (`set_error_location`, an ExtraSelection anchored in the document) is cleared on the first edit after it appears, because an anchored selection otherwise grows under everything typed inside it (#388).
 
 **Both redo conventions are bound**, via `main_window.redo_shortcuts()`. Qt's `StandardKey.Redo` is a *list* that differs per platform — Ctrl+Y first on Windows, Ctrl+Shift+Z on macOS — and `setShortcut()` binds only the first of them, so Ctrl+Shift+Z did nothing on Windows (issue #377). `setShortcuts()` with the platform list plus an explicit Ctrl+Shift+Z and Ctrl+Y gives OpenSCAD/VS Code/Adobe/macOS habits and the Office one everywhere. Qt maps Ctrl to Command on macOS, so no special case is needed there.

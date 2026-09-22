@@ -4,7 +4,8 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
 )
 from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFont,
-                           QIcon, QShortcut, QUndoCommand, QTextCursor)
+                           QIcon, QShortcut, QUndoCommand, QUndoGroup,
+                           QUndoStack, QTextCursor)
 from PySide6.QtCore import (Qt, QSize, QSettings, QThread, QObject, QTimer, QUrl,
                             Signal, Slot)
 from belfryscad.settings import app_settings
@@ -301,6 +302,12 @@ class FileTab(QWidget):
         self._last_text = ""
         self._last_cursor = 0
         self._suppress_text_undo = False
+        #: This tab's own undo history. One stack per tab, gathered into the
+        #: window's QUndoGroup -- undo in one tab used to walk back into
+        #: another's edits once its own ran out (#540). A tab never moves
+        #: between windows (`_tear_off_tab` opens a fresh tab in the new
+        #: one), so a stack belongs to one group for life.
+        self.undo_stack = QUndoStack()
 
     def display_name(self):
         if self.file_path:
@@ -675,7 +682,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self.setAcceptDrops(True)
-        self._undo_stack = self._create_undo_stack()
+        self._undo_group = QUndoGroup(self)
         self._render_cancel: threading.Event | None = None
         self._render_id: int = 0
         #: The render whose result should be framed -- see _render(reframe=).
@@ -793,9 +800,21 @@ class MainWindow(QMainWindow):
             # check, and Qt does not promise which lands first.
             act.toggled.connect(self._on_measure_action)
 
-    def _create_undo_stack(self):
-        from PySide6.QtGui import QUndoStack
-        return QUndoStack(self)
+    def _stack_for(self, tab) -> QUndoStack:
+        """The undo stack a command about `tab` belongs on."""
+        return tab.undo_stack
+
+    def _adopt_undo_stack(self, tab):
+        """Put a new tab's undo stack under this window's Undo/Redo actions.
+
+        `addStack` does not make a stack active, and `_tab_changed` is what
+        normally does -- but the very first tab of a window may be added
+        before anything is listening, so an empty group adopts its first
+        stack as the active one.
+        """
+        self._undo_group.addStack(tab.undo_stack)
+        if self._undo_group.activeStack() is None:
+            tab.undo_stack.setActive(True)
 
     # ------------------------------------------------------------------
     # UI assembly
@@ -1115,7 +1134,7 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        self._act_undo = self._undo_stack.createUndoAction(self, "Undo")
+        self._act_undo = self._undo_group.createUndoAction(self, "Undo")
         self._set_toolbar_icon(self._act_undo, "undo")
         # setShortcutS, plural: the standard key is a LIST of bindings per
         # platform and setShortcut() takes only the first one. That is why
@@ -1125,7 +1144,7 @@ class MainWindow(QMainWindow):
         self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
-        self._act_redo = self._undo_stack.createRedoAction(self, "Redo")
+        self._act_redo = self._undo_group.createRedoAction(self, "Redo")
         self._set_toolbar_icon(self._act_redo, "redo")
         self._act_redo.setShortcuts(redo_shortcuts())
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -1456,6 +1475,7 @@ class MainWindow(QMainWindow):
 
     def _new_document(self):
         tab = FileTab()
+        self._adopt_undo_stack(tab)
         tab._last_revision = tab.editor.document().revision()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
@@ -1556,6 +1576,8 @@ class MainWindow(QMainWindow):
     def _tab_changed(self, index):
         tab = self._tabs.widget(index)
         if tab:
+            # Undo/Redo act on what you are looking at.
+            tab.undo_stack.setActive(True)
             self._customizer_pane.set_file_path(tab.file_path)
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
@@ -1629,6 +1651,7 @@ class MainWindow(QMainWindow):
                 self._clear_viewport()
             if tab.file_path:
                 get_document_manager().unregister(tab.file_path, tab.editor)
+            self._undo_group.removeStack(tab.undo_stack)
         self._tabs.removeTab(index)
         self._refresh_watched_files()
         if self._tabs.count() == 0:
@@ -1733,7 +1756,7 @@ class MainWindow(QMainWindow):
         tab._last_text = current
         tab._last_cursor = cursor_after
         if current != before:
-            self._undo_stack.push(
+            self._stack_for(tab).push(
                 _TextEditCmd(tab, tab.editor, before, cursor_before, current, cursor_after)
             )
             if tab.file_path:
@@ -1780,6 +1803,7 @@ class MainWindow(QMainWindow):
         from belfryscad.window.library_manager import _library_dir
 
         tab = FileTab()
+        self._adopt_undo_stack(tab)
         tab.file_path = path
         # Read-only for anything that is not the user's to edit in place:
         # an installed library, or an example inside the application's own
@@ -5304,7 +5328,7 @@ class MainWindow(QMainWindow):
         if end > len(source):
             return
         new_source = source[:start] + new_text + source[end:]
-        self._undo_stack.push(_GizmoCmd(
+        self._stack_for(tab).push(_GizmoCmd(
             tab, tab.editor, source, new_source, lambda: None,
             start, lambda _offset: None,
             merge_id=1004, label="Adjust Value", viewport=self._viewport,
@@ -5375,7 +5399,7 @@ class MainWindow(QMainWindow):
             new_source = source[:at] + text + source[at:]
             new_node_start = at
 
-        self._undo_stack.push(_GizmoCmd(
+        self._stack_for(self._rendered_tab).push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
             self._render, new_node_start, self._restore_selection_after_gizmo,
             merge_id=merge_id, label=label, viewport=self._viewport,
