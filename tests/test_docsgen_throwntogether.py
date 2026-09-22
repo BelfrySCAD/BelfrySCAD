@@ -63,10 +63,10 @@ class TestFlagReachesTheRenderer:
     def test_defaults_off(self):
         """Every other caller -- the CLI, the GUI preview -- must keep the
         plain-preview behaviour it has today."""
-        assert self._opts().thrown_together is False
+        assert self._opts().show_backfaces is False
 
     def test_carries_through(self):
-        assert self._opts(thrown_together=True).thrown_together is True
+        assert self._opts(show_backfaces=True).show_backfaces is True
 
     def test_light_backfaces_is_the_inverse(self):
         """apply_view_options turns the flag into SceneRenderer.
@@ -82,6 +82,6 @@ class TestFlagReachesTheRenderer:
 
         plain, thrown = FakeRenderer(), FakeRenderer()
         apply_view_options(plain, self._opts())
-        apply_view_options(thrown, self._opts(thrown_together=True))
+        apply_view_options(thrown, self._opts(show_backfaces=True))
         assert plain.light_backfaces is True     # open surface in object colour
         assert thrown.light_backfaces is False   # backsides shown magenta

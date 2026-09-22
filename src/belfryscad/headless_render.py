@@ -18,8 +18,8 @@ import os
 import sys
 from pathlib import Path
 
-_VALID_VIEW_OPTIONS = {"axes", "crosshairs", "edges", "scales", "wireframe",
-                       "throwntogether"}
+_VALID_VIEW_OPTIONS = {"axes", "backfaces", "crosshairs", "edges", "scales",
+                       "wireframe"}
 
 
 def _parse_imgsize(spec: str):
@@ -164,11 +164,18 @@ class _RenderOptions:
     regardless of frame count."""
 
     def __init__(self, imgsize, camera, autocenter, viewall, projection, view, colorscheme,
-                 thrown_together=False):
-        # OpenSCAD's --preview=throwntogether. NOT a cheaper preview: it is
-        # a different picture, drawn to expose face backsides and so reveal
-        # non-manifold geometry. See apply_view_options. (#524)
-        self.thrown_together = bool(thrown_together)
+                 show_backfaces=False):
+        # Paint face backsides with the magenta inverted-normal cue instead
+        # of lighting them, which is what reveals an open surface or a
+        # non-manifold mesh. See apply_view_options. (#524)
+        #
+        # This is NOT OpenSCAD's throwntogether preview, which also skips
+        # CSG and draws every object overlapping. Backfaces are the part of
+        # it that carries meaning in a docs image, and the only part
+        # implemented -- so the option is named for what it does. docsgen's
+        # `ThrownTogether` example tag maps onto it, which is the whole
+        # reason the tag was ever plumbed through.
+        self.show_backfaces = bool(show_backfaces)
         self.w, self.h = _parse_imgsize(imgsize)
         self.ortho = _parse_projection(projection) if projection is not None else False
         self.view_opts = _parse_view(view) if view is not None else set()
@@ -236,17 +243,16 @@ def apply_view_options(renderer, opts: _RenderOptions):
     # surface is lit with the object colour, not flagged magenta. See
     # SceneRenderer.light_backfaces.
     #
-    # Except under ThrownTogether -- the docsgen tag, or `--view
-    # throwntogether` from the CLI, which is the only way to reach it
-    # without a docs build -- where showing those backsides IS the
-    # point -- it is how a doc example demonstrates that a surface is open
-    # or a mesh non-manifold. Verified against OpenSCAD 2026.02.01 on
-    # BOSL2's own gyroid example: `--preview ""` renders it entirely in the
-    # object colour, `--preview throwntogether` renders the backfaces
-    # magenta. Ours matched the first in both cases, which is the bug
-    # (#524).
-    renderer.light_backfaces = not (getattr(opts, "thrown_together", False)
-                                    or "throwntogether" in opts.view_opts)
+    # Except when backfaces are asked for -- by docsgen's ThrownTogether
+    # tag, or by `--view backfaces` from the CLI, which is the only way to
+    # reach it without a docs build. Showing those backsides IS the point
+    # there: it is how a doc example demonstrates that a surface is open or
+    # a mesh non-manifold. Verified against OpenSCAD 2026.02.01 on BOSL2's
+    # own gyroid example: `--preview ""` renders it entirely in the object
+    # colour, `--preview throwntogether` renders the backfaces magenta.
+    # Ours matched the first in both cases, which is the bug (#524).
+    renderer.light_backfaces = not (getattr(opts, "show_backfaces", False)
+                                    or "backfaces" in opts.view_opts)
     renderer.camera.orthographic = opts.ortho
     renderer.show_axes = "axes" in opts.view_opts
     renderer.show_crosshairs = "crosshairs" in opts.view_opts

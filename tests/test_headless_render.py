@@ -106,15 +106,22 @@ class TestParseHelpers:
         with pytest.raises(ValueError):
             _parse_view("axes,nonsense")
 
-    def test_view_throwntogether(self):
-        assert _parse_view("edges,throwntogether") == {"edges", "throwntogether"}
+    def test_view_backfaces(self):
+        assert _parse_view("edges,backfaces") == {"edges", "backfaces"}
+
+    def test_view_rejects_throwntogether(self):
+        """Deliberately not a spelling: only the backface part of OpenSCAD's
+        throwntogether preview is implemented, so the name would promise the
+        CSG-skipping part too."""
+        with pytest.raises(ValueError):
+            _parse_view("throwntogether")
 
     @pytest.mark.parametrize("view,lit", [
-        (None, True), ("edges", True), ("throwntogether", False),
-        ("edges,throwntogether", False),
+        (None, True), ("edges", True), ("backfaces", False),
+        ("edges,backfaces", False),
     ])
-    def test_throwntogether_unlights_backfaces(self, view, lit):
-        """`--view throwntogether` is the only CLI route to the magenta
+    def test_backfaces_unlights_backfaces(self, view, lit):
+        """`--view backfaces` is the only CLI route to the magenta
         inverted-normal cue -- everywhere else headless rendering lights
         backfaces with the object colour, to match the preview a docs build
         asks for. Without it an open mesh cannot be pictured as open."""
