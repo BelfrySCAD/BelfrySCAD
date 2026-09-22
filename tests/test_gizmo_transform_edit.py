@@ -247,7 +247,7 @@ def test_commit_transform_calls_only_methods_that_exist():
     # Instance attributes assigned in __init__ are not class attributes, so
     # only flag names that look like methods.
     missing = [n for n in missing
-               if n not in {"_rendered_tab", "_viewport", "_tabs", "_undo_stack",
+               if n not in {"_rendered_tab", "_viewport", "_tabs", "_undo_group",
                             "_render", "_selection_level", "_selection_level_id"}]
     assert not missing, f"_commit_transform calls missing methods: {missing}"
 

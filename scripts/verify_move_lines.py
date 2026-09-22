@@ -189,7 +189,7 @@ def main():
     w.show()
     app.processEvents()
 
-    stack = w._undo_stack
+    stack = w._current_tab().undo_stack
     tab_ed = w._current_tab().editor
     tab_ed.setPlainText("1\n2\n3\n4")
     app.processEvents()

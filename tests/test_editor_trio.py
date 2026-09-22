@@ -53,10 +53,10 @@ key(ed, Qt.Key.Key_X, "X")                      # "abcX\\ndef\\n"
 c = ed.textCursor(); c.setPosition(0); ed.setTextCursor(c)   # a plain move
 key(ed, Qt.Key.Key_Y, "Y")                      # "YabcX\\ndef\\n"
 out["text_after_edits"] = ed.toPlainText()
-w._undo_stack.undo()
+w._undo_group.activeStack().undo()
 out["text_after_undo"] = ed.toPlainText()
 out["cursor_after_undo"] = ed.textCursor().position()
-w._undo_stack.undo()
+w._undo_group.activeStack().undo()
 out["cursor_after_second_undo"] = ed.textCursor().position()
 
 # #395: a save renders only with Automatic Reload and Render on.
