@@ -153,6 +153,20 @@ def _replace_text_keeping_scroll(editor, text: str) -> None:
     hbar.setValue(min(h, hbar.maximum()))
 
 
+def _cursor_position(editor) -> int:
+    """The editor's cursor offset, never negative.
+
+    `setPlainText()` replaces the whole document, and a `contentsChanged`
+    handler that runs across that replacement can read a cursor still
+    attached to the old one -- a null cursor, whose `position()` is **-1**.
+    Stored, that -1 came back on the matching redo as
+    `QTextCursor::setPosition: Position '-1' out of range`, and it is also
+    compared in `_TextEditCmd.mergeWith`, where a bogus value quietly stops
+    a burst of edits merging.
+    """
+    return max(0, editor.textCursor().position())
+
+
 class _TextEditCmd(QUndoCommand):
     """Undo command for raw text edits in the code editor."""
     _MERGE_WINDOW = 3.0   # seconds: edits this close are merged into one undo step
@@ -189,7 +203,11 @@ class _TextEditCmd(QUndoCommand):
 
     def _set_cursor(self, pos):
         cursor = self._editor.textCursor()
-        cursor.setPosition(min(pos, len(self._editor.toPlainText())))
+        # Both ends clamped: the stored position can be -1 as well as past
+        # the end -- see the capture sites in `_on_editor_changed` and
+        # `_on_editor_cursor_moved`. Qt rejects a negative position with a
+        # console warning and leaves the cursor wherever it was.
+        cursor.setPosition(max(0, min(pos, len(self._editor.toPlainText()))))
         # Off-screen -> centre it, so the undone edit is in the middle of the
         # view rather than hugging an edge; on-screen -> leave the scroll
         # alone (#389).
@@ -1703,7 +1721,7 @@ class MainWindow(QMainWindow):
             return
         if tab.editor.document().revision() != getattr(tab, '_last_revision', -1):
             return
-        tab._last_cursor = tab.editor.textCursor().position()
+        tab._last_cursor = _cursor_position(tab.editor)
 
     def _log_modified_diagnostic(self, tab):
         """Why did this tab just become modified? For #394, which nobody can
@@ -1750,7 +1768,7 @@ class MainWindow(QMainWindow):
         tab._last_revision = tab.editor.document().revision()
         if getattr(tab, '_suppress_text_undo', False):
             return
-        cursor_after = tab.editor.textCursor().position()
+        cursor_after = _cursor_position(tab.editor)
         before = getattr(tab, '_last_text', current)
         cursor_before = getattr(tab, '_last_cursor', 0)
         tab._last_text = current
