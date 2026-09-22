@@ -1728,6 +1728,43 @@ class CodeEditor(QPlainTextEdit):
                 return True
         return super().event(event)
 
+    def viewportEvent(self, event):
+        """Hover a colour literal, get a swatch of it.
+
+        On the VIEWPORT, not on `event()`: a QAbstractScrollArea's tooltip
+        events are delivered to the viewport, so an `event()` override
+        never sees them. The position is in viewport coordinates either
+        way, which is what `cursorForPosition` wants.
+        """
+        if event.type() == QEvent.Type.ToolTip:
+            self._show_color_tooltip(event)
+            return True
+        return super().viewportEvent(event)
+
+    def _show_color_tooltip(self, event):
+        """A swatch for the colour literal under `event`, or no tooltip.
+
+        Silent when there is nothing there -- a tooltip saying "not a
+        colour" on every hover would be worse than none, the same rule the
+        argument hint follows.
+        """
+        from belfryscad.window.color_literals import describe, find_color_literal
+
+        cursor = self.cursorForPosition(event.pos())
+        hit = find_color_literal(cursor.block().text(), cursor.positionInBlock())
+        if hit is None:
+            QToolTip.hideText()
+            return
+        _start, _end, color = hit
+        # A table cell's bgcolor is the one way Qt's rich-text subset will
+        # paint a block of colour: a `data:` image URI is not loaded, and a
+        # styled <span> colours only as far as its text goes.
+        QToolTip.showText(event.globalPos(), (
+            '<table cellspacing="0" cellpadding="2"><tr>'
+            f'<td bgcolor="{color.name(QColor.NameFormat.HexRgb)}">'
+            '&nbsp;&nbsp;&nbsp;&nbsp;</td>'
+            f'<td>&nbsp;{describe(color)}</td></tr></table>'), self)
+
     def keyPressEvent(self, event):
         if self._handle_value_nudge(event):
             event.accept()

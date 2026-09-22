@@ -309,6 +309,68 @@ Pages are cached under `~/.cache/BelfrySCAD/bosl2-wiki/` for a week (`_MAX_AGE`)
 
 `_text_under_cursor()` walks backward from the cursor to find the current identifier prefix (alphanumeric + underscore + leading `$`). `_insert_completion()` replaces the prefix with the selected completion.
 
+## Colour swatch tooltips
+
+Hovering a colour literal shows a tooltip with a swatch of it, the colour's
+name, its `#rrggbb`, and the 0..1 components `color()` takes — the spellings
+the literal itself does not show. `color_literals.py` is the whole of the
+matching (Qt-free of widgets, so `tests/test_color_literals.py` tests it
+directly); `CodeEditor._show_color_tooltip` is the wiring.
+
+**Two shapes count**, both matched lexically on the hovered line, with no
+AST behind them — this has to answer on half-typed lines the parser rejects:
+
+- a double-quoted **name or hex** Qt resolves: `"red"`, `"SteelBlue"`,
+  `"#fff"`, `"#ffffff"`. Restricted to those two spellings on purpose — Qt
+  would also take `#aarrggbb` and `#rrrgggbbb`, which no OpenSCAD build
+  renders.
+- a **3- or 4-element vector of literal numbers, every one in 0..1**, which
+  is OpenSCAD's own range. Components that are expressions or variables
+  never match: there is nothing to resolve without evaluating.
+
+**And it has to sit somewhere that means a colour** (`in_color_context`),
+which is the other half of the test — a colour and a point are the same
+three numbers, and without this every `translate([0.5, 0, 0.2])` got a
+swatch. Three positions qualify:
+
+| | |
+|---|---|
+| An argument of `color()`, `recolor()` or `color_this()` | However deeply nested inside it, so `color(mix([1, 0, 0], t))` counts |
+| The value of an assignment whose **name** says colour | `thecolor = [0.5, 0.75, 1.0];` yes, `p1 = [0.5, 0.75, 1.0];` no. Matched on `colou?r` anywhere in the name, either spelling, any case |
+| A `color=`, `colour=` or `c=` **argument** of any call | `c=` is BOSL2's short spelling, and is an argument name only — a bare `c = [0.5, 0.5, 0.5];` says nothing about what it holds |
+
+The assignment rule wants the literal to **be** the value: a palette's
+members (`thecolors = [[1, 0, 0], [0, 1, 0]];`) are not each the value of
+the assignment, so they get nothing. Inside `color(...)` nesting is fine,
+since there the whole call is about colour however deep it goes.
+
+`_blanked()` replaces string bodies and `//` comments with spaces (keeping
+offsets) before that scan, so a `color(` written inside a string or a
+comment is not read as structure.
+
+**One line only.** A call split across lines (`color(\n    "red")`) is not
+matched — the price of answering with no AST, which is what lets this work
+on lines the parser rejects.
+
+**`QColor` is the name table deliberately.** The evaluator's own
+`css_colors.cpp` was generated from a live PySide6 install, so asking Qt
+keeps the tooltip and the renderer agreeing by construction — including on
+`rebeccapurple`, which CSS3 has and neither of them does, and on
+`transparent`, which both accept.
+
+**On the viewport, not on `event()`** (`CodeEditor.viewportEvent`): a
+`QAbstractScrollArea` delivers tooltip events to its viewport, so an
+`event()` override never sees one. A miss hides the tooltip rather than
+showing "not a colour", the same rule the argument hint follows.
+
+The swatch is a table cell with `bgcolor`. That is the one way Qt's
+rich-text subset will paint a block of colour: a `data:` image URI is not
+loaded, and a styled `<span>` colours only as far as its text goes.
+
+Widget-level behaviour — that the event reaches the viewport at all, and
+that the position maps back to the right character — is covered by
+`scripts/verify_color_tooltip.py`, since Qt widgets abort pytest here.
+
 ## Undo/Redo
 
 Code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Each operation is a `QUndoCommand` subclass:
