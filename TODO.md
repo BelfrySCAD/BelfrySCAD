@@ -2,6 +2,42 @@
 
 - NURBS viewer/editor support
 - VNF tile texture viewer/editor
+- Colour literals in the editor: an inline swatch, and a picker to edit
+  them. A colour literal is a `color()` argument — a name (`"red"`,
+  `"SteelBlue"`), a `#rrggbb` string, or an `[r, g, b]` / `[r, g, b, a]`
+  vector. Both halves share one finder, shaped like `find_font_argument`
+  (`scad_format.py`): only inside `color(...)`, since a bare `"red"`
+  anywhere else is just a string. Names can be resolved with Qt's
+  `QColor.fromString` — the same SVG/CSS list OpenSCAD uses, though worth
+  diffing against the evaluator's `css_colors.cpp` — and **vector
+  components are 0-1, not 0-255**.
+
+  - **Swatch, in a hover tooltip.** Override `event()` for
+    `QEvent.Type.ToolTip`, map the help event's position through
+    `cursorForPosition` to an offset, run the finder, and
+    `QToolTip.showText` rich text whose swatch is a table cell with
+    `bgcolor` (Qt's rich-text subset supports that; a `data:` image does
+    not). Room there for what the literal alone does not say: the resolved
+    colour in every spelling, and the alpha. `QToolTip.showText` is already
+    used for argument hints (`editor.py:2319`), but on a keystroke, so the
+    hover path is new and nothing collides.
+
+    Nothing is drawn in the text, which is why this beats the two
+    alternatives. Tinting the literal's own background in
+    `OpenSCADHighlighter.highlightBlock` (`editor.py:453`) is ~15 lines and
+    needs a black/white foreground picked by luminance to stay readable,
+    but it is permanent visual noise. A box that pushes the text aside is
+    out entirely: `QPlainTextEdit` reserves horizontal space only for
+    things in the document (a `QTextObjectInterface` plus an
+    object-replacement character), which would put the swatch into the
+    text, the undo stack and every save — and drawing one in the overlay
+    pass (`_paint_trailing_spaces`, `editor.py:2478`, is the pattern) can
+    only put it over the opening quote or out at the end of the line.
+  - **Picker**: same shape as **Choose Font…** (`font_picker.py`) — its own
+    top-level context-menu item and a write-back through `replace_span` +
+    `source_edited_externally`, which renders. Writing the value back in
+    the spelling it was found in is the fiddly part: a name stays a name
+    only if the picked colour has one.
 
 - Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
   thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
