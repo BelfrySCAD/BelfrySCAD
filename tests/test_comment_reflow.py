@@ -202,6 +202,21 @@ ed3 = editor([67, 100]); before = ed3.toPlainText()
 answer(None); ed3._reflow_comment(*ed3._reflow_target(at(ed3, 1, sel_to=2)))
 out["cancel_unchanged"] = ed3.toPlainText() == before
 
+# #537: neither reflow nor reformat may re-render -- source_edited_externally
+# is what triggers one.
+fired = []
+ed4 = editor([67, 100])
+ed4.source_edited_externally.connect(lambda: fired.append("reflow"))
+answer(50); ed4._reflow_comment(*ed4._reflow_target(at(ed4, 1, sel_to=2)))
+out["reflow_changed_text"] = ed4.toPlainText() != SRC
+ed5 = CodeEditor()
+CODE = "cube( [1,2,3] );\n"
+ed5.setPlainText(CODE)
+ed5.source_edited_externally.connect(lambda: fired.append("reformat"))
+ed5._reformat_selection(0, len(CODE), CODE)
+out["reformat_changed_text"] = ed5.toPlainText() != CODE
+out["rerenders"] = fired
+
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
@@ -262,3 +277,12 @@ def test_the_surrounding_block_structure_survives(driven):
 
 def test_cancelling_the_dialog_changes_nothing(driven):
     assert driven["cancel_unchanged"]
+
+
+def test_neither_reflow_nor_reformat_re_renders(driven):
+    """#537. Both only move whitespace and comment text, so there is no new
+    geometry -- and rendering mid-edit reported syntax errors for the lines
+    the user had not commented out yet."""
+    assert driven["reflow_changed_text"], "the reflow has to have edited something"
+    assert driven["reformat_changed_text"], "the reformat has to have edited something"
+    assert driven["rerenders"] == []

@@ -1928,8 +1928,11 @@ class CodeEditor(QPlainTextEdit):
         had_trailing_newline = bool(re.search(r'\n[ \t]*$', selected_text))
         if not had_trailing_newline and new_text.endswith("\n"):
             new_text = new_text[:-1]
+        # No source_edited_externally: reformatting only moves whitespace, so
+        # the geometry cannot have changed, and re-rendering mid-edit reports
+        # syntax errors for code the user is still in the middle of writing
+        # (#537).
         self.replace_span(start, end, new_text)
-        self.source_edited_externally.emit()
 
     #: Lines of context a jumped-to line should keep above and below it.
     #: Three is enough to see the statement a match sits in without the
@@ -1999,10 +2002,12 @@ class CodeEditor(QPlainTextEdit):
             return
         start_block = doc.findBlockByNumber(first)
         end_block = doc.findBlockByNumber(last)
+        # No source_edited_externally: only comment text moved, so there is no
+        # geometry to re-render -- and doing so mid-edit flags syntax errors in
+        # the lines the user has not commented out yet (#537).
         self.replace_span(start_block.position(),
                           end_block.position() + len(end_block.text()),
                           "\n".join(new_lines))
-        self.source_edited_externally.emit()
 
     def _reflow_target(self, cursor, use_selection=None):
         """(first, last) block numbers to reflow, or None.
