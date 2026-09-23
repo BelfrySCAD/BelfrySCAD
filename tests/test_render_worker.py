@@ -73,3 +73,92 @@ class TestRenderWorkerUsesLiveBuffer:
         mesh = captured["bodies"][0].body.to_mesh()
         verts = np.asarray(mesh.vert_properties[:, :3])
         assert verts[:, 0].max() == 5.0
+
+
+# -- #554: a warning flood must not swamp the UI thread ----------------------
+
+def _run_collecting(source: str, **kw) -> dict:
+    cancel = kw.pop("cancel", threading.Event())
+    worker = _RenderWorker(source, None, cancel, {}, **kw)
+    out = {"lines": [], "batches": 0, "repeats": {}}
+    worker.logged.connect(lambda msg: out["lines"].append(msg))
+
+    def batch(msgs):
+        out["batches"] += 1
+        for m in msgs:
+            out["lines"].append(f"<repeat {m[1]}: {m[2]}>" if isinstance(m, tuple) else m)
+    worker.logged_batch.connect(batch)
+    worker.repeat_counts.connect(lambda counts: out["repeats"].update(counts))
+    worker.finished.connect(lambda bodies, *_a: out.update(bodies=bodies))
+    worker.run()
+    return out
+
+
+FLOOD = "for (i=[1:3000]) if (nope) cube(1);\ncube(1);\n"          # one warning, 3,000 times
+DISTINCT = "for (i=[1:3000]) echo(i);\ncube(1);\n"                  # 3,000 different lines
+
+
+class TestWarningFlood:
+    def test_console_output_is_capped_and_the_rest_counted(self):
+        out = _run_collecting(DISTINCT)
+        echoes = [l for l in out["lines"] if l.startswith("ECHO:")]
+        assert len(echoes) == _RenderWorker._SHOWN_CAP
+        summary = [l for l in out["lines"] if "not shown" in l]
+        assert summary and "2,000 more messages" in summary[0]
+        assert out.get("bodies"), "the render itself still completes"
+
+    def test_output_arrives_in_batches_not_one_signal_per_message(self):
+        out = _run_collecting(DISTINCT)
+        assert out["batches"] < _RenderWorker._SHOWN_CAP / 10
+
+    def test_the_summary_comes_before_the_workers_own_last_word(self):
+        # "Render: no geometry" / errors follow everything the script said.
+        out = _run_collecting("for (i=[1:1500]) echo(i);\n")
+        summary = next(i for i, l in enumerate(out["lines"]) if "not shown" in l)
+        assert out["lines"][-1].startswith("Render: no geometry")
+        assert summary < len(out["lines"]) - 1
+
+    def test_stop_after_n_warnings(self):
+        out = _run_collecting(FLOOD, max_warnings=5)
+        assert len([l for l in out["lines"] if l.startswith("WARNING:")]) == 5
+        assert any("stopped after 5 warnings" in l for l in out["lines"])
+        assert "bodies" not in out
+
+    def test_stop_on_first_warning_names_the_warning(self):
+        out = _run_collecting(FLOOD, max_warnings=1)
+        warnings = [l for l in out["lines"] if l.startswith("WARNING:")]
+        assert len(warnings) == 1
+        stop = [l for l in out["lines"] if l.startswith("Eval error")]
+        assert stop and warnings[0] in stop[0]      # the stop quotes it
+        assert "bodies" not in out
+
+    def test_cancel_interrupts_a_running_evaluation_quietly(self):
+        cancel = threading.Event()
+        cancel.set()                     # as if pressed while it runs
+        out = _run_collecting(FLOOD, cancel=cancel)
+        assert "bodies" not in out
+        assert not any("error" in l.lower() for l in out["lines"]), out["lines"][-3:]
+
+
+class TestRepeatedMessages:
+    def test_first_ten_then_one_line_counting_the_rest(self):
+        out = _run_collecting(FLOOD)
+        warnings = [l for l in out["lines"] if l.startswith("WARNING:")]
+        assert len(warnings) == _RenderWorker._REPEAT_SHOWN
+        repeat_lines = [l for l in out["lines"] if l.startswith("<repeat")]
+        assert len(repeat_lines) == 1
+        # right after the tenth copy
+        assert out["lines"].index(repeat_lines[0]) == _RenderWorker._REPEAT_SHOWN   # after copies 0..9
+        assert out["repeats"] == {0: 3000 - _RenderWorker._REPEAT_SHOWN}
+        assert not any("not shown" in l for l in out["lines"]), "repeats are not the cap"
+
+    def test_repeats_need_not_be_adjacent(self):
+        # Two warnings taking turns inside a loop: each collapses on its own.
+        out = _run_collecting("for (i=[1:500]) { if (nope) cube(1); if (nada) cube(1); }\ncube(1);\n")
+        assert len([l for l in out["lines"] if l.startswith("WARNING:")]) == 20
+        assert sorted(out["repeats"].values()) == [490, 490]
+
+    def test_different_messages_are_all_printed(self):
+        out = _run_collecting("for (i=[1:30]) echo(i);\n")
+        assert len([l for l in out["lines"] if l.startswith("ECHO:")]) == 30
+        assert out["repeats"] == {}

@@ -400,11 +400,30 @@ class _RenderCallback(QObject):
         self._mw = main_window
         self._file_tab = file_tab
         self._render_id = render_id
+        self._repeat_blocks: dict[int, int] = {}   # repeat id -> console block
 
     @Slot(str)
     def on_logged(self, msg: str):
         if self._render_id == self._mw._render_id:
             self._mw._console.append_output(self._mw._relabel_paths(msg))
+
+    @Slot(list)
+    def on_logged_batch(self, msgs: list):
+        if self._render_id == self._mw._render_id:
+            console = self._mw._console
+            for msg in msgs:
+                if isinstance(msg, tuple):       # ("repeat", id, message)
+                    _, pid, like = msg
+                    self._repeat_blocks[pid] = console.append_repeat(self._mw._relabel_paths(like))
+                else:
+                    console.append_output(self._mw._relabel_paths(msg))
+
+    @Slot(object)
+    def on_repeat_counts(self, counts: dict):
+        if self._render_id == self._mw._render_id:
+            for pid, n in counts.items():
+                if pid in self._repeat_blocks:
+                    self._mw._console.set_repeat(self._repeat_blocks[pid], n)
 
     @Slot(str)
     def on_tmp_path(self, path: str):
@@ -443,6 +462,8 @@ class _RenderCallback(QObject):
 class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
     logged = Signal(str)
+    logged_batch = Signal(list)          # the script's own output, batched (#554)
+    repeat_counts = Signal(object)       # {repeat id: copies not shown}, see _echo
     parse_errored = Signal(str)          # captured stdout; triggers editor error marking
     tmp_path_ready = Signal(str)         # temp .scad holding the live buffer, for label mapping
     ast_ready = Signal(object, object, str)   # (nodes, root_scope, parse_path) — emitted after successful parse
@@ -450,7 +471,7 @@ class _RenderWorker(QObject):
     done = Signal()                      # always emitted at end of run(), for thread cleanup
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
-                 manifold_cache=None, profile: bool = False, hard_warnings: bool = False,
+                 manifold_cache=None, profile: bool = False, max_warnings: int | None = None,
                  keep_minuend_color: bool = False):
         super().__init__()
         self._source = source
@@ -460,8 +481,43 @@ class _RenderWorker(QObject):
         self._manifold_cache = manifold_cache
         self._profile = profile
         self._keep_minuend_color = keep_minuend_color
-        self._hard_warnings = hard_warnings
+        self._max_warnings = max_warnings   # stop the render at this many; None never
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
+        # The script's own output (#554). One queued signal per message let a
+        # warning flood swamp the UI thread -- 60,000 warnings stalled the
+        # event loop for 21 s, and Windows greys a window out after 5 -- so
+        # messages are sent in batches, and a render shows at most
+        # _SHOWN_CAP of them, then says how many more there were.
+        self._pending: list[str] = []
+        self._last_flush = 0.0
+        self._warnings = 0
+        self._shown = 0
+        self._hidden = 0
+        self._hidden_warnings = 0
+        # Identical messages: the first _REPEAT_SHOWN print, then one
+        # "(Message repeats N more times)" line counts the rest, its N
+        # updated in place as copies arrive. Keyed on the whole text, so
+        # it collapses repeats that are not adjacent -- two warnings taking
+        # turns inside a loop -- as well as runs.
+        self._seen: dict[str, int] = {}
+        self._repeat_id: dict[str, int] = {}
+        self._repeat_dirty: set[str] = set()
+
+    #: Copies of one message printed before the rest become a count.
+    _REPEAT_SHOWN = 10
+
+    #: Messages from one render the console shows before summarising the
+    #: rest. Past this they are unreadable anyway, and each costs the UI
+    #: thread about 0.45 ms.
+    _SHOWN_CAP = 1000
+    #: Longest a message waits in a batch before it is sent.
+    _FLUSH_INTERVAL = 0.1
+
+    class _Cancelled(RuntimeError):
+        """Raised from inside echo_fn when the render has been cancelled:
+        the only point at which a running evaluate() can be interrupted.
+        Surfaces as EvalError, which the handler then keeps quiet about --
+        Cancel has already said so."""
 
     class _HardWarning(RuntimeError):
         """Raised from inside echo_fn to stop the render at the first warning.
@@ -479,19 +535,70 @@ class _RenderWorker(QObject):
         """
 
     def _echo(self, msg: str):
-        if self._hard_warnings and msg.startswith("WARNING:"):
-            # Emit it first: the point of stopping is to look at the warning,
-            # so it has to reach the console rather than only surviving as
-            # the exception's text.
-            self.logged.emit(msg)
-            raise _RenderWorker._HardWarning(msg)
-        self.logged.emit(msg)
+        import time
+        if self._cancel.is_set():
+            raise _RenderWorker._Cancelled()
+        warning = msg.startswith("WARNING:")
+        self._warnings += warning
+        seen = self._seen[msg] = self._seen.get(msg, 0) + 1
+        if seen > self._REPEAT_SHOWN:
+            # Past the first few copies: counted, not printed, and not
+            # against _SHOWN_CAP, which is for messages worth reading.
+            if msg not in self._repeat_id:
+                self._repeat_id[msg] = len(self._repeat_id)
+                self._pending.append(("repeat", self._repeat_id[msg], msg))
+            self._repeat_dirty.add(msg)
+        # An ERROR always gets through: it is the line that says what failed.
+        elif self._shown < self._SHOWN_CAP or msg.startswith("ERROR"):
+            self._shown += 1
+            self._pending.append(msg)
+        else:
+            self._hidden += 1
+            self._hidden_warnings += warning
+        stop = warning and self._max_warnings and self._warnings >= self._max_warnings
+        if stop or time.monotonic() - self._last_flush >= self._FLUSH_INTERVAL:
+            self._flush()
+        if stop:
+            # The warning that tripped the limit reached the console above:
+            # the point of stopping is to look at it.
+            raise _RenderWorker._HardWarning(
+                msg if self._max_warnings == 1 else
+                f"Render stopped after {self._warnings} warnings "
+                f"(Preferences > Render > Stop rendering after).")
+
+    def _flush(self):
+        import time
+        if self._pending:
+            self.logged_batch.emit(self._pending)
+            self._pending = []
+        if self._repeat_dirty:
+            self.repeat_counts.emit({self._repeat_id[m]: self._seen[m] - self._REPEAT_SHOWN
+                                     for m in self._repeat_dirty})
+            self._repeat_dirty = set()
+        self._last_flush = time.monotonic()
+
+    def _log(self, text: str):
+        """A worker message, after everything the script said before it."""
+        self._end_output()
+        self.logged.emit(text)
+
+    def _end_output(self):
+        self._flush()
+        if self._hidden:
+            n, w = self._hidden, self._hidden_warnings
+            self._hidden = self._hidden_warnings = 0
+            self.logged.emit(
+                f"... {n:,} more message{'' if n == 1 else 's'} not shown"
+                + (f" ({w:,} warning{'' if w == 1 else 's'})" if w else "")
+                + f": the console shows the first {self._SHOWN_CAP:,} of a render.")
 
     @Slot()
     def run(self):
         try:
             self._do_render()
         finally:
+            if not self._cancel.is_set():
+                self._end_output()
             # The C++ evaluator reads the file at eval time, so the temp
             # file _do_render always writes the live buffer to must outlive
             # it -- clean it up here.
@@ -529,7 +636,7 @@ class _RenderWorker(QObject):
             self.parse_errored.emit(str(e))
             return
         except Exception as e:
-            self.logged.emit(f"Parse error: {e}")
+            self._log(f"Parse error: {e}")
             return
 
         self.ast_ready.emit(None, root_scope, parse_path)
@@ -552,15 +659,17 @@ class _RenderWorker(QObject):
             geometry = evaluator.geometry
         except RecursionError:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  {_fmt_elapsed(elapsed_ms)}")
+            self._log(f"Error: AST too deeply nested (recursion limit exceeded during evaluation).  {_fmt_elapsed(elapsed_ms)}")
             return
         except EvalError as e:
+            if self._cancel.is_set():
+                return          # Cancel has already said so
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Eval error:  {_fmt_elapsed(elapsed_ms)}\n{e}")
+            self._log(f"Eval error:  {_fmt_elapsed(elapsed_ms)}\n{e}")
             return
         except Exception as e:
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
-            self.logged.emit(f"Runtime error:  {_fmt_elapsed(elapsed_ms)}\n{e}\n{traceback.format_exc()}")
+            self._log(f"Runtime error:  {_fmt_elapsed(elapsed_ms)}\n{e}\n{traceback.format_exc()}")
             return
 
         if self._cancel.is_set():
@@ -569,7 +678,7 @@ class _RenderWorker(QObject):
         elapsed_ms = (_time.perf_counter() - _t0) * 1000
 
         if not bodies:
-            self.logged.emit(f"Render: no geometry produced.  {_fmt_elapsed(elapsed_ms)}")
+            self._log(f"Render: no geometry produced.  {_fmt_elapsed(elapsed_ms)}")
             return
 
         bodies = to_renderable_bodies(bodies)
@@ -588,6 +697,7 @@ class _RenderWorker(QObject):
         # the wanted default when the script leaves it alone, and it cannot
         # go stale the way a camera value can.
         export_name = resolve_export_name(evaluator.dyn.get("$export_name"), self._file_path)
+        self._end_output()
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
                             geometry, export_name)
 
@@ -1916,7 +2026,9 @@ class MainWindow(QMainWindow):
         tab = self._create_and_add_tab(path, text)
         self._update_recent_files(path)
         self._refresh_watched_files()
-        if render:
+        # Off lets a file that hangs or floods the renderer be opened to fix
+        # it -- with it on, reopening such a file just hung again (#554).
+        if render and load_preference("render/onOpen", bool):
             self._render(tab, reframe=True)      # a new tab from a file
 
     def _save_file(self):
@@ -1949,6 +2061,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Automatic Reload and Render
     # ------------------------------------------------------------------
+
+    def _warning_limit(self) -> int | None:
+        """Warnings a render may produce before it is stopped, or None.
+
+        Design > Stop on First Warning is the quick switch for 1; Preferences
+        > Render sets any other number. Both on: whichever stops sooner.
+        """
+        limits = [n for n in (1 if self._act_stop_on_warning.isChecked() else 0,
+                              load_preference("render/stopAfterWarnings", int)) if n > 0]
+        return min(limits) if limits else None
 
     def _set_stop_on_warning(self, on: bool):
         s = app_settings()
@@ -2457,7 +2579,7 @@ class MainWindow(QMainWindow):
         self._set_render_busy(True)
 
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
-                               hard_warnings=self._act_stop_on_warning.isChecked(), profile=profile,
+                               max_warnings=self._warning_limit(), profile=profile,
                                keep_minuend_color=load_preference("viewport/keepMinuendColor", bool))
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
@@ -2484,6 +2606,8 @@ class MainWindow(QMainWindow):
         # of these cross-thread connections, so all slots run on the main thread.
         thread.started.connect(worker.run)
         worker.logged.connect(callback.on_logged)
+        worker.logged_batch.connect(callback.on_logged_batch)
+        worker.repeat_counts.connect(callback.on_repeat_counts)
         worker.parse_errored.connect(callback.on_parse_errored)
         worker.tmp_path_ready.connect(callback.on_tmp_path)
         worker.ast_ready.connect(callback.on_ast_ready)

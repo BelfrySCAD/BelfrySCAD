@@ -104,6 +104,12 @@ _DEFAULTS = {
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
+    # Render a file as soon as it is opened. Off lets a file that hangs or
+    # floods the renderer be opened to fix it (#554).
+    "render/onOpen": True,
+    # Stop a render at this many warnings; 0 never. Design > Stop on First
+    # Warning is the quick switch for 1 (#554).
+    "render/stopAfterWarnings": 0,
 }
 
 def parse_guide_columns(value) -> list[int]:
@@ -339,6 +345,32 @@ class PreferencesDialog(QDialog):
         vp_form.addRow("Cut faces:", self._keep_minuend_color)
 
         tabs.addTab(viewport_tab, "Viewport")
+
+        # --- Render tab (#554) ---
+        render_tab = QWidget()
+        render_form = QFormLayout(render_tab)
+        self._render_on_open = QCheckBox("Render a file when it is opened")
+        self._render_on_open.setChecked(
+            s.value("render/onOpen", _DEFAULTS["render/onOpen"], type=bool))
+        self._render_on_open.setToolTip(
+            "Off opens a file without rendering it, so a file that hangs the\n"
+            "renderer can still be opened and fixed. Render with F6.")
+        self._render_on_open.toggled.connect(lambda v: self._emit("render/onOpen", bool(v)))
+        render_form.addRow("Opening:", self._render_on_open)
+        self._stop_after = QSpinBox()
+        self._stop_after.setRange(0, 1_000_000)
+        self._stop_after.setSpecialValueText("Never")      # shown for 0
+        self._stop_after.setSuffix(" warnings")
+        self._stop_after.setValue(
+            s.value("render/stopAfterWarnings", _DEFAULTS["render/stopAfterWarnings"], type=int))
+        self._stop_after.setToolTip(
+            "Stop a render once it has produced this many warnings. Design >\n"
+            "Stop on First Warning is the quick switch for 1; if both are on,\n"
+            "the render stops at whichever comes first.")
+        self._stop_after.valueChanged.connect(
+            lambda v: self._emit("render/stopAfterWarnings", int(v)))
+        render_form.addRow("Stop rendering after:", self._stop_after)
+        tabs.addTab(render_tab, "Render")
 
         # No Export tab: format options are asked by the export flow itself
         # (window/export_options.py), once the file name and format are

@@ -9,6 +9,19 @@
   and CSG to them, then extrude by part.
 - Extrude gizmo for 2D shapes selected in the main viewport, with and
   without centering.
+- Follow-ups from #554, measured on an M1, none of them the warning flood
+  itself (which is fixed):
+  - **Cancel cannot stop a silent runaway.** A render is interrupted only
+    through the evaluator's echo callback, so a script that loops for a long
+    time without printing anything runs to the end. Needs a cancel check
+    inside openscad_cpp_evaluator.
+  - **Module recursion uses ~5 GB before it stops.** `module m() { m(); }`
+    ends with "Recursion too deep" after 2.6 s, peaking at about 5 GB RSS;
+    the function case stops in 0.3 s. Enough to look like a hang on a
+    smaller machine. Evaluator-side.
+  - **60,000 bodies stall the UI for 6.7 s** when the finished render is
+    handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
+    warnings removed from the picture. The geometry upload, not the console.
 - Colour picker for colour literals in the editor. The swatch tooltip
   shipped (`color_literals.py`, `docs/editor.md`); this is the other half —
   editing one. Same shape as **Choose Font…** (`font_picker.py`): its own
@@ -183,7 +196,7 @@ is a commitment to build it — it is the list of what is not there.
   parameter range for builtin modules; UI localization; docking/undocking helper
   widgets into separate windows; always show welcome / export / print dialogs
 
-Preferences has three tabs (Editor, Viewport, AI) against OpenSCAD's seven
+Preferences has four tabs (Editor, Viewport, Render, AI) against OpenSCAD's seven
 pages, which is where most of that last group comes from.
 
 
