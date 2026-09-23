@@ -160,23 +160,93 @@ def interp(points, degree, closed=False):
     if n < p + 1:
         raise ValueError(f"degree {p} interpolation needs at least {p + 1} points")
     if not closed:
-        params = _interp_params(pts, closed=False)
-        interior = [float(np.mean(params[j:j + p])) for j in range(1, n - p)]
-        U = [0.0] * (p + 1) + interior + [1.0] * (p + 1)
-        N = np.zeros((n, n))
-        for k, t in enumerate(params):
-            s = _span(t, U, p, n - 1)
-            N[k, s - p:s + 1] = _basis(s, t, p, U)
-        return np.linalg.solve(N, pts), [0.0] + interior + [1.0]
+        N, knots = _clamped_system(_interp_params(pts, closed=False), p)
+        return np.linalg.solve(N, pts), knots
     chords = np.linalg.norm(np.roll(pts, -1, axis=0) - pts, axis=1)
     ratios = np.roll(chords, -1) / np.maximum(chords, 1e-15)
     rot = (int(np.argmax(ratios)) + 1) % n
     if _collisions(pts, p, rot) > 1:
         rot = min(range(n), key=lambda r: _collisions(pts, p, r))
     rpts, bar, U, params = _closed_system(pts, p, rot)
+    return np.linalg.solve(_periodic_matrix(params, p, U, n), rpts), bar
+
+
+def _clamped_system(params, p):
+    """Collocation matrix and short-form knots for a clamped fit through
+    points at `params` (BOSL2 `_build_clamped_system`, extra_pts=0)."""
+    n = len(params)
+    interior = [float(np.mean(params[j:j + p])) for j in range(1, n - p)]
+    U = [0.0] * (p + 1) + interior + [1.0] * (p + 1)
+    N = np.zeros((n, n))
+    for k, t in enumerate(params):
+        s = _span(t, U, p, n - 1)
+        N[k, s - p:s + 1] = _basis(s, t, p, U)
+    return N, [0.0] + interior + [1.0]
+
+
+def _periodic_matrix(params, p, U, n):
+    """Periodic collocation: basis j >= n folds onto j - n
+    (BOSL2 `_basis_row_periodic`)."""
     N = np.zeros((n, n))
     for k, t in enumerate(params):
         s = _span(t, U, p, n + p - 1)
         for j, b in zip(range(s - p, s + 1), _basis(s, t, p, U)):
             N[k, j % n] += b
-    return np.linalg.solve(N, rpts), bar
+    return N
+
+
+def _closed_surface_system(params, p):
+    """BOSL2 `_build_closed_system` (extra_pts=0), which the surface fit
+    uses. Unlike the closed curve fit it searches no seam rotation, and it
+    nudges any parameter that lands on a knot."""
+    n = len(params)
+    avg = [sum(params[(j + k) % n] + (j + k) // n for k in range(p)) / p for j in range(n + 1)]
+    bar = _fix_tiny_spans([a - avg[0] for a in avg], n)
+    U = _extend_knot_vector(bar, n + 2 * p + 1)
+    eps = bar[n] / n * (0.01 if p == 2 else 1e-6)
+    safe = [u + eps if min(abs(u - k) for k in U) < eps else u for u in np.asarray(params) + bar[p]]
+    return _periodic_matrix(safe, p, U, n), bar
+
+
+def patch(control, degree, closed=(False, False), splinesteps=16, knots=(None, None)):
+    """Sample a uniform-weight NURBS surface, as BOSL2's
+    `nurbs_patch_points(patch, degree, splinesteps, type=, knots=)`:
+    a curve down every column (u, the first index), then along every row
+    of the result (v). `degree`, `closed` and `knots` are (u, v) pairs.
+
+    Returns an (m, k, dim) grid; a closed direction does not repeat its
+    start. Leans on `curve()` being linear in its control points: a whole
+    row of points is fitted as one long point.
+    """
+    P = np.asarray(control, dtype=float)
+    rows, cols, dim = P.shape
+    a = curve(P.reshape(rows, cols * dim), degree[0], closed[0], splinesteps, knots[0])
+    m = len(a)
+    a = a.reshape(m, cols, dim).transpose(1, 0, 2).reshape(cols, m * dim)
+    b = curve(a, degree[1], closed[1], splinesteps, knots[1])
+    return b.reshape(len(b), m, dim).transpose(1, 0, 2)
+
+
+def interp_surface(points, degree, closed=(False, False)):
+    """Control grid and (u, v) knots for a surface through every point of
+    the rectangular grid `points`, as BOSL2's `nurbs_interp_surface(points,
+    degree, row_wrap=, col_wrap=)` with no constraints; `closed` is
+    (row_wrap, col_wrap). Returns what `patch()` takes.
+
+    Parameters are each grid line's centripetal parameters averaged across
+    the grid; every row is fitted in v, then every column of that in u.
+    """
+    # ponytail: centripetal and unconstrained only, as interp().
+    P = np.asarray(points, dtype=float)
+    rows, cols, dim = P.shape
+    pu, pv = degree
+    if rows < pu + 1 or cols < pv + 1:
+        raise ValueError(f"degree {pu}x{pv} needs at least {pu + 1} rows and {pv + 1} columns")
+    u = np.mean([_interp_params(P[:, c], closed[0]) for c in range(cols)], axis=0)
+    v = np.mean([_interp_params(P[r], closed[1]) for r in range(rows)], axis=0)
+    Nv, vk = (_closed_surface_system if closed[1] else _clamped_system)(v, pv)
+    Nu, uk = (_closed_surface_system if closed[0] else _clamped_system)(u, pu)
+    R = np.linalg.solve(Nv, P.transpose(1, 0, 2).reshape(cols, rows * dim))   # v fits, all rows at once
+    R = R.reshape(cols, rows, dim).transpose(1, 0, 2).reshape(rows, cols * dim)
+    ctrl = np.linalg.solve(Nu, R).reshape(rows, cols, dim)
+    return ctrl, (uk, vk)

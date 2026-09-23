@@ -7,10 +7,12 @@ import numpy as np
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QAbstractItemView, QCheckBox, QMenu,
-                               QLabel, QPushButton, QSplitter, QWidget, QComboBox)
+                               QLabel, QPushButton, QSplitter, QWidget, QComboBox,
+                               QSpinBox)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
+from belfryscad import nurbs
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
@@ -153,14 +155,23 @@ def _bezier_patch_mesh(cp: np.ndarray, steps: int = 16) -> tuple[np.ndarray, np.
     t_vals = np.linspace(0.0, 1.0, steps + 1, dtype=np.float64)
     omt = 1.0 - t_vals
     basis = np.stack([omt ** 3, 3 * t_vals * omt ** 2, 3 * t_vals ** 2 * omt, t_vals ** 3], axis=1)
-    surface = np.einsum('ia,jb,abk->ijk', basis, basis, cp)
+    return _surface_mesh(np.einsum('ia,jb,abk->ijk', basis, basis, cp))
 
+
+def _surface_mesh(surface: np.ndarray, wrap_rows: bool = False,
+                  wrap_cols: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    """Triangulate a sampled surface -- an (m, k, 3) grid of points -- two
+    triangles per cell, joining the last row (column) back to the first
+    when that direction wraps. Shared by the Bezier patch and the NURBS
+    surfaces, which differ only in how they sample."""
+    m, k = surface.shape[:2]
     tris_pos = []
     tris_norm = []
-    for i in range(steps):
-        for j in range(steps):
-            p00, p01 = surface[i, j], surface[i, j + 1]
-            p10, p11 = surface[i + 1, j], surface[i + 1, j + 1]
+    for i in range(m if wrap_rows else m - 1):
+        for j in range(k if wrap_cols else k - 1):
+            i1, j1 = (i + 1) % m, (j + 1) % k
+            p00, p01 = surface[i, j], surface[i, j1]
+            p10, p11 = surface[i1, j], surface[i1, j1]
             for a, b, c in [(p00, p01, p11), (p00, p11, p10)]:
                 n = np.cross(b - a, c - a)
                 ln = np.linalg.norm(n)
@@ -253,16 +264,24 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
         btn_row.addWidget(self._show_verts_cb)
         self._face_mode_combo = QComboBox()
-        self._face_mode_combo.addItem("Grid Only")
-        self._face_mode_combo.addItem("Grid Faces")
-        is_4x4 = self._rows == 4 and all(len(row) == 4 for row in grid_value)
-        if is_4x4:
-            self._face_mode_combo.addItem("Bezier Patch")
-        self._face_mode_combo.setCurrentIndex(1)
         self._face_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        _size_combo_to_widest_item(self._face_mode_combo)
         self._face_mode_combo.currentIndexChanged.connect(self._rebuild)
         btn_row.addWidget(self._face_mode_combo)
+        # NURBS degree in each direction, in BOSL2's terms: u runs down the
+        # rows (the first index), v along each row.
+        self._degree_label = QLabel("Degree u/v")
+        self._degree_label.setStyleSheet("QLabel { padding-left: 12px; }")
+        btn_row.addWidget(self._degree_label)
+        self._degree_spins = []
+        for tip in ("Degree in u, across the rows (the first index)",
+                    "Degree in v, along each row"):
+            spin = QSpinBox()
+            spin.setValue(3)
+            spin.setToolTip(tip)
+            spin.valueChanged.connect(self._rebuild)
+            btn_row.addWidget(spin)
+            self._degree_spins.append(spin)
+        self._sync_face_mode_combo()
         btn_row.addSpacing(20)
         self._wrap_combo = QComboBox()
         self._wrap_combo.addItem("No Wrap")
@@ -372,19 +391,53 @@ class GridViewer(QDialog, _UndoableViewerMixin):
             self._vp.set_selected([])
 
     def _sync_face_mode_combo(self):
-        """Add/remove the "Bezier Patch" option to match whether the grid
-        is still exactly 4x4 after a row/column add/delete (a plain
-        checkbox-style toggle isn't enough here since the option should
-        only exist at all for a 4x4 grid, same as at construction time)."""
-        is_4x4 = len(self._grid) == 4 and all(len(row) == 4 for row in self._grid)
-        has_bezier = self._face_mode_combo.count() == 3
-        if is_4x4 and not has_bezier:
-            self._face_mode_combo.addItem("Bezier Patch")
-        elif not is_4x4 and has_bezier:
-            if self._face_mode_combo.currentIndex() == 2:
-                self._face_mode_combo.setCurrentIndex(1)
-            self._face_mode_combo.removeItem(2)
-        _size_combo_to_widest_item(self._face_mode_combo)
+        """Offer exactly the face modes the grid's current shape supports,
+        keeping the current one if it still applies (else Grid Faces), and
+        cap the NURBS degrees at what the point counts allow. Rerun after
+        every edit: adding or deleting a row or column changes all three."""
+        rows = len(self._grid)
+        lens = {len(row) for row in self._grid}
+        modes = ["Grid Only", "Grid Faces"]
+        if rows == 4 and lens == {4}:
+            modes.append("Bezier Patch")
+        if len(lens) == 1 and min(lens) >= 2:
+            # BOSL2 wants a rectangular patch; any ragged row rules it out.
+            modes += ["NURBS Surface", "NURBS Interpolated Surface"]
+        current = self._face_mode_combo.currentText() or "Grid Faces"
+        combo = self._face_mode_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(modes)
+        combo.setCurrentText(current if current in modes else "Grid Faces")
+        combo.blockSignals(False)
+        _size_combo_to_widest_item(combo)
+        nurbs_mode = combo.currentText().startswith("NURBS")
+        self._degree_label.setVisible(nurbs_mode)
+        for spin, count in zip(self._degree_spins, (rows, max(lens))):
+            spin.setVisible(nurbs_mode)
+            spin.blockSignals(True)
+            spin.setRange(1, max(1, count - 1))     # BOSL2 needs degree+1 points
+            spin.blockSignals(False)
+
+    def _nurbs_surface(self):
+        """The NURBS surface to draw, sampled as BOSL2's nurbs_patch_points
+        would, or None: not a NURBS mode, or points BOSL2 would refuse (a
+        duplicate neighbour, a singular fit). The control net stays drawn
+        either way, so nothing vanishes."""
+        mode = self._face_mode_combo.currentText()
+        if not mode.startswith("NURBS"):
+            return None
+        grid = np.array([[[*p, 0.0][:3] for p in row] for row in self._grid], dtype=float)
+        degree = tuple(spin.value() for spin in self._degree_spins)
+        col_wrap, row_wrap = self._wrap_flags()
+        closed = (row_wrap, col_wrap)      # u (rows) wraps with the rows
+        try:
+            if mode == "NURBS Interpolated Surface":
+                control, knots = nurbs.interp_surface(grid, degree, closed)
+                return nurbs.patch(control, degree, closed, knots=knots)
+            return nurbs.patch(grid, degree, closed)
+        except ValueError:
+            return None
 
     def _refresh_row_bookkeeping(self):
         """Recompute self._rows/self._row_offsets from self._grid -- call
@@ -634,9 +687,11 @@ class GridViewer(QDialog, _UndoableViewerMixin):
                            col_wrap=col_wrap,
                            row_wrap=row_wrap,
                            draw_faces=(mode == "Grid Faces"),
-                           bezier_patch=(mode == "Bezier Patch"))
+                           bezier_patch=(mode == "Bezier Patch"),
+                           surface=self._nurbs_surface())
 
     def _rebuild(self, _=None, reframe: bool = True):
+        self._sync_face_mode_combo()
         if self._vp._ctx is not None:
             mode = self._face_mode_combo.currentText()
             col_wrap, row_wrap = self._wrap_flags()
@@ -645,7 +700,8 @@ class GridViewer(QDialog, _UndoableViewerMixin):
                                row_wrap=row_wrap,
                                draw_faces=(mode == "Grid Faces"),
                                bezier_patch=(mode == "Bezier Patch"),
-                               reframe=reframe)
+                               reframe=reframe,
+                               surface=self._nurbs_surface())
 
     def _get_value(self):
         return self._grid
@@ -800,7 +856,8 @@ class _GridViewport(Viewport):
 
     def load_grid(self, grid_value: list, col_wrap: bool = False,
                   row_wrap: bool = False, draw_faces: bool = True,
-                  bezier_patch: bool = False, reframe: bool = True):
+                  bezier_patch: bool = False, reframe: bool = True,
+                  surface: np.ndarray | None = None):
         self._bezier_patch_mode = bezier_patch
         self.makeCurrent()
         self._renderer._clear_buffers()
@@ -939,6 +996,12 @@ class _GridViewport(Viewport):
             cp = pts.reshape(4, 4, 3)
             tris_pos, tris_norm = _bezier_patch_mesh(cp)
             self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
+
+        if surface is not None:
+            # A NURBS surface, sampled by the dialog (see GridViewer._nurbs_surface).
+            tris_pos, tris_norm = _surface_mesh(surface, row_wrap, col_wrap)
+            if len(tris_pos):
+                self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
 
         self._build_point_markers()
         if self._selected_indices:
