@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import sys
 import time
 from pathlib import Path
 import numpy as np
@@ -297,6 +298,53 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
     }.get(key)
 
 
+class _QtGLLoader:
+    """moderngl's loader protocol, answered by Qt's own current context.
+
+    Qt already knows whether it made an EGL or a GLX context, and has the
+    library loaded. moderngl on Linux guesses instead, both ways wrongly:
+    the first context dlopens `libEGL.so`/`libGL.so` -- unversioned names
+    that only the -dev packages install, so a stock desktop gets no context
+    at all -- and every later one assumes GLX, which native Wayland never
+    has current. Either way the process segfaulted. See
+    scripts/gl_context_probe.py and .github/workflows/linux-display.yml.
+    """
+
+    def __init__(self):
+        from PySide6.QtGui import QOpenGLContext
+        self._qctx = QOpenGLContext.currentContext()
+
+    def load_opengl_function(self, name):
+        return self._qctx.getProcAddress(name.encode())
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        pass
+
+    def release(self):
+        pass
+
+
+def _attach_moderngl(require: int = 330):
+    """A moderngl context on the QOpenGLWidget's context, current now."""
+    import moderngl
+    if not sys.platform.startswith("linux"):
+        # ponytail: Linux only -- macOS and Windows attach correctly
+        # through moderngl's own path, and this one is proven on Linux.
+        return moderngl.create_context(require=require)
+    # init_context takes a loader but returns nothing: it stores the result
+    # as moderngl's process default, which is where get_context reads it.
+    # Each viewport overwrites that default with its own; nothing here reads
+    # it except to collect the context just made.
+    moderngl.init_context(_QtGLLoader())
+    ctx = moderngl.get_context()
+    if ctx.version_code < require:
+        raise ValueError(f"Requested OpenGL version {require}, got version {ctx.version_code}")
+    return ctx
+
+
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
@@ -476,8 +524,7 @@ class Viewport(QOpenGLWidget):
     # ------------------------------------------------------------------
 
     def initializeGL(self):
-        import moderngl
-        self._ctx = moderngl.create_context(require=330)
+        self._ctx = _attach_moderngl(330)
         self._renderer.initialize(self._ctx)
         if self._pending_load is not None:
             fn = self._pending_load
