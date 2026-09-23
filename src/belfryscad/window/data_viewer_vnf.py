@@ -878,7 +878,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         self._validation_label.setText("Checking…")
         QApplication.processEvents()
         try:
-            report = validate_vnf(self._vnf)
+            report = self._adjust_report(validate_vnf(self._vnf))
         except Exception as e:                       # noqa: BLE001
             # A check must never take the viewer down with it.
             self._validation_label.setText(f"Validation failed: {e}")
@@ -895,6 +895,10 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         self._validation_label.setText(text)
         self._validation_label.setStyleSheet(
             "color: #1a7f37;" if report.ok else "color: #b32020;")
+
+    def _adjust_report(self, report):
+        """Hook for VNFTileViewer, whose rim is open by design; unchanged here."""
+        return report
 
     @staticmethod
     def _make_vert_table(verts, editable: bool = False) -> QTableWidget:

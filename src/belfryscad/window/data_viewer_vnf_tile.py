@@ -49,6 +49,9 @@ class VNFTileViewer(VNFViewer):
         self._btn_row.insertWidget(2, self._seam_label)
         self._update_seam_label()
 
+    def _adjust_report(self, report):
+        return vnf_tile.set_aside_rim_holes(report)
+
     def _on_tiling_toggled(self, on: bool):
         self._tiled = on
         self._rebuild(reframe=True)     # fit the 3x3 block, or the tile again
