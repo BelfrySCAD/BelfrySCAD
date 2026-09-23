@@ -1,7 +1,6 @@
 # TODO
 
 - NURBS viewer/editor support
-- VNF tile texture viewer/editor
 - Colour picker for colour literals in the editor. The swatch tooltip
   shipped (`color_literals.py`, `docs/editor.md`); this is the other half —
   editing one. Same shape as **Choose Font…** (`font_picker.py`): its own
