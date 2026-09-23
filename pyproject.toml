@@ -127,10 +127,12 @@ finish_arg."filesystem=home" = true
 # upscale and weakens trackpad gesture delivery, both of which this app
 # cares about. fallback-x11 keeps X11-only systems working unchanged.
 #
-# moderngl attaches to Qt's own GL context here (viewport.py's
-# create_context() has no standalone=True), so EGL-under-Wayland needs no
-# code change; the GLX/EGL fallback in headless_render.py is the separate
-# standalone path.
+# moderngl attaches to Qt's own GL context here, through a loader that asks
+# Qt for the GL functions (viewport.py's _QtGLLoader), so EGL under Wayland
+# and GLX under X11 both work. moderngl's own Linux loader did not: it
+# assumed GLX for every context after the first, and wanted -dev packages
+# for the first. .github/workflows/linux-display.yml checks both servers.
+# The GLX/EGL fallback in headless_render.py is the separate standalone path.
 finish_arg."socket=wayland" = true
 finish_arg."socket=fallback-x11" = true
 finish_arg."nosocket=wayland" = false
