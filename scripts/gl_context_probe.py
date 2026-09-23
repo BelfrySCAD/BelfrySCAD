@@ -11,8 +11,15 @@ nothing. CI runs it under X11 (xvfb) and Wayland (headless Weston); see
 
 Exit status 0 on pass, 1 on fail.
 """
+import faulthandler
 import sys
 import traceback
+
+faulthandler.enable()       # a crash inside GL setup still says where
+
+
+def stage(msg):
+    print("..", msg, flush=True)
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QSurfaceFormat
@@ -25,6 +32,7 @@ fmt.setDepthBufferSize(24)
 QSurfaceFormat.setDefaultFormat(fmt)        # as main.py, before QApplication
 
 app = QApplication(sys.argv)
+stage(f"QApplication up on {QApplication.platformName()}")
 errors = []
 sys.excepthook = lambda *e: errors.append("".join(traceback.format_exception(*e)))
 
@@ -34,8 +42,14 @@ from belfryscad.window.viewport import Viewport             # noqa: E402
 main_vp = Viewport()
 main_vp.resize(320, 240)
 main_vp.show()
+stage("main viewport shown")
+app.processEvents()
+stage(f"main viewport context: {main_vp._ctx}")
 viewer = VNFViewer("probe", [[[0, 0, 0], [10, 0, 0], [0, 10, 0]], [[0, 1, 2]]])
 viewer.show()
+stage("data viewer shown")
+app.processEvents()
+stage(f"data viewer context: {viewer._vp._ctx}")
 
 
 def check():
