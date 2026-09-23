@@ -288,3 +288,12 @@ def test_include_formatting_is_idempotent():
                 "use <foo.scad>\nsphere(1);"):
         once = format_scad(src)
         assert format_scad(once) == once, f"not idempotent: {src!r}"
+
+
+def test_trailing_whitespace_in_a_comment_is_not_a_changed_comment():
+    """The formatter strips it, so the safety gate must not reject that
+    rewrite -- a BOSL2 doc-comment line of just `//   ` did exactly that.
+    Changing a comment's actual text still counts."""
+    from belfryscad.window.scad_format import _same_shape
+    assert _same_shape("x = 1;  //   \n/* a  \n b */\n", "x = 1;  //\n/* a\n b */\n")
+    assert not _same_shape("x = 1;  // a\n", "x = 1;  // b\n")
