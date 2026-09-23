@@ -137,6 +137,36 @@ class ConsoleWidget(QTextBrowser):
         else:
             self._append_foldable(lines[0], '\n'.join(lines[1:]))
 
+    @staticmethod
+    def _repeat_text(n: int) -> str:
+        return f"(Message repeats {n:,} more time{'' if n == 1 else 's'})"
+
+    def append_repeat(self, like: str) -> int:
+        """Append a "(Message repeats N more times)" line standing in for
+        the copies of `like` past the first few, banded as `like` is, and
+        return its block number for `set_repeat` to update as the count
+        grows -- the final count is not known until the render ends."""
+        self._append_plain(self._repeat_text(1))
+        bn = self.document().blockCount() - 1
+        kind = _severity_of(like)
+        if kind:
+            self._band(bn, bn, kind)
+        return bn
+
+    def set_repeat(self, bn: int, n: int):
+        """Rewrite the count on a line `append_repeat` made, in place. A
+        block that is no longer one (the console was cleared) is left be."""
+        block = self.document().findBlockByNumber(bn)
+        if not block.isValid() or not block.text().startswith("(Message repeats"):
+            return
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                            QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(self._repeat_text(n), _plain_fmt())
+        kind = self._severity.get(bn)
+        if kind:
+            self._band(bn, bn, kind)
+
     def append_value(self, name: str, value: object, text: str):
         """Like append_output but stores *value* so right-click can launch viewers."""
         lines = text.rstrip('\n').split('\n')

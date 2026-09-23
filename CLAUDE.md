@@ -117,7 +117,7 @@ No live preview. Full Manifold CSG processing runs when:
 - The user selects **Render** (toolbar or Design menu)
 - A **gizmo drag commits** (mouse-up)
 - An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
-- A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created)
+- A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created), unless **Preferences ▸ Render ▸ Render a file when it is opened** is off -- so a file that hangs or floods the renderer can still be opened and fixed (#554)
 - A **file is saved**, but only with **Design ▸ Automatic Reload and Render** on (`_write_file`; a plain save is not a render, #395)
 - The user stops editing **Customizer** fields for 2 seconds, with the pane's **Automatic update** box ticked (`MainWindow._customizer_render_timer`, a debounced single-shot `QTimer` restarted on every edit; the box is preference `customizer/autoUpdate`, on by default, and off leaves the write-back but no render — #397; see `docs/editor.md`'s CustomizerPane section)
 - An **animation frame advances** (`MainWindow._on_animate_frame` renders per tick; a tick is skipped while a render is still in flight, since overlapping renders invoke the parser concurrently and can segfault)
@@ -135,6 +135,8 @@ lattices are explicitly out of scope.
 **"Run Tests…"** (Design menu) asks for a directory of `.scadtest` files and opens the Testing pane, which is where coverage comes from — there is no per-render capture (see "Coverage" below); session-only, never persisted. **"Render with Profiling"** (Design menu) is a separate, explicitly opt-in diagnostic trigger — not part of this automatic/WYSIWYG set — that turns on per-call-site timing instrumentation for that one render. See openscad_cpp_evaluator's `CLAUDE.md` for the profiling instrumentation.
 
 The viewport always shows the last render's result; it stays static while the user edits code.
+
+**Script output during a render** (echo, warnings) is batched by `_RenderWorker` -- flushed every 100 ms, not one queued signal per message -- and capped at `_SHOWN_CAP` (1,000) messages per render, followed by a count of the rest; an `ERROR` always gets through. An identical message prints its first 10 copies, then one "(Message repeats N more times)" line, banded like the message and its N rewritten in place as copies arrive (`ConsoleWidget.append_repeat`/`set_repeat`); keyed on the whole text, so it catches non-adjacent repeats too, and the collapsed copies do not count toward the cap. One signal and console append per message let a warning flood stall the UI thread for 21 s at 60,000 warnings, past the ~5 s after which Windows greys a window out (#554). The same echo callback is the only point at which a running `evaluate()` can be interrupted -- raising there aborts it as `EvalError` -- so it is also where **Cancel** takes effect and where a render stops at **Stop rendering after N warnings** (Preferences ▸ Render; Design ▸ Stop on First Warning is the quick switch for N=1, and with both on the smaller wins). A script that runs long without printing anything cannot be cancelled: that needs a cancel check inside the evaluator.
 
 ## V1 Scope Boundaries
 
