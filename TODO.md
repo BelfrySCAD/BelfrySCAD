@@ -1,12 +1,10 @@
 # TODO
 
-- NURBS surface viewer/editor support. Curves are done: the Path viewer's
-  mode dropdown has NURBS Path and NURBS Interpolated Path, drawn by
-  `nurbs.py`'s port of BOSL2's `nurbs.scad` — extend that port for
-  surfaces rather than starting over. Not yet reachable in the curve modes:
-  weights, knots/multiplicities, `type="open"`, and `nurbs_interp`'s
-  deriv/curvature/corner constraints, none of which a bare point list
-  carries.
+- NURBS parameters a bare point list cannot carry: weights,
+  knots/multiplicities, `type="open"`, and `nurbs_interp`/
+  `nurbs_interp_surface`'s derivative/curvature/normal/edge constraints.
+  Curves (Path viewer) and surfaces (Grid viewer) are done without them,
+  drawn by `nurbs.py`'s port of BOSL2's `nurbs.scad`; extend that port.
 - Notional 2D layout editor: place multiple 2D shapes, apply transforms
   and CSG to them, then extrude by part.
 - Extrude gizmo for 2D shapes selected in the main viewport, with and
