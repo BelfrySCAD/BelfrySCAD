@@ -3085,12 +3085,12 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
     """
     from belfryscad.window.data_viewers import (
         _NEW_LITERAL_SEEDS, _is_path, _is_grid, _is_heightfield, _is_matrix,
-        _is_affine_matrix, _is_vnf, _is_region,
+        _is_affine_matrix, _is_vnf, _is_vnf_tile, _is_region,
     )
     predicates = {
         "path": _is_path, "grid": _is_grid, "heightfield": _is_heightfield,
         "matrix": _is_matrix, "affine": _is_affine_matrix, "vnf": _is_vnf,
-        "region": _is_region,
+        "vnf_tile": _is_vnf_tile, "region": _is_region,
     }
     seen = set()
     for label, shape, _opener, seed in _NEW_LITERAL_SEEDS:

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
+from belfryscad import vnf_tile
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.ui_colors import (header_colors, on_appearance_change,
@@ -470,6 +471,13 @@ def _is_vnf(v) -> bool:
         return False
     return all(_is_list(f) and len(f) >= 3
                and all(isinstance(i, (int, float)) for i in f) for f in faces)
+
+
+def _is_vnf_tile(v) -> bool:
+    """A VNF lying within the unit square in X and Y -- the shape of a
+    BOSL2 VNF tile texture. Offered alongside "VNF", never instead of it:
+    plenty of small meshes happen to fit."""
+    return _is_vnf(v) and vnf_tile.is_tile(v[0])
 
 
 def _object_field(v, *names):
@@ -3424,7 +3432,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
-        btn_row = QHBoxLayout()
+        btn_row = self._btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
         show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
@@ -3935,6 +3943,107 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 # ---------------------------------------------------------------------------
 # Path Viewer
 # ---------------------------------------------------------------------------
+
+class VNFTileViewer(VNFViewer):
+    """A `VNFViewer` for a BOSL2 VNF tile texture -- a VNF within the unit
+    square, repeated edge to edge (see `belfryscad.vnf_tile`).
+
+    Adds what a lone mesh cannot show: the neighbouring copies ("Show
+    tiling", drawn in a lighter grey and never picked), a live
+    check of the seams BOSL2 asserts on, and edge vertices that drag
+    with their twins on the opposite edge, so a seam that matched keeps
+    matching."""
+
+    def __init__(self, title: str, vnf_value: list, parent=None, editable: bool = False):
+        self._tiled = False
+        super().__init__(title, vnf_value, parent, editable)
+        label = "VNF Tile Editor" if editable else "VNF Tile Viewer"
+        self.setWindowTitle(f"{label}: {title}" if title else label)
+        self._tile_cb = QCheckBox("Show tiling")
+        self._tile_cb.setToolTip(
+            "Draw the tile's eight neighbours as the texture would repeat,\n"
+            "so the seams between copies are visible.")
+        self._tile_cb.toggled.connect(self._on_tiling_toggled)
+        self._btn_row.insertWidget(1, self._tile_cb)
+        self._seam_label = QLabel("")
+        self._btn_row.insertWidget(2, self._seam_label)
+        self._update_seam_label()
+
+    def _on_tiling_toggled(self, on: bool):
+        self._tiled = on
+        self._rebuild(reframe=True)     # fit the 3x3 block, or the tile again
+
+    def _load_mesh(self, reframe: bool = True):
+        super()._load_mesh(reframe)
+        if not self._tiled or not self._vp._renderer._buffers:
+            return
+        # The tile's own triangles, as VNFViewer uploaded them. Opaque rather
+        # than the translucent `%` ghost pass, which turned the seams to mush.
+        tile = self._vp._renderer._buffers[-1]
+        positions = np.stack([tile.cpu_v0, tile.cpu_v1, tile.cpu_v2], axis=1).reshape(-1, 3)
+        normals = np.repeat(np.cross(tile.cpu_v1 - tile.cpu_v0, tile.cpu_v2 - tile.cpu_v0), 3, axis=0)
+        normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx or dy:
+                    # Empty tri_ids: ray_cast skips the buffer, so a click
+                    # on a neighbour never selects the tile's own face.
+                    self._vp._renderer.upload_mesh(
+                        positions + np.array([dx, dy, 0], dtype=np.float32), normals,
+                        color=(0.78, 0.78, 0.78, 1.0), tri_ids=np.zeros(0, dtype=np.int32))
+        if reframe:
+            verts = np.array(self._vnf[0], dtype=np.float32)
+            self._vp.frame_scene(verts.min(axis=0) - [1, 1, 0], verts.max(axis=0) + [1, 1, 0])
+
+    def _update_seam_label(self):
+        out_of_range, unmatched = vnf_tile.tile_problems(self._vnf)
+        problems = []
+        if out_of_range:
+            problems.append(f"{len(out_of_range)} outside the unit square")
+        if unmatched:
+            problems.append(f"{len(unmatched)} edge "
+                            f"{'vertex' if len(unmatched) == 1 else 'vertices'} with no twin")
+        if problems:
+            self._seam_label.setText("Won't tile: " + ", ".join(problems))
+            self._seam_label.setToolTip(
+                "BOSL2 rejects this texture.\n"
+                + (f"Outside [0,1]: {out_of_range}\n" if out_of_range else "")
+                + (f"No twin on the opposite edge: {unmatched}" if unmatched else ""))
+            self._seam_label.setStyleSheet("color: #b32020;")
+        else:
+            self._seam_label.setText("Tiles cleanly")
+            self._seam_label.setToolTip("")
+            self._seam_label.setStyleSheet("color: #1a7f37;")
+
+    def _rebuild(self, reframe: bool = True):
+        super()._rebuild(reframe)
+        if hasattr(self, "_seam_label"):
+            self._update_seam_label()
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        i, j = item.row(), item.column()
+        parsed = _parse_number(item.text())
+        if parsed is None:
+            super()._on_item_changed(item)      # reverts the cell
+            return
+        new_pos = list(self._vnf[0][i])
+        new_pos[j] = parsed
+        new_value = copy.deepcopy(self._vnf)
+        for k, p in vnf_tile.linked_moves(self._vnf[0], i, new_pos, lock=False):
+            new_value[0][k] = p
+        self._commit_value(new_value, "Edit Vertex")
+
+    def _on_viewport_vertex_moved(self, vi: int, x: float, y: float, z: float):
+        moves = vnf_tile.linked_moves(self._vnf[0], vi, [x, y, z], lock=True)
+        self._vert_table.blockSignals(True)
+        for k, p in moves:
+            self._vnf[0][k] = p
+            for c in range(3):
+                self._vert_table.item(k, c).setText(f"{p[c]:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild(reframe=False)
+        self._vp.scroll_to_visible(np.array(moves[0][1]))
+
 
 class PathViewer(QDialog, _UndoableViewerMixin):
     """2D/3D path viewer with vertex table, selectable markers, and hover
@@ -8258,6 +8367,8 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["affine"] = (start, end, value)
         if "vnf" not in found and _is_vnf(value):
             found["vnf"] = (start, end, value)
+        if "vnf_tile" not in found and _is_vnf_tile(value):
+            found["vnf_tile"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
     # An object is a CALL, not a bracket literal, so it has its own
@@ -8288,6 +8399,8 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["list"] = (start, end, value)
         if "vnf" not in found and _is_vnf(value):
             found["vnf"] = (start, end, value)
+        if "vnf_tile" not in found and _is_vnf_tile(value):
+            found["vnf_tile"] = (start, end, value)
         if "grid" not in found and _is_grid(value):
             found["grid"] = (start, end, value)
         if "path" not in found and _is_path(value):
@@ -8318,6 +8431,11 @@ def _open_list_viewer(title: str, value, parent=None):
 
 def _open_vnf_viewer(title: str, value, parent=None):
     dlg = VNFViewer(title, value, parent)
+    dlg.show()
+
+
+def _open_vnf_tile_viewer(title: str, value, parent=None):
+    dlg = VNFTileViewer(title, value, parent)
     dlg.show()
 
 
@@ -8376,6 +8494,8 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as List...", lambda: _open_list_viewer(name, value, parent))
     if _is_vnf(value):
         menu.addAction("View as VNF...", lambda: _open_vnf_viewer(name, value, parent))
+        if _is_vnf_tile(value):
+            menu.addAction("View as VNF Tile...", lambda: _open_vnf_tile_viewer(name, value, parent))
     else:
         # A geometry object from a render() expression carries the mesh as
         # separate keys rather than a 2-list, so it needs unwrapping first.
@@ -8430,6 +8550,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
         start, end, value = literals["vnf"]
         menu.addAction("View as VNF...", lambda start=start, end=end, value=value:
                        _open_vnf_viewer(_preview(start, end), value, parent))
+    if "vnf_tile" in literals:
+        start, end, value = literals["vnf_tile"]
+        menu.addAction("View as VNF Tile...", lambda start=start, end=end, value=value:
+                       _open_vnf_tile_viewer(_preview(start, end), value, parent))
     if "grid" in literals:
         start, end, value = literals["grid"]
         menu.addAction("View as Grid...", lambda start=start, end=end, value=value:
@@ -8507,6 +8631,13 @@ def _open_vnf_editor(title: str, value: list, on_commit, parent=None):
     dlg.show()
 
 
+def _open_vnf_tile_editor(title: str, value: list, on_commit, parent=None):
+    dlg = VNFTileViewer(title, value, parent, editable=True)
+    dlg.committed.connect(on_commit)
+    _lock_parent_editor_while_open(dlg, parent)
+    dlg.show()
+
+
 def _open_region_editor(title: str, value: list, on_commit, parent=None):
     dlg = RegionViewer(title, value, parent, editable=True)
     dlg.committed.connect(on_commit)
@@ -8563,6 +8694,11 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as VNF...", lambda start=start, end=end, value=value:
                        _open_vnf_editor(_preview(start, end), value,
                                          lambda t, s=start, e=end: on_commit(t, s, e), parent))
+    if "vnf_tile" in literals:
+        start, end, value = literals["vnf_tile"]
+        menu.addAction("Edit as VNF Tile...", lambda start=start, end=end, value=value:
+                       _open_vnf_tile_editor(_preview(start, end), value,
+                                              lambda t, s=start, e=end: on_commit(t, s, e), parent))
     if "region" in literals:
         start, end, value = literals["region"]
         menu.addAction("Edit as Region...", lambda start=start, end=end, value=value:
@@ -8610,6 +8746,10 @@ _NEW_LITERAL_SEEDS = [
      [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]),
     ("VNF", "vnf", lambda *a: _open_vnf_editor(*a),
      [[[0, 0, 0], [10, 0, 0], [0, 10, 0]], [[0, 1, 2]]]),
+    # A flat unit square, wound clockwise seen from +Z like every one of
+    # BOSL2's own VNF textures.
+    ("VNF Tile", "vnf_tile", lambda *a: _open_vnf_tile_editor(*a),
+     [[[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], [[0, 3, 2, 1]]]),
 ]
 
 
