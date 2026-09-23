@@ -68,7 +68,7 @@ def _fmt(v) -> str:
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
-    from belfryscad.window.data_viewers import _is_oscobject
+    from belfryscad.window.data_viewer_common import _is_oscobject
     if _is_oscobject(v):
         inner = ", ".join(f"{k} = {_fmt(val)}" for k, val in v.items())
         return f"object({inner})"
@@ -106,7 +106,7 @@ def _filtered_vars(frame_data: dict, category: str, show_hidden: bool) -> dict:
 
 def _pretty_fmt_value(value, indent: int = 0) -> str | None:
     """Format OscObject values with multi-line layout. Returns None for other types."""
-    from belfryscad.window.data_viewers import _is_oscobject
+    from belfryscad.window.data_viewer_common import _is_oscobject
     if _is_oscobject(value):
         if not value.data:
             return "object()"
@@ -607,7 +607,7 @@ class DebuggerPane(QWidget):
         self._stack_list = QTableWidget(0, 3)
         self._stack_list.setFont(mono)
         self._stack_list.setHorizontalHeaderLabels(["Name", "File", "Line"])
-        from belfryscad.window.data_viewers import _style_table_headers
+        from belfryscad.window.data_viewer_common import _style_table_headers
         _style_table_headers(self._stack_list)
         stack_header_view = self._stack_list.horizontalHeader()
         stack_header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -656,7 +656,7 @@ class DebuggerPane(QWidget):
         self._vars_table = QTableWidget(0, 2)
         self._vars_table.setFont(mono)
         self._vars_table.setHorizontalHeaderLabels(["Name", "Value"])
-        from belfryscad.window.data_viewers import _style_table_headers
+        from belfryscad.window.data_viewer_common import _style_table_headers
         _style_table_headers(self._vars_table)
         self._vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._vars_table.horizontalHeader().setStretchLastSection(True)

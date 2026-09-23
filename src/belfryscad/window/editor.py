@@ -2894,8 +2894,12 @@ class CodeEditor(QPlainTextEdit):
         # when not debugging (unlike the debug-locals "View 'word' as..."
         # block above, which is keyed by identifier name).
         from belfryscad.window.data_viewers import (
-            find_viewable_literals, find_editable_literals, find_empty_assignment,
-            build_lexical_view_menu, build_editor_menu, build_new_literal_menu,
+            find_viewable_literals,
+            find_editable_literals,
+            find_empty_assignment,
+            build_lexical_view_menu,
+            build_editor_menu,
+            build_new_literal_menu,
         )
         text = self.toPlainText()
         offset = click.position()

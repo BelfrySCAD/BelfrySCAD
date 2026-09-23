@@ -1,6 +1,6 @@
 """
 Tests for the GridViewer shape-detection and flat-index helpers in
-`belfryscad.window.data_viewers` — specifically that a "grid" (list of lists
+the `belfryscad.window.data_viewer*` modules — specifically that a "grid" (list of lists
 of points) need not be rectangular: rows may have different lengths (e.g. a
 cone's single-point apex row next to a wider base row). Also covers
 `_is_matrix`/`_is_affine_matrix`, the shape-detection helpers for
@@ -22,21 +22,63 @@ import numpy as np
 from PySide6.QtCore import Qt
 
 from belfryscad.engine.renderer import Camera
+from belfryscad.window.data_viewer_grid import (
+    _is_grid,
+    _grid_is_triangular,
+    _grid_fan_spec,
+)
+from belfryscad.window.data_viewer_common import (
+    _grid_row_offsets,
+    _grid_flat_to_rc,
+    _identity_matrix,
+    _dodecahedron_faces,
+    _DODECA_VERTS,
+    _DODECA_FACES,
+    _scad_literal_to_python,
+)
+from belfryscad.window.data_viewer_matrix import _is_matrix
+from belfryscad.window.data_viewer_path import (
+    _is_path,
+    _classify_node_type,
+    _remap_node_types,
+    _bezier_linked_moves,
+    _decasteljau_split,
+    _v0_handle_indices,
+    _snap_handles_to_node_type,
+    _fit_merged_segment,
+    _owning_v0_index,
+)
+from belfryscad.window.data_viewer_affine import (
+    _is_affine_matrix,
+    _affine_reference_shape,
+    _affine_shape_edges,
+    _apply_affine,
+    _translation_matrix,
+    _axis_rotation_matrix,
+    _scale_matrix,
+    _shear_matrix,
+    _pivot_about,
+    _compose_after,
+)
+from belfryscad.window.data_viewer_region import _is_region
 from belfryscad.window.data_viewers import (
-    _is_grid, _grid_row_offsets, _grid_flat_to_rc, _grid_is_triangular,
-    _grid_fan_spec, _is_matrix, _is_path, _is_affine_matrix, _is_region,
-    _affine_reference_shape, _affine_shape_edges, _apply_affine,
-    _identity_matrix, _translation_matrix, _axis_rotation_matrix,
-    _scale_matrix, _shear_matrix, _pivot_about, _compose_after,
-    _iter_enclosing_literals, find_editable_literals, find_viewable_literals,
-    _key_nudge_magnitude, _key_nudge_delta,
-    _classify_node_type, _remap_node_types, _bezier_linked_moves, _decasteljau_split,
-    _v0_handle_indices, _snap_handles_to_node_type, _fit_merged_segment,
-    _owning_v0_index, _dodecahedron_faces, _DODECA_VERTS, _DODECA_FACES,
-    _tube_triangles, _is_vnf, _object_field, _geometry_object_vnf,
-    _geometry_object_region, _scad_literal_to_python, _python_value_to_scad,
-    _split_top_level, _parse_object_call_args, _render_object_call,
-    _find_object_call, _scad_type_name, _is_scad_literal_value,
+    _iter_enclosing_literals,
+    find_editable_literals,
+    find_viewable_literals,
+    _object_field,
+    _geometry_object_vnf,
+    _geometry_object_region,
+    _split_top_level,
+    _parse_object_call_args,
+    _find_object_call,
+)
+from belfryscad.window.viewport import _key_nudge_magnitude, _key_nudge_delta
+from belfryscad.window.data_viewer_vnf import _tube_triangles, _is_vnf
+from belfryscad.window.data_viewer_object import (
+    _python_value_to_scad,
+    _render_object_call,
+    _scad_type_name,
+    _is_scad_literal_value,
 )
 
 
@@ -1217,11 +1259,11 @@ class TestValidationColors:
         return float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
 
     def colors(self):
-        from belfryscad.window.data_viewers import _VNFViewport
+        from belfryscad.window.data_viewer_vnf import _VNFViewport
         return _VNFViewport.VALIDATION_COLORS
 
     def test_none_of_them_reads_as_a_backface(self):
-        from belfryscad.window.data_viewers import _VNFViewport
+        from belfryscad.window.data_viewer_vnf import _VNFViewport
         magenta = _VNFViewport.BACKFACE_MAGENTA
         for name, c in self.colors().items():
             assert self.dist(c, magenta) >= self.MIN_VS_SURFACE, (name, c)
@@ -1231,7 +1273,7 @@ class TestValidationColors:
         # stale copy and the check above stops meaning anything.
         import re
         from pathlib import Path
-        from belfryscad.window.data_viewers import _VNFViewport
+        from belfryscad.window.data_viewer_vnf import _VNFViewport
         src = (Path(__file__).resolve().parent.parent / "src" / "belfryscad"
                / "engine" / "renderer.py").read_text()
         m = re.search(r"backface_color\s+or\s+\(([^)]*)\)", src)
@@ -1577,7 +1619,7 @@ class TestObjectCallParsing:
 # `_is_matrix` wants a SQUARE 2x2..5x5, so nothing offered one an editor.
 
 def test_is_heightfield_accepts_any_rectangular_scalar_array():
-    from belfryscad.window.data_viewers import _is_heightfield
+    from belfryscad.window.data_viewer_heightfield import _is_heightfield
 
     assert _is_heightfield([[1, 2], [3, 4]])
     assert _is_heightfield([[1, 2, 3], [4, 5, 6]])
@@ -1586,7 +1628,7 @@ def test_is_heightfield_accepts_any_rectangular_scalar_array():
 
 
 def test_is_heightfield_rejects_what_it_is_not():
-    from belfryscad.window.data_viewers import _is_heightfield
+    from belfryscad.window.data_viewer_heightfield import _is_heightfield
 
     assert not _is_heightfield([[1, 2], [3]]), "ragged: not a height map"
     assert not _is_heightfield([[1, 2, 3]]), "a single row is a path, not a field"
@@ -1602,8 +1644,10 @@ def test_heightfield_does_not_displace_the_shapes_it_overlaps():
     """Shapes are offered independently, so a literal that reads as more
     than one shows every applicable entry. A 3x3 scalar array really is
     both a heightfield and a matrix, and each row really is a point."""
-    from belfryscad.window.data_viewers import (find_editable_literals,
-                                                 find_viewable_literals)
+    from belfryscad.window.data_viewers import (
+        find_editable_literals,
+        find_viewable_literals,
+    )
 
     src = "data = [[0,1,2],[3,4,5],[6,7,8]];"
     offset = src.index("[[") + 2
@@ -1629,7 +1673,7 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 
 hf = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
 dlg = HeightfieldViewer("t", hf, None, editable=True)
@@ -1842,7 +1886,7 @@ def test_heightfield_viewer_edits_heights_and_previews_the_surface(tmp_path):
 
     # Save writes out whatever the dialog is holding at the time -- every
     # edit above, not a snapshot from somewhere earlier.
-    from belfryscad.window.data_viewers import _format_heightfield
+    from belfryscad.window.data_viewer_heightfield import _format_heightfield
     assert out["saved"] == _format_heightfield(out["final_value"])
     assert out["saved"].count("\n") == 3, "one line per row, plus the brackets"
     assert out["cell_text_before_save"] == "0.123", "the table rounds for display"
@@ -1874,7 +1918,7 @@ def _uses_alt_diagonal(tris) -> bool:
 
 
 def test_quad_styles_are_bosl2s_documented_set():
-    from belfryscad.window.data_viewers import QUAD_STYLES
+    from belfryscad.window.data_viewer_heightfield import QUAD_STYLES
 
     assert QUAD_STYLES == ["default", "alt", "flip1", "flip2", "min_edge",
                            "min_area", "quincunx", "convex", "concave"]
@@ -1885,7 +1929,7 @@ def test_quad_styles_are_bosl2s_documented_set():
 
 
 def test_default_and_alt_take_opposite_diagonals():
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     p00, p01, p10, p11 = _quad_pts()
     assert not _uses_alt_diagonal(_quad_triangles("default", p00, p01, p10, p11, 0))
@@ -1893,7 +1937,7 @@ def test_default_and_alt_take_opposite_diagonals():
 
 
 def test_flip_styles_alternate_on_parity_and_oppose_each_other():
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     p = _quad_pts()
     for parity in (0, 1, 2, 3):
@@ -1905,7 +1949,7 @@ def test_flip_styles_alternate_on_parity_and_oppose_each_other():
 
 def test_quincunx_adds_a_centre_vertex_and_four_triangles():
     import numpy as np
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     p00, p01, p10, p11 = _quad_pts(4.0)
     tris = _quad_triangles("quincunx", p00, p01, p10, p11, 0)
@@ -1916,7 +1960,7 @@ def test_quincunx_adds_a_centre_vertex_and_four_triangles():
 
 
 def test_convex_and_concave_choose_opposite_diagonals():
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     # A corner lifted out of plane: the quad is genuinely non-planar, so
     # "which way does it fold" has an answer.
@@ -1927,7 +1971,7 @@ def test_convex_and_concave_choose_opposite_diagonals():
 
 def test_a_degenerate_quad_collapses_to_one_triangle():
     import numpy as np
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     # All four corners collinear: there is no normal to test against.
     a = np.array([0.0, 0.0, 0.0])
@@ -1937,7 +1981,7 @@ def test_a_degenerate_quad_collapses_to_one_triangle():
 
 def test_min_edge_picks_the_shorter_diagonal():
     import numpy as np
-    from belfryscad.window.data_viewers import _quad_triangles
+    from belfryscad.window.data_viewer_grid import _quad_triangles
 
     # Stretch p00-p11 by raising p11: p01-p10 becomes the shorter diagonal.
     p00, p01, p10, p11 = _quad_pts(10.0)
@@ -1950,7 +1994,7 @@ def test_min_edge_picks_the_shorter_diagonal():
 # ---------------------------------------------------------------------------
 
 def test_normalize_maps_the_field_onto_the_requested_range():
-    from belfryscad.window.data_viewers import _normalize_heights
+    from belfryscad.window.data_viewer_heightfield import _normalize_heights
 
     out = _normalize_heights([[0, 5], [10, 10]], 0.0, 1.0)
     assert out == [[0.0, 0.5], [1.0, 1.0]]
@@ -1962,7 +2006,7 @@ def test_normalize_keeps_the_shape_of_the_field():
     """Rescaling is linear, so every height keeps its position relative to
     the others -- that is the whole point of normalizing rather than
     clamping."""
-    from belfryscad.window.data_viewers import _normalize_heights
+    from belfryscad.window.data_viewer_heightfield import _normalize_heights
 
     src = [[-4.0, 0.0], [4.0, 2.0]]
     out = _normalize_heights(src, 0.0, 1.0)
@@ -1975,7 +2019,7 @@ def test_normalize_keeps_the_shape_of_the_field():
 
 def test_normalize_handles_negatives_and_an_inverted_target():
     import pytest
-    from belfryscad.window.data_viewers import _normalize_heights
+    from belfryscad.window.data_viewer_heightfield import _normalize_heights
 
     # Values are rounded to 6 decimals so a saved literal stays readable.
     out = _normalize_heights([[-8, -6], [-4, -2]], 0.0, 1.0)
@@ -1986,7 +2030,7 @@ def test_normalize_handles_negatives_and_an_inverted_target():
 
 
 def test_normalize_a_flat_field_does_not_divide_by_zero():
-    from belfryscad.window.data_viewers import _normalize_heights
+    from belfryscad.window.data_viewer_heightfield import _normalize_heights
 
     # No range to map from; every cell takes the low end.
     assert _normalize_heights([[3, 3], [3, 3]], 0.0, 1.0) == [[0.0, 0.0], [0.0, 0.0]]
@@ -1999,7 +2043,7 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 
 dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
 dlg.show(); app.processEvents()
@@ -2058,7 +2102,7 @@ def test_heightfield_writeback_is_multi_line_and_column_aligned():
     """A heightfield's shape on the page is the point of it. `_format_value`
     puts everything on one line, which is fine for a 4x4 matrix and
     unreadable for a 30x40 field."""
-    from belfryscad.window.data_viewers import _format_heightfield
+    from belfryscad.window.data_viewer_heightfield import _format_heightfield
 
     assert _format_heightfield([[0, 1, 2], [3, 4, 5]]) == (
         "[\n"
@@ -2086,7 +2130,7 @@ def test_heightfield_writeback_rounds_to_three_decimals():
     """One more digit than the table shows, so a height nudged to something
     the display rounds is not silently flattened on the way to the file.
     Unlike the table's own DISPLAY, this rounds the saved value."""
-    from belfryscad.window.data_viewers import _format_heightfield
+    from belfryscad.window.data_viewer_heightfield import _format_heightfield
 
     out = _format_heightfield([[0.123456, 1.0], [2.0, 0.0005]])
     assert "0.123456" not in out
@@ -2102,7 +2146,7 @@ f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QTimer
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 
 def answer(button_text, fn):
     # QMessageBox.exec blocks and cannot be monkeypatched, so press the
@@ -2178,7 +2222,7 @@ f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 
 MODS = {"coarse": Qt.KeyboardModifier.ShiftModifier,
         "normal": Qt.KeyboardModifier.NoModifier,
@@ -2245,7 +2289,7 @@ def test_heightfield_nudge_steps_do_not_depend_on_the_z_scale(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_apply_levels_maps_luminance_onto_heights():
-    from belfryscad.window.data_viewers import _apply_levels
+    from belfryscad.window.data_viewer_heightfield import _apply_levels
 
     grid = [[0.0, 0.25, 0.5], [0.75, 1.0, 0.5]]
     assert _apply_levels(grid, 0.0, 1.0, 0.0, 1.0) == grid, "identity"
@@ -2256,7 +2300,7 @@ def test_apply_levels_maps_luminance_onto_heights():
 def test_levels_stretch_the_interesting_part_of_the_range():
     """A photo rarely spans the full range; without levels its detail is
     squeezed into the middle of the field."""
-    from belfryscad.window.data_viewers import _apply_levels
+    from belfryscad.window.data_viewer_heightfield import _apply_levels
 
     grid = [[0.0, 0.25, 0.5, 0.75, 1.0]]
     # Everything at or below 0.25 floors, at or above 0.75 ceilings, and
@@ -2265,13 +2309,13 @@ def test_levels_stretch_the_interesting_part_of_the_range():
 
 
 def test_levels_can_invert():
-    from belfryscad.window.data_viewers import _apply_levels
+    from belfryscad.window.data_viewer_heightfield import _apply_levels
 
     assert _apply_levels([[0.0, 1.0]], 0.0, 1.0, 0.0, 1.0, invert=True) == [[1.0, 0.0]]
 
 
 def test_degenerate_levels_become_a_step_rather_than_dividing_by_zero():
-    from belfryscad.window.data_viewers import _apply_levels
+    from belfryscad.window.data_viewer_heightfield import _apply_levels
 
     grid = [[0.4, 0.5, 0.6]]
     # black == white: everything below is low, at or above is high.
@@ -2286,9 +2330,11 @@ f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication, QPushButton
 from PySide6.QtGui import QImage, qRgb
 app = QApplication([])
-from belfryscad.window.data_viewers import (HeightfieldViewer,
-                                             HeightfieldImportDialog,
-                                             _image_luminance_grid)
+from belfryscad.window.data_viewer_heightfield import (
+    HeightfieldViewer,
+    HeightfieldImportDialog,
+    _image_luminance_grid,
+)
 
 # A left-to-right gradient: what comes out has to increase along each row
 # and be identical down every column.
@@ -2387,7 +2433,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage, qRgb
 from PySide6.QtCore import QPoint, QRect
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldImportDialog
+from belfryscad.window.data_viewer_heightfield import HeightfieldImportDialog
 
 # Left half black, right half white: a crop is unmistakable in the values.
 img = QImage(200, 100, QImage.Format.Format_RGB32)
@@ -2478,7 +2524,7 @@ f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage, qRgb
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldImportDialog
+from belfryscad.window.data_viewer_heightfield import HeightfieldImportDialog
 
 # Left half at 0.2 luminance, right half at 0.8 -- neither is 0 or 1, so a
 # picked level is distinguishable from the defaults.
@@ -2573,15 +2619,17 @@ def test_levels_can_be_picked_off_the_image(tmp_path):
 # normal is computed once for the shape rather than once per marker.
 
 def _dodec():
-    from belfryscad.window.data_viewers import _dodecahedron_faces
+    from belfryscad.window.data_viewer_common import _dodecahedron_faces
     return _dodecahedron_faces(1.0, False)
 
 
 def test_bulk_markers_match_the_per_point_build_exactly():
     """The fast path must be a pure speed-up, not a different picture."""
     import numpy as np
-    from belfryscad.window.data_viewers import (_lit_marker_field,
-                                                 _lit_marker_triangles)
+    from belfryscad.window.data_viewer_common import (
+        _lit_marker_field,
+        _lit_marker_triangles,
+    )
 
     faces = _dodec()
     colour = np.array([0.0, 0.9, 0.9], dtype=np.float32)
@@ -2603,8 +2651,10 @@ def test_bulk_markers_match_the_per_point_build_exactly():
 def test_bulk_markers_take_a_colour_per_point():
     """AffineMatrixViewer marks its first corner differently from the rest."""
     import numpy as np
-    from belfryscad.window.data_viewers import (_lit_marker_field,
-                                                 _lit_marker_triangles)
+    from belfryscad.window.data_viewer_common import (
+        _lit_marker_field,
+        _lit_marker_triangles,
+    )
 
     faces = _dodec()
     colours = np.array([[0.85, 0.15, 0.15], [0.9, 0.45, 0.1]], dtype=np.float32)
@@ -2620,7 +2670,7 @@ def test_bulk_markers_take_a_colour_per_point():
 
 
 def test_no_markers_is_an_empty_array_not_a_crash():
-    from belfryscad.window.data_viewers import _lit_marker_field
+    from belfryscad.window.data_viewer_common import _lit_marker_field
 
     assert _lit_marker_field([], [], _dodec(), (0.0, 0.9, 0.9)).shape == (0, 9)
 
@@ -2633,9 +2683,11 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
-from belfryscad.window.data_viewers import (HeightfieldViewer,
-                                             _marker_radius_for_point,
-                                             _marker_radii_for_points)
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
+from belfryscad.window.data_viewer_common import (
+    _marker_radius_for_point,
+    _marker_radii_for_points,
+)
 
 dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
 dlg.show(); app.processEvents()
@@ -2686,7 +2738,7 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 
 dlg = HeightfieldViewer("t", [[0.0, 1.0], [2.0, 3.0]], None, editable=True)
 dlg.show(); app.processEvents()
@@ -2747,9 +2799,12 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, qRgb
 app = QApplication([])
-from belfryscad.window.data_viewers import (HeightfieldImportDialog,
-                                             _eyedropper_cursor,
-                                             _lower_left_tip, _ICONS_DIR)
+from belfryscad.window.data_viewer_heightfield import (
+    HeightfieldImportDialog,
+    _eyedropper_cursor,
+    _lower_left_tip,
+    _ICONS_DIR,
+)
 
 cur = _eyedropper_cursor(32)
 out = {"hotspot": [cur.hotSpot().x(), cur.hotSpot().y()],
@@ -2844,7 +2899,8 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldViewer, GridViewer
+from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
+from belfryscad.window.data_viewer_grid import GridViewer
 
 hf = [[round(0.5 + 0.5 * math.sin(c / 2.0) * math.cos(r / 2.0), 3)
        for c in range(6)] for r in range(5)]
@@ -2896,8 +2952,10 @@ f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage, qRgb
 app = QApplication([])
-from belfryscad.window.data_viewers import (HeightfieldViewer,
-                                             HeightfieldImportDialog)
+from belfryscad.window.data_viewer_heightfield import (
+    HeightfieldViewer,
+    HeightfieldImportDialog,
+)
 
 dlg = HeightfieldViewer("t", [[1.0] * 3, [0.5] * 3, [0.0] * 3], None, editable=True)
 dlg.resize(500, 400); dlg.show(); app.processEvents()
@@ -2979,7 +3037,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage, qRgb
 from PySide6.QtTest import QTest
 app = QApplication([])
-from belfryscad.window.data_viewers import HeightfieldImportDialog
+from belfryscad.window.data_viewer_heightfield import HeightfieldImportDialog
 
 img = QImage(200, 100, QImage.Format.Format_RGB32)      # 2:1
 for y in range(100):
@@ -3083,10 +3141,15 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
     would reject writes back a literal that "Edit as..." can no longer find,
     so the user could create it once and never reopen it.
     """
-    from belfryscad.window.data_viewers import (
-        _NEW_LITERAL_SEEDS, _is_path, _is_grid, _is_heightfield, _is_matrix,
-        _is_affine_matrix, _is_vnf, _is_vnf_tile, _is_region,
-    )
+    from belfryscad.window.data_viewers import _NEW_LITERAL_SEEDS
+    from belfryscad.window.data_viewer_path import _is_path
+    from belfryscad.window.data_viewer_grid import _is_grid
+    from belfryscad.window.data_viewer_heightfield import _is_heightfield
+    from belfryscad.window.data_viewer_matrix import _is_matrix
+    from belfryscad.window.data_viewer_affine import _is_affine_matrix
+    from belfryscad.window.data_viewer_vnf import _is_vnf
+    from belfryscad.window.data_viewer_vnf_tile import _is_vnf_tile
+    from belfryscad.window.data_viewer_region import _is_region
     predicates = {
         "path": _is_path, "grid": _is_grid, "heightfield": _is_heightfield,
         "matrix": _is_matrix, "affine": _is_affine_matrix, "vnf": _is_vnf,

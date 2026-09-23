@@ -171,8 +171,8 @@ class Measurement:
 
 
 # Arrow-key nudging, shared by this viewport and every editable data
-# viewport. They live here rather than in data_viewers because that
-# module already imports this one.
+# viewport. They live here rather than with the data viewers because
+# those modules already import this one.
 def _view_locked_axis(camera) -> int:
     """Return 0/1/2 (X/Y/Z) for whichever world axis is most nearly parallel
     to the camera's current view direction — the one axis a 2D mouse drag
@@ -668,7 +668,7 @@ class Viewport(QOpenGLWidget):
         # vertex drag/nudge rebuild, where re-fitting on every move would
         # zoom/recenter the view instead of just keeping the edited vertex
         # on-screen (see Camera.pan_to_keep_visible, called separately by
-        # the vertex-move handlers in data_viewers.py).
+        # the data viewers' vertex-move handlers).
         if reframe:
             self._renderer.camera.frame_bounds(bb_min, bb_max, self._fit_aspect())
         if self._measurements:
