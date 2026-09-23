@@ -1,6 +1,16 @@
 # TODO
 
-- NURBS viewer/editor support
+- NURBS surface viewer/editor support. Curves are done: the Path viewer's
+  mode dropdown has NURBS Path and NURBS Interpolated Path, drawn by
+  `nurbs.py`'s port of BOSL2's `nurbs.scad` — extend that port for
+  surfaces rather than starting over. Not yet reachable in the curve modes:
+  weights, knots/multiplicities, `type="open"`, and `nurbs_interp`'s
+  deriv/curvature/corner constraints, none of which a bare point list
+  carries.
+- Notional 2D layout editor: place multiple 2D shapes, apply transforms
+  and CSG to them, then extrude by part.
+- Extrude gizmo for 2D shapes selected in the main viewport, with and
+  without centering.
 - Colour picker for colour literals in the editor. The swatch tooltip
   shipped (`color_literals.py`, `docs/editor.md`); this is the other half —
   editing one. Same shape as **Choose Font…** (`font_picker.py`): its own

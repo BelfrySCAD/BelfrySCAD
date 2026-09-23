@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent, QUndoStack, QUndoCommand, QKeySequence
 
-from belfryscad import vnf_tile
+from belfryscad import nurbs, vnf_tile
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.ui_colors import (header_colors, on_appearance_change,
@@ -4117,10 +4117,27 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._closed_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._closed_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._closed_cb)
-        self._bezier_cb = QCheckBox("Bezier")
-        self._bezier_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
-        self._bezier_cb.toggled.connect(self._rebuild)
-        btn_row.addWidget(self._bezier_cb)
+        # How the points are read: a plain polyline, cubic Bezier segments,
+        # NURBS control points, or points a NURBS interpolates. View-only,
+        # like Close Path -- the literal is the same list of points in all
+        # four, so the mode is never written back.
+        self._mode_combo = QComboBox()
+        for label, key in (("Path", "path"), ("Bezier Path", "bezier"),
+                           ("NURBS Path", "nurbs"),
+                           ("NURBS Interpolated Path", "nurbs_interp")):
+            self._mode_combo.addItem(label, key)
+        self._mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        _size_combo_to_widest_item(self._mode_combo)
+        self._mode_combo.currentIndexChanged.connect(self._rebuild)
+        btn_row.addWidget(self._mode_combo)
+        self._degree_label = QLabel("Degree")
+        self._degree_label.setStyleSheet("QLabel { padding-left: 12px; }")
+        btn_row.addWidget(self._degree_label)
+        self._degree_spin = QSpinBox()
+        self._degree_spin.setValue(3)
+        self._degree_spin.valueChanged.connect(self._rebuild)
+        btn_row.addWidget(self._degree_spin)
+        self._sync_degree_spin()
         if editable:
             btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
@@ -4213,7 +4230,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
         if not rows or len(self._path) - len(rows) < 2:
             return
-        if (self._bezier_cb.isChecked() and len(rows) == 1
+        if (self._mode() == "bezier" and len(rows) == 1
                 and rows[0] % 3 == 0 and len(self._path) >= 4):
             self._delete_bezier_v0(rows[0])
             return
@@ -4406,14 +4423,32 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._vp.classify_single_node(i0 + 3)
         self._vp.refresh_markers()
 
+    def _mode(self) -> str:
+        return self._mode_combo.currentData()
+
+    def _sync_degree_spin(self):
+        """Show the degree only in the NURBS modes, and cap it at what the
+        point count supports (BOSL2 asserts degree+1 points; interpolation
+        also needs degree >= 2), so the curve never silently degrades to
+        the straight-line fallback just because a point was deleted."""
+        mode = self._mode()
+        nurbs = mode in ("nurbs", "nurbs_interp")
+        self._degree_label.setVisible(nurbs)
+        self._degree_spin.setVisible(nurbs)
+        low = 2 if mode == "nurbs_interp" else 1
+        self._degree_spin.blockSignals(True)
+        self._degree_spin.setRange(low, max(low, len(self._path) - 1))
+        self._degree_spin.blockSignals(False)
+
     def _do_initial_load(self):
         self._vp.load_path(self._path, self._closed_cb.isChecked(),
-                           self._bezier_cb.isChecked())
+                           self._mode(), self._degree_spin.value())
 
     def _rebuild(self, _=None, reframe: bool = True):
+        self._sync_degree_spin()
         if self._vp._ctx is not None:
             self._vp.load_path(self._path, self._closed_cb.isChecked(),
-                               self._bezier_cb.isChecked(), reframe=reframe)
+                               self._mode(), self._degree_spin.value(), reframe=reframe)
 
     def keyPressEvent(self, event):
         """Delete/Backspace deletes the currently selected vertices
@@ -4560,7 +4595,8 @@ class _PathViewport(Viewport):
                 pairs.append(curve[j + 1])
         return pairs
 
-    def load_path(self, path_value: list, closed: bool, bezier: bool = False, reframe: bool = True):
+    def load_path(self, path_value: list, closed: bool, mode: str = "path",
+                  degree: int = 3, reframe: bool = True):
         self.makeCurrent()
         self._renderer._clear_buffers()
         self._renderer.clear_simple_buffers()
@@ -4580,6 +4616,7 @@ class _PathViewport(Viewport):
         # ordinary drag/nudge-triggered rebuild (bezier already on) must
         # NOT reclassify, or it would clobber explicit context-menu
         # overrides (and the type the user is actively dragging toward).
+        bezier = mode == "bezier"
         if bezier and not self._bezier:
             self._classify_all_node_types()
         self._bezier = bezier
@@ -4623,6 +4660,22 @@ class _PathViewport(Viewport):
                 for i, pt in enumerate(handle_pairs):
                     hdata[i] = np.concatenate([pt, handle_color])
                 self._renderer.upload_lines(hdata)
+        elif mode in ("nurbs", "nurbs_interp") and (curve := self._nurbs_curve(pts, closed, mode, degree)) is not None:
+            if closed:
+                curve = np.vstack([curve, curve[:1]])
+            line_data = np.empty((2 * (len(curve) - 1), 6), dtype=np.float32)
+            line_data[0::2, :3] = curve[:-1]
+            line_data[1::2, :3] = curve[1:]
+            line_data[:, 3:] = line_color
+            self._renderer.upload_lines(line_data)
+            if mode == "nurbs":
+                # The control polygon, lighter than the curve it shapes.
+                ring = np.vstack([pts, pts[:1]]) if closed else pts
+                hdata = np.empty((2 * (len(ring) - 1), 6), dtype=np.float32)
+                hdata[0::2, :3] = ring[:-1]
+                hdata[1::2, :3] = ring[1:]
+                hdata[:, 3:] = 0.6
+                self._renderer.upload_lines(hdata)
         else:
             n = len(pts)
             seg_count = n if closed else n - 1
@@ -4637,6 +4690,25 @@ class _PathViewport(Viewport):
         self._build_point_markers()
         self.doneCurrent()
         self.update()
+
+    @staticmethod
+    def _nurbs_curve(pts: np.ndarray, closed: bool, mode: str, degree: int):
+        """Sampled NURBS curve for the NURBS modes, or None when BOSL2
+        would refuse these points (too few for the degree, duplicate
+        neighbours, a singular fit) -- the caller then draws the plain
+        polyline, so the points never vanish from view."""
+        dim = 3 if np.any(pts[:, 2]) else 2
+        try:
+            if mode == "nurbs_interp":
+                control, knots = nurbs.interp(pts[:, :dim], degree, closed)
+                curve = nurbs.curve(control, degree, closed, knots=knots)
+            else:
+                curve = nurbs.curve(pts[:, :dim], degree, closed)
+        except ValueError:
+            return None
+        if dim == 2:
+            curve = np.column_stack([curve, np.zeros(len(curve))])
+        return curve.astype(np.float32)
 
     def _classify_all_node_types(self):
         """(Re)build self._node_types from scratch by inspecting every v0's
