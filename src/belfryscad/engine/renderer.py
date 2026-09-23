@@ -1344,7 +1344,6 @@ class SceneRenderer:
                      color: Optional[tuple] = None,
                      backface_color: Optional[tuple] = None,
                      edge_positions: Optional[np.ndarray] = None,
-                     edge_colors: Optional[np.ndarray] = None,
                      tri_ids: Optional[np.ndarray] = None) -> MeshBuffer:
         """Upload a raw triangle mesh with no CSG model-matrix/highlight
         support. `positions`/`normals` are (3T, 3) arrays, one row per
@@ -1361,11 +1360,13 @@ class SceneRenderer:
             self._mesh_prog, [(vbo, "3f 3f", "in_position", "in_normal")],
         )
         edge_vbo = edge_vao = None
-        if edge_positions is not None and edge_colors is not None:
-            edge_data = np.concatenate([edge_positions, edge_colors], axis=1).astype(np.float32)
-            edge_vbo = self._ctx.buffer(edge_data.tobytes())
+        if edge_positions is not None:
+            # Positions only: _EDGE_VERT takes its colour as a uniform, set
+            # from the body at draw time (#348). Binding an `in_color` it
+            # no longer declares raised KeyError, so the mesh never loaded.
+            edge_vbo = self._ctx.buffer(np.ascontiguousarray(edge_positions, dtype=np.float32).tobytes())
             edge_vao = self._ctx.vertex_array(
-                self._edge_prog, [(edge_vbo, "3f 3f", "in_position", "in_color")],
+                self._edge_prog, [(edge_vbo, "3f", "in_position")],
             )
         v0, v1, v2 = positions[0::3], positions[1::3], positions[2::3]
         buf = MeshBuffer(self._ctx, vbo, None, vao, len(interleaved), color,

@@ -3596,22 +3596,18 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
 
         self._vp.set_face_data(positions, tri_to_face_arr, verts)
 
-        edge_color = np.array([0.15, 0.15, 0.15], dtype=np.float32)
         starts = np.array(all_edge_starts, dtype=np.float32)
         ends = np.array(all_edge_ends, dtype=np.float32)
-        n_edges = len(starts)
-        cols = np.tile(edge_color, (n_edges, 1))
-        edge_data = np.empty((n_edges * 2, 6), dtype=np.float32)
-        edge_data[0::2] = np.concatenate([starts, cols], axis=1)
-        edge_data[1::2] = np.concatenate([ends, cols], axis=1)
+        edge_positions = np.empty((len(starts) * 2, 3), dtype=np.float32)
+        edge_positions[0::2] = starts
+        edge_positions[1::2] = ends
 
         # tri_ids=tri_to_face_arr lets SceneRenderer.ray_cast resolve a hit
         # triangle straight back to its OpenSCAD face index for picking.
         # color left as the default (None) so it tracks the live color
         # theme's object color instead of a fixed one.
         self._vp._renderer.upload_mesh(positions, normals,
-                             edge_positions=edge_data[:, :3],
-                             edge_colors=edge_data[:, 3:],
+                             edge_positions=edge_positions,
                              tri_ids=tri_to_face_arr)
 
         bb_min = verts.min(axis=0)
