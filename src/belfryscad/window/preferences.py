@@ -20,8 +20,10 @@ from belfryscad.window.color_themes import (
     load_custom_themes, save_custom_themes, unique_theme_name, THEME_COLOR_KEYS,
 )
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.data_viewers import (
-    _diamond_faces, _dodecahedron_faces, _lit_marker_triangles,
+from belfryscad.window.data_viewer_path import _diamond_faces
+from belfryscad.window.data_viewer_common import (
+    _dodecahedron_faces,
+    _lit_marker_triangles,
 )
 from belfryscad.window.ai_secrets import get_api_key, set_api_key, delete_api_key
 from belfryscad.window.ai_providers import (
@@ -872,7 +874,7 @@ class _ColorThemePreview(Viewport):
             # need an explicit makeCurrent()/doneCurrent() bracket here, or
             # they'd mutate whatever OTHER GL widget's context happened to
             # be bound at the time (typically the main window's viewport),
-            # corrupting its state (same class of bug data_viewers.py's own
+            # corrupting its state (same class of bug the data viewers' own
             # GL-mutating methods guard against).
             #
             # _load_mesh's call to the same methods below must NOT be

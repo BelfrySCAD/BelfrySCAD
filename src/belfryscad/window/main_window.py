@@ -2905,7 +2905,7 @@ class MainWindow(QMainWindow):
         if not self._last_profile_result:
             self.log("No profile available — use Render with Profiling first.")
             return
-        from belfryscad.window.data_viewers import ProfileViewer
+        from belfryscad.window.data_viewer_profile import ProfileViewer
         from belfryscad.window.library_manager import _library_dir
         viewer = ProfileViewer(self._last_profile_result, parent=self,
                                 path_labels=self._path_labels,
