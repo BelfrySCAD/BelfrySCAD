@@ -705,6 +705,7 @@ class FindBar(QWidget):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(find_bar_bg()))
         self.setPalette(pal)
+        self._style_toggles()
         # A search may already be showing results when the theme flips.
         if self._matches:
             self._update_highlights()
@@ -789,6 +790,7 @@ class FindBar(QWidget):
                   self._btn_prev, self._btn_next, self._match_label,
                   self._btn_close):
             find_row.addWidget(w)
+        self._style_toggles()
 
         outer.addLayout(find_row)
 
@@ -896,6 +898,32 @@ class FindBar(QWidget):
     # plus one spacing so its field lines up with the find field.
     _DISCLOSE_W = 18
 
+    def _style_toggles(self):
+        """Draw the option toggles' on/off states ourselves (#545).
+
+        Left to the platform, a flat checkable button on Windows draws its
+        checked label in the on-accent colour -- white -- but a flat button
+        gets no accent fill, so "Aa" and ".*" turned white on the light bar
+        exactly when they were ON: the one state that changes what a search
+        finds, invisible. Off is plain button text; on is the theme's
+        highlight fill with its own text colour, a pair every theme already
+        makes legible. Rerun on every theme change, since the colours are
+        read now rather than tracked.
+        """
+        if not hasattr(self, "_btn_case"):
+            return                      # _apply_theme runs before _setup_ui builds them
+        pal = self.palette()
+        text = pal.buttonText().color().name()
+        on_bg = pal.highlight().color().name()
+        on_text = pal.highlightedText().color().name()
+        sheet = (f"QPushButton {{ border: none; border-radius: 3px; background: transparent;"
+                 f" color: {text}; }}"
+                 f"QPushButton:hover {{ background: rgba(128, 128, 128, 0.25); }}"
+                 f"QPushButton:checked {{ background: {on_bg}; color: {on_text}; }}")
+        for btn in (self._btn_case, self._btn_word, self._btn_regex):
+            btn.setStyleSheet(sheet)
+        self._refresh_word_icon()
+
     def _refresh_word_icon(self):
         """Paint the Match Whole Word icon: 'ab' with a rule beneath it.
 
@@ -906,6 +934,16 @@ class FindBar(QWidget):
         was stored, not that anything appears.
         """
         w, h = 18, 14
+        icon = QIcon()
+        # Two pixmaps: off in button text, on in the highlighted-text colour
+        # that sits on the checked fill (see _style_toggles).
+        for color, state in ((self.palette().buttonText().color(), QIcon.State.Off),
+                             (self.palette().highlightedText().color(), QIcon.State.On)):
+            icon.addPixmap(self._word_pixmap(w, h, color), QIcon.Mode.Normal, state)
+        self._btn_word.setIcon(icon)
+        self._btn_word.setIconSize(QSize(w, h))
+
+    def _word_pixmap(self, w: int, h: int, color) -> QPixmap:
         dpr = self.devicePixelRatioF() or 1.0
         pm = QPixmap(int(w * dpr), int(h * dpr))
         pm.setDevicePixelRatio(dpr)
@@ -913,7 +951,6 @@ class FindBar(QWidget):
 
         font = QFont(self.font())
         font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))
-        color = self.palette().buttonText().color()
 
         painter = QPainter(pm)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -929,16 +966,14 @@ class FindBar(QWidget):
         painter.setPen(QPen(color, 1.2))
         painter.drawLine(int(x), h - 2, int(x + tw), h - 2)
         painter.end()
-
-        self._btn_word.setIcon(QIcon(pm))
-        self._btn_word.setIconSize(QSize(w, h))
+        return pm
 
     def changeEvent(self, event):
         # Repaint the icon when the palette flips (macOS light/dark), or it
         # keeps the old text colour and can end up invisible.
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange and hasattr(self, "_btn_word"):
-            self._refresh_word_icon()
+            self._style_toggles()
             self._refresh_replace_icons()
 
     def _on_disclose_toggled(self, expanded: bool):
