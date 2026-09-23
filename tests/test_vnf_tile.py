@@ -54,3 +54,19 @@ def test_interior_vertex_is_clamped_to_the_unit_square_alone():
 
 def test_typed_value_is_taken_as_given():
     assert linked_moves(DIAMONDS[0], 3, [0.3, 0.5, 0], lock=False)[0] == (3, [0.3, 0.5, 0])
+
+
+def test_validation_sets_aside_the_rim_but_not_a_crack():
+    """A tile's rim is open by design (it is where the next copy joins on),
+    so manifold validation's "holes" there are expected. Remove a face and
+    the crack it leaves is still reported."""
+    from belfryscad.vnf_tile import set_aside_rim_holes
+    from belfryscad.vnf_validate import validate_vnf
+
+    report = set_aside_rim_holes(validate_vnf(DIAMONDS))
+    assert report.ok and report.hole_edges == [] and report.expected_open == 8
+    assert report.summary() == "Tile is good."
+
+    cracked = [DIAMONDS[0], DIAMONDS[1][:4] + DIAMONDS[1][5:]]   # drop [1, 5, 4]
+    report = set_aside_rim_holes(validate_vnf(cracked))
+    assert not report.ok and report.hole_edges

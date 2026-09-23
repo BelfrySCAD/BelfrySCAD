@@ -54,6 +54,9 @@ class VNFReport:
     welded_points: np.ndarray | None = None               # positions, post-weld
     remap: np.ndarray | None = None                       # original index -> welded
     truncated: bool = False                               # a budget was hit
+    #: Open edges set aside as intended rather than reported: a VNF tile's
+    #: rim (see vnf_tile.set_aside_rim_holes). Not a defect, so not in `ok`.
+    expected_open: int = 0
     notes: list = field(default_factory=list)
 
     @property
@@ -63,6 +66,8 @@ class VNFReport:
                     or self.nonmanifold_edges)
 
     def summary(self) -> str:
+        if self.ok and self.expected_open:
+            return "Tile is good."
         if self.ok:
             return "No problems found: closed, consistently wound, no self-intersections."
         parts = []

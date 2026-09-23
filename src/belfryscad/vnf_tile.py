@@ -63,6 +63,27 @@ def tile_problems(vnf) -> tuple[list[int], list[int]]:
     return out_of_range, sorted(unmatched)
 
 
+def set_aside_rim_holes(report):
+    """Drop the open edges that run along one side of the unit square from
+    a vnf_validate report, counting them in `expected_open` instead.
+
+    A tile is an open surface: its rim along X=0/1 and Y=0/1 is where the
+    next copy joins on, so manifold validation reports it as holes on every
+    valid tile. An open edge anywhere else -- a crack inside the tile, or
+    one running diagonally across a corner -- is still reported.
+    """
+    pts = report.welded_points
+
+    def along_a_side(a, b):
+        return any(abs(pts[a][k] - e) <= _EPSILON and abs(pts[b][k] - e) <= _EPSILON
+                   for k in (0, 1) for e in (0, 1))
+
+    rim = [e for e in report.hole_edges if along_a_side(*e)]
+    report.hole_edges = [e for e in report.hole_edges if not along_a_side(*e)]
+    report.expected_open += len(rim)
+    return report
+
+
 def linked_moves(verts, i, new_pos, lock=True) -> list[tuple[int, list]]:
     """Every `(index, position)` that moving vertex `i` to `new_pos` should
     set, so that a seam which matched before still matches after.
