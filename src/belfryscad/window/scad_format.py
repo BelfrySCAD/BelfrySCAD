@@ -628,8 +628,15 @@ def _shape(text: str):
 
     def walk(node):
         if isinstance(node, dict) and "kind" in node:
-            return (node["kind"], tuple(
-                walk(v) for k, v in sorted(node.items()) if k not in ("kind", "position")))
+            kids = tuple(
+                walk(v) for k, v in sorted(node.items()) if k not in ("kind", "position"))
+            if node["kind"] in ("CommentLine", "CommentSpan"):
+                # Trailing whitespace in a comment is not content, and the
+                # formatter strips it: `//   ` becoming `//` is not a
+                # changed comment.
+                kids = tuple(re.sub(r"[ \t]+(?=\n|$)", "", k) if isinstance(k, str) else k
+                             for k in kids)
+            return (node["kind"], kids)
         if isinstance(node, list):
             return tuple(walk(x) for x in node)
         return node
