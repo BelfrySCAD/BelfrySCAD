@@ -304,6 +304,40 @@ When a tool is active, axis handles are drawn over the selected shape. Dragging 
 | Rotate | Arc per axis | Modify/insert `rotate(...)` wrapper |
 | Scale | Handle per axis | Modify/insert `scale([x,y,z])` wrapper |
 | Scale (Shift+drag) | Any axis handle | Scale all three components uniformly |
+| Extrude | One +Z arrow | Modify/insert `linear_extrude(height=h)` |
+| Extrude Centered | One +Z arrow | The same, with `center=true` |
+
+### Extrude and Extrude Centered
+
+Offered only for a **2D shape**, or a shape already **inside a
+`linear_extrude`** (whose body is 3D, but whose height they edit):
+`MainWindow._is_extrudable` asks the renderer whether every buffer of the
+selection is a flat preview slab (`SceneRenderer.selected_is_2d`), and failing
+that looks for the extrude in the source (`scad_format.find_extrude_call`).
+Both draw and pick a single +Z arrow (`EXTRUDE_GIZMOS`); the shape stays put
+during the drag -- only the arrow follows it -- and the extrusion appears on
+the commit's render.
+
+The rewrite is `scad_format.extrude_edit`, tested in
+`tests/test_extrude_edit.py`:
+
+- **A new extrusion** wraps the node *outside* its transform chain, as a new
+  translate would: `translate([10,0]) circle(4)` becomes
+  `linear_extrude(height=10) translate([10,0]) circle(4)`. It needs an upward
+  drag; a downward one says so in the status bar and writes nothing.
+- **An existing one** has its height adjusted like a translate component --
+  a number recomputed, an expression appended to (`h` becomes `h + 5`), a
+  missing height taken as OpenSCAD's default 100 -- and every other argument
+  (twist, slices, scale, convexity) kept as written. A numeric height is never
+  taken to zero or below.
+- **The tool sets `center`**: Extrude writes `false` into a `center` that is
+  there and adds none where there is none; Extrude Centered writes `true`,
+  adding `center=true` if needed. Positional arguments stay positional.
+
+Selecting a 2D shape at all needed an evaluator change: a `CrossSection` has
+no run IDs, so a 2D shape's preview slab mapped to no source until
+openscad_cpp_evaluator gave each section an ID of its own
+(`ColoredBody::sectionId`).
 
 ### A drag quantizes to the same numbers a nudge would
 
