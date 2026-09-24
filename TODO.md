@@ -22,15 +22,6 @@
   - **60,000 bodies stall the UI for 6.7 s** when the finished render is
     handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
     warnings removed from the picture. The geometry upload, not the console.
-- Colour picker for colour literals in the editor. The swatch tooltip
-  shipped (`color_literals.py`, `docs/editor.md`); this is the other half —
-  editing one. Same shape as **Choose Font…** (`font_picker.py`): its own
-  top-level context-menu item and a write-back through `replace_span` +
-  `source_edited_externally`, which renders. `find_color_literal` already
-  gives the span and the colour, so the fiddly part left is writing the
-  value back in the spelling it was found in — a name stays a name only if
-  the picked colour has one, and a vector's components are 0-1.
-
 - Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
   thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
   `--docsgen` and `--mdimggen` took over `CheckDocs` and `CheckTutorials`

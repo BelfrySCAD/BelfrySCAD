@@ -371,6 +371,32 @@ Widget-level behaviour — that the event reaches the viewport at all, and
 that the position maps back to the right character — is covered by
 `scripts/verify_color_tooltip.py`, since Qt widgets abort pytest here.
 
+### Choose Color… (editing a colour literal)
+
+`window/color_picker.py`. Right-clicking any literal the swatch recognises
+(same finder, same one-line rule) offers **Choose Color…**, a top-level item
+beside **Choose Font…**: a swatch, a **Name** combo of Qt's colour names
+(each with its own swatch; editable, so typing jumps through the list), a
+**Hex** field taking `#rgb` or `#rrggbb`, and **Other Colors…** for the
+platform's native colour panel (`QColorDialog.getColor`, with an alpha slider
+only when the literal has an alpha). Save writes back through `replace_span` +
+`source_edited_externally`, which renders; saving an unchanged colour writes
+nothing.
+
+**The literal keeps its shape** (`literal_for`, tested in
+`tests/test_color_picker.py`):
+
+- **A string** is written the way the colour was chosen: the name picked, or
+  the hex exactly as typed (`#fff` stays short). A colour from the native
+  panel becomes a name if the literal was a name and the colour has one
+  (`name_for`, first alphabetically where Qt has two), otherwise `#rrggbb`.
+- **A vector** stays a vector of 0..1 components to three decimals, keeping
+  its alpha if it had four. Choosing `"red"` does not turn `[1, 0, 0]` into a
+  string: a `thecolor = [...]` may be indexed or `concat()`ed elsewhere.
+
+`transparent` is left out of the name list: as an rgb it is black, so it
+would write a name that does not mean what the swatch shows.
+
 ## Undo/Redo
 
 Code edits and gizmo drags are undo/redo-able via Qt's `QUndoStack`. Each operation is a `QUndoCommand` subclass:
