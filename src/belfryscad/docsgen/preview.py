@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import tempfile
 import os.path
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,6 +140,16 @@ def build_preview(source_text: str, src_file: str, gen_images: bool = True,
     # Examples resolve `include <...>` relative to the file being edited,
     # which the bare basename below cannot express.
     runner.src_dir_override = str(Path(src_file).resolve().parent)
+    # An example that needs the documented file gets THIS text, not what is
+    # saved on disk: the pane previews unsaved edits (#560, self_include.py).
+    # Beside the source so its own relative includes resolve, and named with
+    # the runner's temp prefix so an abandoned one is swept.
+    from . import self_include
+    from .runner import _TEMP_PREFIX
+    fd, live = tempfile.mkstemp(suffix=".scad", prefix=_TEMP_PREFIX, dir=runner.src_dir_override)
+    with os.fdopen(fd, "w") as f:
+        f.write(source_text)
+    self_include.live_copy = (os.path.basename(src_file), live)
     try:
         parser = parser_cls(opts)
         # The rc's own DocsDirectory would send images into the project's
@@ -179,6 +190,11 @@ def build_preview(source_text: str, src_file: str, gen_images: bool = True,
         errorlog.add_entry(os.path.basename(src_file), 0, str(e), ErrorLog.FAIL)
     finally:
         runner.src_dir_override = None
+        self_include.live_copy = None
+        try:
+            os.unlink(live)
+        except OSError:
+            pass
         result.errors = list(errorlog.errlist)
         errorlog.errlist.clear()
         errorlog.badfiles.clear()

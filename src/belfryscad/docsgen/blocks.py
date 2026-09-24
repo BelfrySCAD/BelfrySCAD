@@ -10,6 +10,7 @@ from .utils import flatten
 from .errorlog import ErrorLog, errorlog
 from .imagemanager import image_manager
 from .logmanager import log_manager
+from .self_include import self_include_lines
 
 
 class DocsGenException(Exception):
@@ -902,6 +903,9 @@ class LogBlock(GenericBlock):
 
         script_lines = []
         script_lines.extend(fileblock.includes)
+        # BelfrySCAD departure (#560): the documented file, when its
+        # Includes do not already reach it. See self_include.py.
+        script_lines.extend(self_include_lines(self.origin.file, fileblock.includes))
         script_lines.extend(fileblock.common_code)
         for line in self.body:
             if line.strip().startswith("--"):
@@ -961,6 +965,9 @@ class ImageBlock(GenericBlock):
 
         script_lines = []
         script_lines.extend(fileblock.includes)
+        # BelfrySCAD departure (#560): the documented file, when its
+        # Includes do not already reach it. See self_include.py.
+        script_lines.extend(self_include_lines(self.origin.file, fileblock.includes))
         script_lines.extend(fileblock.common_code)
         for line in self.body:
             if line.strip().startswith("--"):
