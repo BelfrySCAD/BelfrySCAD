@@ -107,8 +107,9 @@ is a commitment to build it — it is the list of what is not there.
   configuration pages in Preferences. Designed; see "Input devices" below.
 - **3D Print** (`PrintService`, `PrintInitDialog`, `ExternalToolInterface`) —
   remote print services and handing the model off to a local slicer.
-- **Automatic update check** (`AutoUpdater`, `SparkleAutoUpdater`), including
-  the development-snapshot channel.
+- **Development-snapshot update channel** (`AutoUpdater`'s snapshot option).
+  The release check itself is done (see below); there is nothing to point a
+  snapshot channel at until snapshots are published somewhere.
 - **Welcome/launching screen** (`LaunchingScreen`) — recent files and examples
   on startup.
 - **Viewport Control dock** (`ViewportControl`) — numeric camera entry
@@ -130,6 +131,14 @@ is a commitment to build it — it is the list of what is not there.
 - **Go to Definition on a builtin** (#526, issue #525) now opens the
   language reference instead of reporting no definition, and misses reach
   the status bar rather than only the console.
+- **Update check** (`AutoUpdater`). Help ▸ Check for Updates… (#557,
+  v1.46.0) asks GitHub's `releases/latest` on demand, and the same check runs
+  quietly at startup at most once a day, behind the Editor preference "Check
+  for a new release when BelfrySCAD starts" (`app/checkForUpdates`, on by
+  default). The startup check says nothing unless a newer release exists and
+  offers Skip This Version (`app/skippedUpdate`). See
+  `window/update_check.py`. Not done: installing in place — the dialog links
+  to the release page, and there is no macOS installer to link to.
 
 **Decided against — do not re-propose:**
 

@@ -285,6 +285,11 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
     window.show()
     if file_to_open:
         window.open_file_by_path(file_to_open)
+    if not testing:
+        # Never under --testing: a test launch must not reach the network.
+        from PySide6.QtCore import QTimer
+        from belfryscad.window.update_check import check_at_startup
+        QTimer.singleShot(3000, lambda: check_at_startup(window))
     if ai_prompt:
         from PySide6.QtCore import QTimer
         # After the event loop is up and any initial file has opened and
