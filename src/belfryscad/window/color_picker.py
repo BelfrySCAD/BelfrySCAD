@@ -158,8 +158,18 @@ class ColorPickerDialog(QDialog):
 
 
 
-#: Qt's names, minus `transparent`: as an rgb it is black, and offering it
-#: would write a name that does not mean what the swatch shows.
-_PICKABLE_NAMES = [n for n in QColor.colorNames() if n != "transparent"]
+def _hue_order(name: str):
+    """Around the colour wheel, dark to light within a hue; greys (no hue)
+    last, dark to light."""
+    c = QColor(name)
+    hue = c.hslHueF()
+    return (hue < 0, hue, c.lightnessF())
+
+
+#: Qt's names, minus `transparent` (as an rgb it is black, so it would write
+#: a name that does not mean what the swatch shows), in hue order: a list of
+#: 147 names read alphabetically puts `aliceblue` beside `antiquewhite`.
+_PICKABLE_NAMES = sorted((n for n in QColor.colorNames() if n != "transparent"),
+                         key=_hue_order)
 
 
