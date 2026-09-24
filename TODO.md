@@ -108,7 +108,11 @@ is a commitment to build it — it is the list of what is not there.
 - **3D Print** (`PrintService`, `PrintInitDialog`, `ExternalToolInterface`) —
   remote print services and handing the model off to a local slicer.
 - **Automatic update check** (`AutoUpdater`, `SparkleAutoUpdater`), including
-  the development-snapshot channel.
+  the development-snapshot channel. The manual half shipped in #557 / v1.46.0:
+  Help ▸ Check for Updates… (`window/update_check.py`) asks GitHub's
+  `releases/latest` on demand. Still missing: a check at startup (it contacts
+  GitHub unasked, so it needs an opt-out preference), the snapshot channel,
+  and any in-place install — the dialog only links to the release page.
 - **Welcome/launching screen** (`LaunchingScreen`) — recent files and examples
   on startup.
 - **Viewport Control dock** (`ViewportControl`) — numeric camera entry
