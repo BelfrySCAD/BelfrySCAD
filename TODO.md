@@ -22,16 +22,6 @@
   - **60,000 bodies stall the UI for 6.7 s** when the finished render is
     handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
     warnings removed from the picture. The geometry upload, not the console.
-- Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
-  thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
-  `--docsgen` and `--mdimggen` took over `CheckDocs` and `CheckTutorials`
-  in BOSL2 #2034. All 909 of its tests now pass on this evaluator (exit 0,
-  ~82s serial, against openscad-test's 8.3s for 226 with 5-way
-  parallelism), so the swap is a workflow edit rather than a porting job:
-  drop the AppImage, `libfuse2` and `pip install openscad-test`, and run
-  `belfryscad --test tests/*.scadtest`. Needs belfryscad with
-  openscad_cpp_evaluator >= 1.3.0.
-
 - Accelerate textured extrusions and sweeps. (Sweeps take 2D paths or regions;
   extrusions take 2D geometry.) They are slow because the work happens in the
   OpenSCAD language. Measured 2026-09-18 against BOSL2 @ c4067293: a textured
