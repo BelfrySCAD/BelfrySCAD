@@ -94,6 +94,7 @@ _DEFAULTS = {
     # the running BelfrySCAD as a new tab, instead of starting another one.
     # Read once at launch, in main.py, before any window exists.
     "app/openInRunningInstance": True,
+    "app/checkForUpdates": True,
     # The Customizer's "Automatic update" box (#397): a field change renders
     # 2s later. Off keeps the write-back and leaves rendering to F6.
     "customizer/autoUpdate": True,
@@ -246,6 +247,17 @@ class PreferencesDialog(QDialog):
         self._single_instance.toggled.connect(
             lambda v: self._emit("app/openInRunningInstance", bool(v)))
         form.addRow("Opening files:", self._single_instance)
+
+        # Once a day at startup; Help > Check for Updates... works either way
+        self._check_updates = QCheckBox("Check for a new release when BelfrySCAD starts")
+        self._check_updates.setChecked(
+            s.value("app/checkForUpdates", _DEFAULTS["app/checkForUpdates"], type=bool))
+        self._check_updates.setToolTip(
+            "At most once a day, asks GitHub for the latest release and says\n"
+            "so only if it is newer. Help > Check for Updates... works either way.")
+        self._check_updates.toggled.connect(
+            lambda v: self._emit("app/checkForUpdates", bool(v)))
+        form.addRow("Updates:", self._check_updates)
 
         self._tint_covered = QCheckBox("Coverage overlay also tints covered spans green")
         self._tint_covered.setChecked(

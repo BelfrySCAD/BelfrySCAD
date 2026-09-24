@@ -20,3 +20,11 @@ def test_newer_release_is_offered():
 
 def test_macos_is_told_there_is_no_installer():
     assert "No macOS installer" in update_message("1.44.0", "v1.45.0", platform="darwin")[1]
+
+
+def test_startup_check_at_most_once_a_day_and_only_when_enabled():
+    from belfryscad.window.update_check import STARTUP_INTERVAL, startup_check_due
+    assert startup_check_due(True, 0.0, 1e9)                      # never checked
+    assert not startup_check_due(True, 1e9, 1e9 + STARTUP_INTERVAL - 1)
+    assert startup_check_due(True, 1e9, 1e9 + STARTUP_INTERVAL)
+    assert not startup_check_due(False, 0.0, 1e9)                 # preference off
