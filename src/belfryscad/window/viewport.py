@@ -13,7 +13,8 @@ from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon)
 
-from belfryscad.engine.renderer import EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer
+from belfryscad.engine.renderer import (EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
+                                        _project_to_screen)
 from belfryscad.window.debugger import _debug_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -407,6 +408,11 @@ class Viewport(QOpenGLWidget):
             " font-family: Menlo; font-size: 13px; }"
         )
         self._delta_label.hide()
+        # The extrude drag's height, beside the arrow rather than at the
+        # bottom of the view: it is a length along that arrow.
+        self._extrude_label = QLabel("", self)
+        self._extrude_label.setStyleSheet(self._delta_label.styleSheet())
+        self._extrude_label.hide()
 
         # Measurement readout, one label per finished measurement plus the
         # one being taken. Same treatment as the delta overlay.
@@ -825,11 +831,14 @@ class Viewport(QOpenGLWidget):
         self._sync_tool_buttons()
         self.update()
 
-    def set_selection_extrudable(self, extrudable: bool):
+    def set_selection_extrudable(self, extrudable: bool, centered: bool = False):
         """Whether the extrude tools apply: the selection is a 2D shape, or
-        is already inside a `linear_extrude` whose height they can change.
-        Decided by MainWindow, which has the source to look in."""
+        is already inside a `linear_extrude` whose height they can change --
+        and whether that one is `center=true`, which is where its shape sits
+        in it, for the drag preview. Decided by MainWindow, which has the
+        source to look in."""
         self._selection_extrudable = bool(extrudable)
+        self._extrude_centered = bool(centered)
         if not self._selection_extrudable and self._active_tool in EXTRUDE_GIZMOS:
             self.set_active_tool(-1)
         self._sync_tool_buttons()
@@ -1643,8 +1652,7 @@ class Viewport(QOpenGLWidget):
                 return
             delta = _quantize(t - self._drag_start_1d, magnitude)
             self._renderer.drag_offset = self._drag_axis_world * delta
-            centred = " centered" if self._active_tool == 4 else ""
-            self._show_delta(f"Extrude{centred}  {delta:+g}")
+            self._show_extrude_label(self._preview_extrusion(delta))
         elif self._active_tool == 1:
             t = self._axis_ring_hit(pos.x(), pos.y())
             if t is None:
@@ -1669,6 +1677,51 @@ class Viewport(QOpenGLWidget):
             axis_name = "XYZ" if uniform else "XYZ"[self._gizmo_drag_axis]
             self._show_delta(f"{axis_name}  \u00d7{factor:g}")
         self.update()
+
+    def _preview_extrusion(self, delta: float):
+        """Stretch the selection along Z into the extrusion this drag would
+        commit, and return that extrusion's height (None if unknown).
+
+        A 2D shape is a thin slab from its own plane upward, so it starts at
+        height 0. An extrusion already there is as tall as it is, with its
+        shape at the bottom, or in the middle when it is `center=true`. The
+        new one grows up from that plane, or both ways for Extrude Centered.
+        Past zero there is nothing to show, so the shape is left as it is.
+        """
+        r = self._renderer
+        zr = r.selected_z_range()
+        if zr is None:
+            return None
+        zmin, zmax = zr
+        flat = r.selected_is_2d()
+        height = round((0.0 if flat else zmax - zmin) + delta, 4)
+        if height <= 0 or zmax - zmin <= 0:
+            r.drag_extrude = None
+            return height
+        plane = zmin if flat or not getattr(self, "_extrude_centered", False) else (zmin + zmax) / 2
+        lo = plane - height / 2 if self._active_tool == 4 else plane
+        k = height / (zmax - zmin)
+        r.drag_extrude = (k, lo - k * zmin)
+        return height
+
+    def _show_extrude_label(self, height):
+        """The new height, just past the arrow's tip."""
+        r = self._renderer
+        bbox = r._selected_buffer_bbox()
+        if bbox is None or height is None:
+            self._extrude_label.hide()
+            return
+        tip = bbox[0] + r.drag_offset + np.array([0, 0, r.camera.distance * GIZMO_SCALE])
+        w, h = self.width(), self.height()
+        mvp = r.camera.projection_matrix(w / max(h, 1)) @ r.camera.view_matrix()
+        at = _project_to_screen(tip, mvp, w, h)
+        if at is None:
+            self._extrude_label.hide()
+            return
+        self._extrude_label.setText(f"height {height:g}" if height > 0 else "height must be > 0")
+        self._extrude_label.adjustSize()
+        self._extrude_label.move(int(at[0]) + 14, int(at[1]) - self._extrude_label.height() // 2)
+        self._extrude_label.show()
 
     def _show_delta(self, text: str):
         self._delta_label.setText(text)
@@ -1697,6 +1750,8 @@ class Viewport(QOpenGLWidget):
         elif self._active_tool in EXTRUDE_GIZMOS:
             dz = round(float(self._renderer.drag_offset[2]), 4)
             self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
+            self._renderer.drag_extrude = None
+            self._extrude_label.hide()
             self._gizmo_drag_axis = -1
             self.update()
             if abs(dz) > 1e-4:

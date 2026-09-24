@@ -19,8 +19,10 @@ from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
+from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.scad_format import (extrude_edit, find_extrude_call,
+from belfryscad.window.scad_format import (extrude_edit, extrude_is_centered,
+                                           find_extrude_call,
                                            find_transform_chain,
                                            nudge_component, transform_at,
                                            vector_texts)
@@ -647,8 +649,11 @@ class _RenderWorker(QObject):
             return
 
         # --- Evaluate ---
+        # A thin slab for 2D shapes, so they read as flat contours here;
+        # export (`evaluator.geometry`) keeps OpenSCAD's 1 unit regardless.
         evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile,
-                              keep_minuend_color=self._keep_minuend_color)
+                              keep_minuend_color=self._keep_minuend_color,
+                              flat_preview_height=FLAT_PREVIEW_HEIGHT)
         try:
             # Seeded from the ORIGINAL path, not parse_path -- an unsaved
             # buffer renders through a temp file whose name would otherwise
@@ -5443,7 +5448,7 @@ class MainWindow(QMainWindow):
             rendered.editor.clear_selection()
         # Read-only (an installed library) selects but does not edit.
         self._viewport.set_selection_editable(not tab.editor.isReadOnly())
-        self._viewport.set_selection_extrudable(self._is_extrudable(span, tab))
+        self._viewport.set_selection_extrudable(*self._extrude_state(span, tab))
 
     # ------------------------------------------------------------------
     # Translate gizmo commit
@@ -5502,12 +5507,17 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
         return self._rendered_tab.editor.toPlainText(), span.start_offset
 
-    def _is_extrudable(self, span, tab) -> bool:
-        """The extrude tools apply to a 2D shape, and to one already inside a
-        `linear_extrude` -- whose body is 3D, but whose height they edit."""
+    def _extrude_state(self, span, tab):
+        """`(extrudable, centered)` for the selection. The extrude tools
+        apply to a 2D shape, and to one already inside a `linear_extrude` --
+        whose body is 3D, but whose height they edit; `centered` is that
+        extrude's `center`, which the drag preview needs."""
+        source = tab.editor.toPlainText()
         if self._viewport._renderer.selected_is_2d():
-            return True
-        return find_extrude_call(tab.editor.toPlainText(), span.start_offset) is not None
+            return True, False
+        if find_extrude_call(source, span.start_offset) is None:
+            return False, False
+        return True, extrude_is_centered(source, span.start_offset)
 
     def _on_extrude_committed(self, dz: float, centered: bool):
         """Wrap the selected 2D shape in `linear_extrude`, or change the
@@ -5650,7 +5660,7 @@ class MainWindow(QMainWindow):
         # set, so the tools could stay hidden for a selection that is now
         # editable, or shown for one that is not.
         self._viewport.set_selection_editable(not tab.editor.isReadOnly())
-        self._viewport.set_selection_extrudable(self._is_extrudable(span, tab))
+        self._viewport.set_selection_extrudable(*self._extrude_state(span, tab))
         if self._rendered_tab:
             self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
         self._viewport.update()

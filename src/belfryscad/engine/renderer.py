@@ -193,6 +193,12 @@ GIZMO_SCALE = 0.07
 #: 4 extrudes centred on it. Both draw and pick a single +Z arrow.
 EXTRUDE_GIZMOS = (3, 4)
 
+#: How thick the viewport draws a top-level 2D shape: thin enough to read as
+#: the flat contour it is. OpenSCAD's preview uses 1 unit, and docs images
+#: and headless renders keep that (the evaluator's default); only the
+#: interactive viewport asks for this.
+FLAT_PREVIEW_HEIGHT = 0.01
+
 
 _GIZMO_VERT = """
 #version 330 core
@@ -934,6 +940,9 @@ class SceneRenderer:
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
         self.drag_offset: np.ndarray = np.zeros(3, dtype=np.float32)
+        # An extrude drag's preview: the selection's z mapped to k*z + off,
+        # stretching it to the extrusion the drag would commit. None when off.
+        self.drag_extrude: Optional[tuple] = None
         self.gizmo_type: int = 0           # 0=translate, 1=rotate
         self.drag_rotation_axis: int = -1
         self.drag_rotation_angle: float = 0.0
@@ -1045,6 +1054,7 @@ class SceneRenderer:
         self._clear_buffers()
         self.selected_id = None
         self.drag_offset = np.zeros(3, dtype=np.float32)
+        self.drag_extrude = None
         self.drag_rotation_angle = 0.0
         self.drag_rotation_axis = -1
         self.drag_scale_axis = -1
@@ -1622,6 +1632,9 @@ class SceneRenderer:
             if is_selected and has_drag:
                 buf_model = np.eye(4, dtype=np.float32)
                 buf_model[:3, 3] = self.drag_offset
+            elif is_selected and self.drag_extrude is not None:
+                buf_model = np.eye(4, dtype=np.float32)
+                buf_model[2, 2], buf_model[2, 3] = self.drag_extrude
             elif is_selected and has_rotation and rot_center is not None:
                 buf_model = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
             elif is_selected and has_scale and scale_center is not None:
@@ -2310,6 +2323,16 @@ class SceneRenderer:
         center = ((bb_min + bb_max) / 2).astype(np.float32)
         extent = float(np.linalg.norm(bb_max - bb_min))
         return center, extent
+
+    def selected_z_range(self) -> Optional[tuple]:
+        """(zmin, zmax) of the selection, for the extrude preview."""
+        if self.selected_id is None:
+            return None
+        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        if not matches:
+            return None
+        zs = np.concatenate([v[:, 2] for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
+        return float(zs.min()), float(zs.max())
 
     def selected_is_2d(self) -> bool:
         """Is the selection a 2D shape -- drawn as the flat preview slab?"""

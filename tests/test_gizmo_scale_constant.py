@@ -22,7 +22,9 @@ def test_nothing_hard_codes_the_gizmo_size_any_more():
                          for ln in path.read_text(encoding="utf-8").splitlines())
         assert "0.14" not in code, path
         uses += len(re.findall(r"distance \* GIZMO_SCALE", code))
-    assert uses == 4, uses
+    # The four originals, plus the extrude gizmo's height label, which sits
+    # at the arrow's tip and so needs its length too.
+    assert uses == 5, uses
 
 
 def test_the_viewport_reads_the_renderer_s_constant():

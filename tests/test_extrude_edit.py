@@ -48,3 +48,15 @@ def test_no_edit_that_is_not_a_positive_height():
 def test_node_start_is_where_the_edit_began():
     src = "cube(1);\ntranslate([1, 0]) circle(5);"
     assert extrude_edit(src, src.index("circle"), 2, False)[1] == src.index("translate")
+
+
+@pytest.mark.parametrize("src, centered", [
+    ("circle(5);", False),
+    ("linear_extrude(10) circle(5);", False),
+    ("linear_extrude(10, true) circle(5);", True),
+    ("linear_extrude(height=10, center=true) circle(5);", True),
+    ("linear_extrude(center = false, height=10) circle(5);", False),
+])
+def test_extrude_is_centered(src, centered):
+    from belfryscad.window.scad_format import extrude_is_centered
+    assert extrude_is_centered(src, src.index("circle")) is centered

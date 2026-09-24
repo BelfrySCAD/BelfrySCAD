@@ -987,6 +987,40 @@ def find_extrude_call(source: str, start: int):
             or transform_at(source, start, "linear_extrude"))
 
 
+def _arg_name(piece: str):
+    """The name of a `name = value` argument, or None for a positional one."""
+    m = re.match(r"\s*([A-Za-z_$]\w*)\s*=(?!=)", piece)
+    return m.group(1) if m else None
+
+
+def _extrude_args(source: str, call):
+    """A `linear_extrude(...)` call's argument texts, in order, and the
+    indexes of its height and center (None where not given). OpenSCAD's
+    order is (height, center, ...), so each is its name or that position."""
+    open_paren = source.index("(", call.start)
+    pieces = [p for p in _split_args(source[open_paren + 1:call.end - 1]) if p]
+    positional = [i for i, p in enumerate(pieces) if _arg_name(p) is None]
+    height_at = next((i for i, p in enumerate(pieces) if _arg_name(p) == "height"),
+                     positional[0] if positional else None)
+    center_at = next((i for i, p in enumerate(pieces) if _arg_name(p) == "center"),
+                     positional[1] if len(positional) > 1 else None)
+    return pieces, height_at, center_at
+
+
+def extrude_is_centered(source: str, start: int) -> bool:
+    """Whether the `linear_extrude` the node at `start` is in has
+    `center=true` -- where its 2D shape sits in the extrusion, which the
+    extrude gizmo's preview needs. False when there is none."""
+    call = find_extrude_call(source, start)
+    if call is None:
+        return False
+    pieces, _height_at, center_at = _extrude_args(source, call)
+    if center_at is None:
+        return False
+    value = pieces[center_at].split("=", 1)[1] if _arg_name(pieces[center_at]) else pieces[center_at]
+    return value.strip() == "true"
+
+
 def extrude_edit(source: str, start: int, delta: float, centered: bool):
     """`(new_source, new_node_start)` for an extrude-gizmo drag, or None.
 
@@ -1011,18 +1045,7 @@ def extrude_edit(source: str, start: int, delta: float, centered: bool):
         head += ", center=true) " if centered else ") "
         return source[:at] + head + source[at:], at
 
-    open_paren = source.index("(", call.start)
-    pieces = [p for p in _split_args(source[open_paren + 1:call.end - 1]) if p]
-
-    def name_of(piece):
-        m = re.match(r"\s*([A-Za-z_$]\w*)\s*=(?!=)", piece)
-        return m.group(1) if m else None
-
-    positional = [i for i, p in enumerate(pieces) if name_of(p) is None]
-    height_at = next((i for i, p in enumerate(pieces) if name_of(p) == "height"),
-                     positional[0] if positional else None)
-    center_at = next((i for i, p in enumerate(pieces) if name_of(p) == "center"),
-                     positional[1] if len(positional) > 1 else None)
+    pieces, height_at, center_at = _extrude_args(source, call)
 
     if height_at is None:
         new_height = nudge_component(_DEFAULT_EXTRUDE_HEIGHT, delta, "add")
@@ -1031,7 +1054,7 @@ def extrude_edit(source: str, start: int, delta: float, centered: bool):
             center_at += 1
     else:
         old = pieces[height_at]
-        name = name_of(old)
+        name = _arg_name(old)
         value = old.split("=", 1)[1].strip() if name else old.strip()
         new_height = nudge_component(value, delta, "add")
         pieces[height_at] = f"{name}={new_height}" if name else new_height
@@ -1042,7 +1065,7 @@ def extrude_edit(source: str, start: int, delta: float, centered: bool):
         pass            # an expression: nothing to check without evaluating
 
     if center_at is not None:
-        name = name_of(pieces[center_at])
+        name = _arg_name(pieces[center_at])
         if name:
             pieces[center_at] = f"center={'true' if centered else 'false'}"
         else:

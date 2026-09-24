@@ -442,10 +442,12 @@ class DebugSession(QObject):
 
     def _run(self, source_path: str, viewport_params: dict):
         from openscad_cpp_evaluator import Evaluator, EvalError
+        from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT
         from belfryscad.export_name import seed_params
         ev = Evaluator(echo_fn=self.logged.emit, debug_hook=self._make_hook(), error_break_fn=self._error_break,
                       return_hook=self._on_function_return, manifold_cache=self._manifold_cache,
-                      fast_continue_signal=self._fast_continue_signal)
+                      fast_continue_signal=self._fast_continue_signal,
+                      flat_preview_height=FLAT_PREVIEW_HEIGHT)
         try:
             # Same seed as a normal render, so stepping through a script
             # sees the same $export_name it would see when rendered.

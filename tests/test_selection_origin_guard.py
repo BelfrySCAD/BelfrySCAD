@@ -42,8 +42,8 @@ class _FakeWindow:
     _selectable_span_for_id = MainWindow._selectable_span_for_id
     _editable_span_for_id = MainWindow._editable_span_for_id
 
-    def _is_extrudable(self, span, tab):
-        return False        # which tools show is not what these tests are about
+    def _extrude_state(self, span, tab):
+        return False, False  # which tools show is not what these tests are about
 
     def __init__(self, id_to_node, rendered, others=()):
         self.id_to_node = id_to_node
@@ -362,7 +362,7 @@ def test_applying_it_selects_the_span_that_starts_there(tmp_path):
                                    update=lambda: None)
     tab.editor.set_selection = lambda a, b: selected.setdefault("span", (a, b))
     mw._viewport.set_selection_editable = lambda v: selected.setdefault("editable", v)
-    mw._viewport.set_selection_extrudable = lambda v: None
+    mw._viewport.set_selection_extrudable = lambda *a: None
     tab.editor.clear_selection = lambda: selected.setdefault("cleared", True)
 
     MainWindow._apply_pending_reselect(mw)
@@ -380,7 +380,7 @@ def test_nothing_matching_clears_rather_than_selecting_the_wrong_thing(tmp_path)
     mw._pending_reselect = (1, 999)
     mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
-                                   set_selection_extrudable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
     tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
     MainWindow._apply_pending_reselect(mw)
@@ -457,7 +457,7 @@ def test_a_stale_render_does_not_consume_the_pending_reselect(tmp_path):
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
     mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
-                                   set_selection_extrudable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
     tab.editor.clear_selection = lambda: cleared.setdefault("cleared", True)
     tab.editor.set_selection = lambda a, b: cleared.setdefault("span", (a, b))
@@ -483,7 +483,7 @@ def test_a_later_render_can_still_satisfy_it(tmp_path):
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
     mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
-                                   set_selection_extrudable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
     tab.editor.set_selection = lambda a, b: None
     tab.editor.clear_selection = lambda: None
@@ -508,7 +508,7 @@ def test_the_reselect_matches_by_region_not_an_exact_offset(tmp_path):
     }, tab)
     mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
-                                   set_selection_extrudable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
     tab.editor.set_selection = lambda a, b: got.setdefault("span", (a, b))
     tab.editor.clear_selection = lambda: got.setdefault("cleared", True)
@@ -529,7 +529,7 @@ def test_an_edit_after_every_body_clears(tmp_path):
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 8), call_sites=())}, tab)
     mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
-                                   set_selection_extrudable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
     tab.editor.clear_selection = lambda: got.setdefault("cleared", True)
     mw._pending_reselect = (1, 500)
