@@ -13,7 +13,8 @@ from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon)
 
-from belfryscad.engine.renderer import GIZMO_SCALE, SceneRenderer
+from belfryscad.engine.renderer import (EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
+                                        _project_to_screen)
 from belfryscad.window.debugger import _debug_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -345,11 +346,16 @@ def _attach_moderngl(require: int = 330):
     return ctx
 
 
+#: Every tool that draws a gizmo and takes a drag.
+_GIZMO_TOOLS = (0, 1, 2) + EXTRUDE_GIZMOS
+
+
 class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
     selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
+    extrude_committed   = Signal(float, bool)            # height delta, centred
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
@@ -382,7 +388,8 @@ class Viewport(QOpenGLWidget):
         self._selectable = selectable
 
         # Tool state
-        self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale
+        self._active_tool: int = -1   # -1=none, 0=translate, 1=rotate, 2=scale,
+                                      # 3=extrude, 4=extrude centred
 
         # Measurement. `_measure_mode` is None, "distance" or "angle";
         # `_measure_pending` collects the snapped points of the measurement
@@ -401,6 +408,11 @@ class Viewport(QOpenGLWidget):
             " font-family: Menlo; font-size: 13px; }"
         )
         self._delta_label.hide()
+        # The extrude drag's height, beside the arrow rather than at the
+        # bottom of the view: it is a length along that arrow.
+        self._extrude_label = QLabel("", self)
+        self._extrude_label.setStyleSheet(self._delta_label.styleSheet())
+        self._extrude_label.hide()
 
         # Measurement readout, one label per finished measurement plus the
         # one being taken. Same treatment as the delta overlay.
@@ -498,6 +510,8 @@ class Viewport(QOpenGLWidget):
             (0, "translate", "Translate"),
             (1, "rotate", "Rotate"),
             (2, "scale", "Scale"),
+            (3, "extrude", "Extrude"),
+            (4, "extrude-centered", "Extrude Centered"),
         )):
             btn = QPushButton(self)
             btn.setFlat(True)
@@ -812,7 +826,20 @@ class Viewport(QOpenGLWidget):
         going to change it; the gizmos and arrow-key nudging are what
         cannot apply."""
         self._selection_editable = bool(editable)
-        if not self._selection_editable and self._active_tool in (0, 1, 2):
+        if not self._selection_editable and self._active_tool in _GIZMO_TOOLS:
+            self.set_active_tool(-1)
+        self._sync_tool_buttons()
+        self.update()
+
+    def set_selection_extrudable(self, extrudable: bool, centered: bool = False):
+        """Whether the extrude tools apply: the selection is a 2D shape, or
+        is already inside a `linear_extrude` whose height they can change --
+        and whether that one is `center=true`, which is where its shape sits
+        in it, for the drag preview. Decided by MainWindow, which has the
+        source to look in."""
+        self._selection_extrudable = bool(extrudable)
+        self._extrude_centered = bool(centered)
+        if not self._selection_extrudable and self._active_tool in EXTRUDE_GIZMOS:
             self.set_active_tool(-1)
         self._sync_tool_buttons()
         self.update()
@@ -823,23 +850,25 @@ class Viewport(QOpenGLWidget):
         is the visible half of refusing the edit."""
         visible = (self._renderer.selected_id is not None
                    and getattr(self, "_selection_editable", True))
+        extrudable = visible and getattr(self, "_selection_extrudable", False)
         for tool_id, btn in getattr(self, "_tool_btns", {}).items():
-            btn.setVisible(visible)
-            btn.setChecked(visible and self._active_tool == tool_id)
+            shown = extrudable if tool_id in EXTRUDE_GIZMOS else visible
+            btn.setVisible(shown)
+            btn.setChecked(shown and self._active_tool == tool_id)
 
     def set_selection(self, orig_id):
         """Set (or clear, with None) the selected shape, keeping the tool
         buttons in step. A tool left running over a cleared selection would
         draw no gizmo and answer no clicks."""
         self._renderer.selected_id = orig_id
-        if orig_id is None and self._active_tool in (0, 1, 2):
+        if orig_id is None and self._active_tool in _GIZMO_TOOLS:
             self.set_active_tool(-1)
         self._sync_tool_buttons()
         self.update()
 
     def set_active_tool(self, tool_id: int):
         self._active_tool = tool_id
-        self._renderer.show_gizmo = tool_id in (0, 1, 2)
+        self._renderer.show_gizmo = tool_id in _GIZMO_TOOLS
         self._renderer.gizmo_type = tool_id
         self._gizmo_drag_axis = -1
         self._renderer.active_gizmo_axis = -1
@@ -1292,7 +1321,7 @@ class Viewport(QOpenGLWidget):
             return
 
         # Gizmo drag start (T/R tool active, gizmo visible, axis hit)
-        if (self._active_tool in (0, 1, 2)
+        if (self._active_tool in _GIZMO_TOOLS
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None):
             axis = self._renderer.pick_gizmo_axis(pos.x(), pos.y(),
@@ -1343,7 +1372,7 @@ class Viewport(QOpenGLWidget):
             return
 
         # Highlight which gizmo axis the cursor is over
-        if (self._active_tool in (0, 1, 2)
+        if (self._active_tool in _GIZMO_TOOLS
                 and self._renderer.show_gizmo
                 and self._renderer.selected_id is not None
                 and self._last_mouse is None):   # not orbiting
@@ -1617,6 +1646,13 @@ class Viewport(QOpenGLWidget):
             self._renderer.drag_offset = self._drag_axis_world * delta
             self._show_delta(
                 f"{'XYZ'[self._gizmo_drag_axis]}  {delta:+g}")
+        elif self._active_tool in EXTRUDE_GIZMOS:
+            t = self._axis_plane_hit(pos.x(), pos.y())
+            if t is None:
+                return
+            delta = _quantize(t - self._drag_start_1d, magnitude)
+            self._renderer.drag_offset = self._drag_axis_world * delta
+            self._show_extrude_label(self._preview_extrusion(delta))
         elif self._active_tool == 1:
             t = self._axis_ring_hit(pos.x(), pos.y())
             if t is None:
@@ -1642,6 +1678,51 @@ class Viewport(QOpenGLWidget):
             self._show_delta(f"{axis_name}  \u00d7{factor:g}")
         self.update()
 
+    def _preview_extrusion(self, delta: float):
+        """Stretch the selection along Z into the extrusion this drag would
+        commit, and return that extrusion's height (None if unknown).
+
+        A 2D shape is a thin slab from its own plane upward, so it starts at
+        height 0. An extrusion already there is as tall as it is, with its
+        shape at the bottom, or in the middle when it is `center=true`. The
+        new one grows up from that plane, or both ways for Extrude Centered.
+        Past zero there is nothing to show, so the shape is left as it is.
+        """
+        r = self._renderer
+        zr = r.selected_z_range()
+        if zr is None:
+            return None
+        zmin, zmax = zr
+        flat = r.selected_is_2d()
+        height = round((0.0 if flat else zmax - zmin) + delta, 4)
+        if height <= 0 or zmax - zmin <= 0:
+            r.drag_extrude = None
+            return height
+        plane = zmin if flat or not getattr(self, "_extrude_centered", False) else (zmin + zmax) / 2
+        lo = plane - height / 2 if self._active_tool == 4 else plane
+        k = height / (zmax - zmin)
+        r.drag_extrude = (k, lo - k * zmin)
+        return height
+
+    def _show_extrude_label(self, height):
+        """The new height, just past the arrow's tip."""
+        r = self._renderer
+        bbox = r._selected_buffer_bbox()
+        if bbox is None or height is None:
+            self._extrude_label.hide()
+            return
+        tip = bbox[0] + r.drag_offset + np.array([0, 0, r.camera.distance * GIZMO_SCALE])
+        w, h = self.width(), self.height()
+        mvp = r.camera.projection_matrix(w / max(h, 1)) @ r.camera.view_matrix()
+        at = _project_to_screen(tip, mvp, w, h)
+        if at is None:
+            self._extrude_label.hide()
+            return
+        self._extrude_label.setText(f"height {height:g}" if height > 0 else "height must be > 0")
+        self._extrude_label.adjustSize()
+        self._extrude_label.move(int(at[0]) + 14, int(at[1]) - self._extrude_label.height() // 2)
+        self._extrude_label.show()
+
     def _show_delta(self, text: str):
         self._delta_label.setText(text)
         self._delta_label.adjustSize()
@@ -1666,6 +1747,15 @@ class Viewport(QOpenGLWidget):
             dz = round(float(offset[2]), 4)
             if abs(dx) + abs(dy) + abs(dz) > 1e-4:
                 self.translate_committed.emit(dx, dy, dz)
+        elif self._active_tool in EXTRUDE_GIZMOS:
+            dz = round(float(self._renderer.drag_offset[2]), 4)
+            self._renderer.drag_offset = np.zeros(3, dtype=np.float32)
+            self._renderer.drag_extrude = None
+            self._extrude_label.hide()
+            self._gizmo_drag_axis = -1
+            self.update()
+            if abs(dz) > 1e-4:
+                self.extrude_committed.emit(dz, self._active_tool == 4)
         elif self._active_tool == 1:
             angle = self._renderer.drag_rotation_angle
             axis  = self._gizmo_drag_axis

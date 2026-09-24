@@ -969,6 +969,114 @@ def nudge_component(text: str, amount: float, mode: str) -> str:
     return f"{base} * {_fmt_num(amount)}"
 
 
+#: OpenSCAD's default `linear_extrude` height, for a call that gives none.
+_DEFAULT_EXTRUDE_HEIGHT = "100"
+
+
+def find_extrude_call(source: str, start: int):
+    """The `linear_extrude(...)` a node at `start` sits in, or None.
+
+    Directly outside the node's own chain of transform wrappers --
+    `linear_extrude(5) translate([1, 0]) circle(2)` is found from the
+    circle -- or at `start` itself, when the evaluator attributed the
+    extruded body to the extrude statement rather than to its child.
+    """
+    chain = find_transform_chain(source, start)
+    at = chain[-1][1].start if chain else start
+    return (find_transform_call(source, at, "linear_extrude")
+            or transform_at(source, start, "linear_extrude"))
+
+
+def _arg_name(piece: str):
+    """The name of a `name = value` argument, or None for a positional one."""
+    m = re.match(r"\s*([A-Za-z_$]\w*)\s*=(?!=)", piece)
+    return m.group(1) if m else None
+
+
+def _extrude_args(source: str, call):
+    """A `linear_extrude(...)` call's argument texts, in order, and the
+    indexes of its height and center (None where not given). OpenSCAD's
+    order is (height, center, ...), so each is its name or that position."""
+    open_paren = source.index("(", call.start)
+    pieces = [p for p in _split_args(source[open_paren + 1:call.end - 1]) if p]
+    positional = [i for i, p in enumerate(pieces) if _arg_name(p) is None]
+    height_at = next((i for i, p in enumerate(pieces) if _arg_name(p) == "height"),
+                     positional[0] if positional else None)
+    center_at = next((i for i, p in enumerate(pieces) if _arg_name(p) == "center"),
+                     positional[1] if len(positional) > 1 else None)
+    return pieces, height_at, center_at
+
+
+def extrude_is_centered(source: str, start: int) -> bool:
+    """Whether the `linear_extrude` the node at `start` is in has
+    `center=true` -- where its 2D shape sits in the extrusion, which the
+    extrude gizmo's preview needs. False when there is none."""
+    call = find_extrude_call(source, start)
+    if call is None:
+        return False
+    pieces, _height_at, center_at = _extrude_args(source, call)
+    if center_at is None:
+        return False
+    value = pieces[center_at].split("=", 1)[1] if _arg_name(pieces[center_at]) else pieces[center_at]
+    return value.strip() == "true"
+
+
+def extrude_edit(source: str, start: int, delta: float, centered: bool):
+    """`(new_source, new_node_start)` for an extrude-gizmo drag, or None.
+
+    Updates the `linear_extrude` the node is already in (see
+    `find_extrude_call`): its height gets `delta` the way a translate
+    component would (`nudge_component`, so `h` becomes `h + 5`), and its
+    `center` is set to match the tool. Every other argument -- twist,
+    slices, scale, convexity -- is kept as written.
+
+    Otherwise wraps the node, outside its transform chain as a translate
+    would be, in `linear_extrude(height=delta)`. None when that would not
+    be a positive height: a new extrusion cannot start from a downward drag,
+    and an existing numeric height is not taken to zero or below.
+    """
+    call = find_extrude_call(source, start)
+    if call is None:
+        if delta <= 0:
+            return None
+        chain = find_transform_chain(source, start)
+        at = chain[-1][1].start if chain else start
+        head = f"linear_extrude(height={_fmt_num(delta)}"
+        head += ", center=true) " if centered else ") "
+        return source[:at] + head + source[at:], at
+
+    pieces, height_at, center_at = _extrude_args(source, call)
+
+    if height_at is None:
+        new_height = nudge_component(_DEFAULT_EXTRUDE_HEIGHT, delta, "add")
+        pieces.insert(0, f"height={new_height}")
+        if center_at is not None:
+            center_at += 1
+    else:
+        old = pieces[height_at]
+        name = _arg_name(old)
+        value = old.split("=", 1)[1].strip() if name else old.strip()
+        new_height = nudge_component(value, delta, "add")
+        pieces[height_at] = f"{name}={new_height}" if name else new_height
+    try:
+        if float(new_height) <= 0:
+            return None
+    except ValueError:
+        pass            # an expression: nothing to check without evaluating
+
+    if center_at is not None:
+        name = _arg_name(pieces[center_at])
+        if name:
+            pieces[center_at] = f"center={'true' if centered else 'false'}"
+        else:
+            pieces[center_at] = "true" if centered else "false"
+    elif centered:
+        pieces.append("center=true")
+
+    text = f"linear_extrude({', '.join(pieces)})"
+    return source[:call.start] + text + source[call.end:], call.start
+
+
 # -- Finding the value under the cursor ------------------------------------
 
 def _arg_spans(text: str, start: int, end: int):

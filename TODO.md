@@ -9,8 +9,6 @@
   Extend that port.
 - Notional 2D layout editor: place multiple 2D shapes, apply transforms
   and CSG to them, then extrude by part.
-- Extrude gizmo for 2D shapes selected in the main viewport, with and
-  without centering.
 - Follow-ups from #554, measured on an M1, none of them the warning flood
   itself (which is fixed):
   - **Cancel cannot stop a silent runaway.** A render is interrupted only

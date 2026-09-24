@@ -189,6 +189,16 @@ void main() {
 #: how a handle and the region that picks it drift apart.
 GIZMO_SCALE = 0.07
 
+#: gizmo_type values for the extrude tools: 3 extrudes up from the shape,
+#: 4 extrudes centred on it. Both draw and pick a single +Z arrow.
+EXTRUDE_GIZMOS = (3, 4)
+
+#: How thick the viewport draws a top-level 2D shape: thin enough to read as
+#: the flat contour it is. OpenSCAD's preview uses 1 unit, and docs images
+#: and headless renders keep that (the evaluator's default); only the
+#: interactive viewport asks for this.
+FLAT_PREVIEW_HEIGHT = 0.01
+
 
 _GIZMO_VERT = """
 #version 330 core
@@ -930,6 +940,9 @@ class SceneRenderer:
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
         self.drag_offset: np.ndarray = np.zeros(3, dtype=np.float32)
+        # An extrude drag's preview: the selection's z mapped to k*z + off,
+        # stretching it to the extrusion the drag would commit. None when off.
+        self.drag_extrude: Optional[tuple] = None
         self.gizmo_type: int = 0           # 0=translate, 1=rotate
         self.drag_rotation_axis: int = -1
         self.drag_rotation_angle: float = 0.0
@@ -1041,6 +1054,7 @@ class SceneRenderer:
         self._clear_buffers()
         self.selected_id = None
         self.drag_offset = np.zeros(3, dtype=np.float32)
+        self.drag_extrude = None
         self.drag_rotation_angle = 0.0
         self.drag_rotation_axis = -1
         self.drag_scale_axis = -1
@@ -1554,7 +1568,9 @@ class SceneRenderer:
         self._prog["light_dir"].value = tuple(L_world)
         self._prog["eye_pos"].value = tuple(eye_pos)
 
-        has_drag = np.any(self.drag_offset != 0)
+        # An extrude drag moves only its arrow: the shape stays where it is
+        # until the commit renders the extrusion.
+        has_drag = np.any(self.drag_offset != 0) and self.gizmo_type not in EXTRUDE_GIZMOS
         has_rotation = self.drag_rotation_axis >= 0 and self.drag_rotation_angle != 0.0
         has_scale = self.drag_scale_axis >= 0 and self.drag_scale_factor != 1.0
 
@@ -1616,6 +1632,9 @@ class SceneRenderer:
             if is_selected and has_drag:
                 buf_model = np.eye(4, dtype=np.float32)
                 buf_model[:3, 3] = self.drag_offset
+            elif is_selected and self.drag_extrude is not None:
+                buf_model = np.eye(4, dtype=np.float32)
+                buf_model[2, 2], buf_model[2, 3] = self.drag_extrude
             elif is_selected and has_rotation and rot_center is not None:
                 buf_model = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
             elif is_selected and has_scale and scale_center is not None:
@@ -1922,6 +1941,11 @@ class SceneRenderer:
             if np.any(self.drag_offset != 0):
                 center = center + self.drag_offset
             geo = _build_gizmo_geo(center, scale, self.active_gizmo_axis)
+        elif self.gizmo_type in EXTRUDE_GIZMOS:
+            # One arrow, up Z: an extrusion only ever grows along Z. Its tip
+            # follows the drag, as the translate arrow's does.
+            geo = _build_gizmo_geo(center + self.drag_offset, scale,
+                                   self.active_gizmo_axis, axes=(2,))
         elif self.gizmo_type == 1:
             geo = _build_rotate_gizmo_geo(center, scale, self.active_gizmo_axis)
         else:
@@ -2300,10 +2324,29 @@ class SceneRenderer:
         extent = float(np.linalg.norm(bb_max - bb_min))
         return center, extent
 
+    def selected_z_range(self) -> Optional[tuple]:
+        """(zmin, zmax) of the selection, for the extrude preview."""
+        if self.selected_id is None:
+            return None
+        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        if not matches:
+            return None
+        zs = np.concatenate([v[:, 2] for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
+        return float(zs.min()), float(zs.max())
+
+    def selected_is_2d(self) -> bool:
+        """Is the selection a 2D shape -- drawn as the flat preview slab?"""
+        if self.selected_id is None:
+            return False
+        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        return bool(matches) and all(buf.flat_preview for buf in matches)
+
     def pick_gizmo_axis(self, px: float, py: float, w: int, h: int) -> int:
         """Return which gizmo axis (0=X,1=Y,2=Z) is under the pixel, or -1."""
         if self.gizmo_type == 0:
             return self._pick_translate_axis(px, py, w, h)
+        elif self.gizmo_type in EXTRUDE_GIZMOS:
+            return 2 if self._pick_translate_axis(px, py, w, h) == 2 else -1
         elif self.gizmo_type == 1:
             return self._pick_rotate_axis(px, py, w, h)
         else:
@@ -2532,8 +2575,9 @@ _AXES_COLORS = np.array([[1.0,0.18,0.18],[0.18,1.0,0.18],[0.18,0.18,1.0]], dtype
 _HIGHLIGHT   = np.array([1.0, 1.0, 0.2], dtype=np.float32)
 
 
-def _build_gizmo_geo(center: np.ndarray, length: float, active_axis: int) -> np.ndarray:
-    """Return interleaved (pos3, color3) vertex data for 3 axis arrows (GL_TRIANGLES)."""
+def _build_gizmo_geo(center: np.ndarray, length: float, active_axis: int,
+                    axes=(0, 1, 2)) -> np.ndarray:
+    """Return interleaved (pos3, color3) vertex data for axis arrows (GL_TRIANGLES)."""
     n_seg = 8
     shaft_r  = length * 0.04
     cone_r   = length * 0.09
@@ -2541,7 +2585,7 @@ def _build_gizmo_geo(center: np.ndarray, length: float, active_axis: int) -> np.
 
     rows: list[np.ndarray] = []
 
-    for ai in range(3):
+    for ai in axes:
         d  = _AXES_DIRS[ai]
         p1 = _AXES_PERP1[ai]
         p2 = _AXES_PERP2[ai]
