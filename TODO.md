@@ -1,10 +1,12 @@
 # TODO
 
-- NURBS parameters a bare point list cannot carry: weights,
-  knots/multiplicities, `type="open"`, and `nurbs_interp`/
+- NURBS in the Path and Grid viewers already works, both control-point
+  and interpolated (`nurbs.py`, a port of BOSL2's `nurbs.scad`:
+  `curve`/`interp` for paths, `patch`/`interp_surface` for grids). Still
+  missing are the parameters a bare point list cannot carry: weights,
+  custom knots/multiplicities, `type="open"`, and `nurbs_interp`/
   `nurbs_interp_surface`'s derivative/curvature/normal/edge constraints.
-  Curves (Path viewer) and surfaces (Grid viewer) are done without them,
-  drawn by `nurbs.py`'s port of BOSL2's `nurbs.scad`; extend that port.
+  Extend that port.
 - Notional 2D layout editor: place multiple 2D shapes, apply transforms
   and CSG to them, then extrude by part.
 - Extrude gizmo for 2D shapes selected in the main viewport, with and
