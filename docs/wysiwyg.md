@@ -314,9 +314,26 @@ Offered only for a **2D shape**, or a shape already **inside a
 `MainWindow._is_extrudable` asks the renderer whether every buffer of the
 selection is a flat preview slab (`SceneRenderer.selected_is_2d`), and failing
 that looks for the extrude in the source (`scad_format.find_extrude_call`).
-Both draw and pick a single +Z arrow (`EXTRUDE_GIZMOS`); the shape stays put
-during the drag -- only the arrow follows it -- and the extrusion appears on
-the commit's render.
+Both draw and pick a single +Z arrow (`EXTRUDE_GIZMOS`).
+
+**The drag previews the extrusion** (`Viewport._preview_extrusion`): the
+selection is stretched along Z by a model matrix (`SceneRenderer.drag_extrude`,
+`z -> k*z + off`) to the extrusion the drag would commit, and the new height is
+shown beside the arrow's tip (`_extrude_label`) rather than at the bottom of
+the view. A 2D shape starts at height 0 and grows up from its own plane; an
+existing extrusion starts at its bounding-box height, with its shape at the
+bottom -- or in the middle when it is `center=true`, which MainWindow reads from
+the source (`scad_format.extrude_is_centered`) and passes with
+`set_selection_extrudable`. Extrude Centered grows both ways from that plane.
+Past zero the shape is left as it is and the label says so. The height is the
+bounding box's, so under an outer `scale()` it is the scaled one -- the commit
+still adds the drag to the height written in the source.
+
+**2D shapes are drawn 0.01 thick** (`FLAT_PREVIEW_HEIGHT`), passed to the
+evaluator as `flat_preview_height` by the render worker and the debugger, so
+a 2D shape reads as the flat contour it is. OpenSCAD's preview slab is 1 unit
+and everything else keeps that: docs images and `--viewall` framing depend on
+it, and export always gets the 1-unit slab (a 2D-only script exports it).
 
 The rewrite is `scad_format.extrude_edit`, tested in
 `tests/test_extrude_edit.py`:
