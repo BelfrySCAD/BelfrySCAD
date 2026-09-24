@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- A flat shape at the bottom, pulled straight up. -->
+<svg version="1.1" width="48" height="48" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <g style="fill:none;stroke:#444444;stroke-width:1.66667;stroke-linecap:round;stroke-linejoin:round">
+    <path d="M 4,25 L 11,20 L 28,20 L 21,25 Z" />
+    <path d="M 16,22.5 L 16,5" />
+    <path d="M 12,9 L 16,5 L 20,9" />
+  </g>
+</svg>

@@ -20,7 +20,8 @@ from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.scad_format import (find_transform_chain,
+from belfryscad.window.scad_format import (extrude_edit, find_extrude_call,
+                                           find_transform_chain,
                                            nudge_component, transform_at,
                                            vector_texts)
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
@@ -983,6 +984,7 @@ class MainWindow(QMainWindow):
         self._viewport.translate_committed.connect(self._on_translate_committed)
         self._viewport.rotate_committed.connect(self._on_rotate_committed)
         self._viewport.scale_committed.connect(self._on_scale_committed)
+        self._viewport.extrude_committed.connect(self._on_extrude_committed)
         self._viewport.camera_changed.connect(self._update_camera_label)
         self._viewport.size_changed.connect(self._update_size_label)
         # The busy overlay's close box; Escape does the same thing (#530).
@@ -5441,6 +5443,7 @@ class MainWindow(QMainWindow):
             rendered.editor.clear_selection()
         # Read-only (an installed library) selects but does not edit.
         self._viewport.set_selection_editable(not tab.editor.isReadOnly())
+        self._viewport.set_selection_extrudable(self._is_extrudable(span, tab))
 
     # ------------------------------------------------------------------
     # Translate gizmo commit
@@ -5481,6 +5484,50 @@ class MainWindow(QMainWindow):
         self._value_nudge_tab = tab
         self._value_nudge_timer.start(self._VALUE_NUDGE_RENDER_DELAY_MS)
 
+    def _gizmo_target(self):
+        """`(source, span_start)` of the selected, editable node a gizmo drag
+        applies to, with its tab brought to the front; or None."""
+        if not self._rendered_tab:
+            return None
+        orig_id = self._viewport._renderer.selected_id
+        if orig_id is None:
+            return None
+        span = self._editable_span_for_id(orig_id)
+        if span is None:
+            return None
+
+        if self._current_tab() is not self._rendered_tab:
+            idx = self._tabs.indexOf(self._rendered_tab)
+            if idx >= 0:
+                self._tabs.setCurrentIndex(idx)
+        return self._rendered_tab.editor.toPlainText(), span.start_offset
+
+    def _is_extrudable(self, span, tab) -> bool:
+        """The extrude tools apply to a 2D shape, and to one already inside a
+        `linear_extrude` -- whose body is 3D, but whose height they edit."""
+        if self._viewport._renderer.selected_is_2d():
+            return True
+        return find_extrude_call(tab.editor.toPlainText(), span.start_offset) is not None
+
+    def _on_extrude_committed(self, dz: float, centered: bool):
+        """Wrap the selected 2D shape in `linear_extrude`, or change the
+        height of the one it is in. See `scad_format.extrude_edit`."""
+        target = self._gizmo_target()
+        if target is None:
+            return
+        source, start = target
+        edit = extrude_edit(source, start, dz, centered)
+        if edit is None:
+            self.statusBar().showMessage(
+                "Extrude: drag up -- an extrusion needs a positive height.", 4000)
+            return
+        new_source, new_node_start = edit
+        self._stack_for(self._rendered_tab).push(_GizmoCmd(
+            self._rendered_tab, self._rendered_tab.editor, source, new_source,
+            self._render, new_node_start, self._restore_selection_after_gizmo,
+            merge_id=1005, label="Extrude", viewport=self._viewport,
+        ))
+
     def _commit_transform(self, name: str, keyword: str, fill: str,
                           amounts, mode: str, label: str, merge_id: int):
         """Wrap or update a `name(...)` transform around the selected node.
@@ -5499,22 +5546,10 @@ class MainWindow(QMainWindow):
         so a parametric model keeps its relationships instead of being
         overwritten with a constant or gaining a wrapper per drag.
         """
-        if not self._rendered_tab:
+        target = self._gizmo_target()
+        if target is None:
             return
-        orig_id = self._viewport._renderer.selected_id
-        if orig_id is None:
-            return
-        span = self._editable_span_for_id(orig_id)
-        if span is None:
-            return
-
-        if self._current_tab() is not self._rendered_tab:
-            idx = self._tabs.indexOf(self._rendered_tab)
-            if idx >= 0:
-                self._tabs.setCurrentIndex(idx)
-
-        source = self._rendered_tab.editor.toPlainText()
-        start = span.start_offset
+        source, start = target
 
         chain = find_transform_chain(source, start)
         outer_name, outer = chain[-1] if chain else (None, None)
@@ -5615,6 +5650,7 @@ class MainWindow(QMainWindow):
         # set, so the tools could stay hidden for a selection that is now
         # editable, or shown for one that is not.
         self._viewport.set_selection_editable(not tab.editor.isReadOnly())
+        self._viewport.set_selection_extrudable(self._is_extrudable(span, tab))
         if self._rendered_tab:
             self._rendered_tab.editor.set_selection(span.start_offset, span.end_offset)
         self._viewport.update()
