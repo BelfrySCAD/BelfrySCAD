@@ -2998,6 +2998,27 @@ class CodeEditor(QPlainTextEdit):
                     "Choose Font...",
                     lambda: open_font_picker(spec, preview, on_font_commit, self))
 
+            # The same literals the hover swatch recognises, found the same
+            # way: on the clicked line alone.
+            from belfryscad.window.color_literals import find_color_literal
+            from belfryscad.window.color_picker import open_color_picker
+            block = click.block()
+            color_hit = find_color_literal(block.text(), click.positionInBlock())
+            if color_hit is not None:
+                c_start = block.position() + color_hit[0]
+                c_end = block.position() + color_hit[1]
+
+                def on_color_commit(new_text, start=c_start, end=c_end):
+                    self.replace_span(start, end, new_text)
+                    self.source_edited_externally.emit()
+
+                if not menu.actions() or not menu.actions()[-1].isSeparator():
+                    menu.addSeparator()
+                menu.addAction(
+                    "Choose Color...",
+                    lambda: open_color_picker(block.text()[color_hit[0]:color_hit[1]], color_hit[2],
+                                              on_color_commit, self))
+
         if new_assign:
             name, indent, start, end = new_assign
             # The whole line is rewritten, so the name/spacing/`;` come out

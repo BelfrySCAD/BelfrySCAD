@@ -201,13 +201,21 @@ def describe(c: QColor) -> str:
     has one, `#rrggbb`, and the 0..1 components `color()` takes."""
     r, g, b, a = c.getRgbF()
     parts = [c.name(QColor.NameFormat.HexRgb)]
-    for name, known in _NAMES.items():
-        if known == c.rgb():
-            parts.insert(0, name)
-            break
+    name = name_for(c)
+    if name:
+        parts.insert(0, name)
     nums = ", ".join(f"{v:.3g}" for v in (r, g, b))
     parts.append(f"[{nums}]" if a >= 1.0 else f"[{nums}, {a:.3g}]")
     return " · ".join(parts)
+
+
+def name_for(c: QColor) -> str | None:
+    """A name for `c`'s rgb (alpha ignored), or None. Where Qt has two for
+    one colour (`aqua`/`cyan`, `gray`/`grey`) the first alphabetically."""
+    for name, known in _NAMES.items():
+        if known == c.rgb():
+            return name
+    return None
 
 
 #: name -> packed rgb, for the reverse lookup `describe` does. Built once
