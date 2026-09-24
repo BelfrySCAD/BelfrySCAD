@@ -1,10 +1,12 @@
 # TODO
 
-- NURBS parameters a bare point list cannot carry: weights,
-  knots/multiplicities, `type="open"`, and `nurbs_interp`/
+- NURBS in the Path and Grid viewers already works, both control-point
+  and interpolated (`nurbs.py`, a port of BOSL2's `nurbs.scad`:
+  `curve`/`interp` for paths, `patch`/`interp_surface` for grids). Still
+  missing are the parameters a bare point list cannot carry: weights,
+  custom knots/multiplicities, `type="open"`, and `nurbs_interp`/
   `nurbs_interp_surface`'s derivative/curvature/normal/edge constraints.
-  Curves (Path viewer) and surfaces (Grid viewer) are done without them,
-  drawn by `nurbs.py`'s port of BOSL2's `nurbs.scad`; extend that port.
+  Extend that port.
 - Notional 2D layout editor: place multiple 2D shapes, apply transforms
   and CSG to them, then extrude by part.
 - Extrude gizmo for 2D shapes selected in the main viewport, with and
@@ -22,16 +24,6 @@
   - **60,000 bodies stall the UI for 6.7 s** when the finished render is
     handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
     warnings removed from the picture. The geometry upload, not the console.
-- Move BOSL2's `Regressions` job to `belfryscad --test`. It is the last
-  thing in that repo still downloading the OpenSCAD 2021.01 AppImage;
-  `--docsgen` and `--mdimggen` took over `CheckDocs` and `CheckTutorials`
-  in BOSL2 #2034. All 909 of its tests now pass on this evaluator (exit 0,
-  ~82s serial, against openscad-test's 8.3s for 226 with 5-way
-  parallelism), so the swap is a workflow edit rather than a porting job:
-  drop the AppImage, `libfuse2` and `pip install openscad-test`, and run
-  `belfryscad --test tests/*.scadtest`. Needs belfryscad with
-  openscad_cpp_evaluator >= 1.3.0.
-
 - Accelerate textured extrusions and sweeps. (Sweeps take 2D paths or regions;
   extrusions take 2D geometry.) They are slow because the work happens in the
   OpenSCAD language. Measured 2026-09-18 against BOSL2 @ c4067293: a textured
