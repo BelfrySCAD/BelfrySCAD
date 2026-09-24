@@ -238,6 +238,14 @@ it errored on legitimate content. Its cost was measured against all of BOSL2
 before shipping — 42,963 doc lines, 106 carrying both a link and a code span,
 exactly one behaving differently (`nurbs.scad` writes a link inside backticks,
 which now renders literally).
+A fourth, #560: an example's script also includes **the file it documents**, after the
+`Includes:` lines, unless they already reach it (`docsgen/self_include.py`; reach decided
+statically with `scad_deps` plus the libshim redirect, because a double include re-runs and
+warns about every top-level assignment). Upstream includes only the `Includes:` lines, so a
+library outside BOSL2's arrangement -- where `std.scad` reaches every core file and the rest
+list themselves -- had every example fail on its own functions. The Docs pane includes a
+temporary copy of the live buffer instead, so examples see unsaved edits. A full BOSL2 docs
+build is unchanged by it.
 The first two alter no verdict at all: the same input passes or fails exactly
 as upstream would have it. Keeping the parser otherwise byte-identical is what
 makes the pane's verdict trustworthy: it is the same validation a real docs

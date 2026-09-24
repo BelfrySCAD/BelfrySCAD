@@ -34,7 +34,7 @@ It also unlocks the GUI case, which upstream cannot do at all: previewing
 ## What is vendored and what is not
 
 `src/belfryscad/docsgen/` holds `openscad_docsgen`'s own modules, copied
-unchanged but for one line:
+unchanged but for a few marked lines:
 
     parser.py  blocks.py  errorlog.py  filehashes.py  utils.py
     target.py  target_wiki.py  target_githubwiki.py
@@ -45,7 +45,7 @@ produces, so a preview cannot disagree with a real docs build. Verified by
 running both tools over identical trees and diffing: byte-identical
 markdown, same errors. See "Measured against the real thing" below.
 
-The one line is `parse_lines`' call to `strip_block_comments`
+One of those lines is `parse_lines`' call to `strip_block_comments`
 (`block_comments.py`, ours) — see "Block comments" below. It is a fix for a
 bug upstream shares, so the two still agree on every file where upstream is
 right; measured over all 58 BOSL2 library files, the set of documented
@@ -207,9 +207,26 @@ gap.
 
 ### Deliberate differences from upstream
 
-One of these is a bug fix, and it only bites on Windows:
+Two of these change what a script produces:
 
-* **Image URLs are built with `posixpath`, not `os.path`.** Upstream uses
+* **An example sees the file it documents** (#560, `self_include.py`).
+  Upstream builds an example's script from the file's `Includes:` lines, its
+  `CommonCode` and the example -- never the file itself, so a library of your
+  own had every example fail with `Ignoring unknown function` for the very
+  functions it documents. BOSL2 never notices: `std.scad` includes every core
+  file, and a file it does not include lists itself (`gears.scad` says
+  `include <BOSL2/gears.scad>`). So `include <the file>` goes after the
+  `Includes:` lines (before `CommonCode`, so the file's constants exist when
+  the example runs) -- **only when those lines do not already reach it**,
+  decided statically with `scad_deps` and the libshim redirect, because
+  including a file twice re-runs every top-level assignment and warns about
+  each one. The code a reader sees in the markdown is unchanged. In the Docs
+  pane the file included is a temporary copy of the live buffer beside the
+  source, so examples run against unsaved edits. A full BOSL2 docs build is
+  unchanged by it.
+
+* **Image URLs are built with `posixpath`, not `os.path`** (a Windows-only
+  bug fix). Upstream uses
   `os.path.join` for the `rel_url` that goes straight into a markdown image
   link (`blocks.py`'s `image_url_rel`, `mdimggen.py`'s `img_rel_url`), so a
   docs build run on Windows emits `images\demo\widget.png` and every image
