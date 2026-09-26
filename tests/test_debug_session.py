@@ -26,7 +26,7 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication(["pytest-debug-session"])
@@ -78,6 +78,31 @@ class TestDebugSessionUsesLiveBuffer:
         assert line == 3
         assert os.path.realpath(origin) == os.path.realpath(parse_path)
         session.stop()
+
+    def test_cleanup_path_is_gone_when_finished_arrives(self, tmp_path):
+        """The temp file is deleted before `finished` is emitted, not in a
+        `finally` after it: the old order let a listener see it still there
+        (the intermittent CI failure of the test below)."""
+        for i in range(5):
+            _tmp = tempfile.NamedTemporaryFile(suffix=".scad", mode="w", delete=False,
+                                               dir=str(tmp_path))
+            _tmp.write("cube(2);\n")
+            _tmp.close()
+            parse_path = _tmp.name
+            session = DebugSession()
+            seen = []
+            pauses = []
+            # Direct: the handler runs inside the emit, on the worker thread,
+            # so it sees exactly the order of unlink and emit -- a queued one
+            # usually runs after the worker's finally and hides the race.
+            session.finished.connect(lambda *a, p=parse_path: seen.append(os.path.exists(p)),
+                                     Qt.ConnectionType.DirectConnection)
+            session.paused.connect(lambda *a: pauses.append(a))
+            session.start(parse_path, {}, {}, current_file=parse_path, cleanup_path=parse_path)
+            _pump_until(lambda: pauses)
+            session.resume("continue")
+            _pump_until(lambda: seen)
+            assert seen == [False], f"run {i}: the file still existed when finished arrived"
 
     def test_cleanup_path_removed_after_session_ends(self, tmp_path):
         main = tmp_path / "main.scad"

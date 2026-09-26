@@ -452,22 +452,36 @@ class DebugSession(QObject):
             # Same seed as a normal render, so stepping through a script
             # sees the same $export_name it would see when rendered.
             bodies, id_to_node = ev.evaluate(source_path, seed_params(viewport_params, source_path))
+            self._remove_cleanup_path()
             if not self._stopped:
                 self.finished.emit(bodies, id_to_node)
         except EvalError as e:
+            self._remove_cleanup_path()
             if not self._stopped:
                 self.errored.emit(str(e))
         except Exception as e:
             import traceback
+            self._remove_cleanup_path()
             if not self._stopped:
                 self.errored.emit(f"{e}\n{traceback.format_exc()}")
         finally:
-            if getattr(self, "_cleanup_path", None):
-                try:
-                    os.unlink(self._cleanup_path)
-                except OSError:
-                    pass
-                self._cleanup_path = None
+            self._remove_cleanup_path()     # anything else that ends the run
+
+    def _remove_cleanup_path(self):
+        """Delete the temp .scad written for an unsaved buffer, once.
+
+        Called BEFORE `finished`/`errored` is emitted, not in a `finally`
+        after it: the session is over as far as a listener is concerned the
+        moment that signal arrives, and a listener on another thread could
+        look for the file before this thread got round to deleting it -- which
+        is how test_cleanup_path_removed_after_session_ends failed now and
+        then on CI."""
+        if getattr(self, "_cleanup_path", None):
+            try:
+                os.unlink(self._cleanup_path)
+            except OSError:
+                pass
+            self._cleanup_path = None
 
     def pause(self):
         """Request the evaluator to pause at the next debug hook call."""
