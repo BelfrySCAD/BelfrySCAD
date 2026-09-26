@@ -87,6 +87,18 @@
   (looping the driver on a Windows runner) before anything can be said
   about the cause.
 
+- Intermittent failure of `tests/test_debug_session.py::
+  TestDebugSessionUsesLiveBuffer::test_cleanup_path_removed_after_session_ends`
+  on ubuntu-latest, at its last line, `assert not os.path.exists(parse_path)`.
+  Seen twice on 2026-09-26: on main (run 36241664027) and in PR #581 (run
+  36271868257). The cause is a race, not a leak: `DebugSession._run`, on its
+  worker thread, emits `finished` and only deletes the cleanup file in its
+  `finally` afterwards, so the test -- which checks as soon as `finished`
+  arrives on the main thread -- can look before the unlink has happened. The
+  file is always deleted a moment later. Fix by deleting before emitting
+  (the unlink moves ahead of `finished.emit`/`errored.emit`), or by having the
+  test wait for the file to go.
+
 ## OpenSCAD GUI parity gaps
 
 Surveyed 2026-09-17 against openscad/openscad `master` @ 4c1d47946 (2026-09-16),
