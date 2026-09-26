@@ -135,6 +135,28 @@ class TestWarningFlood:
         assert stop and "nothing was drawn" in stop[0] and "Stop rendering after" in stop[0]
         assert "bodies" not in out
 
+    # A closed tetrahedron with two faces wound backwards: kept and drawn by
+    # the evaluator, with a warning saying so (#566).
+    REVERSED = ("polyhedron([[0,0,0], [10,0,0], [0,10,0], [0,0,10]],\n"
+                "           [[0,1,2], [0,1,3], [0,2,3], [1,2,3]]);\n")
+
+    def test_a_drawn_anyway_warning_at_the_limit_still_draws_the_shape(self):
+        # #566: stopping there drew nothing, hiding the shape the warning is
+        # about. The render runs on; later output is counted, not shown.
+        # Mesh warnings are raised while geometry is built, after every
+        # warning from running the script, so the second one comes later.
+        out = _run_collecting("translate([20,0,0]) " + self.REVERSED + self.REVERSED, max_warnings=1)
+        assert len(out.get("bodies") or []) == 2, "the render finished and drew both"
+        assert len([l for l in out["lines"] if "WARNING:" in l]) == 1
+        note = [l for l in out["lines"] if l.startswith("Reached the first warning")]
+        assert note and "drawn anyway" in note[0] and "1 later message not shown" in note[0]
+        assert not any(l.startswith("Render stopped") for l in out["lines"])
+
+    def test_another_warning_at_the_limit_still_stops(self):
+        out = _run_collecting(FLOOD + self.REVERSED, max_warnings=1)
+        assert "bodies" not in out
+        assert any(l.startswith("Render stopped at the first warning") for l in out["lines"])
+
     def test_cancel_interrupts_a_running_evaluation_quietly(self):
         cancel = threading.Event()
         cancel.set()                     # as if pressed while it runs

@@ -487,6 +487,12 @@ class _RenderWorker(QObject):
         self._keep_minuend_color = keep_minuend_color
         self._max_warnings = max_warnings   # stop the render at this many; None never
         self._stopped_on_warning = False    # set when that limit is what ended the render
+        # Set instead when the warning that reached the limit is one about a
+        # shape drawn anyway (a non-manifold polyhedron or import): the render
+        # finishes so that shape is shown, with everything past the limit
+        # kept off the console but counted here.
+        self._finishing_past_limit = False
+        self._past_limit = 0
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
         # The script's own output (#554). One queued signal per message let a
         # warning flood swamp the UI thread -- 60,000 warnings stalled the
@@ -539,10 +545,22 @@ class _RenderWorker(QObject):
         skips the latter entirely.
         """
 
+    # The evaluator's words for a mesh it keeps and draws although it is not a
+    # valid solid (polyhedron, import): stopping there would hide the very
+    # shape the warning is about (#566).
+    _DRAWN_ANYWAY = "drawing the object as"
+
     def _echo(self, msg: str):
         import time
         if self._cancel.is_set():
             raise _RenderWorker._Cancelled()
+        if self._finishing_past_limit:
+            # Past the limit: the render only runs on to draw the shape.
+            if msg.startswith("ERROR"):
+                self._pending.append(msg)
+            else:
+                self._past_limit += 1
+            return
         warning = msg.startswith("WARNING:")
         self._warnings += warning
         seen = self._seen[msg] = self._seen.get(msg, 0) + 1
@@ -563,6 +581,9 @@ class _RenderWorker(QObject):
         stop = warning and self._max_warnings and self._warnings >= self._max_warnings
         if stop or time.monotonic() - self._last_flush >= self._FLUSH_INTERVAL:
             self._flush()
+        if stop and self._DRAWN_ANYWAY in msg:
+            self._finishing_past_limit = True
+            return
         if stop:
             # The warning that tripped the limit reached the console above:
             # the point of stopping is to look at it.
@@ -716,6 +737,14 @@ class _RenderWorker(QObject):
         # go stale the way a camera value can.
         export_name = resolve_export_name(evaluator.dyn.get("$export_name"), self._file_path)
         self._end_output()
+        if self._finishing_past_limit:
+            n = self._max_warnings
+            rest = self._past_limit
+            self.logged.emit(
+                f"Reached {'the first warning' if n == 1 else f'{n} warnings'} "
+                "(Preferences > Render > Stop rendering after) at a shape that is drawn "
+                "anyway, so the render ran on to show it"
+                + (f"; {rest:,} later message{'' if rest == 1 else 's'} not shown." if rest else "."))
         self.finished.emit(bodies, id_to_node, elapsed_ms, final_vp, evaluator.csg_tree, evaluator.profile_result,
                             geometry, export_name)
 
