@@ -13,7 +13,7 @@ from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon)
 
-from belfryscad.engine.renderer import (EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
+from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
 from belfryscad.window.debugger import _debug_icon
 
@@ -155,7 +155,7 @@ class Measurement:
         a = self.points[0] - self.points[1]
         b = self.points[2] - self.points[1]
         na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
-        if na < 1e-12 or nb < 1e-12:
+        if na == 0 or nb == 0:
             return float("nan")     # a leg of no length has no angle
         cos = float(np.dot(a, b)) / (na * nb)
         return float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
@@ -183,7 +183,7 @@ def _view_locked_axis(camera) -> int:
     the other two (most-perpendicular-to-view) axes."""
     forward = camera.target - camera.eye_position()
     norm = np.linalg.norm(forward)
-    if norm > 1e-9:
+    if norm > 0:
         forward = forward / norm
     return int(np.argmax(np.abs(forward)))
 
@@ -229,7 +229,7 @@ def _screen_roll_axis(camera):
     """
     forward = camera.target - camera.eye_position()
     norm = np.linalg.norm(forward)
-    if norm > 1e-9:
+    if norm > 0:
         forward = forward / norm
     axis = int(np.argmax(np.abs(forward)))
     return axis, (-1.0 if forward[axis] > 0 else 1.0)
@@ -590,7 +590,7 @@ class Viewport(QOpenGLWidget):
     def _measure_marker_size(self) -> float:
         """Cross size, scaled to the camera so it stays legible at any zoom
         without redrawing on every orbit."""
-        return max(1e-6, float(self._renderer.camera.distance) * 0.012)
+        return float(self._renderer.camera.distance) * 0.012
 
     def _measure_segments(self):
         """[(a, b, rgb)] for everything the measurement overlay draws."""
@@ -684,7 +684,7 @@ class Viewport(QOpenGLWidget):
                 else m.points[1]
             clip = mvp.astype(np.float64) @ np.array(
                 [anchor_pt[0], anchor_pt[1], anchor_pt[2], 1.0])
-            if clip[3] <= 1e-9:
+            if clip[3] <= 0:
                 lab.hide()          # behind the camera
                 continue
             ndc = clip[:2] / clip[3]
@@ -717,6 +717,10 @@ class Viewport(QOpenGLWidget):
         self.update()
 
     def frame_scene(self, bb_min, bb_max, reframe: bool = True):
+        # The clip planes are set from what is drawn (Camera.clip_planes), so
+        # they need the bounds even when the camera is not refitted.
+        self._renderer.camera.scene_bounds = (np.array(bb_min, dtype=np.float64),
+                                              np.array(bb_max, dtype=np.float64))
         # Cache the bounds so "View All" can reframe from them directly (see
         # _frame_all) instead of only being able to derive bounds by scanning
         # live buffers — needed for data viewers whose geometry lives in
@@ -1164,7 +1168,7 @@ class Viewport(QOpenGLWidget):
         Cmd+]/Cmd+[ shortcuts."""
         cam = self._renderer.camera
         factor = 1.03 if direction < 0 else 0.97
-        cam.distance = max(0.1, cam.distance * factor)
+        cam.distance = max(Camera.MIN_DISTANCE, cam.distance * factor)
         # This changes apparent scale exactly as the wheel does, so
         # screen-space markers need the same rebuild. Without it the
         # keyboard shortcuts zoomed the scene and left every vertex
@@ -1187,7 +1191,7 @@ class Viewport(QOpenGLWidget):
         aspect = w / h
         mvp = cam.projection_matrix(aspect) @ cam.view_matrix()
         clip = mvp @ np.array([pt[0], pt[1], pt[2], 1.0], dtype=np.float32)
-        if abs(clip[3]) < 1e-9:
+        if clip[3] == 0:
             return
         ndc_x = clip[0] / clip[3]
         ndc_y = clip[1] / clip[3]
@@ -1581,7 +1585,7 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
-            cam.distance = max(0.1, cam.distance * factor)
+            cam.distance = max(Camera.MIN_DISTANCE, cam.distance * factor)
             return
         origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
         cam.zoom_to_point(origin, ray_dir, factor)
