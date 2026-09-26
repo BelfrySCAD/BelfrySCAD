@@ -121,15 +121,18 @@ class TestWarningFlood:
     def test_stop_after_n_warnings(self):
         out = _run_collecting(FLOOD, max_warnings=5)
         assert len([l for l in out["lines"] if l.startswith("WARNING:")]) == 5
-        assert any("stopped after 5 warnings" in l for l in out["lines"])
+        assert any("Render stopped at 5 warnings" in l and "Stop rendering after" in l for l in out["lines"])
         assert "bodies" not in out
 
-    def test_stop_on_first_warning_names_the_warning(self):
+    def test_stop_at_the_first_warning_says_why_nothing_was_drawn(self):
+        # #566: the warning was repeated under "Eval error", which read as the
+        # script failing and never said a setting had stopped the render.
         out = _run_collecting(FLOOD, max_warnings=1)
-        warnings = [l for l in out["lines"] if l.startswith("WARNING:")]
-        assert len(warnings) == 1
-        stop = [l for l in out["lines"] if l.startswith("Eval error")]
-        assert stop and warnings[0] in stop[0]      # the stop quotes it
+        warnings = [l for l in out["lines"] if "WARNING:" in l]
+        assert len(warnings) == 1                   # shown once, not quoted again
+        assert not any(l.startswith("Eval error") for l in out["lines"])
+        stop = [l for l in out["lines"] if l.startswith("Render stopped at the first warning")]
+        assert stop and "nothing was drawn" in stop[0] and "Stop rendering after" in stop[0]
         assert "bodies" not in out
 
     def test_cancel_interrupts_a_running_evaluation_quietly(self):

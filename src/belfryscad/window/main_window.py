@@ -486,6 +486,7 @@ class _RenderWorker(QObject):
         self._profile = profile
         self._keep_minuend_color = keep_minuend_color
         self._max_warnings = max_warnings   # stop the render at this many; None never
+        self._stopped_on_warning = False    # set when that limit is what ended the render
         self._tmp_path = None  # temp .scad for an unsaved buffer; unlinked in run()
         # The script's own output (#554). One queued signal per message let a
         # warning flood swamp the UI thread -- 60,000 warnings stalled the
@@ -565,6 +566,7 @@ class _RenderWorker(QObject):
         if stop:
             # The warning that tripped the limit reached the console above:
             # the point of stopping is to look at it.
+            self._stopped_on_warning = True
             raise _RenderWorker._HardWarning(
                 msg if self._max_warnings == 1 else
                 f"Render stopped after {self._warnings} warnings "
@@ -672,6 +674,15 @@ class _RenderWorker(QObject):
             if self._cancel.is_set():
                 return          # Cancel has already said so
             elapsed_ms = (_time.perf_counter() - _t0) * 1000
+            if self._stopped_on_warning:
+                # The warning itself is already on the console; repeating it
+                # under "Eval error" read as the script failing, and said
+                # nothing about why nothing was drawn (#566).
+                n = self._max_warnings
+                self._log(f"Render stopped at {'the first warning' if n == 1 else f'{n} warnings'}, "
+                          "as set in Preferences > Render > Stop rendering after; nothing was drawn. "
+                          f"Set it to Never to render past warnings.  {_fmt_elapsed(elapsed_ms)}")
+                return
             self._log(f"Eval error:  {_fmt_elapsed(elapsed_ms)}\n{e}")
             return
         except Exception as e:
@@ -813,6 +824,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self._migrate_stop_on_first_warning()
         self.setWindowTitle("BelfrySCAD")
         self.resize(1400, 900)
 
@@ -1426,11 +1438,6 @@ class MainWindow(QMainWindow):
             app_settings().value(
                 "autoReload", False, type=bool),
             self._set_auto_reload)
-        self._act_stop_on_warning = self._add_checkable(
-            design_menu, "Stop on First Warning",
-            app_settings().value(
-                "stopOnFirstWarning", False, type=bool),
-            self._set_stop_on_warning)
         design_menu.addSeparator()
         self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
@@ -2072,22 +2079,26 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _warning_limit(self) -> int | None:
-        """Warnings a render may produce before it is stopped, or None.
-
-        Design > Stop on First Warning is the quick switch for 1; Preferences
-        > Render sets any other number. Both on: whichever stops sooner.
+        """Warnings a render may produce before it is stopped, or None:
+        Preferences > Render > Stop rendering after, the one setting for it.
+        (Design > Stop on First Warning duplicated it for N=1 and, being
+        separate, could stop a render with the preference set to Never, #566.)
         """
-        limits = [n for n in (1 if self._act_stop_on_warning.isChecked() else 0,
-                              load_preference("render/stopAfterWarnings", int)) if n > 0]
-        return min(limits) if limits else None
+        n = load_preference("render/stopAfterWarnings", int)
+        return n if n > 0 else None
 
-    def _set_stop_on_warning(self, on: bool):
+    @staticmethod
+    def _migrate_stop_on_first_warning():
+        """Carry the removed Design-menu toggle into the preference once, so a
+        render that stopped at the first warning still does -- now visibly,
+        in Preferences, where it can be changed."""
         s = app_settings()
-        s.setValue("stopOnFirstWarning", bool(on))
-        self.log("Stop on First Warning is "
-                 + ("on: a render now halts at the first WARNING instead of "
-                    "carrying on and burying it in later output."
-                    if on else "off."))
+        if not s.contains("stopOnFirstWarning"):
+            return
+        if s.value("stopOnFirstWarning", False, type=bool) and \
+                load_preference("render/stopAfterWarnings", int) == 0:
+            s.setValue("render/stopAfterWarnings", 1)
+        s.remove("stopOnFirstWarning")
 
     def _set_auto_reload(self, on: bool):
         s = app_settings()
