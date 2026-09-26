@@ -376,9 +376,8 @@ class PreferencesDialog(QDialog):
         self._stop_after.setValue(
             s.value("render/stopAfterWarnings", _DEFAULTS["render/stopAfterWarnings"], type=int))
         self._stop_after.setToolTip(
-            "Stop a render once it has produced this many warnings. Design >\n"
-            "Stop on First Warning is the quick switch for 1; if both are on,\n"
-            "the render stops at whichever comes first.")
+            "Stop a render once it has produced this many warnings; nothing is\n"
+            "drawn for a render stopped this way. Never renders past every warning.")
         self._stop_after.valueChanged.connect(
             lambda v: self._emit("render/stopAfterWarnings", int(v)))
         render_form.addRow("Stop rendering after:", self._stop_after)
