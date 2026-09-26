@@ -721,7 +721,7 @@ class DocsPane(QWidget):
             return
         rel = url.path() or url.toString()[len(_RENDER_SCHEME) + 1:]
         if self._last_source:
-            text, path = self._last_source
+            text, path = self._live_source()
             self._queue(text, path, [rel])
 
     def _image_rel_at(self, pos):
@@ -773,9 +773,23 @@ class DocsPane(QWidget):
         images and costs minutes to rebuild on a BOSL2-sized library.
         """
         from belfryscad.docsgen.preview import invalidate_image
-        text, path = self._last_source
+        text, path = self._live_source()
         invalidate_image(path, rel)
         self._queue(text, path, [rel])
+
+    # Set by the main window to return (text, path) of the tab being shown.
+    # The pane is not rebuilt on every keystroke (see refresh), so the text it
+    # was last built from goes stale as the user types; an action that renders
+    # asks for the live buffer instead (#565: Example(3D) -> Example(3D,Med),
+    # then Re-render, rendered the old options until a tab switch refreshed).
+    source_fn = None
+
+    def _live_source(self):
+        """The editor's current (text, path), falling back to the last build's."""
+        live = self.source_fn() if self.source_fn else None
+        if live and live[1]:
+            self._last_source = live
+        return self._last_source
 
     def _on_status_link(self, href: str):
         if href == _RENDER_ALL_HREF:
@@ -783,7 +797,7 @@ class DocsPane(QWidget):
 
     def _render_all(self):
         if self._last_source:
-            text, path = self._last_source
+            text, path = self._live_source()
             self._queue(text, path, None)   # None == render every image
 
     def _capture_scroll(self):

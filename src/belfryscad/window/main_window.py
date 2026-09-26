@@ -1181,6 +1181,7 @@ class MainWindow(QMainWindow):
         self._docs_pane = DocsPane()
         self._docs_pane.goto_line.connect(self._goto_source_line)
         self._docs_pane.refresh_requested.connect(self._refresh_docs_pane)
+        self._docs_pane.source_fn = self._current_docs_source
 
         self._docs_dock = QDockWidget("Docs", self)
         self._docs_dock.setObjectName("DocsDock")
@@ -1756,6 +1757,11 @@ class MainWindow(QMainWindow):
             self._act_read_only.setChecked(tab.editor.isReadOnly())
             self._refresh_docs_pane()
             self._apply_coverage_overlays(tab)
+
+    def _current_docs_source(self):
+        """(text, path) of the tab being shown, for the Docs pane."""
+        tab = self._current_tab()
+        return (tab.editor.toPlainText(), tab.file_path or "") if tab else None
 
     def _refresh_docs_pane(self):
         """Rebuild the Docs preview from the live editor buffer, if the pane

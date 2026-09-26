@@ -1646,3 +1646,46 @@ def test_cli_without_docs_dir_still_honours_the_rc_file(tmp_path, monkeypatch):
 def test_cli_without_docs_dir_or_rc_defaults_to_docs(tmp_path, monkeypatch):
     _run_docsgen_cli(tmp_path, monkeypatch, ["-n", "-m"])
     assert (tmp_path / "docs" / "demo.scad.md").exists()
+
+
+_LIVE_SOURCE_DRIVER = """
+import json, tempfile
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.docs_pane import DocsPane
+
+pane = DocsPane()
+queued = []
+pane._queue = lambda text, path, images: queued.append([text, path, images])
+live = {"text": "// Example(3D):\\n//   cube(1);\\n"}
+pane.source_fn = lambda: (live["text"], "/tmp/lib.scad")
+pane.refresh(live["text"], "/tmp/lib.scad")          # the build the pane shows
+live["text"] = "// Example(3D,Med):\\n//   cube(1);\\n"  # edited, pane not rebuilt
+pane._rerender_image("images/lib/x.png")
+pane._render_all()
+pane.source_fn = None                               # no hook: last build's text
+pane._render_all()
+pane.shutdown()
+print(json.dumps(queued))
+"""
+
+
+def test_render_actions_use_the_live_buffer(tmp_path):
+    """#565: the pane is not rebuilt on every keystroke, so Re-render used
+    the text of its last build -- an Example's changed options were ignored
+    until a tab switch refreshed it. Rendering actions read the live buffer."""
+    import json, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_live.py"
+    driver.write_text(_LIVE_SOURCE_DRIVER)
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    queued = json.loads(r.stdout.strip().splitlines()[-1])
+    rerender, render_all, fallback = queued[1], queued[2], queued[3]
+    assert "Example(3D,Med)" in rerender[0] and rerender[2] == ["images/lib/x.png"]
+    assert "Example(3D,Med)" in render_all[0] and render_all[2] is None
+    assert "Example(3D,Med)" in fallback[0], "the live text became the pane's last source"
