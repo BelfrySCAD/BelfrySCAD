@@ -286,3 +286,98 @@ def test_neither_reflow_nor_reformat_re_renders(driven):
     assert driven["reflow_changed_text"], "the reflow has to have edited something"
     assert driven["reformat_changed_text"], "the reformat has to have edited something"
     assert driven["rerenders"] == []
+
+
+# -- /* ... */ comments (#567) ---------------------------------------------
+
+from belfryscad.window.scad_format import reflow_block_comment
+
+REPORTER = [
+    "/*",
+    "Unlike the original paper (Marching Cubes: A High Resolution 3D Surface Construction "
+    "Algorithm), these tables provide a topology produces a closed mesh, avoiding the usual "
+    "marching-cubes ambiguities.",
+    "",
+    "Rotations are prioritized over inversions so that 3 of the 6 cases containing ambiguous "
+    "faces are never added.",
+    "*/",
+]
+
+
+def test_a_block_comment_rewraps_its_paragraphs_and_keeps_its_delimiters():
+    out = reflow_block_comment(REPORTER, 60)
+    assert out[0] == "/*" and out[-1] == "*/"
+    assert "" in out, "the blank line between paragraphs stays"
+    assert all(len(l) <= 60 for l in out)
+    assert " ".join(l for l in out[1:-1] if l).split() == " ".join(REPORTER[1:-1]).split()
+
+
+def test_a_javadoc_block_keeps_its_star_prefix_and_closer():
+    src = ["/**", " * Makes a widget from the parts given to it, checking each one first and "
+           "complaining loudly if any is missing.", " *", " * Second paragraph.", " */"]
+    out = reflow_block_comment(src, 50)
+    assert out[0] == "/**" and out[-1] == " */" and " *" in out
+    assert all(l.startswith(" * ") for l in out[1:-1] if l != " *")
+    assert all(len(l) <= 50 for l in out)
+
+
+def test_text_on_the_delimiter_lines_stays_on_them():
+    out = reflow_block_comment(["/* A short comment with enough words that it has to wrap "
+                                "onto a second line when it is reflowed */"], 40)
+    assert out[0].startswith("/* ") and out[-1].endswith(" */")
+    assert all(len(l) <= 40 for l in out)
+
+
+def test_lines_continuing_a_comment_opened_above_reflow():
+    out = reflow_block_comment(["  text inside a comment opened on an earlier line", "  and more."],
+                               30, starts_inside=True)
+    assert out == ["  text inside a comment opened", "  on an earlier line and more."]
+
+
+@pytest.mark.parametrize("lines, inside", [
+    (["x = 1;"], False),                   # code
+    (["/* a */ x = 1;"], False),           # code after the comment
+    (["text", "*/", "cube(1);"], True),    # the selection runs past the comment
+])
+def test_anything_but_comment_text_is_refused(lines, inside):
+    assert reflow_block_comment(lines, 60, starts_inside=inside) is None
+
+
+def test_reflowing_twice_changes_nothing_more():
+    once = reflow_block_comment(REPORTER, 60)
+    assert reflow_block_comment(once, 60) == once
+
+
+_BLOCK_DRIVER = r'''
+import json, os, sys, tempfile
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QTextCursor
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.editor import CodeEditor
+SRC = "x = 1;\n/*\n" + "word " * 40 + "\n\n" + "more " * 30 + "\n*/\ncube(1);\n"
+ed = CodeEditor(); ed.setPlainText(SRC); app.processEvents()
+def sel(first, last):
+    doc = ed.document(); c = QTextCursor(doc)
+    c.setPosition(doc.findBlockByNumber(first).position())
+    b = doc.findBlockByNumber(last); c.setPosition(b.position() + len(b.text()), QTextCursor.MoveMode.KeepAnchor)
+    return c
+out = {"interior": ed._reflow_target(sel(2, 4)), "whole": ed._reflow_target(sel(1, 5)),
+       "with_code": ed._reflow_target(sel(1, 6)), "code": ed._reflow_target(sel(6, 6))}
+ed._reflow_comment(2, 4, width=50)
+out["lines"] = ed.toPlainText().splitlines()
+print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+'''
+
+
+def test_the_editor_offers_reflow_inside_a_block_comment():
+    proc = subprocess.run([sys.executable, "-c", _BLOCK_DRIVER], capture_output=True, text=True,
+                          timeout=180, env=dict(os.environ, QT_QPA_PLATFORM="offscreen"))
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["interior"] == [2, 4] and out["whole"] == [1, 5]
+    assert out["with_code"] is None and out["code"] is None
+    lines = out["lines"]
+    assert lines[0] == "x = 1;" and lines[1] == "/*" and lines[-2] == "*/" and lines[-1] == "cube(1);"
+    assert all(len(l) <= 50 for l in lines)

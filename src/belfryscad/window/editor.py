@@ -2062,14 +2062,17 @@ class CodeEditor(QPlainTextEdit):
         """Rewrap comment lines `first..last` (inclusive block numbers),
         repeating each line's own `//` prefix. Asks for the width unless
         given one."""
-        from belfryscad.window.scad_format import reflow_comment
+        from belfryscad.window.scad_format import reflow_block_comment, reflow_comment
         if width is None:
             width = self.ask_reflow_width()
             if width is None:
                 return
         doc = self.document()
         lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
-        new_lines = reflow_comment(lines, width)
+        new_lines = (reflow_comment(lines, width) if self._all_line_comments(lines)
+                     else reflow_block_comment(lines, width, self._starts_in_block_comment(first)))
+        if new_lines is None:
+            return
         if new_lines == lines:
             return
         start_block = doc.findBlockByNumber(first)
@@ -2094,15 +2097,31 @@ class CodeEditor(QPlainTextEdit):
         given line is not recoverable from its prefix, so the author says
         so by selecting it.
         """
-        from belfryscad.window.scad_format import comment_prefix
+        from belfryscad.window.scad_format import reflow_block_comment
         if not (cursor.hasSelection() if use_selection is None else use_selection):
             return None
         doc = self.document()
         first, last = self._selected_block_range(cursor)
         lines = [doc.findBlockByNumber(i).text() for i in range(first, last + 1)]
-        if not all(comment_prefix(ln) is not None for ln in lines):
-            return None
-        return first, last
+        if self._all_line_comments(lines):
+            return first, last
+        # Or the text of a /* ... */ comment (#567), which the highlighter
+        # already knows about: it is what colours those lines.
+        if reflow_block_comment(lines, 80, self._starts_in_block_comment(first)) is not None:
+            return first, last
+        return None
+
+    @staticmethod
+    def _all_line_comments(lines) -> bool:
+        from belfryscad.window.scad_format import comment_prefix
+        return all(comment_prefix(ln) is not None for ln in lines)
+
+    def _starts_in_block_comment(self, block_number: int) -> bool:
+        """Whether a /* comment is still open at the start of that line: the
+        highlighter's state for the line before it, bit 0 (see
+        ScadHighlighter.highlightBlock)."""
+        prev = self.document().findBlockByNumber(block_number).previous()
+        return prev.isValid() and prev.userState() >= 0 and bool(prev.userState() & 1)
 
     def _selected_block_range(self, cursor):
         """(first, last) block numbers the cursor's selection covers.

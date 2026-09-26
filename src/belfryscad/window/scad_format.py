@@ -1313,6 +1313,99 @@ def reflow_comment(lines: list[str], width: int) -> list[str]:
     return out
 
 
+_STAR_PREFIX = re.compile(r"^([ \t]*)(\*(?!/)[ \t]?)?")
+
+
+def reflow_block_comment(lines: list[str], width: int, starts_inside: bool = False) -> list[str] | None:
+    """Rewrap the text of a `/* ... */` comment to `width` columns (#567),
+    or None if `lines` are not all comment text.
+
+    `starts_inside` says the first line continues a comment opened above it
+    (the highlighter's block state knows). A line standing alone as `/*`,
+    `/**` or `*/` is kept as it is; a blank line, or one that is only the
+    ` *` of a Javadoc-style block, is a paragraph break. The text keeps the
+    first text line's prefix -- its indent, and a leading `* ` if the block
+    uses one -- and text sharing a line with `/*` or `*/` stays on it. Long
+    words are never broken, as in `reflow_comment`.
+    """
+    import textwrap
+
+    # Split every line into (kind, prefix, text): "keep" for a delimiter on
+    # its own, "open"/"close"/"text" for lines with prose.
+    items = []
+    inside = starts_inside
+    for line in lines:
+        head, body, tail = "", line, ""
+        if not inside:
+            stripped = line.lstrip()
+            if not stripped.startswith("/*"):
+                return None                      # code, not comment
+            indent = line[:len(line) - len(stripped)]
+            opener = "/**" if stripped.startswith("/**") and not stripped.startswith("/**/") else "/*"
+            head, body = indent + opener, stripped[len(opener):]
+            inside = True
+        close = body.find("*/")
+        if close >= 0:
+            if body[close + 2:].strip():
+                return None                      # code after the comment
+            body, tail = body[:close], "*/"
+            inside = False
+        items.append((head, body, tail, line))
+    if not items:
+        return []
+
+    # The body prefix: from the first line with prose that is not the opener.
+    prefix = None
+    for head, body, _tail, _line in items:
+        if not head and body.strip() and body.strip() != "*":
+            prefix = _STAR_PREFIX.match(body).group(0)
+            break
+
+    out: list[str] = []
+    para: list[str] = []
+    para_head = ""          # "/* " when the paragraph starts on the opener
+    para_tail = ""          # "*/" when it ends on the closer
+
+    def body_prefix():
+        return prefix if prefix is not None else " " * (len(para_head) + 1 if para_head else 0)
+
+    def flush():
+        nonlocal para_head, para_tail
+        if not para:
+            return
+        rest = body_prefix()
+        first = (para_head + " ") if para_head else rest
+        wrap_width = max(max(len(first.expandtabs()), len(rest.expandtabs())) + 1, width)
+        wrapped = textwrap.wrap(" ".join(para), width=wrap_width, initial_indent=first,
+                                subsequent_indent=rest, break_long_words=False,
+                                break_on_hyphens=False) or [first.rstrip()]
+        if para_tail:
+            wrapped[-1] += " " + para_tail
+        out.extend(wrapped)
+        para.clear()
+        para_head = para_tail = ""
+
+    for head, body, tail, line in items:
+        text = body.strip()
+        if text.startswith("*") and not head:
+            text = text[1:].strip()              # the ` * ` of a Javadoc line
+        if not text:
+            # No prose: a lone `/*` or `*/`, a blank line, a bare ` *`. Kept
+            # exactly as written, and it ends the paragraph before it.
+            flush()
+            out.append(line.rstrip())
+            continue
+        if head:
+            flush()
+            para_head = head
+        para.append(text)
+        if tail:
+            para_tail = tail
+            flush()
+    flush()
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Breaking a function body at its own structure
 #

@@ -224,7 +224,8 @@ renders on a 400ms debounce. Full rules in `docs/wysiwyg.md` under
 "Nudging a number in the editor". Read-only tabs get no item at all, matching
 the gizmo and viewport-nudge gating.
 
-**Reflow Comment…** (writable tabs, **selected** whole-line `//` comments):
+**Reflow Comment…** (writable tabs, **selected** whole-line `//` comments, or
+the text of a `/* ... */` comment):
 rewraps the selection to a width you are asked for, repeating each line's own
 prefix — vim's `gq`, which is what editing BOSL2 documentation otherwise means
 doing by hand (#467). The two pieces live in `scad_format.py`, Qt-free:
@@ -248,6 +249,17 @@ means is not recoverable from its prefix, so the author says so by selecting it
   lines stops being either. A bare `//` is a paragraph break, kept as-is with
   the paragraphs either side wrapped separately; each line's *own* prefix is
   stripped to detect that, since `//` does not start with `//   `.
+
+- `reflow_block_comment(lines, width, starts_inside)` does the same for a
+  `/* ... */` comment (#567). A line that is only `/*`, `/**`, `*/`, blank, or
+  the bare ` *` of a Javadoc-style block is kept exactly as written and ends
+  the paragraph before it; the text keeps the first text line's prefix (its
+  indent and a leading `* ` if the block uses one), and text sharing a line
+  with `/*` or `*/` stays on it. It returns None for anything that is not
+  comment text, which is how `_reflow_target` refuses a selection reaching
+  into code. Whether the first selected line starts *inside* a comment opened
+  above it comes from the highlighter's block state (bit 0 of the previous
+  line's `userState()`), the same state that colours those lines.
 
 **The width is asked, not assumed** (`ask_reflow_width`): it is the whole point
 of the operation and differs between a code comment and a paragraph of prose.
