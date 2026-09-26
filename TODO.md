@@ -74,6 +74,31 @@
   callback into script is the same shape as the `warp()` experiment, where the
   builtin lost to four lines of userspace.
 
+- Intermittent Windows crash on exit in the GUI test drivers: a driver
+  finishes its checks, prints its result, then the Python process dies
+  with 0xC0000005 (access violation, exit code 3221225477), failing a
+  test whose assertions all passed. Seen 2026-09-26 in
+  `tests/test_modified_diagnostic.py` on windows-latest (PR #580, run
+  36271444951, attempt 1); the rerun passed, and the test had not failed
+  in the 40 runs before it. #497 already closes the window before
+  `os._exit` to stop the docs-pane thread and in-flight render jobs (the
+  race #496 found), so something else is still alive at exit -- a render
+  worker, the file watcher, a GL context. Needs a way to reproduce it
+  (looping the driver on a Windows runner) before anything can be said
+  about the cause.
+
+- Intermittent failure of `tests/test_debug_session.py::
+  TestDebugSessionUsesLiveBuffer::test_cleanup_path_removed_after_session_ends`
+  on ubuntu-latest, at its last line, `assert not os.path.exists(parse_path)`.
+  Seen twice on 2026-09-26: on main (run 36241664027) and in PR #581 (run
+  36271868257). The cause is a race, not a leak: `DebugSession._run`, on its
+  worker thread, emits `finished` and only deletes the cleanup file in its
+  `finally` afterwards, so the test -- which checks as soon as `finished`
+  arrives on the main thread -- can look before the unlink has happened. The
+  file is always deleted a moment later. Fix by deleting before emitting
+  (the unlink moves ahead of `finished.emit`/`errored.emit`), or by having the
+  test wait for the file to go.
+
 ## OpenSCAD GUI parity gaps
 
 Surveyed 2026-09-17 against openscad/openscad `master` @ 4c1d47946 (2026-09-16),
