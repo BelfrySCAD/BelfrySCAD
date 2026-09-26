@@ -393,6 +393,11 @@ class Camera:
     """Spherical-coordinate orbit camera."""
 
     DEFAULT_FOV = 22.5
+    # How close the camera may get to its target. OpenSCAD zooms to about a
+    # 1e-12 cube (#568); vertices are float32, which holds that near the
+    # origin (the exponent reaches 1e-38) but not far from it -- a 1e-12
+    # detail at x=100 is below float32's resolution there, in OpenSCAD too.
+    MIN_DISTANCE = 1e-13
 
     #: Fraction of the viewport left empty on EACH side by the projection
     #: fit (`_frame_bounds_projected`), so a fitted model has some air
@@ -407,6 +412,9 @@ class Camera:
         self.roll = 0.0
         self.distance = 50.0
         self.target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        # (bb_min, bb_max) of what is drawn, for the clip planes; None until
+        # a scene is framed (frame_bounds / Viewport.frame_scene).
+        self.scene_bounds = None
         self.fov = self.DEFAULT_FOV
         self.orthographic = False
         self.stereo = False
@@ -426,7 +434,7 @@ class Camera:
         if not self.roll:
             return up
         norm = np.linalg.norm(forward)
-        if norm < 1e-9:
+        if norm <= 0:
             return up
         return _rotate_around_axis(up, forward / norm, math.radians(self.roll))
 
@@ -451,7 +459,7 @@ class Camera:
         eye = self.eye_position()
         offset = eye - self.target
         distance = float(np.linalg.norm(offset))
-        if distance < 1e-9:
+        if distance <= 0:          # not 1e-9: the camera may be closer than that (#568)
             return
         forward = -offset / distance  # target - eye, normalized
         up = self._rolled_up(forward)
@@ -476,7 +484,7 @@ class Camera:
         rotation back into this camera's normal (az/el/roll) state."""
         offset = eye - self.target
         distance = float(np.linalg.norm(offset))
-        if distance < 1e-9:
+        if distance <= 0:
             return
         self.distance = distance
         d = offset / distance
@@ -523,8 +531,27 @@ class Camera:
         fixed while far grows would only worsen depth-buffer precision for
         large scenes on top of the clipping bug. Floors at the original
         constants, so typical/small scenes are completely unaffected."""
-        far = max(10000.0, self.distance * 3.0)
-        near = max(0.1, far / 100000.0)
+        if self.scene_bounds is None:
+            far = max(10000.0, self.distance * 3.0)
+            near = max(0.1, far / 100000.0)
+            return near, far
+        # With the scene known, bracket what is actually there, as OpenSCAD
+        # does: the model's bounding sphere, and the axes, which run
+        # _axis_extent() from the origin. Fixed floors (near >= 0.1) clipped
+        # everything once the camera came closer than that, which is what
+        # stopped zooming at ~0.0005 (#568); the ratio is also far tighter
+        # than 1e5 at ordinary zoom, which only helps depth precision.
+        eye = self.eye_position().astype(np.float64)
+        lo, hi = (np.asarray(b, dtype=np.float64) for b in self.scene_bounds)
+        center, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2
+        to_center = float(np.linalg.norm(eye - center))
+        far = 1.05 * max(to_center + radius,
+                         float(np.linalg.norm(eye)) + _axis_extent(self),
+                         self.distance * 3.0)
+        # 1e-7 of far is the floor: a camera inside a large model still gets
+        # a usable depth range (24-bit depth), close enough for detail at
+        # about a millionth of the model's size.
+        near = max(0.9 * (to_center - radius), far * 1e-7)
         return near, far
 
     def projection_matrix(self, aspect: float) -> np.ndarray:
@@ -544,7 +571,7 @@ class Camera:
         ], dtype=np.float32)
 
     def zoom_to_point(self, ray_origin: np.ndarray, ray_dir: np.ndarray,
-                       factor: float, min_distance: float = 0.1) -> None:
+                       factor: float, min_distance: float = MIN_DISTANCE) -> None:
         """Dolly by `factor`, keeping the world point under (ray_origin,
         ray_dir) -- typically a cursor's camera_ray() -- fixed on screen
         (standard scroll-to-cursor zoom) instead of dollying toward target.
@@ -647,11 +674,15 @@ class Camera:
         """
         center = (bb_min + bb_max) / 2
         self.target = center.astype(np.float32)
+        self.scene_bounds = (np.array(bb_min, dtype=np.float64), np.array(bb_max, dtype=np.float64))
         if aspect is not None and aspect > 0:
             self._frame_bounds_projected(bb_min, bb_max, aspect)
             return
         radius = np.linalg.norm(bb_max - bb_min) / 2
-        self.distance = max(radius / math.sin(math.radians(self.fov / 2)), 1.0)
+        # Only an empty or single-point model falls back to 1: a floor of 1
+        # framed a 1e-6 part as an invisible speck (#568).
+        need = radius / math.sin(math.radians(self.fov / 2))
+        self.distance = max(need, self.MIN_DISTANCE) if need > 0 else 1.0
 
     def _frame_bounds_projected(self, bb_min: np.ndarray, bb_max: np.ndarray,
                                  aspect: float) -> None:
@@ -710,7 +741,7 @@ class Camera:
         tan_h = tan_v * aspect
         if tan_v <= 0 or tan_h <= 0:
             return
-        need = 1.0
+        need = 0.0
         for cx in (bb_min[0], bb_max[0]):
             for cy in (bb_min[1], bb_max[1]):
                 for cz in (bb_min[2], bb_max[2]):
@@ -728,7 +759,7 @@ class Camera:
                         need = max(need,
                                    abs(y) / tan_v + toward,
                                    abs(x) / tan_h + toward)
-        self.distance = max(need, 1.0)
+        self.distance = max(need, self.MIN_DISTANCE) if need > 0 else 1.0
 
 
 def _axis_extent(camera: Camera) -> float:
@@ -770,7 +801,7 @@ def _axis_density(camera: Camera) -> tuple[list[bool], list[int]]:
     view_norm = np.linalg.norm(view_dir)
     end_on = [False, False, False]
     stride = [1, 1, 1]
-    if view_norm > 1e-9:
+    if view_norm > 0:
         view_dir /= view_norm
         for ai in range(3):
             c = abs(view_dir[ai])
@@ -811,7 +842,7 @@ def _axis_spans(L: float, seg: float) -> list[tuple[float, float]]:
         return [(0.0, L)] if L > 0.0 else []
     spans = []
     t = 0.0
-    while t < L - 1e-9:
+    while t < L * (1 - 1e-9):   # relative: an absolute 1e-9 drew no axis at L < 1e-9 (#568)
         t_next = min(t + seg, L)
         spans.append((t, t_next))
         t = t_next
@@ -1157,10 +1188,7 @@ class SceneRenderer:
         marker only used to route this buffer into the right render pass
         (see SceneRenderer._paint_scene's Pass 1/1b bucketing)."""
         T = len(v0)
-        face_normals = np.cross(v1 - v0, v2 - v0)
-        lengths = np.linalg.norm(face_normals, axis=1, keepdims=True)
-        lengths = np.where(lengths == 0, 1, lengths)
-        face_normals /= lengths
+        face_normals = _unit_normals(v0, v1, v2)
 
         normals_per_corner = np.repeat(face_normals, 3, axis=0)
         positions_per_corner = np.concatenate([v0, v1, v2], axis=1).reshape(-1, 3)
@@ -1283,7 +1311,10 @@ class SceneRenderer:
         e1, e2 = (b - a).astype(np.float64), (c - a).astype(np.float64)
         h = np.cross(d, e2)
         det = np.einsum("ij,ij->i", e1, h)
-        ok = np.abs(det) > 1e-12
+        # Relative to the triangle's own size: an absolute 1e-12 rejected
+        # every face of a model smaller than ~1e-6 (#568).
+        scale = np.linalg.norm(e1, axis=1) * np.linalg.norm(e2, axis=1)
+        ok = np.abs(det) > 1e-12 * scale
         inv = np.zeros_like(det)
         inv[ok] = 1.0 / det[ok]
         s = origin.astype(np.float64) - a
@@ -1291,16 +1322,14 @@ class SceneRenderer:
         q = np.cross(s, e1)
         v = inv * np.einsum("j,ij->i", d, q)
         t = inv * np.einsum("ij,ij->i", e2, q)
-        hit = ok & (u >= 0.0) & (u <= 1.0) & (v >= 0.0) & (u + v <= 1.0) & (t > 1e-9)
+        hit = ok & (u >= 0.0) & (u <= 1.0) & (v >= 0.0) & (u + v <= 1.0) & (t > 0.0)
         return int(hit.sum())
 
     def _shell_vao(self, buf: MeshBuffer, idx: np.ndarray):
         """A VAO for just this shell's triangles, laid out exactly as
         _make_mesh_buffer does so the same program can draw it."""
         v0, v1, v2 = buf.cpu_v0[idx], buf.cpu_v1[idx], buf.cpu_v2[idx]
-        normals = np.cross(v1 - v0, v2 - v0)
-        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-        normals /= np.where(lengths == 0, 1, lengths)
+        normals = _unit_normals(v0, v1, v2)
         if buf.tri_colors is None:
             vcolor = np.ones((3 * len(idx), 4), dtype=np.float32)
         else:
@@ -2031,7 +2060,7 @@ class SceneRenderer:
         k = 1
         while True:
             t = k * minor_spacing
-            if t > L + 1e-9:
+            if t > L * (1 + 1e-9):
                 break
             is_major = (k % major_steps == 0)
             length = tick_len if is_major else minor_len_actual
@@ -2168,7 +2197,7 @@ class SceneRenderer:
         result = []
         n = 1
         t = spacing
-        while t <= L + 1e-9:
+        while t <= L * (1 + 1e-9):
             for sign in (1.0, -1.0):
                 pos = sign * t
                 lbl = _fmt_tick(pos, spacing)
@@ -2248,7 +2277,7 @@ class SceneRenderer:
         tan_half = math.tan(math.radians(self.camera.fov / 2))
         eye = self.camera.eye_position().astype(np.float64)
         fwd = self.camera.target.astype(np.float64) - eye
-        fwd /= max(float(np.linalg.norm(fwd)), 1e-9)
+        fwd /= float(np.linalg.norm(fwd)) or 1.0   # no 1e-9 floor: the camera can be closer (#568)
         ss = self._label_supersample
 
         # Labels sit on the negative perpendicular side (opposite the ticks).
@@ -2276,7 +2305,7 @@ class SceneRenderer:
             if self.camera.orthographic:
                 depth = float(self.camera.distance)
             else:
-                depth = max(float(np.dot(world_pos - eye, fwd)), 1e-6)
+                depth = max(float(np.dot(world_pos - eye, fwd)), float(self.camera.distance) * 1e-6)
             world_per_px = 2.0 * depth * tan_half / max(h, 1)
 
             # Cap only. Under 4% of the viewport a label keeps exactly the
@@ -2771,13 +2800,25 @@ def _moller_trumbore_batch(ray_origin: np.ndarray, ray_dir: np.ndarray,
     return hit_idx, float(t_vals[hit_idx])
 
 
+def _unit_normals(v0, v1, v2) -> np.ndarray:
+    """Unit face normals, float32, computed in float64: for a face with
+    ~1e-12 edges the cross product is ~1e-24, and squaring that for its
+    length underflows float32 to 0 -- every normal came out zero and the
+    model drew unlit (#568). Degenerate faces keep a zero normal."""
+    n = np.cross(np.asarray(v1, np.float64) - v0, np.asarray(v2, np.float64) - v0)
+    lengths = np.linalg.norm(n, axis=1, keepdims=True)
+    return (n / np.where(lengths == 0, 1, lengths)).astype(np.float32)
+
+
 def _nice_spacings(L: float) -> tuple[float, float, float]:
     """Return (label_spacing, major_spacing, minor_spacing).
 
     major_spacing is the largest round subdivision below the label interval,
     so e.g. when labels are every 2 there is a major tick at every 1.
     """
-    raw = max(L, 1e-9) / 15
+    # No 1e-9 floor: it put the first tick past the end of an axis shorter
+    # than that, so a zoomed-in view had no ticks at all (#568).
+    raw = (L if L > 0 else 1.0) / 15
     mag = 10 ** math.floor(math.log10(raw))
     for f in (1, 2, 5, 10):
         if f * mag >= raw:
@@ -2818,7 +2859,14 @@ def _fmt_tick(val: float, spacing: float) -> str:
     if spacing >= 1.0:
         return str(int(round(val)))
     decimals = max(0, -math.floor(math.log10(spacing)))
-    return f"{val:.{decimals}f}"
+    if decimals <= 4:
+        return f"{val:.{decimals}f}"
+    # Below 1e-4, "0.000000000003" is unreadable: exponent form, with the
+    # digits the spacing warrants and float noise rounded off (#568).
+    if val == 0:
+        return "0"
+    digits = max(1, math.floor(math.log10(abs(val))) + decimals + 1)
+    return f"{round(val, decimals):.{digits}g}"
 
 
 def _highlight_color(color: tuple) -> tuple:
