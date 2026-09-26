@@ -135,26 +135,58 @@ def _fmt_elapsed(elapsed_ms: float) -> str:
     return f"({elapsed_ms:.0f} ms)"
 
 
-def _replace_text_keeping_scroll(editor, text: str) -> None:
-    """Replace the editor's text without throwing away the scroll position.
+def _replace_text_keeping_scroll(editor, text: str):
+    """Turn the editor's text into `text` without moving what is on screen,
+    and return the changed span of the new text as (start, end).
 
-    `setPlainText()` replaces the whole document, and Qt resets the
-    scrollbars to the top when it does. Every undo/redo path here wants the
-    view left where the user had it -- and worse, `_TextEditCmd._set_cursor`
-    decides whether to recentre by asking if the cursor is on screen, which
-    is meaningless once the viewport has already jumped. That test was
-    always answering "no", so every undo recentred (#531), defeating the
-    #389 fix that put the test there.
+    Only the part that differs is replaced -- the common prefix and suffix
+    stay put -- in one edit, so every other block keeps its layout. The
+    whole-document `setPlainText()` this replaced threw the layout away, and
+    under word wrap the scroll bar counts visual LINES, not blocks: the value
+    restored afterwards named a different line once the document re-laid
+    out, and undo or redo moved the view by several lines (#531, still seen
+    after #533 fixed the unwrapped case).
 
-    Clamped to `maximum()` because the new text may be shorter than the old
-    one, in which case the saved offset no longer exists.
+    The view is anchored on the line at its top: the same block, the same
+    wrapped line within it, moved down or up by however many lines an edit
+    ABOVE it added or removed, so an undo far above the view does not slide
+    the text being looked at.
     """
-    vbar = editor.verticalScrollBar()
-    hbar = editor.horizontalScrollBar()
-    v, h = vbar.value(), hbar.value()
-    editor.setPlainText(text)
-    vbar.setValue(min(v, vbar.maximum()))
+    from PySide6.QtGui import QTextCursor
+    old = editor.toPlainText()
+    if old == text:
+        return len(text), len(text)
+    start = 0
+    limit = min(len(old), len(text))
+    while start < limit and old[start] == text[start]:
+        start += 1
+    tail = 0
+    while tail < limit - start and old[-1 - tail] == text[-1 - tail]:
+        tail += 1
+    old_end, new_end = len(old) - tail, len(text) - tail
+
+    vbar, hbar = editor.verticalScrollBar(), editor.horizontalScrollBar()
+    top = editor.firstVisibleBlock()
+    top_no = top.blockNumber()
+    line_in_top = max(0, vbar.value() - top.firstLineNumber())
+    h = hbar.value()
+    above = old_end <= top.position()
+    blocks_before = editor.document().blockCount()
+
+    cursor = QTextCursor(editor.document())
+    cursor.beginEditBlock()
+    cursor.setPosition(start)
+    cursor.setPosition(old_end, QTextCursor.MoveMode.KeepAnchor)
+    cursor.insertText(text[start:new_end])
+    cursor.endEditBlock()
+
+    if above:
+        top_no += editor.document().blockCount() - blocks_before
+    block = editor.document().findBlockByNumber(max(0, top_no))
+    if block.isValid():
+        vbar.setValue(min(block.firstLineNumber() + line_in_top, vbar.maximum()))
     hbar.setValue(min(h, hbar.maximum()))
+    return start, new_end
 
 
 def _cursor_position(editor) -> int:
@@ -169,6 +201,36 @@ def _cursor_position(editor) -> int:
     a burst of edits merging.
     """
     return max(0, editor.textCursor().position())
+
+
+def _place_cursor(editor, pos, changed=None) -> None:
+    """Put the cursor at `pos` after an undo or redo, scrolling only when it
+    has to (#531): not at all when the cursor is already on screen; just far
+    enough to show it when the changed text is on screen but the cursor is
+    not; centred when the change is out of view entirely, so the undone edit
+    lands in the middle rather than hugging an edge (#389)."""
+    cursor = editor.textCursor()
+    # Clamped both ends: a stored position can be -1 as well as past the end
+    # (see `_cursor_position`). Qt rejects a negative one with a console
+    # warning and leaves the cursor wherever it was.
+    cursor.setPosition(max(0, min(pos, len(editor.toPlainText()))))
+    view = editor.viewport().rect()
+    visible = view.contains(editor.cursorRect(cursor))
+    change_visible = False
+    if changed is not None:
+        c = editor.textCursor()
+        c.setPosition(max(0, min(changed[0], len(editor.toPlainText()))))
+        change_visible = view.intersects(editor.cursorRect(c))
+    vbar, hbar = editor.verticalScrollBar(), editor.horizontalScrollBar()
+    v, h = vbar.value(), hbar.value()
+    editor.setTextCursor(cursor)
+    if visible:
+        vbar.setValue(v)      # setTextCursor may have nudged it; it had no need to
+        hbar.setValue(h)
+    elif change_visible:
+        editor.ensureCursorVisible()
+    else:
+        editor.centerCursor()
 
 
 class _TextEditCmd(QUndoCommand):
@@ -205,39 +267,27 @@ class _TextEditCmd(QUndoCommand):
         self._t = other._t
         return True
 
-    def _set_cursor(self, pos):
-        cursor = self._editor.textCursor()
-        # Both ends clamped: the stored position can be -1 as well as past
-        # the end -- see the capture sites in `_on_editor_changed` and
-        # `_on_editor_cursor_moved`. Qt rejects a negative position with a
-        # console warning and leaves the cursor wherever it was.
-        cursor.setPosition(max(0, min(pos, len(self._editor.toPlainText()))))
-        # Off-screen -> centre it, so the undone edit is in the middle of the
-        # view rather than hugging an edge; on-screen -> leave the scroll
-        # alone (#389).
-        visible = self._editor.viewport().rect().contains(self._editor.cursorRect(cursor))
-        self._editor.setTextCursor(cursor)
-        if not visible:
-            self._editor.centerCursor()
+    def _set_cursor(self, pos, changed=None):
+        _place_cursor(self._editor, pos, changed)
 
     def undo(self):
         self._tab._suppress_text_undo = True
-        _replace_text_keeping_scroll(self._editor, self._before)
+        changed = _replace_text_keeping_scroll(self._editor, self._before)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._before
         self._tab._last_cursor = self._cursor_before
-        self._set_cursor(self._cursor_before)
+        self._set_cursor(self._cursor_before, changed)
 
     def redo(self):
         if self._first_redo:
             self._first_redo = False
             return   # text is already correct; user just typed it
         self._tab._suppress_text_undo = True
-        _replace_text_keeping_scroll(self._editor, self._after)
+        changed = _replace_text_keeping_scroll(self._editor, self._after)
         self._tab._suppress_text_undo = False
         self._tab._last_text = self._after
         self._tab._last_cursor = self._cursor_after
-        self._set_cursor(self._cursor_after)
+        self._set_cursor(self._cursor_after, changed)
 
 
 class _GizmoCmd(QUndoCommand):
