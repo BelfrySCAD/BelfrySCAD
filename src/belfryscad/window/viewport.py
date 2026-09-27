@@ -1047,6 +1047,16 @@ class Viewport(QOpenGLWidget):
             self.camera_changed.emit()
             self.update()
             return
+        if preset == "center":
+            # OpenSCAD's View > Center: the origin back in the middle,
+            # rotation and zoom left alone.
+            self.stop_view_animation()
+            cam.target = np.zeros(3, dtype=np.float32)
+            if self._measurements:
+                self._refresh_measure_labels()
+            self.camera_changed.emit()
+            self.update()
+            return
         target = self.VIEW_PRESETS.get(preset)
         if target is None:
             return

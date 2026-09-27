@@ -1340,7 +1340,7 @@ class MainWindow(QMainWindow):
         # window or off it; the layout saved on quit keeps wherever it went.
         tb = QToolBar(title)
         tb.setObjectName(name)
-        tb.setIconSize(QSize(20, 20))
+        tb.setIconSize(QSize(28, 28))
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         return tb
 
@@ -1372,7 +1372,7 @@ class MainWindow(QMainWindow):
         self._set_toolbar_icon(self._act_export, "export")
         self._act_export.setToolTip("Export…")
         self._act_export.triggered.connect(self._export)
-        vtb.addAction(self._act_export)
+        tb.addAction(self._act_export)
 
         tb.addSeparator()
 
@@ -1412,26 +1412,30 @@ class MainWindow(QMainWindow):
         self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F7))
         self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_animate_tb.triggered.connect(self._show_animate)
-        vtb.addAction(self._act_animate_tb)
 
-        vtb.addSeparator()
-
-        # The two view resets, as their own group. Their View-menu twins are
+        # The view presets, as their own group. Their View-menu twins are
         # built later (_make_menus runs after this), so these carry their own
         # handlers rather than reusing those QActions -- both just call
         # _set_view, which is the whole of what the menu items do.
-        self._act_view_iso_tb = QAction("Isometric View", self)
-        self._set_toolbar_icon(self._act_view_iso_tb, "view-iso")
-        self._act_view_iso_tb.setToolTip("Reset orientation to isometric (Ctrl+0)")
-        self._act_view_iso_tb.triggered.connect(lambda: self._set_view("iso"))
-        vtb.addAction(self._act_view_iso_tb)
+        for label, preset, tip in (
+            ("Top View",       "top",    "Top (Ctrl+4)"),
+            ("Bottom View",    "bottom", "Bottom (Ctrl+5)"),
+            ("Left View",      "left",   "Left (Ctrl+6)"),
+            ("Right View",     "right",  "Right (Ctrl+7)"),
+            ("Front View",     "front",  "Front (Ctrl+8)"),
+            ("Back View",      "back",   "Back (Ctrl+9)"),
+            ("Isometric View", "iso",    "Reset orientation to isometric (Ctrl+0)"),
+            ("View All",       "all",    "Zoom to fit the whole model (Shift+Ctrl+V)"),
+            ("Center",         "center", "Put the origin back in the middle (Shift+Ctrl+0)"),
+        ):
+            act = QAction(label, self)
+            self._set_toolbar_icon(act, f"view-{preset}")
+            act.setToolTip(tip)
+            act.triggered.connect(lambda _=False, p=preset: self._set_view(p))
+            vtb.addAction(act)
 
-        self._act_view_all_tb = QAction("View All", self)
-        self._set_toolbar_icon(self._act_view_all_tb, "view-all")
-        self._act_view_all_tb.setToolTip("Zoom to fit the whole model (Shift+Ctrl+V)")
-        self._act_view_all_tb.triggered.connect(lambda: self._set_view("all"))
-        vtb.addAction(self._act_view_all_tb)
-
+        vtb.addSeparator()
+        vtb.addAction(self._act_animate_tb)
         vtb.addSeparator()
         vtb.addAction(self._act_measure_distance)
         vtb.addAction(self._act_measure_angle)
@@ -1601,6 +1605,7 @@ class MainWindow(QMainWindow):
             ("Back",      "back",   "Ctrl+9"),
             ("Isometric", "iso",    "Ctrl+0"),
             ("View All",  "all",    "Shift+Ctrl+V"),
+            ("Center",    "center", "Shift+Ctrl+0"),
         ):
             act = self._add_action(view_menu, label,
                              lambda p=preset: self._set_view(p),
