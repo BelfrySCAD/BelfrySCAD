@@ -153,7 +153,7 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Design menu
 
-- 3D Print, Check Validity, Display AST, Display CSG Products
+- 3D Print, Display AST, Display CSG Products
   (`Display CSG Tree` is covered by `Dump CSG Tree to Console`)
 
 ### View and viewport

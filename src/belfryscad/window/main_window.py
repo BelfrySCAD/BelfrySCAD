@@ -1537,6 +1537,7 @@ class MainWindow(QMainWindow):
                 "autoReload", False, type=bool),
             self._set_auto_reload)
         design_menu.addSeparator()
+        self._add_action(design_menu, "Check Validity", self._check_validity)
         self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
         self._add_action(design_menu, "Flush Caches", self._flush_caches)
@@ -2878,6 +2879,13 @@ class MainWindow(QMainWindow):
                 self.log(f"Frame dump error: {e}")
             self._animate_pane.advance_frame()
 
+    def _check_validity(self):
+        """Design > Check Validity: the AI's geometry check, to the console.
+        More than OpenSCAD's one "Valid: yes/no" line -- each part, and the
+        merged mesh an export would write, with what is wrong."""
+        self.log(self._geometry_check()
+                 or "Nothing to validate! Try building first (press F6).")
+
     def _dump_csg_tree(self):
         """Print the resolved+generated CSG tree from the last successful
         render to the console — a debugging aid for inspecting the tree
@@ -4181,6 +4189,11 @@ class MainWindow(QMainWindow):
         bodies = getattr(self, "_bodies", None)
         if not bodies:
             return ""
+        # A 2D result is drawn as a thin slab, which is a perfectly sound
+        # solid and says nothing about the shape; OpenSCAD refuses too.
+        bodies = [b for b in bodies if not getattr(b, "flat_preview", False)]
+        if not bodies:
+            return "Current top level object is not a 3D object."
         import numpy as np
         try:
             from openscad_cpp_evaluator import check_mesh
