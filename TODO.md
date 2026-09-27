@@ -74,19 +74,6 @@
   callback into script is the same shape as the `warp()` experiment, where the
   builtin lost to four lines of userspace.
 
-- Intermittent Windows crash on exit in the GUI test drivers: a driver
-  finishes its checks, prints its result, then the Python process dies
-  with 0xC0000005 (access violation, exit code 3221225477), failing a
-  test whose assertions all passed. Seen 2026-09-26 in
-  `tests/test_modified_diagnostic.py` on windows-latest (PR #580, run
-  36271444951, attempt 1); the rerun passed, and the test had not failed
-  in the 40 runs before it. #497 already closes the window before
-  `os._exit` to stop the docs-pane thread and in-flight render jobs (the
-  race #496 found), so something else is still alive at exit -- a render
-  worker, the file watcher, a GL context. Needs a way to reproduce it
-  (looping the driver on a Windows runner) before anything can be said
-  about the cause.
-
 ## OpenSCAD GUI parity gaps
 
 Surveyed 2026-09-17 against openscad/openscad `master` @ 4c1d47946 (2026-09-16),
