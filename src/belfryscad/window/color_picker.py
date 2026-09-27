@@ -158,22 +158,33 @@ class ColorPickerDialog(QDialog):
 
 
 
-#: Below this chroma (max - min of r, g, b) a colour reads as a grey or a
-#: white whatever its nominal hue: `snow` is hue 0, but sorting it by that
-#: put it among the strong reds.
-_NEUTRAL_CHROMA = 0.095
+#: Below this chroma (max - min of r, g, b), and at least this light, a
+#: colour reads as a tinted white rather than as its hue: `snow` is hue 0, but
+#: sorting it by that put it among the strong reds. The lightness floor keeps
+#: dim low-chroma colours (`rosybrown`, `darkseagreen`) with the colours.
+_PASTEL_CHROMA = 0.2
+_PASTEL_LIGHTNESS = 0.75
 
 
 def _hue_order(name: str):
-    """Twelve 30-degree hue bands around the wheel (red centred on 0), dark
-    to light within each; then the neutrals, dark to light.
+    """Three groups: colours, then pastels, then greys (chroma 0, or
+    named as one).
 
-    Bands rather than raw hue: sorted by exact hue, lightness only broke ties,
-    so dark and light alternated along any stretch of similar hues."""
+    Colours go in twelve 30-degree hue bands around the wheel (red centred
+    on 0), dark to light within each -- bands rather than raw hue, since
+    sorted by exact hue, lightness only broke ties, so dark and light
+    alternated along any stretch of similar hues. Pastels (tinted whites,
+    all near-equally light) go round the wheel by exact hue. Greys go dark
+    to light."""
     c = QColor(name)
     r, g, b, _ = c.getRgbF()
-    if max(r, g, b) - min(r, g, b) < _NEUTRAL_CHROMA:
-        return (1, 0, c.lightnessF())
+    chroma = max(r, g, b) - min(r, g, b)
+    # By name as well as by chroma: the slate greys carry a blue tint
+    # (chroma 0.125-0.133) but are named, and used, as greys.
+    if chroma == 0 or "gray" in name or "grey" in name:
+        return (2, 0, c.lightnessF())
+    if chroma < _PASTEL_CHROMA and c.lightnessF() >= _PASTEL_LIGHTNESS:
+        return (1, c.hsvHue(), c.lightnessF())
     return (0, (c.hsvHue() + 15) % 360 // 30, c.lightnessF())
 
 
