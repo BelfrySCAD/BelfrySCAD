@@ -1048,12 +1048,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_ui(self):
-        # Two toolbars, as OpenSCAD has, so each can be hidden on its own:
-        # file/edit/run actions, then the ones about the 3D view. They share
-        # the top row.
-        self._toolbar, self._view_toolbar = self._make_toolbars()
+        # Three toolbars, each hidden on its own (OpenSCAD has the first
+        # two): file/edit/run actions, the camera views, then the viewport
+        # modes and tools. They share the top row.
+        self._toolbar, self._view_toolbar, self._tools_toolbar = self._make_toolbars()
         self.addToolBar(self._toolbar)
         self.addToolBar(self._view_toolbar)
+        self.addToolBar(self._tools_toolbar)
 
         # Tab bar strip: a full-width row directly under the toolbar, holding
         # only the editor tab bar. A dedicated QToolBar is used (rather than
@@ -1063,8 +1064,13 @@ class MainWindow(QMainWindow):
         # as wide as its own dock area — cramped once many tabs are open.
         self._tab_bar_toolbar = QToolBar("Tab Bar")
         self._tab_bar_toolbar.setObjectName("TabBarToolBar")
-        self._tab_bar_toolbar.setMovable(False)
+        # Movable, but only along the top or bottom edge: a QTabBar laid in
+        # a vertical toolbar stays horizontal and turns into a sliver, and a
+        # floating one is a tab strip detached from the pages it switches.
+        self._tab_bar_toolbar.setMovable(True)
         self._tab_bar_toolbar.setFloatable(False)
+        self._tab_bar_toolbar.setAllowedAreas(
+            Qt.ToolBarArea.TopToolBarArea | Qt.ToolBarArea.BottomToolBarArea)
         self._tab_bar_toolbar.setContentsMargins(0, 0, 0, 0)
         self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tab_bar_toolbar)
@@ -1349,6 +1355,7 @@ class MainWindow(QMainWindow):
         # that hid the old single toolbar still hides this one.
         tb = self._new_toolbar("Editor Toolbar", "MainToolBar")
         vtb = self._new_toolbar("3D View Toolbar", "ViewToolBar")
+        ttb = self._new_toolbar("Tools Toolbar", "ToolsToolBar")
 
         self._act_new = QAction("New", self)
         self._set_toolbar_icon(self._act_new, "new")
@@ -1434,13 +1441,14 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _=False, p=preset: self._set_view(p))
             vtb.addAction(act)
 
-        vtb.addSeparator()
-        vtb.addAction(self._act_animate_tb)
-        vtb.addSeparator()
-        vtb.addAction(self._act_measure_distance)
-        vtb.addAction(self._act_measure_angle)
+        # Spin and Stereo join Animate here from _setup_menus, which builds
+        # their actions after this runs.
+        ttb.addAction(self._act_animate_tb)
+        ttb.addSeparator()
+        ttb.addAction(self._act_measure_distance)
+        ttb.addAction(self._act_measure_angle)
 
-        return tb, vtb
+        return tb, vtb, ttb
 
     # ------------------------------------------------------------------
     # Menus
@@ -1561,7 +1569,8 @@ class MainWindow(QMainWindow):
         # toggleViewAction, not a checkable of our own: it follows the
         # toolbar, so a layout restored with a toolbar hidden shows unticked.
         for bar, label in ((self._toolbar, "Show Editor Toolbar"),
-                           (self._view_toolbar, "Show 3D View Toolbar")):
+                           (self._view_toolbar, "Show 3D View Toolbar"),
+                           (self._tools_toolbar, "Show Tools Toolbar")):
             act = bar.toggleViewAction()
             act.setText(label)
             view_menu.addAction(act)
@@ -1635,19 +1644,30 @@ class MainWindow(QMainWindow):
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
         self._act_spin.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        # The same checkable action on the 3D View toolbar, beside Animate
+        # The same checkable action on the Tools toolbar, beside Animate
         # (the menus are built after the toolbars, so it is inserted here),
         # so the button and the menu tick can never disagree.
         self._set_toolbar_icon(self._act_spin, "spin")
         self._act_spin.setToolTip("Spin (" + self._act_spin.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText) + ")")
-        self._view_toolbar.insertAction(self._act_animate_tb, self._act_spin)
+        self._tools_toolbar.insertAction(self._act_animate_tb, self._act_spin)
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Ctrl+Meta+2"))
         self._act_perspective.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        # On the Tools toolbar before Spin, with the viewport's own
+        # perspective icon; pressed means perspective, released orthographic.
+        apply_themed_icon(self._act_perspective, _ICONS_DIR / "view-perspective.svg")
+        self._act_perspective.setToolTip("Perspective (" + self._act_perspective.shortcut().toString(
+            QKeySequence.SequenceFormat.NativeText) + "); off is orthographic")
+        self._tools_toolbar.insertAction(self._act_spin, self._act_perspective)
         self._act_stereo = self._add_checkable(view_menu, "Stereo (Cross-eye)", False, self._toggle_stereo)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
         self._act_stereo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        # On the Tools toolbar too, after Spin, the same way Spin is.
+        self._set_toolbar_icon(self._act_stereo, "stereo")
+        self._act_stereo.setToolTip("Stereo, cross-eye (" + self._act_stereo.shortcut().toString(
+            QKeySequence.SequenceFormat.NativeText) + ")")
+        self._tools_toolbar.insertAction(self._act_animate_tb, self._act_stereo)
         view_menu.addSeparator()
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
