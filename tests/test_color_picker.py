@@ -33,3 +33,13 @@ def test_a_four_element_vector_keeps_its_alpha():
 def test_name_for():
     assert name_for(QColor("#ff0000")) == "red"
     assert name_for(QColor("#123456")) is None
+
+
+def test_pale_tints_sort_with_the_neutrals_and_bands_run_dark_to_light():
+    from belfryscad.window.color_picker import _PICKABLE_NAMES as names
+    # `snow` is nominally hue 0; it belongs with the whites, not the reds.
+    assert names.index("snow") > names.index("black") > names.index("hotpink")
+    # Within the red band, dark to light.
+    assert names.index("maroon") < names.index("red") < names.index("mistyrose")
+    # A band stays together: the oranges do not interleave with the reds.
+    assert names.index("mistyrose") < names.index("saddlebrown")

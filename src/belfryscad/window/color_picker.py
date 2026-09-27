@@ -158,12 +158,23 @@ class ColorPickerDialog(QDialog):
 
 
 
+#: Below this chroma (max - min of r, g, b) a colour reads as a grey or a
+#: white whatever its nominal hue: `snow` is hue 0, but sorting it by that
+#: put it among the strong reds.
+_NEUTRAL_CHROMA = 0.08
+
+
 def _hue_order(name: str):
-    """Around the colour wheel, dark to light within a hue; greys (no hue)
-    last, dark to light."""
+    """Twelve 30-degree hue bands around the wheel (red centred on 0), dark
+    to light within each; then the neutrals, dark to light.
+
+    Bands rather than raw hue: sorted by exact hue, lightness only broke ties,
+    so dark and light alternated along any stretch of similar hues."""
     c = QColor(name)
-    hue = c.hslHueF()
-    return (hue < 0, hue, c.lightnessF())
+    r, g, b, _ = c.getRgbF()
+    if max(r, g, b) - min(r, g, b) < _NEUTRAL_CHROMA:
+        return (1, 0, c.lightnessF())
+    return (0, (c.hsvHue() + 15) % 360 // 30, c.lightnessF())
 
 
 #: Qt's names, minus `transparent` (as an rgb it is black, so it would write
