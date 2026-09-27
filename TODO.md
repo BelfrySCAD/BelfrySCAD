@@ -157,12 +157,6 @@ is a commitment to build it — it is the list of what is not there.
 
 ### View and viewport
 
-- Thrown Together as a **view mode** (preview-adjacent but distinct:
-  backfaces in magenta for CSG debugging). Note the docs renderer *does*
-  honour the `ThrownTogether` example flag as of #527 (issue #524), and the
-  viewport already draws backfaces magenta and shades them (#520, issue
-  #519) — so what is missing is only the View-menu toggle that forces that
-  display on for an otherwise-closed model, not the rendering behind it.
 - Center, Reset View, an explicit Orthogonal item (we have a Perspective toggle)
 - Separate Hide Editor toolbar / Hide 3D View toolbar (we have one Show Toolbar)
 - Show Warnings and Errors in 3D View
