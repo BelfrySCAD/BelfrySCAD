@@ -1,0 +1,68 @@
+name: BOSL2 docs check
+
+# Runs every Example and Figure in BOSL2's documentation through THIS
+# BelfrySCAD and THIS locked evaluator, without writing images -- the same
+# `belfryscad --docsgen -Tmf` BOSL2's own CI runs, but on the code about to
+# ship instead of whatever is already on PyPI.
+#
+# Why it exists: evaluator 1.28.5 reworded a polyhedron warning, the docs
+# build's warning mask (src/belfryscad/docsgen/imagemanager.py) matched the
+# old text, and BOSL2's wiki build broke only after both had been released.
+# An evaluator bump changes uv.lock, which is a trigger below, so the next
+# such change fails here, on the bump PR, before a release.
+#
+# ~9 minutes on an M1, ~13 on ubuntu-latest, so it runs only when something it covers changes,
+# weekly (BOSL2 itself moves), and on demand. Not a required check.
+
+on:
+  pull_request:
+    paths:
+      - src/belfryscad/docsgen/**
+      - src/belfryscad/libshim.py
+      - src/belfryscad/scad_deps.py
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/bosl2-docs.yml
+  push:
+    branches: [main]
+    paths:
+      - src/belfryscad/docsgen/**
+      - src/belfryscad/libshim.py
+      - src/belfryscad/scad_deps.py
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/bosl2-docs.yml
+  schedule:
+    - cron: "17 6 * * 1"    # Mondays
+  workflow_dispatch:
+
+jobs:
+  docsgen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        with:
+          repository: BelfrySCAD/BOSL2
+          path: bosl2
+
+      - name: Install Qt/GL dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libgl1-mesa-dri
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      # BOSL2's own matcher turns each "!! ERROR at file:line" into an
+      # annotation on the run. Its path is from the workspace root, not the
+      # step's working-directory; a missing matcher file fails the step. -T executes every script but writes no
+      # images; -m still builds the markdown, so parser errors count too.
+      # docsgen exits non-zero if any example failed.
+      - name: Run every BOSL2 example
+        working-directory: bosl2
+        run: |
+          echo "::add-matcher::bosl2/.github/openscad_docsgen.json"
+          uv run --project .. --frozen belfryscad --docsgen -Tmf

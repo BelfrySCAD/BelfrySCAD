@@ -818,3 +818,14 @@ markdown fix-ups and an end-to-end preview. It never renders: Qt/GL inside
 pytest takes the whole run down (see `feedback_gl_qt_tests_crash_pytest`).
 The rendering path is checked by running `belfryscad --docsgen` against a
 real library and diffing the output against `openscad-docsgen`'s, as above.
+
+`.github/workflows/bosl2-docs.yml` runs every BOSL2 Example and Figure through
+the branch's BelfrySCAD and locked evaluator (`belfryscad --docsgen -Tmf` in a
+BOSL2 checkout, no images; ~9 min) on PRs touching `docsgen/`, `libshim.py`,
+`scad_deps.py`, `pyproject.toml` or `uv.lock`, on main, weekly and on demand.
+The `uv.lock` trigger is the point: an evaluator bump that changes a warning's
+wording, or starts warning where OpenSCAD does not, fails there before a
+release instead of in BOSL2's wiki build. That is how evaluator 1.28.5's
+reworded polyhedron warning slipped past `_MASKED_WARNINGS` (#605), whose
+entries `test_docs_mask_covers_the_evaluators_own_mesh_warnings` now checks
+against the real evaluator.
