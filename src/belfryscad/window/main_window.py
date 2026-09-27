@@ -1483,6 +1483,10 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Undent", self._undent, QKeySequence("Shift+Tab"))
         self._add_action(edit_menu, "Comment", self._comment, QKeySequence("Ctrl+/"))
         self._add_action(edit_menu, "Uncomment", self._uncomment, QKeySequence("Ctrl+Shift+/"))
+        # The editor's own Option+Up/Down, made findable. Alt is Option on
+        # macOS, so the menu shows the same keys the editor already takes.
+        self._add_action(edit_menu, "Move Line Up", lambda: self._move_lines(-1), QKeySequence("Alt+Up"))
+        self._add_action(edit_menu, "Move Line Down", lambda: self._move_lines(1), QKeySequence("Alt+Down"))
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
         act_replace = self._add_action(edit_menu, "Find & Replace…", self._find_replace)
@@ -3377,6 +3381,10 @@ class MainWindow(QMainWindow):
 
     def _selection_contract(self):
         pass  # TODO: walk selection down AST
+
+    def _move_lines(self, delta: int):
+        if e := self._current_editor():
+            e._move_lines(delta)
 
     def _indent(self):
         if e := self._current_editor():

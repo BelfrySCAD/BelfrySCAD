@@ -143,7 +143,6 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Edit menu
 
-- Move Line Up / Move Line Down
 - Convert Tabs to Spaces
 - Bookmarks: toggle, jump to next, jump to previous (nothing in the source)
 - Jump to next error
