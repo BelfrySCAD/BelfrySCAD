@@ -334,6 +334,36 @@ void main() {
 }
 """
 
+# Red/blue anaglyph composite: each eye is rendered in full colour to its own
+# texture, then this puts the LEFT eye's brightness in red and the RIGHT
+# eye's in green and blue. Brightness, not colour: a pure red part would
+# otherwise be invisible to the cyan eye and a pure blue one to the red eye,
+# and two images that different cannot be fused. Green and blue together
+# suit red/cyan glasses as well as red/blue.
+_ANAGLYPH_VERT = """
+#version 330 core
+in vec2 in_position;
+out vec2 v_uv;
+void main() {
+    v_uv = in_position * 0.5 + 0.5;
+    gl_Position = vec4(in_position, 0.0, 1.0);
+}
+"""
+
+_ANAGLYPH_FRAG = """
+#version 330 core
+in vec2 v_uv;
+uniform sampler2D left_eye;
+uniform sampler2D right_eye;
+out vec4 fragColor;
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+void main() {
+    float l = dot(texture(left_eye, v_uv).rgb, LUMA);
+    float r = dot(texture(right_eye, v_uv).rgb, LUMA);
+    fragColor = vec4(l, r, r, 1.0);
+}
+"""
+
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
 # meshes) rather than evaluated ColoredBody scenes. Unlike `_VERT`/`_FRAG`
@@ -417,7 +447,8 @@ class Camera:
         self.scene_bounds = None
         self.fov = self.DEFAULT_FOV
         self.orthographic = False
-        self.stereo = False
+        self.stereo = False              # cross-eye, side by side
+        self.anaglyph = False            # red/blue, full width (never both)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1064,6 +1095,14 @@ class SceneRenderer:
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
         self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
         self._label_prog = ctx.program(vertex_shader=_LABEL_VERT, fragment_shader=_LABEL_FRAG)
+        self._anaglyph_prog = ctx.program(vertex_shader=_ANAGLYPH_VERT, fragment_shader=_ANAGLYPH_FRAG)
+        self._anaglyph_prog["left_eye"].value = 0
+        self._anaglyph_prog["right_eye"].value = 1
+        self._anaglyph_vbo = ctx.buffer(np.array(
+            [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0], dtype=np.float32).tobytes())
+        self._anaglyph_vao = ctx.vertex_array(
+            self._anaglyph_prog, [(self._anaglyph_vbo, "2f", "in_position")])
+        self._anaglyph_targets_cache = None     # ((w, h), [per-eye GL objects])
 
         # Unit quad (-1..1) for label billboards, fanned around vertex 0.
         quad = np.array([
@@ -1583,10 +1622,67 @@ class SceneRenderer:
 
             self._viewport = (w, h)
             self._ctx.viewport = (0, 0, gl_w, gl_h)
+        elif self.camera.anaglyph:
+            self._paint_anaglyph(fbo, bg_color, L_world, extra_paint)
         else:
             aspect = w / h if h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
             self._paint_scene(center_view, proj, L_world, extra_paint)
+
+    def _anaglyph_targets(self, w: int, h: int) -> list:
+        """Per eye: a multisampled framebuffer to draw into (so edges stay
+        as smooth as the normal view's) and a texture it resolves to, for
+        the composite to sample. Rebuilt only when the viewport resizes."""
+        cached = self._anaglyph_targets_cache
+        if cached is not None and cached[0] == (w, h):
+            return cached[1]
+        self._release_anaglyph_targets()
+        ctx = self._ctx
+        samples = min(4, ctx.max_samples)
+        eyes = []
+        for _ in range(2):
+            color = ctx.renderbuffer((w, h), 4, samples=samples)
+            depth = ctx.depth_renderbuffer((w, h), samples=samples)
+            tex = ctx.texture((w, h), 4)
+            eyes.append({"msaa": ctx.framebuffer([color], depth), "tex": tex,
+                         "resolved": ctx.framebuffer([tex]), "_rb": (color, depth)})
+        self._anaglyph_targets_cache = ((w, h), eyes)
+        return eyes
+
+    def _release_anaglyph_targets(self):
+        cached = getattr(self, "_anaglyph_targets_cache", None)
+        if cached is None:
+            return
+        for eye in cached[1]:
+            for obj in (eye["msaa"], eye["resolved"], eye["tex"], *eye["_rb"]):
+                obj.release()
+        self._anaglyph_targets_cache = None
+
+    def _paint_anaglyph(self, fbo, bg_color, L_world: np.ndarray, extra_paint=None):
+        """Red/blue anaglyph: the scene from each eye, full width, combined
+        by _ANAGLYPH_FRAG. Eyes placed exactly as cross-eye stereo places
+        them (same IPD / screen-distance / depth-scale maths) but not
+        swapped: the left eye is the one behind the red lens."""
+        gl_w, gl_h = self._ctx.viewport[2], self._ctx.viewport[3]
+        if gl_w <= 0 or gl_h <= 0:
+            return
+        proj = self.camera.projection_matrix(gl_w / gl_h)
+        right_view, left_view = self.camera.stereo_view_matrices(gl_w, gl_h)
+        bg = (bg_color if bg_color is not None else self.bg_color)[:3]
+        eyes = self._anaglyph_targets(gl_w, gl_h)
+        for eye, view in zip(eyes, (left_view, right_view)):
+            eye["msaa"].use()
+            self._active_fbo = eye["msaa"]
+            self._ctx.clear(*bg)
+            self._paint_scene(view, proj, L_world, extra_paint)
+            self._ctx.copy_framebuffer(eye["resolved"], eye["msaa"])
+        fbo.use()
+        self._active_fbo = fbo
+        self._ctx.disable(mgl.DEPTH_TEST)
+        eyes[0]["tex"].use(0)
+        eyes[1]["tex"].use(1)
+        self._anaglyph_vao.render(mgl.TRIANGLE_STRIP)
+        self._ctx.enable(mgl.DEPTH_TEST)
 
     def _paint_scene(self, view: np.ndarray, proj: np.ndarray, L_world: np.ndarray, extra_paint=None):
         """Render one eye's worth of scene: geometry, edges, axes, labels, gizmo."""
@@ -2568,6 +2664,7 @@ class SceneRenderer:
 
     def release(self):
         self._clear_buffers()
+        self._release_anaglyph_targets()
         if self._gizmo_vbo is not None:
             self._gizmo_vao.release()
             self._gizmo_vbo.release()

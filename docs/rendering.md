@@ -50,9 +50,13 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
 
 **Shutdown and interpreter exit**: `MainWindow.closeEvent()` pauses the window-level `AnimatePane` (no new renders get queued), sets the cancel event, and waits (with a 5s deadline, pumping `QApplication.processEvents()`) for any `_render_jobs` threads to finish — Qt aborts if a `QThread` is destroyed while still running. It then saves settings (with an explicit `QSettings.sync()`) and clears `self._bodies` / `self._viewport.load_geometry([])` to drop references to Manifold geometry via normal refcounting.
 
-## Stereo (Cross-eye) mode
+## Stereo modes
 
-**View menu → "Stereo (Cross-eye)"** renders two side-by-side perspective views in a single `QOpenGLWidget`. When enabled, `Camera.stereo = True` and `SceneRenderer.paint()` renders two passes:
+**View ▸ Stereo** is three modes -- Off, Cross-eye, Red-Blue Anaglyph -- picked from that radio submenu, or stepped through in that order by the Tools toolbar's glasses button and Ctrl+Cmd+3 (`MainWindow._set_stereo_mode` / `_cycle_stereo`; the button shows pressed in either stereo mode). Saved as `stereoMode`; an old boolean `stereo` setting reads as cross-eye.
+
+### Cross-eye
+
+**Cross-eye** renders two side-by-side perspective views in a single `QOpenGLWidget`. When enabled, `Camera.stereo = True` and `SceneRenderer.paint()` renders two passes:
 
 1. Calls `Camera.stereo_view_matrices(half_vp_w, vp_h)` (device pixels), which shifts each camera ±(`distance × stereo_fraction / 2`) along the camera's right vector (row 0 of the view matrix), pointing both eye cameras at the same target (toe-in). Cross-eye arrangement: left panel = right eye, right panel = left eye.
 
@@ -72,6 +76,10 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
    `screen_dpi` is read from `QScreen.physicalDotsPerInch()` when preferences are applied. For a 100 DPI monitor, 90 mm IPD, 770 mm screen distance, and a ~900 px tall window, this yields roughly 3–4 % of camera distance.
 2. Each pass sets `ctx.viewport` to its half of the framebuffer, temporarily overrides `self._viewport` to `(half_w, h)` so axes, labels, and other screen-size-dependent calculations use the half-width, and calls `_paint_scene(view, proj, L_world)` where `proj` uses the half-width aspect ratio.
 3. `_paint_scene()` computes eye position from the view matrix (`eye = -R^T · t`) for correct per-eye specular highlights. Axes, labels, and gizmo all render in both eyes.
+
+### Red-Blue Anaglyph
+
+`Camera.anaglyph = True` (never together with `stereo`). `SceneRenderer._paint_anaglyph()` places the eyes with the same `stereo_view_matrices()` maths at FULL width, and not swapped: its second matrix is the left eye, behind the red lens. Each eye is drawn in full colour into its own multisampled framebuffer (so edges stay as smooth as the normal view), resolved to a texture, and one full-screen pass (`_ANAGLYPH_FRAG`) writes the left eye's **brightness** to red and the right eye's to green and blue. Brightness, not colour, is the trade: a pure red part would be invisible to the cyan eye and a pure blue one to the red eye, and images that different cannot be fused; the background comes out grey the same way. Green and blue both, so red/cyan glasses work as well as red/blue. Colour-coded cues (selection, gizmo axes, magenta back faces, the RGB axes) are lost while it is on -- it is a mode for looking, not editing. QPainter overlays (orientation cube, measurement labels, busy spinner) are drawn once, flat, after the composite. The per-eye targets are cached and rebuilt only on resize. `tests/test_renderer.py::test_anaglyph_eyes_give_the_right_depth_sign` pins the eye order: swapped eyes turn depth inside out with nothing else noticing.
 
 Stereo and Perspective are independently togglable. Both states are saved to `QSettings` and restored on launch. Keyboard shortcut: **Ctrl+Cmd+3**.
 
