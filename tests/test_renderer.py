@@ -240,6 +240,28 @@ class TestCameraRoll:
         assert np.allclose(left_eye[1, :3], mono_up, atol=1e-4)
 
 
+    def test_anaglyph_eyes_give_the_right_depth_sign(self):
+        """The anaglyph puts stereo_view_matrices()'s SECOND matrix behind
+        the red (left) lens. Swapped eyes turn depth inside out, and nothing
+        else would notice: a point behind the focus must sit further left in
+        the left eye's image, a point in front further right."""
+        cam = Camera()
+        cam.distance = 100.0
+        right_view, left_view = cam.stereo_view_matrices(1100, 700)
+        proj = cam.projection_matrix(1100 / 700)
+        fwd = cam.target - cam.eye_position()
+        fwd = fwd / np.linalg.norm(fwd)
+
+        def ndc_x(view, p):
+            v = proj @ view @ np.append(p, 1.0)
+            return v[0] / v[3]
+
+        far = cam.target + fwd * 40
+        near = cam.target - fwd * 40
+        assert ndc_x(left_view, far) < ndc_x(right_view, far)
+        assert ndc_x(left_view, near) > ndc_x(right_view, near)
+
+
 class TestCameraOrbitFree:
     """Camera.orbit_free -- true trackball rotation for the "Orbit"
     Shift+drag mode: rotates around the camera's OWN current up/right
