@@ -598,7 +598,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+] | Zoom In |
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
-| Option+Up / Option+Down | Move line/selected lines up or down |
+| Option+Up / Option+Down | Move line/selected lines up or down (Edit ▸ Move Line Up / Move Line Down) |
 | Cmd+F | Find |
 | Shift+Cmd+F | Find & Replace (Ctrl+H also, off macOS) |
 | Cmd+E | Export… |
@@ -1309,7 +1309,7 @@ The editor's right-click menu offers **Use Library…** as well, near the top so
 
 Non-modal, and it stays open after Insert: pulling in two or three files from one library is the normal case, and closing on each would make that several trips. It is created once and re-populated on reopen, so a library installed meanwhile appears. Rows are labelled by file, since the verb and directory repeat on every row; the entry point sorts first and is marked as such.
 
-**Edit**:**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / Move Line Up / Move Line Down / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
 **Design**: Render / Render with Profiling / Show Profile Report… / — / Run Tests… / — / Check Validity / Dump CSG Tree to Console / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
 
