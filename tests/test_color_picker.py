@@ -37,15 +37,27 @@ def test_name_for():
 
 def test_pale_tints_sort_with_the_neutrals_and_bands_run_dark_to_light():
     from belfryscad.window.color_picker import _PICKABLE_NAMES as names
-    # `snow` is nominally hue 0; it belongs with the whites, not the reds.
-    assert names.index("snow") > names.index("black") > names.index("hotpink")
-    # The CSS "whites" are all neutrals; beige (chroma 0.098) is not.
-    neutrals = names[names.index("black"):]
+    # `snow` is nominally hue 0; it belongs with the pastels, not the reds.
+    assert names.index("hotpink") < names.index("snow") < names.index("black")
+    # The tinted whites are pastels, after the colours and before the greys.
+    pastels = names[names.index("snow"):names.index("black")]
     for w in ("snow", "seashell", "linen", "oldlace", "floralwhite", "ivory",
               "mintcream", "ghostwhite"):
-        assert w in neutrals, w
-    assert "beige" not in neutrals
+        assert w in pastels, w
+    for w in ("beige", "thistle", "mistyrose", "lightcyan", "lightyellow",
+              "antiquewhite", "cornsilk"):
+        assert w in pastels, w
+    for w in ("lemonchiffon", "lightgoldenrodyellow", "papayawhip", "lightsteelblue"):
+        assert w in pastels, w
+    # Low chroma but dim: a colour, not a pastel.
+    assert "rosybrown" not in pastels and "darkseagreen" not in pastels
+    assert "whitesmoke" not in pastels
+    # Greys are chroma 0 or named as one (the slate greys), dark to light.
+    greys = names[names.index("black"):]
+    assert greys == sorted(greys, key=lambda n: QColor(n).lightnessF())
+    assert {n for n in names if "gray" in n or "grey" in n} <= set(greys)
+    assert {"black", "white", "whitesmoke", "silver", "gainsboro"} <= set(greys)
     # Within the red band, dark to light.
-    assert names.index("maroon") < names.index("red") < names.index("mistyrose")
+    assert names.index("maroon") < names.index("red") < names.index("pink")
     # A band stays together: the oranges do not interleave with the reds.
-    assert names.index("mistyrose") < names.index("saddlebrown")
+    assert names.index("pink") < names.index("saddlebrown")
