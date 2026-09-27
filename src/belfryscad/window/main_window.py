@@ -1635,6 +1635,13 @@ class MainWindow(QMainWindow):
         self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
         self._act_spin.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        # The same checkable action on the 3D View toolbar, beside Animate
+        # (the menus are built after the toolbars, so it is inserted here),
+        # so the button and the menu tick can never disagree.
+        self._set_toolbar_icon(self._act_spin, "spin")
+        self._act_spin.setToolTip("Spin (" + self._act_spin.shortcut().toString(
+            QKeySequence.SequenceFormat.NativeText) + ")")
+        self._view_toolbar.insertAction(self._act_animate_tb, self._act_spin)
         self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Ctrl+Meta+2"))
         self._act_perspective.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)

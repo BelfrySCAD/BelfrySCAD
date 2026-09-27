@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Spin: a vertical axis with an orbit arrow turning round it. The arc
+       runs from the front-left, round the back, to just right of the axis
+       at the front, where a wide ellipse is flattest; the head is aimed
+       along the chord across its own length, not the tangent at the tip,
+       so the curve does not bend up into one wing. -->
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <line x1="16" y1="3" x2="16" y2="29"/>
+    <path d="M 12.24 21.23 A 11 4.5 0 1 1 19.76 21.23"/>
+    <polyline points="22.65,17.85 19.76,21.23 23.87,22.91"/>
+  </g>
+</svg>
