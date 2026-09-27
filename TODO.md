@@ -161,7 +161,6 @@ is a commitment to build it — it is the list of what is not there.
 - Center, Reset View, an explicit Orthogonal item (we have a Perspective toggle)
 - Separate Hide Editor toolbar / Hide 3D View toolbar (we have one Show Toolbar)
 - Show Warnings and Errors in 3D View
-- Viewport info overlays: Camera, Bounding Box, Measurement Area
 
 ### Editor behaviour
 
