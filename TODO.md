@@ -126,8 +126,7 @@ is a commitment to build it — it is the list of what is not there.
 
 - **Display CSG Products** (Design menu). OpenSCAD's preview-renderer
   internals; we have no preview. Declined 2026-09-27.
-- **Display AST** (Design menu). Declined 2026-09-27; Reformat Selection
-  (the parser's own printer, `format_source`) covers reading code normalised.
+- **Display AST** (Design menu). Declined 2026-09-27.
 - **Error Log dock** (`ErrorLog`). The console already has clickable anchors,
   so the navigation that makes OpenSCAD's dock useful is already there; all a
   dock would add is a second, filterable copy of the same messages. Declined
