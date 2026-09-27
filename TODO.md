@@ -95,7 +95,6 @@ is a commitment to build it — it is the list of what is not there.
   on startup.
 - **Viewport Control dock** (`ViewportControl`) — numeric camera entry
   (eye, centre, rotation, FOV) instead of dragging.
-- **Color List dock** (`ColorList`) — browsable list of OpenSCAD's named colours.
 
 **Done since this list was written:**
 
@@ -120,6 +119,8 @@ is a commitment to build it — it is the list of what is not there.
   offers Skip This Version (`app/skippedUpdate`). See
   `window/update_check.py`. Not done: installing in place — the dialog links
   to the release page, and there is no macOS installer to link to.
+- **Color List** (`ColorList`) — a Help ▸ Color List… window rather than a
+  dock (`window/color_list.py`).
 
 **Decided against — do not re-propose:**
 
