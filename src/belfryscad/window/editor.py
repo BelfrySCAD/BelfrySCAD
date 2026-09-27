@@ -9,7 +9,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QPainter, QTextFormat, QPainterPath, QKeySequence, QTextCursor,
     QAction, QFontMetricsF, QTextDocument, QPixmap, QIcon, QPen,
-    QDesktopServices,
+    QDesktopServices, QPalette,
 )
 from PySide6.QtCore import (
     Qt, QRect, QSize, QRegularExpression, QPoint, QPointF, QEvent, Signal,
@@ -1357,6 +1357,8 @@ class CodeEditor(QPlainTextEdit):
         self._exec_selection: list = []
         self._find_selections: list = []
         self._bracket_selections: list = []
+        self._current_line_selection: list = []
+        self._highlight_current_line = True
         self._find_bar = FindBar(self)
         self._indent_guides = _IndentGuides(self)
         self._column_guide = _ColumnGuide(self)
@@ -1386,6 +1388,7 @@ class CodeEditor(QPlainTextEdit):
         self.horizontalScrollBar().valueChanged.connect(self._reposition_scroll_overlays)
         self.verticalScrollBar().valueChanged.connect(self._reposition_scroll_overlays)
         self.document().contentsChanged.connect(self._on_doc_changed)
+        self.cursorPositionChanged.connect(self._update_current_line)
         self.cursorPositionChanged.connect(self._update_bracket_match)
         self._update_line_number_area_width()
 
@@ -1565,6 +1568,32 @@ class CodeEditor(QPlainTextEdit):
         because it was a deliberate convenience for whoever wants it.
         """
         self._append_line_on_down = enabled
+
+    def set_highlight_current_line(self, enabled: bool):
+        """Preferences > Editor > Highlight the current line (on by
+        default, as OpenSCAD's)."""
+        self._highlight_current_line = enabled
+        self._update_current_line()
+
+    def _update_current_line(self):
+        """A full-width band behind the cursor's line.
+
+        Derived from the editor's own background rather than a fixed colour,
+        so it is a faint shade of whatever the theme is: darker on a light
+        background, lighter on a dark one. Every other marker paints over it.
+        """
+        self._current_line_selection = []
+        if self._highlight_current_line:
+            base = self.palette().color(QPalette.ColorRole.Base)
+            fmt = QTextCharFormat()
+            fmt.setBackground(base.darker(106) if base.lightnessF() > 0.5 else base.lighter(135))
+            fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            sel = QTextEdit.ExtraSelection()
+            sel.format = fmt
+            sel.cursor = self.textCursor()
+            sel.cursor.clearSelection()
+            self._current_line_selection = [sel]
+        self._refresh_extra_selections()
 
     def set_indent_size(self, size: int):
         self._indent_size = size
@@ -2669,7 +2698,7 @@ class CodeEditor(QPlainTextEdit):
         """
         for sel in self._exec_selection:
             sel.format.setBackground(QColor(execution_line_color()))
-        self._refresh_extra_selections()
+        self._update_current_line()     # re-derives its band from the new theme
         self._line_number_area.update()
 
     def clear_execution_line(self):
@@ -2746,9 +2775,11 @@ class CodeEditor(QPlainTextEdit):
         self._refresh_extra_selections()
 
     def _refresh_extra_selections(self):
-        # Coverage first: a background tint every other marker paints over.
+        # The current-line band first, then coverage: background tints every
+        # other marker paints over.
         self.setExtraSelections(
-            self._coverage_selections + self._error_selections + self._selection_extra
+            self._current_line_selection
+            + self._coverage_selections + self._error_selections + self._selection_extra
             + self._find_selections + self._exec_selection + self._bracket_selections
         )
 

@@ -90,6 +90,7 @@ _DEFAULTS = {
     # the file, and a document that grows while you navigate it surprised a
     # user into filing issue #378.
     "editor/appendLineOnDownArrow": False,
+    "editor/highlightCurrentLine": True,
     # A file opened from the desktop (double-click, "open with") goes to
     # the running BelfrySCAD as a new tab, instead of starting another one.
     # Read once at launch, in main.py, before any window exists.
@@ -235,6 +236,14 @@ class PreferencesDialog(QDialog):
         self._append_line_down.toggled.connect(
             lambda v: self._emit("editor/appendLineOnDownArrow", bool(v)))
         form.addRow("Cursor:", self._append_line_down)
+
+        self._highlight_line = QCheckBox("Highlight the current line")
+        self._highlight_line.setChecked(
+            s.value("editor/highlightCurrentLine",
+                    _DEFAULTS["editor/highlightCurrentLine"], type=bool))
+        self._highlight_line.toggled.connect(
+            lambda v: self._emit("editor/highlightCurrentLine", bool(v)))
+        form.addRow("", self._highlight_line)
 
         # Second launch with a file: hand it to the running instance
         self._single_instance = QCheckBox("A file opened from the desktop goes to the running BelfrySCAD as a new tab")
