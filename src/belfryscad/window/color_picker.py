@@ -161,7 +161,7 @@ class ColorPickerDialog(QDialog):
 #: Below this chroma (max - min of r, g, b) a colour reads as a grey or a
 #: white whatever its nominal hue: `snow` is hue 0, but sorting it by that
 #: put it among the strong reds.
-_NEUTRAL_CHROMA = 0.08
+_NEUTRAL_CHROMA = 0.095
 
 
 def _hue_order(name: str):

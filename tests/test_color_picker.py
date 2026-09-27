@@ -39,6 +39,12 @@ def test_pale_tints_sort_with_the_neutrals_and_bands_run_dark_to_light():
     from belfryscad.window.color_picker import _PICKABLE_NAMES as names
     # `snow` is nominally hue 0; it belongs with the whites, not the reds.
     assert names.index("snow") > names.index("black") > names.index("hotpink")
+    # The CSS "whites" are all neutrals; beige (chroma 0.098) is not.
+    neutrals = names[names.index("black"):]
+    for w in ("snow", "seashell", "linen", "oldlace", "floralwhite", "ivory",
+              "mintcream", "ghostwhite"):
+        assert w in neutrals, w
+    assert "beige" not in neutrals
     # Within the red band, dark to light.
     assert names.index("maroon") < names.index("red") < names.index("mistyrose")
     # A band stays together: the oranges do not interleave with the reds.
