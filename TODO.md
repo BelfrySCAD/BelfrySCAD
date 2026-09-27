@@ -164,7 +164,6 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Editor behaviour
 
-- Highlight current line
 - Number scroll via mouse wheel — scroll over a numeric literal to increment it
 - Ctrl/Cmd-mouse-wheel zooms text
 - Backspace unindents

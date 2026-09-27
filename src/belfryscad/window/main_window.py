@@ -5025,6 +5025,8 @@ class MainWindow(QMainWindow):
         tab.editor._column_guide.setVisible(show_guide)
         tab.editor.set_append_line_on_down(
             load_preference("editor/appendLineOnDownArrow", type_=bool))
+        tab.editor.set_highlight_current_line(
+            load_preference("editor/highlightCurrentLine", type_=bool))
 
     def _park_idle_dock_tabbars(self):
         """Move dock tab bars that have nothing to show out of the way.
