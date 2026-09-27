@@ -1689,3 +1689,35 @@ def test_render_actions_use_the_live_buffer(tmp_path):
     assert "Example(3D,Med)" in rerender[0] and rerender[2] == ["images/lib/x.png"]
     assert "Example(3D,Med)" in render_all[0] and render_all[2] is None
     assert "Example(3D,Med)" in fallback[0], "the live text became the pane's last source"
+
+
+# The docs-build warning mask matches the EVALUATOR's warning text by
+# substring, so a reworded warning silently stops matching. That is exactly
+# how BOSL2's vnf_validate_4 example broke: evaluator 1.28.5 renamed "mesh is
+# not closed" to "faces are not consistently wound" for a closed mesh with
+# reversed faces. These run the real evaluator, so the next rewording fails
+# here rather than in a library's docs build.
+_OPEN_SURFACE = "polyhedron([[0,0,0],[10,0,0],[0,10,0],[0,0,10]], [[0,1,2],[0,3,1],[0,2,3]]);"
+_MISORIENTED = ("polyhedron([[0,0,0],[10,0,0],[0,10,0],[0,0,10]], "
+                "[[0,1,2],[0,3,1],[0,2,3],[1,2,3]]);")
+
+
+@pytest.mark.parametrize("script", [
+    _OPEN_SURFACE,
+    _MISORIENTED,
+    "hull() { square(5); cube(5); }",               # Mixing 2D and 3D
+    "linear_extrude(2) { square(5); cube(3); }",    # Ignoring 3D child for 2D
+], ids=["open", "misoriented", "mixed-dims", "ignored-child"])
+def test_docs_mask_covers_the_evaluators_own_mesh_warnings(tmp_path, script):
+    from belfryscad.docsgen.imagemanager import _unmasked
+    from belfryscad.docsgen.runner import runner
+    r = runner.run([script], str(tmp_path))
+    assert r.warnings, "the evaluator stopped warning about this mesh at all"
+    assert _unmasked(r.warnings) == []
+
+
+def test_docs_mask_still_fails_a_real_warning(tmp_path):
+    from belfryscad.docsgen.imagemanager import _unmasked
+    from belfryscad.docsgen.runner import runner
+    r = runner.run(["cube(undefined_size);"], str(tmp_path))
+    assert _unmasked(r.warnings)

@@ -57,8 +57,19 @@ _DEFAULT_FRAMES = 36
 #: autocenter disabled" and "failed with error, falling back to Nef
 #: operation" for exactly the same reason. Anything NOT listed here still
 #: fails the build.
+#:
+#: "faces are not consistently wound" goes further: OpenSCAD says nothing
+#: about such a polyhedron in either mode (verified against 2026.02.01), so
+#: upstream docsgen passes it. It is the evaluator's diagnosis of a CLOSED
+#: mesh with reversed faces, which until 1.28.5 was reported -- and masked --
+#: as "mesh is not closed"; the rewording (BelfrySCAD #566) broke BOSL2's
+#: vnf_validate_4, an example that is misoriented on purpose. The warning
+#: still shows in the GUI and CLI; only a docs build ignores it.
+#: tests/test_docsgen.py runs the real evaluator's mesh warnings through this
+#: list, so a future rewording fails there instead of in a docs build.
 _MASKED_WARNINGS = (
     "mesh is not closed",
+    "faces are not consistently wound",
     "Mixing 2D and 3D objects is not supported",
     "Ignoring 2D child object for 3D operation",
     "Ignoring 3D child object for 2D operation",
