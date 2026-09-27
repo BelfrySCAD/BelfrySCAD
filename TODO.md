@@ -159,7 +159,6 @@ is a commitment to build it — it is the list of what is not there.
 ### View and viewport
 
 - Center, Reset View, an explicit Orthogonal item (we have a Perspective toggle)
-- Separate Hide Editor toolbar / Hide 3D View toolbar (we have one Show Toolbar)
 - Show Warnings and Errors in 3D View
 
 ### Editor behaviour

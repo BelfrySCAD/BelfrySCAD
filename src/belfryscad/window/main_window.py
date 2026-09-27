@@ -1048,8 +1048,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_ui(self):
-        self._toolbar = self._make_toolbar()
+        # Two toolbars, as OpenSCAD has, so each can be hidden on its own:
+        # file/edit/run actions, then the ones about the 3D view. They share
+        # the top row.
+        self._toolbar, self._view_toolbar = self._make_toolbars()
         self.addToolBar(self._toolbar)
+        self.addToolBar(self._view_toolbar)
 
         # Tab bar strip: a full-width row directly under the toolbar, holding
         # only the editor tab bar. A dedicated QToolBar is used (rather than
@@ -1330,12 +1334,21 @@ class MainWindow(QMainWindow):
         else:
             action.setIcon(QIcon())
 
-    def _make_toolbar(self):
-        tb = QToolBar("Main")
-        tb.setObjectName("MainToolBar")
+    @staticmethod
+    def _new_toolbar(title: str, name: str) -> QToolBar:
+        # Movable and floatable, so each can be dragged to any edge of the
+        # window or off it; the layout saved on quit keeps wherever it went.
+        tb = QToolBar(title)
+        tb.setObjectName(name)
         tb.setIconSize(QSize(20, 20))
-        tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        return tb
+
+    def _make_toolbars(self):
+        # "MainToolBar" kept as the editor toolbar's name, so a saved layout
+        # that hid the old single toolbar still hides this one.
+        tb = self._new_toolbar("Editor Toolbar", "MainToolBar")
+        vtb = self._new_toolbar("3D View Toolbar", "ViewToolBar")
 
         self._act_new = QAction("New", self)
         self._set_toolbar_icon(self._act_new, "new")
@@ -1359,7 +1372,7 @@ class MainWindow(QMainWindow):
         self._set_toolbar_icon(self._act_export, "export")
         self._act_export.setToolTip("Export…")
         self._act_export.triggered.connect(self._export)
-        tb.addAction(self._act_export)
+        vtb.addAction(self._act_export)
 
         tb.addSeparator()
 
@@ -1399,9 +1412,9 @@ class MainWindow(QMainWindow):
         self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F7))
         self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_animate_tb.triggered.connect(self._show_animate)
-        tb.addAction(self._act_animate_tb)
+        vtb.addAction(self._act_animate_tb)
 
-        tb.addSeparator()
+        vtb.addSeparator()
 
         # The two view resets, as their own group. Their View-menu twins are
         # built later (_make_menus runs after this), so these carry their own
@@ -1411,19 +1424,19 @@ class MainWindow(QMainWindow):
         self._set_toolbar_icon(self._act_view_iso_tb, "view-iso")
         self._act_view_iso_tb.setToolTip("Reset orientation to isometric (Ctrl+0)")
         self._act_view_iso_tb.triggered.connect(lambda: self._set_view("iso"))
-        tb.addAction(self._act_view_iso_tb)
+        vtb.addAction(self._act_view_iso_tb)
 
         self._act_view_all_tb = QAction("View All", self)
         self._set_toolbar_icon(self._act_view_all_tb, "view-all")
         self._act_view_all_tb.setToolTip("Zoom to fit the whole model (Shift+Ctrl+V)")
         self._act_view_all_tb.triggered.connect(lambda: self._set_view("all"))
-        tb.addAction(self._act_view_all_tb)
+        vtb.addAction(self._act_view_all_tb)
 
-        tb.addSeparator()
-        tb.addAction(self._act_measure_distance)
-        tb.addAction(self._act_measure_angle)
+        vtb.addSeparator()
+        vtb.addAction(self._act_measure_distance)
+        vtb.addAction(self._act_measure_angle)
 
-        return tb
+        return tb, vtb
 
     # ------------------------------------------------------------------
     # Menus
@@ -1536,7 +1549,13 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("View")
-        self._act_show_toolbar = self._add_checkable(view_menu, "Show Toolbar", True, self._toolbar.setVisible)
+        # toggleViewAction, not a checkable of our own: it follows the
+        # toolbar, so a layout restored with a toolbar hidden shows unticked.
+        for bar, label in ((self._toolbar, "Show Editor Toolbar"),
+                           (self._view_toolbar, "Show 3D View Toolbar")):
+            act = bar.toggleViewAction()
+            act.setText(label)
+            view_menu.addAction(act)
         self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tab_bar_toolbar.setVisible)
 
         self._act_show_editor = self._editor_dock.toggleViewAction()
