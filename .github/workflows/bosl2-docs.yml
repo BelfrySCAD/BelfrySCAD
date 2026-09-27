@@ -11,7 +11,7 @@ name: BOSL2 docs check
 # An evaluator bump changes uv.lock, which is a trigger below, so the next
 # such change fails here, on the bump PR, before a release.
 #
-# ~9 minutes on an M1, so it runs only when something it covers changes,
+# ~9 minutes on an M1, ~13 on ubuntu-latest, so it runs only when something it covers changes,
 # weekly (BOSL2 itself moves), and on demand. Not a required check.
 
 on:
@@ -57,11 +57,12 @@ jobs:
       - run: uv sync --frozen
 
       # BOSL2's own matcher turns each "!! ERROR at file:line" into an
-      # annotation on the run. -T executes every script but writes no
+      # annotation on the run. Its path is from the workspace root, not the
+      # step's working-directory; a missing matcher file fails the step. -T executes every script but writes no
       # images; -m still builds the markdown, so parser errors count too.
       # docsgen exits non-zero if any example failed.
       - name: Run every BOSL2 example
         working-directory: bosl2
         run: |
-          echo "::add-matcher::.github/openscad_docsgen.json"
+          echo "::add-matcher::bosl2/.github/openscad_docsgen.json"
           uv run --project .. --frozen belfryscad --docsgen -Tmf
