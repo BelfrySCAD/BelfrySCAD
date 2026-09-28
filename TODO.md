@@ -146,7 +146,6 @@ is a commitment to build it — it is the list of what is not there.
 - Convert Tabs to Spaces
 - Bookmarks: toggle, jump to next, jump to previous (nothing in the source)
 - Jump to next error
-- Use Selection for Find
 - Insert Template
 - Increase / Decrease Font Size as commands (size is preference-only today)
 - Show Next Tab / Show Previous Tab as menu items
