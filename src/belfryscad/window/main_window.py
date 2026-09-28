@@ -1472,6 +1472,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
         file_menu.addSeparator()
         self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
+        self._add_action(file_menu, "Export as Image…", self._export_image)
         file_menu.addSeparator()
         self._add_action(file_menu, "Quit", self.close, QKeySequence.StandardKey.Quit)
 
@@ -2589,6 +2590,34 @@ class MainWindow(QMainWindow):
         settings.setValue("recentFiles", [])
         self._rebuild_recent_menu()
 
+    def _default_export_path(self) -> str:
+        """Where an export is offered: the script's own $export_name (seeded
+        with the source file's basename, and assignable by the script),
+        already reduced to filename-safe characters, in the source file's
+        own directory when there is one -- so an export lands beside the
+        model rather than wherever the process happens to be."""
+        tab = self._current_tab()
+        if tab is None:
+            return ""
+        name = tab.export_name or default_export_name(tab.file_path)
+        return os.path.join(os.path.dirname(str(tab.file_path)), name) if tab.file_path else name
+
+    def _export_image(self):
+        """File > Export as Image: the 3D view as it is now, as a PNG at the
+        viewport's size -- OpenSCAD's command of the same name. The CLI's
+        `-o out.png` renders headlessly with its own camera and size; this
+        saves exactly what is on screen."""
+        path, _chosen = QFileDialog.getSaveFileName(
+            self, "Export as Image", self._default_export_path() + ".png", "PNG image (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        if self._target_viewport().grabFramebuffer().save(path, "PNG"):
+            self.log(f"Exported image to {path}")
+        else:
+            QMessageBox.warning(self, "Export as Image", f"Could not write {path}.")
+
     def _export(self):
         if not self._bodies:
             self._render()
@@ -2604,18 +2633,8 @@ class MainWindow(QMainWindow):
         # now that it is written directly rather than through lib3mf, which
         # had no wheels for ARM platforms.)
         filters = ";;".join(f for f, _e in _EXPORT_FORMATS)
-        # Default name comes from the script's own $export_name (seeded with
-        # the source file's basename, and assignable by the script), already
-        # reduced to filename-safe characters. Offered in the source file's
-        # own directory when there is one, so an export lands beside the
-        # model rather than wherever the process happens to be.
-        tab = self._current_tab()
-        default = ""
-        if tab is not None:
-            name = tab.export_name or default_export_name(tab.file_path)
-            default = os.path.join(os.path.dirname(str(tab.file_path)), name) if tab.file_path else name
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Export", default, filters
+            self, "Export", self._default_export_path(), filters
         )
         if not path:
             return
