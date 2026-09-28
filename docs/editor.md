@@ -594,6 +594,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Shift+Cmd+0 | Center (origin back to the middle) |
 | Cmd++ | Increase editor font size |
 | Cmd+- | Decrease editor font size |
+| Cmd+wheel (Ctrl+wheel on Windows/Linux) | Zoom editor text, one point per wheel notch; a trackpad's small deltas add up to whole notches (`CodeEditor.wheelEvent` / `step_font_size`, shared with Cmd++/Cmd+-; floor 6 pt; this editor only, not saved) |
 | Cmd+[ | Zoom Out |
 | Cmd+] | Zoom In |
 | Tab | Indent line/selection |
