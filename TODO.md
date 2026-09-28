@@ -9,16 +9,8 @@
   Extend that port.
 - Notional 2D layout editor: place multiple 2D shapes, apply transforms
   and CSG to them, then extrude by part.
-- Follow-ups from #554, measured on an M1, none of them the warning flood
-  itself (which is fixed):
-  - **Cancel cannot stop a silent runaway.** A render is interrupted only
-    through the evaluator's echo callback, so a script that loops for a long
-    time without printing anything runs to the end. Needs a cancel check
-    inside openscad_cpp_evaluator.
-  - **Module recursion uses ~5 GB before it stops.** `module m() { m(); }`
-    ends with "Recursion too deep" after 2.6 s, peaking at about 5 GB RSS;
-    the function case stops in 0.3 s. Enough to look like a hang on a
-    smaller machine. Evaluator-side.
+- Follow-up from #554, measured on an M1, not the warning flood itself
+  (which is fixed):
   - **60,000 bodies stall the UI for 6.7 s** when the finished render is
     handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
     warnings removed from the picture. The geometry upload, not the console.

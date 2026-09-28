@@ -34,7 +34,7 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
 
 `mkstemp` is used rather than `NamedTemporaryFile(delete=False)` because it returns the path at the moment the file starts existing, leaving no window where the file is on disk but the caller has nothing to clean up yet.
 
-**Cancellation**: `_render()` passes a `threading.Event` to the worker, which checks `cancel.is_set()` between major steps. A `render_id` counter increments per render; the callback discards results whose `render_id` no longer matches.
+**Cancellation**: `_render()` passes a `_RenderCancel` (a `threading.Event`) to the worker, which checks `cancel.is_set()` between major steps and in its echo callback. Its `set()` also requests the evaluator's `CancelSignal`, passed to `Evaluator(cancel_signal=...)`, so a script that prints nothing still stops -- mid-evaluate, with `EvalError("Render cancelled")`, which the worker drops silently because Cancel has already said so (#554). A `render_id` counter increments per render; the callback discards results whose `render_id` no longer matches.
 
 **Progress indicator**: a QLabel overlay centered in the viewport shows elapsed seconds and cycling dots (`.` → `..` → `...` → blank) during rendering, updated every 100ms via QTimer. A `WaitCursor` override is set/restored at the same time. The viewport geometry is cleared at render start so only the overlay is visible.
 

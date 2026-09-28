@@ -515,6 +515,22 @@ class _RenderCallback(QObject):
             self._mw._on_render_thread_done(self._file_tab)
 
 
+class _RenderCancel(threading.Event):
+    """A render's Cancel. Setting it also requests the evaluator's own
+    CancelSignal, which stops a running evaluate() even when the script
+    prints nothing -- the echo callback, the only other way in, never runs
+    for one of those (#554)."""
+
+    def __init__(self):
+        super().__init__()
+        from openscad_cpp_evaluator import CancelSignal
+        self.signal = CancelSignal()
+
+    def set(self):
+        super().set()
+        self.signal.request()
+
+
 class _RenderWorker(QObject):
     """Runs parse + evaluate in a background thread. All signals are queued to the main thread."""
     logged = Signal(str)
@@ -728,7 +744,8 @@ class _RenderWorker(QObject):
         # export (`evaluator.geometry`) keeps OpenSCAD's 1 unit regardless.
         evaluator = Evaluator(echo_fn=self._echo, manifold_cache=self._manifold_cache, profile=self._profile,
                               keep_minuend_color=self._keep_minuend_color,
-                              flat_preview_height=FLAT_PREVIEW_HEIGHT)
+                              flat_preview_height=FLAT_PREVIEW_HEIGHT,
+                              cancel_signal=getattr(self._cancel, "signal", None))
         try:
             # Seeded from the ORIGINAL path, not parse_path -- an unsaved
             # buffer renders through a temp file whose name would otherwise
@@ -2813,7 +2830,7 @@ class MainWindow(QMainWindow):
         # viewport was empty for seconds at a time between frames.
         self.log("Rendering…")
 
-        cancel = threading.Event()
+        cancel = _RenderCancel()
         self._render_cancel = cancel
         self._set_render_busy(True)
 
