@@ -50,14 +50,13 @@ _NAME = re.compile(r'[A-Za-z]+\Z')
 def color_for_name(text: str) -> QColor | None:
     """The colour a string literal's CONTENT names, or None.
 
-    Only the two spellings OpenSCAD itself takes: a bare name, and `#rgb`
-    or `#rrggbb`. Qt would also accept `#rrrgggbbb`, `#aarrggbb` and
-    `transparent`, which would tooltip colours no OpenSCAD build renders.
+    Exactly what `color()` takes (`color_names.parse_color`): a CSS name,
+    `transparent`, `xkcd:<name>`, or `#rgb` / `#rgba` / `#rrggbb` /
+    `#rrggbbaa`, alpha last. Nothing Qt alone would take -- `#aarrggbb`
+    reads alpha first there, and `#rrrgggbbb` no OpenSCAD build renders.
     """
-    if not (_NAME.match(text) or _HEX.match(text)):
-        return None
-    c = QColor.fromString(text)
-    return c if c.isValid() else None
+    from belfryscad.window.color_names import parse_color
+    return parse_color(text)
 
 
 def looks_like_color_vector(parts: list[str]) -> QColor | None:

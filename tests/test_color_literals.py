@@ -10,28 +10,29 @@ from belfryscad.window.color_literals import (
 )
 
 
-@pytest.mark.parametrize("name, rgb", [
-    ("red", (255, 0, 0)),
-    ("SteelBlue", (70, 130, 180)),          # case does not matter to Qt
-    ("#fff", (255, 255, 255)),
-    ("#ffffff", (255, 255, 255)),
-    ("#4080c0", (64, 128, 192)),
-    # Qt takes it and so does the evaluator's own table (as opaque black,
-    # since that table is rgb only) -- matching Qt is what keeps the two
-    # agreeing, so this is not an exception to weed out.
-    ("transparent", (0, 0, 0)),
+@pytest.mark.parametrize("name, rgba", [
+    ("red", (255, 0, 0, 255)),
+    ("SteelBlue", (70, 130, 180, 255)),     # case does not matter
+    ("#fff", (255, 255, 255, 255)),
+    ("#ffffff", (255, 255, 255, 255)),
+    ("#4080c0", (64, 128, 192, 255)),
+    # What color() takes since evaluator 1.29.0, as OpenSCAD does:
+    ("transparent", (0, 0, 0, 0)),
+    ("rebeccapurple", (0x66, 0x33, 0x99, 255)),
+    ("xkcd:Dark Mint", (0x48, 0xc0, 0x72, 255)),
+    ("#f008", (255, 0, 0, 0x88)),           # alpha LAST, not Qt's #argb
+    ("#ff000080", (255, 0, 0, 0x80)),
 ])
-def test_a_known_name_or_hex_resolves(name, rgb):
+def test_a_known_name_or_hex_resolves(name, rgba):
     c = color_for_name(name)
-    assert c is not None and (c.red(), c.green(), c.blue()) == rgb
+    assert c is not None and (c.red(), c.green(), c.blue(), c.alpha()) == rgba
 
 
 @pytest.mark.parametrize("text", [
     "notacolor", "", "ff0000",              # a bare hex needs its #
-    "#ffff", "#ff", "#1234567",             # only 3 or 6 digits
+    "#ff", "#12345", "#1234567",            # only 3, 4, 6 or 8 digits
     "#rrggbb",
-    "rebeccapurple",                        # CSS3 has it, Qt and the
-                                            # evaluator's table do not
+    "dark mint",                            # an xkcd name needs its prefix
     "/tmp/red", "red green",
 ])
 def test_anything_else_is_not_a_colour(text):
