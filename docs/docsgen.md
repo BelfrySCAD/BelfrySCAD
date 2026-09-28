@@ -51,6 +51,14 @@ bug upstream shares, so the two still agree on every file where upstream is
 right; measured over all 58 BOSL2 library files, the set of documented
 items is identical with it and without.
 
+Another is `SynTagsBlock`'s check for a tag the rc file's `SynTags:` never
+defines. Upstream indexes the table blindly and dies with a bare `KeyError`
+that takes the whole run down, which in the Docs pane read only as "The
+preview could not be built. KeyError: 'Geom'". Here it is an ordinary docs
+error at the `SynTags:` line naming the tag and the rc key to define it
+under. The verdict is unchanged -- such a file fails either way -- only
+the message and the fact that the rest of the file is still checked.
+
 Only the two modules that shelled out to OpenSCAD are ours. They keep the
 upstream module names, class names and method signatures, which is why the
 vendored files need **no import edits at all**:

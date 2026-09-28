@@ -246,6 +246,8 @@ library outside BOSL2's arrangement -- where `std.scad` reaches every core file 
 list themselves -- had every example fail on its own functions. The Docs pane includes a
 temporary copy of the live buffer instead, so examples see unsaved edits. A full BOSL2 docs
 build is unchanged by it.
+A fifth: a `SynTags:` tag the rc file never defines is a docs error at that line naming the
+tag, where upstream dies with a bare `KeyError` (all the Docs pane could show). Same verdict.
 The first two alter no verdict at all: the same input passes or fails exactly
 as upstream would have it. Keeping the parser otherwise byte-identical is what
 makes the pane's verdict trustworthy: it is the same validation a real docs

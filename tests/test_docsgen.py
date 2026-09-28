@@ -1721,3 +1721,31 @@ def test_docs_mask_still_fails_a_real_warning(tmp_path):
     from belfryscad.docsgen.runner import runner
     r = runner.run(["cube(undefined_size);"], str(tmp_path))
     assert _unmasked(r.warnings)
+
+
+def test_an_undefined_syntag_is_a_docs_error_not_a_crash(tmp_path):
+    """`// SynTags: Geom` with no Geom in the rc's SynTags used to raise a
+    bare KeyError out of the parser, which the Docs pane could only show as
+    "The preview could not be built. KeyError: 'Geom'". It is a docs error
+    at that line, naming the tag and where to define it."""
+    from belfryscad.docsgen.preview import build_preview
+    src = tmp_path / "lib.scad"
+    text = "\n".join([
+        "// LibFile: lib.scad",
+        "",
+        "// Function: foo()",
+        "// Synopsis: Returns one.",
+        "// SynTags: Geom",
+        "// Usage:",
+        "//   x = foo();",
+        "// Description:",
+        "//   Returns one.",
+        "function foo() = 1;",
+        "",
+    ])
+    src.write_text(text)
+    preview = build_preview(text, str(src), gen_images=False, images=[])
+    msgs = [(line, msg) for _f, line, msg, _lvl in preview.errors]
+    assert any(line == 5 and "Geom" in msg and "SynTags" in msg and ".openscad_docsgen_rc" in msg
+               for line, msg in msgs), msgs
+    assert preview.has_errors
