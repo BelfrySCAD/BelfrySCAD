@@ -137,7 +137,6 @@ is a commitment to build it — it is the list of what is not there.
 - Reload (manual; the file-watcher path exists but there is no command)
 - Save a Copy, Save All, Show Library Folder
 - Export formats we cannot write: **DXF**, **CSG**, **POV-Ray**
-- Export as Image — PNG exists in the CLI (`-o out.png`) but has no GUI item
 - The whole Python submenu (venv select/create, revoke trusted files);
   upstream OpenSCAD now ships Python scripting
 

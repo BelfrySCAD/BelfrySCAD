@@ -1303,7 +1303,7 @@ A `VNFViewer` subclass for a BOSL2 **VNF tile texture**: a VNF whose X and Y lie
 
 ## Menu Structure
 
-**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / — / Export… / — / Quit
+**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / — / Export… / Export as Image… (the 3D view as shown, as a PNG at the viewport's device-pixel size, offered as `$export_name.png` beside the source like Export…; the CLI's `-o out.png` renders headlessly with its own camera instead) / — / Quit
 
 **Examples** covers one feature per file, named for it, so the menu is a lookup: Basics holds the shapes and moves (`csg`, `transforms`, `mirror`, `resize`, `color`, `polygon`, `text`, `linear_extrude`, `rotate_extrude`, `modules`), Advanced the rest (`hull`, `minkowski`, `offset`, `projection`, `polyhedron`, `multmatrix`, `intersection_for`, `import`, `surface`, `children`). `import` and `surface` ship their data alongside in `Advanced/data/`, which works because both resolve a relative path against the file naming it.
 
