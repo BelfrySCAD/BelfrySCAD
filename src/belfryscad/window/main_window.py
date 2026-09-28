@@ -1,3 +1,4 @@
+import sys
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
@@ -1495,6 +1496,13 @@ class MainWindow(QMainWindow):
         # macOS, so the menu shows the same keys the editor already takes.
         self._add_action(edit_menu, "Move Line Up", lambda: self._move_lines(-1), QKeySequence("Alt+Up"))
         self._add_action(edit_menu, "Move Line Down", lambda: self._move_lines(1), QKeySequence("Alt+Down"))
+        self._add_action(edit_menu, "Convert Tabs to Spaces", self._convert_tabs_to_spaces)
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Increase Font Size", self._font_size_increase, QKeySequence("Ctrl++"))
+        self._add_action(edit_menu, "Decrease Font Size", self._font_size_decrease, QKeySequence("Ctrl+-"))
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Copy Viewport Image", self._copy_viewport_image,
+                         QKeySequence("Ctrl+Shift+C"))
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
         act_replace = self._add_action(edit_menu, "Find & Replace…", self._find_replace)
@@ -1715,6 +1723,17 @@ class MainWindow(QMainWindow):
         self._add_action(window_menu, "New Window", self._new_window, QKeySequence("Ctrl+Shift+N"))
         self._add_action(window_menu, "Open in New Window…", self._open_in_new_window)
         self._add_action(window_menu, "Move Tab to New Window", self._tear_off_tab)
+        # Qt's standard "next child" keys (Ctrl+Tab on Windows and Linux,
+        # Cmd+Shift+] on macOS) plus, on macOS, the physical Ctrl+Tab -- Qt
+        # calls it Meta+Tab there, and its own list offers Cmd+Tab instead,
+        # which the system's app switcher takes first. Without it, Ctrl+Tab
+        # reached the editor and indented the line.
+        mac = sys.platform == "darwin"
+        for label, step, std, extra in (
+                ("Show Next Tab", 1, QKeySequence.StandardKey.NextChild, "Meta+Tab"),
+                ("Show Previous Tab", -1, QKeySequence.StandardKey.PreviousChild, "Meta+Shift+Tab")):
+            act = self._add_action(window_menu, label, lambda _=False, st=step: self._cycle_tab(st))
+            act.setShortcuts(QKeySequence.keyBindings(std) + ([QKeySequence(extra)] if mac else []))
         window_menu.addSeparator()
         self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
 
@@ -1763,8 +1782,6 @@ class MainWindow(QMainWindow):
                 s.setContext(Qt.ShortcutContext.ApplicationShortcut)
             s.activated.connect(slot)
 
-        shortcut("Ctrl++", self._font_size_increase)
-        shortcut("Ctrl+-", self._font_size_decrease)
         shortcut("Shift+F6", self._start_debug)
 
     # ------------------------------------------------------------------
@@ -3424,6 +3441,38 @@ class MainWindow(QMainWindow):
 
     def _selection_contract(self):
         pass  # TODO: walk selection down AST
+
+    def _cycle_tab(self, step: int):
+        n = self._tabs.count()
+        if n > 1:
+            self._tabs.setCurrentIndex((self._tabs.currentIndex() + step) % n)
+
+    def _convert_tabs_to_spaces(self):
+        """Every tab to spaces, out to the next indent stop (OpenSCAD's
+        Edit > Convert Tabs to Spaces, at our indent size rather than its
+        fixed 4). One undo step; nothing happens if there are no tabs."""
+        e = self._current_editor()
+        if e is None or e.isReadOnly():
+            return
+        text = e.toPlainText()
+        if "\t" not in text:
+            return
+        converted = "\n".join(line.expandtabs(e._indent_size) for line in text.split("\n"))
+        cursor = e.textCursor()
+        pos = cursor.position()
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.insertText(converted)
+        cursor.endEditBlock()
+        cursor.setPosition(min(pos, len(converted)))
+        e.setTextCursor(cursor)
+
+    def _copy_viewport_image(self):
+        """The 3D view as it is now, to the clipboard (OpenSCAD's Edit >
+        Copy viewport image)."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setImage(self._target_viewport().grabFramebuffer())
+        self.statusBar().showMessage("Copied the viewport image to the clipboard.", 3000)
 
     def _move_lines(self, delta: int):
         if e := self._current_editor():

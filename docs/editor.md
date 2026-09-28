@@ -594,6 +594,8 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Shift+Cmd+0 | Center (origin back to the middle) |
 | Cmd++ | Increase editor font size |
 | Cmd+- | Decrease editor font size |
+| Ctrl+Tab / Ctrl+Shift+Tab (also Cmd+Shift+] / [ on macOS) | Show next / previous tab |
+| Cmd+Shift+C | Copy the viewport image to the clipboard |
 | Option+wheel (Alt+wheel on Windows/Linux) | Step the number at the text cursor: the digit just left of the cursor moves, so the step is 1, 0.1, 10… by its place; decimals, leading zeros and a unary sign kept, one undo step per notch (`number_scroll.step_number`, OpenSCAD's number scroll; a binary minus is not taken as the number's sign, unlike OpenSCAD). No render follows -- edits never render |
 | Cmd+wheel (Ctrl+wheel on Windows/Linux) | Zoom editor text, one point per wheel notch; a trackpad's small deltas add up to whole notches (`CodeEditor.wheelEvent` / `step_font_size`, shared with Cmd++/Cmd+-; floor 6 pt; this editor only, not saved) |
 | Cmd+[ | Zoom Out |
@@ -1313,7 +1315,7 @@ The editor's right-click menu offers **Use Library…** as well, near the top so
 
 Non-modal, and it stays open after Insert: pulling in two or three files from one library is the normal case, and closing on each would make that several trips. It is created once and re-populated on reopen, so a library installed meanwhile appears. Rows are labelled by file, since the verb and directory repeat on every row; the entry point sorts first and is marked as such.
 
-**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / Move Line Up / Move Line Down / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
+**Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / Move Line Up / Move Line Down / Convert Tabs to Spaces (each tab out to the next indent stop, `str.expandtabs` at the indent size -- OpenSCAD's is a fixed 4; one undo step) / — / Increase Font Size (Cmd++) / Decrease Font Size (Cmd+-) / — / Copy Viewport Image (Cmd+Shift+C; the viewport's framebuffer to the clipboard) / — / Find… / Find & Replace… / — / Word Wrap (checkable) / — / Read Only (checkable; per-tab, defaults on for files opened from the library directory)
 
 **Design**: Render / Render with Profiling / Show Profile Report… / — / Run Tests… / — / Check Validity / Dump CSG Tree to Console / — / Flush Caches / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)* / — / Use Library ▶ *(lists installed libraries; inserts `use`/`include` statement)* / Manage Libraries…
 
@@ -1347,7 +1349,7 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 - —
 - Show Edges / Show Axes / Show Scale Markers / Show Crosshairs
 
-**Window**: Minimize / Zoom / — / Move Tab to New Window / — / *(open document list)* / Bring All to Front
+**Window**: Minimize / Zoom / — / Move Tab to New Window / Show Next Tab / Show Previous Tab (Qt's NextChild/PreviousChild keys -- Ctrl+Tab / Ctrl+Shift+Tab on Windows and Linux, Cmd+Shift+] / Cmd+Shift+[ on macOS -- plus, on macOS, the physical Ctrl+Tab / Ctrl+Shift+Tab, which Qt's list leaves out and which otherwise reached the editor and indented the line; wraps round) / — / *(open document list)* / Bring All to Front
 
 **Help**: About BelfrySCAD / Documentation
 
