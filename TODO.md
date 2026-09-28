@@ -143,15 +143,12 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Edit menu
 
-- Convert Tabs to Spaces
 - Bookmarks: toggle, jump to next, jump to previous (nothing in the source)
 - Jump to next error
 - Insert Template
-- Increase / Decrease Font Size as Edit-menu items (Cmd++/Cmd+- and
-  Cmd+wheel already work; only the menu entries are missing)
-- Show Next Tab / Show Previous Tab as menu items
-- Copy viewport image / translation / rotation / distance / FOV to the
-  clipboard — this is how people paste a `$vpt`/`$vpr` back into a script
+- Copy viewport translation / rotation / distance / FOV to the clipboard
+  (the image is done) — this is how people paste a `$vpt`/`$vpr` back into
+  a script
 
 ### Design menu
 
