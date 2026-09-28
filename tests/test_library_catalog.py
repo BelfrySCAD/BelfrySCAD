@@ -138,3 +138,16 @@ def test_no_test_harnesses_are_offered(catalog):
                  if re.search(r"(^|[_-])tests?$|^tests?([_-]|$)|^libtest$",
                               os.path.splitext(os.path.basename(_named(r)))[0], re.I)]
     assert harnesses == []
+
+
+def test_show_library_folder_creates_and_opens_it(tmp_path, monkeypatch):
+    """Help ▸ Show Library Folder: a missing folder is created, then opened."""
+    from PySide6.QtGui import QDesktopServices
+    import belfryscad.window.library_manager as lm
+    folder = tmp_path / "OpenSCAD" / "libraries"
+    opened = []
+    monkeypatch.setattr(lm, "_library_dir", lambda: folder)
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(Path(url.toLocalFile())))
+    assert lm.show_library_folder() == folder
+    assert folder.is_dir()
+    assert opened == [folder]           # Path: Qt gives Windows paths with forward slashes

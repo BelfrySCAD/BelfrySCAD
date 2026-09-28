@@ -1769,6 +1769,7 @@ class MainWindow(QMainWindow):
         # read from the evaluator's own index (issue #379).
         self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
         self._add_action(help_menu, "Color List…", lambda: show_color_list(self))
+        self._add_action(help_menu, "Show Library Folder", self._show_library_folder)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)
@@ -3312,6 +3313,10 @@ class MainWindow(QMainWindow):
         self.id_to_node = {}
         self._csg_cache.clear()
         self.log("Flushed AST caches — render or debug to rebuild.")
+
+    def _show_library_folder(self):
+        from belfryscad.window.library_manager import show_library_folder
+        self.log(f"Library folder: {show_library_folder()}")
 
     def _open_library_manager(self):
         from belfryscad.window.library_manager import LibraryManagerWindow
