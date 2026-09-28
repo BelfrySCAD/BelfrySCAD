@@ -22,6 +22,56 @@
   - **60,000 bodies stall the UI for 6.7 s** when the finished render is
     handed to the UI thread -- `for (i=[1:60000]) cube(1);` with the
     warnings removed from the picture. The geometry upload, not the console.
+- **`$fe`: discretization by maximum error.** Upstream OpenSCAD added `$fe`
+  on 2026-01-27 (cac909724), behind `--enable=discretization-by-error`: the
+  most a curve's polygon may stray from the true circle, measured along a radius
+  to an edge's midpoint. Neither the evaluator (`fnSegments` in
+  `src/builtins/segments.cpp` takes only `$fn`/`$fa`/`$fs`) nor BOSL2's `segs()`
+  knows it. Rule, from `CurveDiscretizer::getCircularSegmentCount` at master
+  cc19000e0, and matching the 2026.02.01 binary's counts for six `$fe`/r pairs:
+
+  - Precedence `$fn` > `$fe` > `$fa`/`$fs`. `$fe` applies when `$fn` is 0 and
+    `$fe >= GRID_FINE` (2^-20); it then ignores `$fa`/`$fs` entirely.
+  - Full circle: `n = π / acos(1 - fe/r)` (radians); `n = 5` when
+    `fe/r >= 0.1909830056` (the ratio that gives exactly 5, and covers fe >= r);
+    capped at `max(min(36000, 200·π·r), 5)` -- the counts `$fa`/`$fs` would give
+    at their 0.01 floors. Then `ceil`.
+  - Arcs: `ceil(n · |angle| / 360)` with `n` NOT ceiled first. The `$fa`/`$fs`
+    branch ceils the full-circle count before scaling; the `$fe` branch does not,
+    so the two differ (n = 5.2, 270°: 4 vs 5).
+  - `linear_extrude` twist slices (`getHelixSlices`): per-slice twist
+    `θ = 2·acos(1 - fe/r_max)` (the same angle as one circle segment), slices =
+    `max(ceil(twist_rad / θ), ceil(twist/120), 1)`; `min_slices` when fe >= r.
+  - `$fe` is not predefined: a bare read warns "Ignoring unknown variable" even
+    with the feature on. `is_undef($fe)` is silent.
+
+  BOSL2's `segs()` (utility.scad) would become, keeping its `2e-15` guard:
+
+  ```
+  function segs(r, angle) =
+      let(
+          r  = is_finite(r) ? abs(r) : 0,
+          fe = is_undef($fe) ? 0 : max(0, $fe),
+          n  = $fn > 0 ? ceil(max($fn, 3))
+             : fe >= 2^-20 && r >= 2^-20
+               ? (fe/r >= 0.1909830056 ? 5
+                  : min(max(min(36000, 200*PI*r), 5), 180/acos(1 - fe/r)))
+             : ceil(max(5, min(360/$fa, r*2*PI/$fs)))
+      )
+      is_def(angle) ? ceil(n*abs(angle)/360 - 2e-15) : ceil(n);
+  ```
+
+  (`180/acos(...)` because OpenSCAD's `acos` is in degrees.) The `$fn` branch
+  also gains a `ceil`: today `segs()` returns a fractional `$fn` as-is, where
+  OpenSCAD rounds it up. The evaluator has the opposite bug -- `fnSegments`
+  truncates a fractional `$fn` (5.5 -> 5; OpenSCAD 6) -- worth fixing alongside.
+
+  Evaluator side: add `fe` to `fnSegments`/`fnSegmentsFromCtx` for every curved
+  primitive, arcs and `rotate_extrude` angle scaling (unceiled `n`), and to
+  `linear_extrude`'s twist slices; add a `supported_feature("discretization-by-
+  error")`. Open question: honour `$fe` always, or only behind a flag as upstream
+  does -- a script setting `$fe` gets different geometry here vs a stock
+  OpenSCAD with the feature off.
 - Accelerate textured extrusions and sweeps. (Sweeps take 2D paths or regions;
   extrusions take 2D geometry.) They are slow because the work happens in the
   OpenSCAD language. Measured 2026-09-18 against BOSL2 @ c4067293: a textured
