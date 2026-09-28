@@ -1470,6 +1470,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
         self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
         self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
+        self._add_action(file_menu, "Reload", self._reload_current, QKeySequence("Ctrl+R"))
         file_menu.addSeparator()
         self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
         self._add_action(file_menu, "Export as Image…", self._export_image)
@@ -2365,8 +2366,11 @@ class MainWindow(QMainWindow):
         if rendered:
             self._render(self._current_tab())
 
-    def _reload_one(self, path: str) -> bool:
-        """Reload `path`'s tab from disk. True if anything changed."""
+    def _reload_one(self, path: str, force: bool = False) -> bool:
+        """Reload `path`'s tab from disk. True if anything changed.
+
+        `force` is File > Reload, which the user has already agreed may
+        discard unsaved edits; the automatic reload never does."""
         tab = None
         try:
             resolved = str(Path(path).resolve())
@@ -2390,7 +2394,7 @@ class MainWindow(QMainWindow):
         if text == tab.editor.toPlainText():
             return False       # our own save, or a touch with no edit
 
-        if tab.is_modified:
+        if tab.is_modified and not force:
             # Never discard unsaved work to pick up an external edit. The
             # user is the only one who can say which version wins.
             self.log(f"WARNING: {Path(path).name} changed on disk, but this "
@@ -2411,8 +2415,28 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._sync_tab_label(idx, tab)
-        self.log(f"Reloaded {Path(path).name} (changed on disk).")
+        self.log(f"Reloaded {Path(path).name}" + ("." if force else " (changed on disk)."))
         return True
+
+    def _reload_current(self):
+        """File > Reload (Ctrl+R, as OpenSCAD): the current tab's text from
+        disk. Asks first if that would discard unsaved edits -- and even
+        then they are one Undo away, since the swap goes through the undo
+        stack. Does not render; Render or Automatic Reload does that."""
+        tab = self._current_tab()
+        if tab is None or not tab.file_path:
+            self.statusBar().showMessage("Nothing to reload: this tab has never been saved.", 3000)
+            return
+        if tab.is_modified and not self.skip_unsaved_prompts:
+            reply = QMessageBox.question(
+                self, "Reload",
+                f"Discard your unsaved changes to {tab.display_name()} and reload it from disk?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        if not self._reload_one(str(tab.file_path), force=True):
+            self.statusBar().showMessage(f"{tab.display_name()} is unchanged on disk.", 3000)
 
     # ------------------------------------------------------------------
     # Measurement
