@@ -99,7 +99,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `[major, minor, patch]`, and `supported_feature("name")` returns the level at which this build
   implements a named feature (`render-expr`, `polyhedron-vnf`, `separate-children`,
   `minkowski-diff`, `sphere-styles`, `export-name`, `simplify-op`, `expr-import`,
-  `object-function`, `roof-op` — one for every documented extension) or **0** for one it
+  `object-function`, `roof-op`, `discretization-by-error` — one for every documented extension) or **0** for one it
   does not — including names it has never heard of, so probing for a future feature is safe.
   Both are `undef` in OpenSCAD, so the guard is portable. They exist because OpenSCAD silently
   ignores unknown *arguments*: `children(separate=true)` runs there and renders the wrong shape
