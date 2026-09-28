@@ -148,7 +148,8 @@ is a commitment to build it — it is the list of what is not there.
 - Jump to next error
 - Use Selection for Find
 - Insert Template
-- Increase / Decrease Font Size as commands (size is preference-only today)
+- Increase / Decrease Font Size as Edit-menu items (Cmd++/Cmd+- and
+  Cmd+wheel already work; only the menu entries are missing)
 - Show Next Tab / Show Previous Tab as menu items
 - Copy viewport image / translation / rotation / distance / FOV to the
   clipboard — this is how people paste a `$vpt`/`$vpr` back into a script
