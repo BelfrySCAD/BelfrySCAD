@@ -1687,6 +1687,10 @@ class CodeEditor(QPlainTextEdit):
         self._error_selections = [sel]
         self._refresh_extra_selections()
 
+    def error_position(self) -> int | None:
+        """Where the marked error starts (a document position), or None."""
+        return self._error_selections[0].cursor.selectionStart() if self._error_selections else None
+
     def clear_errors(self):
         if not self._error_selections:
             return  # called on every keystroke; nothing to repaint
