@@ -147,7 +147,7 @@ def test_show_library_folder_creates_and_opens_it(tmp_path, monkeypatch):
     folder = tmp_path / "OpenSCAD" / "libraries"
     opened = []
     monkeypatch.setattr(lm, "_library_dir", lambda: folder)
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(Path(url.toLocalFile())))
     assert lm.show_library_folder() == folder
     assert folder.is_dir()
-    assert opened == [str(folder)]
+    assert opened == [folder]           # Path: Qt gives Windows paths with forward slashes
