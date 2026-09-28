@@ -134,7 +134,6 @@ is a commitment to build it — it is the list of what is not there.
 
 ### File menu
 
-- Reload (manual; the file-watcher path exists but there is no command)
 - Save a Copy, Save All, Show Library Folder
 - Export formats we cannot write: **DXF**, **CSG**, **POV-Ray**
 - The whole Python submenu (venv select/create, revoke trusted files);
