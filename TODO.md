@@ -144,9 +144,6 @@ is a commitment to build it — it is the list of what is not there.
 - Bookmarks: toggle, jump to next, jump to previous (nothing in the source)
 - Jump to next error
 - Insert Template
-- Copy viewport translation / rotation / distance / FOV to the clipboard
-  (the image is done) — this is how people paste a `$vpt`/`$vpr` back into
-  a script
 
 ### Design menu
 
