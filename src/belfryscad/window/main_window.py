@@ -1487,6 +1487,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
         self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
         self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
+        self._add_action(file_menu, "Save All", self._save_all, QKeySequence("Ctrl+Alt+S"))
         self._add_action(file_menu, "Reload", self._reload_current, QKeySequence("Ctrl+R"))
         file_menu.addSeparator()
         self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
@@ -2250,6 +2251,24 @@ class MainWindow(QMainWindow):
         if not tab.file_path:
             return self._save_file_as()
         return self._write_file(tab, tab.file_path)
+
+    def _save_all(self):
+        """File ▸ Save All: every modified tab in this window, in tab order.
+        An untitled tab is brought forward and asks for a name, as Save
+        does; cancelling that (or a failed write) stops the rest, so nothing
+        is saved behind a dialog the user just said no to."""
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if not tab or not tab.is_modified:
+                continue
+            if tab.file_path:
+                saved = self._write_file(tab, tab.file_path)
+            else:
+                self._tabs.setCurrentIndex(i)
+                saved = self._save_file_as()
+            if not saved:
+                return False
+        return True
 
     def _save_file_as(self):
         tab = self._current_tab()
