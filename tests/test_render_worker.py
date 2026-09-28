@@ -187,3 +187,18 @@ class TestRepeatedMessages:
         out = _run_collecting("for (i=[1:30]) echo(i);\n")
         assert len([l for l in out["lines"] if l.startswith("ECHO:")]) == 30
         assert out["repeats"] == {}
+
+
+# -- #554: Cancel stops a script that prints nothing --------------------------
+
+def test_cancel_stops_a_silent_render():
+    from belfryscad.window.main_window import _RenderCancel
+    import time
+    cancel = _RenderCancel()
+    threading.Timer(0.2, cancel.set).start()
+    t0 = time.perf_counter()
+    out = _run_collecting("function f(n) = n <= 0 ? 0 : 1 + f(n - 1);\n"
+                          "x = [for (i = [0:99999], j = [0:9999]) f(20)];\ncube(1);\n", cancel=cancel)
+    assert time.perf_counter() - t0 < 5
+    assert "bodies" not in out
+    assert not any(l.startswith("Eval error") for l in out["lines"])   # Cancel reports itself
