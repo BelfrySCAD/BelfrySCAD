@@ -1457,7 +1457,39 @@ class CodeEditor(QPlainTextEdit):
                 self.step_font_size(steps)
             event.accept()
             return
+        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            # Alt/Option+wheel steps the number at the text cursor -- see
+            # number_scroll. Qt turns Alt+wheel into a HORIZONTAL scroll on
+            # some platforms, so take whichever axis moved.
+            d = event.angleDelta()
+            self._wheel_num = getattr(self, "_wheel_num", 0) + (d.y() or d.x())
+            steps = int(self._wheel_num / self._WHEEL_NOTCH)
+            if steps:
+                self._wheel_num -= steps * self._WHEEL_NOTCH
+                self._step_number_at_cursor(steps)
+            event.accept()
+            return
         super().wheelEvent(event)
+
+    def _step_number_at_cursor(self, steps: int):
+        from belfryscad.window.number_scroll import step_number
+        if self.isReadOnly():
+            return
+        cursor = self.textCursor()
+        block = cursor.block()
+        result = step_number(block.text(), cursor.positionInBlock(), steps)
+        if result is None:
+            return
+        new_line, new_col = result
+        # One edit block, so each notch is one undo step.
+        cursor.beginEditBlock()
+        cursor.setPosition(block.position())
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                            QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(new_line)
+        cursor.endEditBlock()
+        cursor.setPosition(block.position() + new_col)
+        self.setTextCursor(cursor)
 
     def line_number_area_width(self):
         digits = max(1, len(str(self.blockCount())))

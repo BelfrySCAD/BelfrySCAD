@@ -594,6 +594,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Shift+Cmd+0 | Center (origin back to the middle) |
 | Cmd++ | Increase editor font size |
 | Cmd+- | Decrease editor font size |
+| Option+wheel (Alt+wheel on Windows/Linux) | Step the number at the text cursor: the digit just left of the cursor moves, so the step is 1, 0.1, 10… by its place; decimals, leading zeros and a unary sign kept, one undo step per notch (`number_scroll.step_number`, OpenSCAD's number scroll; a binary minus is not taken as the number's sign, unlike OpenSCAD). No render follows -- edits never render |
 | Cmd+wheel (Ctrl+wheel on Windows/Linux) | Zoom editor text, one point per wheel notch; a trackpad's small deltas add up to whole notches (`CodeEditor.wheelEvent` / `step_font_size`, shared with Cmd++/Cmd+-; floor 6 pt; this editor only, not saved) |
 | Cmd+[ | Zoom Out |
 | Cmd+] | Zoom In |
