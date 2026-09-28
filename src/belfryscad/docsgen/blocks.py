@@ -205,6 +205,13 @@ class SynTagsBlock(LabelBlock):
     def __init__(self, title, subtitle, body, origin, parent, syntags_data={}):
         tags = [x.strip() for x in subtitle.split(",")]
         for tag in tags:
+            # Departure from upstream, which indexes syntags_data blindly and
+            # dies with a bare KeyError -- all the Docs pane could then show.
+            # Still a failure, just one that says what to fix and where.
+            if tag not in syntags_data:
+                raise DocsGenException(
+                    title, "Unknown SynTag '{}' -- define it under SynTags: in "
+                    ".openscad_docsgen_rc, while declaring block:".format(tag))
             parent.syntags[tag] = syntags_data[tag]
         super().__init__(title, subtitle, body, origin, parent=parent)
 
