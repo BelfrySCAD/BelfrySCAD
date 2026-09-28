@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 )
 
 from belfryscad.window.ui_colors import (
+    bookmark_pill_colors,
     execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
     fold_arrow_color, guide_colors, gutter_colors, on_appearance_change,
     whitespace_marker_color,
@@ -1377,6 +1378,16 @@ class CodeEditor(QPlainTextEdit):
 
         self._debug_locals: dict | None = None
         self._breakpoints: set[int] = set()  # 0-indexed block numbers
+        # Bookmarks (Edit menu, Ctrl+F2 / F2 / Shift+F2): a cursor anchored at
+        # each marked line, so the mark moves with its text as lines are
+        # added or removed above it. A whole-document replace (setPlainText,
+        # a select-all insert) would collapse every cursor to the top, so the
+        # lines as of the last edit are kept too, to re-anchor on.
+        self._bookmarks: list[QTextCursor] = []
+        self._bookmark_lines: list[int] = []
+        self._bookmarks_pending = False
+        self._doc_chars = self.document().characterCount()
+        self.document().contentsChange.connect(self._track_bookmarks)
 
         self._fold_regions: dict[int, int] = {}
         self._folded: set[int] = set()
@@ -1532,6 +1543,7 @@ class CodeEditor(QPlainTextEdit):
         lh = self.fontMetrics().height()
         bp_w = self._BP_W
         num_w = self._line_number_area.width() - 16 - bp_w
+        bookmarked = set(self.bookmark_lines())
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
@@ -1545,12 +1557,21 @@ class CodeEditor(QPlainTextEdit):
                         painter.setBrush(QColor("#E06C75"))
                         painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
 
-                # Line number
-                painter.setPen(QColor(gutter_fg))
+                # Line number, on a pill when bookmarked -- beside the
+                # breakpoint column, never in it, so both show at once.
+                number = str(block_number + 1)
+                pen = gutter_fg
+                if block_number in bookmarked:
+                    fill, pen = bookmark_pill_colors()
+                    tw = self.fontMetrics().horizontalAdvance(number)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(fill))
+                    painter.drawRoundedRect(bp_w + num_w - tw - 4, top + 1, tw + 7, lh - 2, 4, 4)
+                painter.setPen(QColor(pen))
                 painter.drawText(
                     bp_w, top, num_w, lh,
                     Qt.AlignmentFlag.AlignRight,
-                    str(block_number + 1),
+                    number,
                 )
 
                 if block_number in self._fold_regions:
@@ -2553,6 +2574,62 @@ class CodeEditor(QPlainTextEdit):
         cr.setWidth(self._completer.popup().sizeHintForColumn(0)
                      + self._completer.popup().verticalScrollBar().sizeHint().width())
         self._completer.complete(cr)
+
+    # ------------------------------------------------------------------
+    # Bookmarks
+    # ------------------------------------------------------------------
+
+    def bookmark_lines(self) -> list[int]:
+        """Bookmarked lines, 0-indexed block numbers, ascending."""
+        return sorted({c.blockNumber() for c in self._bookmarks})
+
+    def toggle_bookmark(self):
+        """Mark or unmark the cursor's line."""
+        line = self.textCursor().blockNumber()
+        kept = [c for c in self._bookmarks if c.blockNumber() != line]
+        if len(kept) == len(self._bookmarks):
+            kept.append(QTextCursor(self.document().findBlockByNumber(line)))
+        self._bookmarks = kept
+        self._bookmark_lines = self.bookmark_lines()
+        self._line_number_area.update()
+
+    def jump_to_bookmark(self, forward: bool = True) -> bool:
+        """Cursor to the next (or previous) bookmark, wrapping round the
+        file and keeping its column where the line is long enough, as
+        OpenSCAD does. False if there are none."""
+        lines = self.bookmark_lines()
+        if not lines:
+            return False
+        here = self.textCursor().blockNumber()
+        if forward:
+            target = next((n for n in lines if n > here), lines[0])
+        else:
+            target = next((n for n in reversed(lines) if n < here), lines[-1])
+        block = self.document().findBlockByNumber(target)
+        cursor = self.textCursor()
+        cursor.setPosition(block.position() + min(cursor.positionInBlock(), block.length() - 1))
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        return True
+
+    def _track_bookmarks(self, position: int, removed: int, _added: int):
+        whole = position == 0 and self._doc_chars > 1 and removed >= self._doc_chars - 1
+        self._doc_chars = self.document().characterCount()
+        if not self._bookmarks:
+            return
+        # setPlainText arrives as two changes -- everything removed, then the
+        # new text inserted -- so re-anchor once there is text to anchor in,
+        # not on the empty document in between.
+        if whole:
+            self._bookmarks_pending = True
+        if self._bookmarks_pending:
+            if self._doc_chars <= 1:
+                return
+            last = self.document().blockCount() - 1
+            self._bookmarks = [QTextCursor(self.document().findBlockByNumber(min(n, last)))
+                               for n in self._bookmark_lines]
+            self._bookmarks_pending = False
+        self._bookmark_lines = self.bookmark_lines()
 
     def toggle_breakpoint(self, block_number: int):
         if block_number in self._breakpoints:

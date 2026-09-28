@@ -157,7 +157,6 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Edit menu
 
-- Bookmarks: toggle, jump to next, jump to previous (nothing in the source)
 - Insert Template
 
 ### Design menu
