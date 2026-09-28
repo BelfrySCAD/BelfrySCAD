@@ -1426,6 +1426,39 @@ class CodeEditor(QPlainTextEdit):
             self._apply_min_width()
         super().changeEvent(event)
 
+    #: Smallest size the zoom steps down to; the editor stays readable.
+    _MIN_POINT_SIZE = 6
+    #: One wheel notch, in angleDelta units (1/8 degree).
+    _WHEEL_NOTCH = 120
+
+    def step_font_size(self, step: int):
+        """Zoom the text by `step` points -- Cmd/Ctrl+wheel and Cmd/Ctrl +/-.
+        This editor only, and not saved; the preference is the default."""
+        f = self.font()
+        size = f.pointSize() + step
+        if size < self._MIN_POINT_SIZE:
+            return
+        f.setPointSize(size)
+        self.setFont(f)
+        # Tab stops are measured in the font, so they have to follow it.
+        self.set_indent_size(self._indent_size)
+
+    def wheelEvent(self, event):
+        # Qt reports macOS's Cmd as ControlModifier, so this is Cmd+wheel
+        # there and Ctrl+wheel elsewhere. QPlainTextEdit's own Ctrl+wheel
+        # zoom only works while read-only.
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Whole notches only: a trackpad sends a stream of small deltas,
+            # and a point per event would fly through every size at once.
+            self._wheel_zoom = getattr(self, "_wheel_zoom", 0) + event.angleDelta().y()
+            steps = int(self._wheel_zoom / self._WHEEL_NOTCH)
+            if steps:
+                self._wheel_zoom -= steps * self._WHEEL_NOTCH
+                self.step_font_size(steps)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
     def line_number_area_width(self):
         digits = max(1, len(str(self.blockCount())))
         return 6 + self._BP_W + self.fontMetrics().horizontalAdvance("9") * digits + 14

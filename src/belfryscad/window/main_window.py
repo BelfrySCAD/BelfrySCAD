@@ -5442,16 +5442,11 @@ class MainWindow(QMainWindow):
 
     def _font_size_increase(self):
         if e := self._current_editor():
-            f = e.font()
-            f.setPointSize(f.pointSize() + 1)
-            e.setFont(f)
+            e.step_font_size(1)
 
     def _font_size_decrease(self):
         if e := self._current_editor():
-            f = e.font()
-            if f.pointSize() > 6:
-                f.setPointSize(f.pointSize() - 1)
-                e.setFont(f)
+            e.step_font_size(-1)
 
     def _zoom_viewport(self, direction):
         self._target_viewport().zoom(direction)
