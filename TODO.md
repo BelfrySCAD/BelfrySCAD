@@ -164,9 +164,9 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Editor behaviour
 
-- Number scroll via mouse wheel — scroll over a numeric literal to increment it
-
-(Line numbers, brace matching and Backspace-unindents are already present.)
+Nothing left here: line numbers, brace matching, Backspace-unindents,
+current-line highlight, Cmd/Ctrl+wheel zoom and Option/Alt+wheel number
+stepping are all present.
 
 ### Help, Window and preferences
 
