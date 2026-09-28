@@ -7,6 +7,8 @@ import setproctitle
 def _parse_args(argv):
     parser = argparse.ArgumentParser(prog="belfryscad", add_help=False)
     parser.add_argument("file", nargs="?")
+    # The GUI opens each as its own tab, as OpenSCAD does; -o takes one.
+    parser.add_argument("more_files", nargs="*", help=argparse.SUPPRESS)
     parser.add_argument("-o", "--output", metavar="FILE",
                          help="Render FILE headlessly and export to this path (.stl/.obj/.3mf/.ply/.wrl/.x3d/.png); "
                               "no GUI window opens")
@@ -220,7 +222,7 @@ def _isolate_settings():
     return use_scratch_settings(tmpdir)
 
 
-def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
+def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None,
              testing: bool = False):
     from PySide6.QtCore import QEvent, Signal
@@ -253,9 +255,8 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
         path = _isolate_settings()
         print(f"belfryscad: --testing: settings changes will be discarded "
               f"({path})", file=sys.stderr)
-    file_to_open = None
-    if initial_file and initial_file.endswith(".scad") and os.path.isfile(initial_file):
-        file_to_open = os.path.abspath(initial_file)
+    files_to_open = [os.path.abspath(f) for f in initial_files
+                     if f.endswith(".scad") and os.path.isfile(f)]
     # A double-click in a file manager is a second launch with a file on
     # its command line. Unless the preference says otherwise, hand the file
     # to the BelfrySCAD already running and leave, rather than open a whole
@@ -264,7 +265,7 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
     from belfryscad.settings import app_settings
     from belfryscad.single_instance import InstanceServer, hand_off
     single = app_settings().value("app/openInRunningInstance", True, type=bool) and not testing
-    if single and file_to_open and hand_off([file_to_open]):
+    if single and files_to_open and hand_off(files_to_open):
         return 0
     window = MainWindow()
     # Reaches the escape hatch _confirm_unsaved already honours, so both
@@ -283,8 +284,8 @@ def _run_gui(initial_file: str | None, no_save_prompts: bool = False,
         _wire_ai_echo(window)
     app.file_open_requested.connect(window.open_file_by_path)
     window.show()
-    if file_to_open:
-        window.open_file_by_path(file_to_open)
+    for path in files_to_open:
+        window.open_file_by_path(path)
     if not testing:
         # Never under --testing: a test launch must not reach the network.
         from PySide6.QtCore import QTimer
@@ -536,6 +537,10 @@ def main():
         if not args.file:
             print("belfryscad: -o/--output requires an input .scad file", file=sys.stderr)
             raise SystemExit(1)
+        if args.more_files:
+            print("belfryscad: -o/--output takes one input file; got "
+                  f"{1 + len(args.more_files)}", file=sys.stderr)
+            raise SystemExit(1)
 
         if args.param_file or args.param_set:
             if not (args.param_file and args.param_set):
@@ -628,7 +633,7 @@ def main():
     if ignored:
         print(f"belfryscad: {', '.join(ignored)} only apply together with -o/--output; ignoring", file=sys.stderr)
 
-    _run_gui(args.file,
+    _run_gui([args.file, *args.more_files] if args.file else [],
              no_save_prompts=args.no_save_prompts or args.testing,
              ai_echo=args.ai_echo, ai_prompt=args.ai, testing=args.testing)
 

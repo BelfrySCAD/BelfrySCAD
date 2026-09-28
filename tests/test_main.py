@@ -186,3 +186,25 @@ class TestEnsureStreams:
         log.add_entry("widget.scad", 8, 'Unrecognized block: "Bogus"', ErrorLog.FAIL)
         assert log.errlist == [("widget.scad", 8, 'Unrecognized block: "Bogus"', ErrorLog.FAIL)]
         assert log.has_errors
+
+
+def test_gui_gets_every_file_on_the_command_line(tmp_path, monkeypatch):
+    # OpenSCAD opens each as a tab; only the first used to reach the window.
+    import belfryscad.main as m
+    got = {}
+    monkeypatch.setattr(m, "_run_gui", lambda files, **kw: got.update(files=files))
+    monkeypatch.setattr("sys.argv", ["belfryscad", "--no-save-prompts", "a.scad", "b.scad", "c.scad"])
+    main()
+    assert got["files"] == ["a.scad", "b.scad", "c.scad"]
+
+
+def test_output_refuses_more_than_one_input(tmp_path, monkeypatch, capsys):
+    a, b = tmp_path / "a.scad", tmp_path / "b.scad"
+    a.write_text("cube(1);"); b.write_text("cube(2);")
+    out = tmp_path / "out.stl"
+    monkeypatch.setattr("sys.argv", ["belfryscad", "-o", str(out), str(a), str(b)])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    assert "takes one input file; got 2" in capsys.readouterr().err
+    assert not out.exists()

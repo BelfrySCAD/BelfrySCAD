@@ -1534,17 +1534,18 @@ class MainWindow(QMainWindow):
         # blank one that would display as a stray separator in the menu.
         #
         # NOT Ctrl+Alt+F (⌥⌘F, which is the macOS convention and what this
-        # first shipped as): Option rewrites the character it modifies -- ⌥F
-        # produces ƒ -- and the native menu bar's key equivalent then never
-        # matches, so the shortcut is displayed but silently dead. Confirmed
-        # on a real keyboard; the action itself was enabled and correctly
-        # bound, which is why no amount of inspecting it found the problem.
+        # first shipped as): on a real keyboard it was displayed but did
+        # nothing, although the action was enabled and correctly bound. Why is
+        # not known. It is NOT that Option rewrites the letter (⌥F types ƒ)
+        # and so defeats the menu bar -- that was the explanation given here,
+        # and Save All's ⌥⌘S, the same shape, works (checked on a real
+        # keyboard, 2026-09-28).
         act_replace.setShortcuts([s for s in (QKeySequence(QKeySequence.StandardKey.Replace),
                                                QKeySequence("Ctrl+Shift+F")) if not s.isEmpty()])
         # Ctrl+' (⌘' on macOS, Xcode's Jump to Next Issue), not OpenSCAD's
-        # Ctrl+Alt+E: Option rewrites E into a dead accent key on macOS, so the
-        # menu bar would never match it -- see Find & Replace above -- and
-        # Ctrl+Alt is AltGr on Windows, where Ctrl+Alt+E types a euro sign.
+        # Ctrl+Alt+E: Ctrl+Alt is AltGr on Windows, where Ctrl+Alt+E types a
+        # euro sign on many layouts. On macOS ⌥E is a dead accent key, which
+        # may or may not reach the menu bar; untested.
         self._add_action(edit_menu, "Jump to Next Error", self._jump_to_next_error, QKeySequence("Ctrl+'"))
         edit_menu.addSeparator()
         self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
