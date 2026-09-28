@@ -70,6 +70,20 @@ def _library_dir() -> Path:
     return Path.home() / "Documents" / "OpenSCAD" / "libraries"
 
 
+def show_library_folder() -> Path:
+    """Help ▸ Show Library Folder: open the folder `use <NAME/...>` finds
+    installed libraries in, in the platform's file manager. Created first if
+    it does not exist yet -- it is where a library gets put by hand, so a
+    missing folder is exactly when someone looks for it."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    folder = _library_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+    return folder
+
+
 def _load_catalog() -> list[dict]:
     with open(_LIBRARIES_JSON, encoding="utf-8") as f:
         return json.load(f)
