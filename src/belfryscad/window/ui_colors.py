@@ -77,6 +77,13 @@ def gutter_colors() -> tuple[str, str]:
     return ("#3A3A3A", "#FFFFFF") if is_dark() else ("#CCCCCC", "#000000")
 
 
+def bookmark_pill_colors() -> tuple[str, str]:
+    """(fill, digits) of the pill behind a bookmarked line's number. Blue,
+    to stay clear of the breakpoint dot's red beside it; white digits on
+    either fill are above 4.5:1."""
+    return ("#2F6DB5", "#FFFFFF") if is_dark() else ("#2A63A8", "#FFFFFF")
+
+
 def fold_arrow_color() -> str:
     """The gutter's fold triangles, which sit on `gutter_colors()[0]`."""
     return "#B0B0B0" if is_dark() else "#606060"

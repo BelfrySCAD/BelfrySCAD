@@ -1548,6 +1548,12 @@ class MainWindow(QMainWindow):
         # may or may not reach the menu bar; untested.
         self._add_action(edit_menu, "Jump to Next Error", self._jump_to_next_error, QKeySequence("Ctrl+'"))
         edit_menu.addSeparator()
+        # OpenSCAD's keys. Set from here only, never by clicking the gutter,
+        # whose left column toggles breakpoints.
+        self._add_action(edit_menu, "Toggle Bookmark", self._toggle_bookmark, QKeySequence("Ctrl+F2"))
+        self._add_action(edit_menu, "Next Bookmark", lambda: self._jump_to_bookmark(True), QKeySequence("F2"))
+        self._add_action(edit_menu, "Previous Bookmark", lambda: self._jump_to_bookmark(False), QKeySequence("Shift+F2"))
+        edit_menu.addSeparator()
         self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
         edit_menu.addAction(self._act_word_wrap)
@@ -1940,6 +1946,20 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if tab:
             self._docs_pane.refresh(tab.editor.toPlainText(), tab.file_path or "")
+
+    def _toggle_bookmark(self):
+        editor = self._current_editor()
+        if editor is not None:
+            editor.toggle_bookmark()
+
+    def _jump_to_bookmark(self, forward: bool):
+        editor = self._current_editor()
+        if editor is None:
+            return
+        if editor.jump_to_bookmark(forward):
+            editor.setFocus()
+        else:
+            self.statusBar().showMessage("No bookmarks in this tab. Edit ▸ Toggle Bookmark (Ctrl+F2) sets one.", 3000)
 
     def _jump_to_next_error(self):
         """Edit ▸ Jump to Next Error: put the cursor on the marked syntax
