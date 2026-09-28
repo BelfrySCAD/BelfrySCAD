@@ -1541,6 +1541,11 @@ class MainWindow(QMainWindow):
         # bound, which is why no amount of inspecting it found the problem.
         act_replace.setShortcuts([s for s in (QKeySequence(QKeySequence.StandardKey.Replace),
                                                QKeySequence("Ctrl+Shift+F")) if not s.isEmpty()])
+        # Ctrl+' (⌘' on macOS, Xcode's Jump to Next Issue), not OpenSCAD's
+        # Ctrl+Alt+E: Option rewrites E into a dead accent key on macOS, so the
+        # menu bar would never match it -- see Find & Replace above -- and
+        # Ctrl+Alt is AltGr on Windows, where Ctrl+Alt+E types a euro sign.
+        self._add_action(edit_menu, "Jump to Next Error", self._jump_to_next_error, QKeySequence("Ctrl+'"))
         edit_menu.addSeparator()
         self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
@@ -1934,6 +1939,21 @@ class MainWindow(QMainWindow):
         tab = self._current_tab()
         if tab:
             self._docs_pane.refresh(tab.editor.toPlainText(), tab.file_path or "")
+
+    def _jump_to_next_error(self):
+        """Edit ▸ Jump to Next Error: put the cursor on the marked syntax
+        error. OpenSCAD's cycles through its error markers, and only a parse
+        error ever sets one; here too there is at most one, so "next" is it."""
+        editor = self._current_editor()
+        pos = editor.error_position() if editor is not None else None
+        if pos is None:
+            self.statusBar().showMessage("No error to jump to.", 3000)
+            return
+        cursor = editor.textCursor()
+        cursor.setPosition(pos)
+        editor.setTextCursor(cursor)
+        editor.centerCursor()
+        editor.setFocus()
 
     def _goto_source_line(self, line: int):
         """Put the cursor on 1-based `line` of the current editor."""
