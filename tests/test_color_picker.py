@@ -35,29 +35,11 @@ def test_name_for():
     assert name_for(QColor("#123456")) is None
 
 
-def test_pale_tints_sort_with_the_neutrals_and_bands_run_dark_to_light():
+def test_hue_bands_run_dark_to_light():
     from belfryscad.window.color_picker import _PICKABLE_NAMES as names
-    # `snow` is nominally hue 0; it belongs with the pastels, not the reds.
-    assert names.index("hotpink") < names.index("snow") < names.index("black")
-    # The tinted whites are pastels, after the colours and before the greys.
-    pastels = names[names.index("snow"):names.index("black")]
-    for w in ("snow", "seashell", "linen", "oldlace", "floralwhite", "ivory",
-              "mintcream", "ghostwhite"):
-        assert w in pastels, w
-    for w in ("beige", "thistle", "mistyrose", "lightcyan", "lightyellow",
-              "antiquewhite", "cornsilk"):
-        assert w in pastels, w
-    for w in ("lemonchiffon", "lightgoldenrodyellow", "papayawhip", "lightsteelblue"):
-        assert w in pastels, w
-    # Low chroma but dim: a colour, not a pastel.
-    assert "rosybrown" not in pastels and "darkseagreen" not in pastels
-    assert "whitesmoke" not in pastels
-    # Greys are chroma 0 or named as one (the slate greys), dark to light.
-    greys = names[names.index("black"):]
-    assert greys == sorted(greys, key=lambda n: QColor(n).lightnessF())
-    assert {n for n in names if "gray" in n or "grey" in n} <= set(greys)
-    assert {"black", "white", "whitesmoke", "silver", "gainsboro"} <= set(greys)
-    # Within the red band, dark to light.
-    assert names.index("maroon") < names.index("red") < names.index("pink")
-    # A band stays together: the oranges do not interleave with the reds.
-    assert names.index("pink") < names.index("saddlebrown")
+    # Within the red band, dark to light; a tinted white at its light end.
+    assert names.index("maroon") < names.index("red") < names.index("snow")
+    # Bands stay together: the reds finish before the oranges start.
+    assert names.index("snow") < names.index("saddlebrown")
+    # No grey group: a hueless grey sorts in the red band by lightness.
+    assert names.index("black") < names.index("maroon") < names.index("white") < names.index("saddlebrown")

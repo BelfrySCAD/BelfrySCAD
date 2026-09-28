@@ -387,8 +387,14 @@ that the position maps back to the right character — is covered by
 
 `window/color_picker.py`. Right-clicking any literal the swatch recognises
 (same finder, same one-line rule) offers **Choose Color…**, a top-level item
-beside **Choose Font…**: a swatch, a **Name** combo of Qt's colour names
-(each with its own swatch; editable, so typing jumps through the list), a
+beside **Choose Font…**: a swatch, then the Color List's own table
+(`color_list.ColorTable`, shared by both) of every name `color()` takes -- the
+CSS names plus `rebeccapurple` and the 949 `xkcd:<name>`s, each with its
+swatch, hex and rgb -- with its filter, **Sort by** menu (Name, Hue,
+Saturation, Chroma, Lightness, Value, Luminance) and **Hide xkcd colors** box.
+Selecting a row picks that colour, double-clicking one picks it and saves, and
+the current colour's row stays selected (a hex typed or a native-panel colour
+selects its name if it has one). Then a
 **Hex** field taking `#rgb` or `#rrggbb`, and **Other Colors…** for the
 platform's native colour panel (`QColorDialog.getColor`, with an alpha slider
 only when the literal has an alpha). Save writes back through `replace_span` +
@@ -406,8 +412,16 @@ nothing.
   its alpha if it had four. Choosing `"red"` does not turn `[1, 0, 0]` into a
   string: a `thecolor = [...]` may be indexed or `concat()`ed elsewhere.
 
-`transparent` is left out of the name list: as an rgb it is black, so it
-would write a name that does not mean what the swatch shows.
+`transparent` is left out of the name list: its swatch would be black. A
+name literal shows its own name while the colour is unchanged, so
+`"xkcd:dark mint"` and `"cyan"` (which shares `aqua`'s rgb) open as themselves.
+
+Which string literals count as colours at all -- for the swatch, the picker and
+**Choose Color…** -- is `color_names.parse_color`, the GUI's copy of OpenSCAD's
+`parse_color` that openscad_cpp_evaluator >= 1.29.0 follows: CSS names,
+`transparent` (alpha 0), `xkcd:<name>`, and `#rgb` / `#rgba` / `#rrggbb` /
+`#rrggbbaa`, alpha last. Qt's own `#aarrggbb` reads alpha first, so hex is not
+left to `QColor.fromString`.
 
 ## Undo/Redo
 
@@ -1355,7 +1369,7 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 
 `window/about.py` holds both, and the version facts behind them as plain data (`about_info()` / `about_html()` / `about_text()`) so they test without a widget. The About action carries `MenuRole.AboutRole`, which moves it into the application menu on macOS where the platform expects it — the same treatment Preferences already gets with `PreferencesRole`; on Windows and Linux it stays under Help.
 
-The dialog leads with the version, because "mainly I want to know what version I'm running" is what issue #379 asked for, and lists **openscad_cpp_evaluator** beside it: geometry comes from there, it moves independently of the app, and a bug report needs both. A **Copy Versions** button puts the plain-text form on the clipboard so a version reaches an issue without being retyped. Documentation opens the wiki. **Font List** (`window/font_list.py`) lists every face `text()` can resolve — family, style, and the exact `font=` spec that selects it — with a live filter over family and style, sortable columns, and double-click (or the button) to copy the spec. Regular shows as the bare family, so what you copy is what you type. Families whose name starts with a dot — macOS's private system faces, which Font Book hides too — are left out of both the list and the picker (`is_private_family`, issue #402); `load_fonts()` is the one place both get their fonts, so the filter lives there and `text()` itself is unaffected. A **Sample** column (issue #388) paints a pangram plus the digits in each face, via a `QStyledItemDelegate` that registers the row's font file with Qt the first time that row is painted — nothing is pre-rendered, so opening the list costs nothing extra and only rows scrolled into view pay. The sentence is chosen per family by crc32, so a face keeps it across sorts, filters and sessions. The Qt-side face resolution (`qt_family_for`/`qt_font_for`, `font_picker.py`) is shared with the picker's live preview. **Color List** (`window/color_list.py`) is the same idea for `color()`: a window, not OpenSCAD's dock, listing every name `color()` accepts with a swatch, its hex and the `[r, g, b]` vector, in the colour picker's order -- colours in 30° hue bands dark to light, then pastels (tinted whites) round the wheel, then greys dark to light (`_hue_order`, `_PICKABLE_NAMES` — Qt's names, the table the evaluator's `css_colors.cpp` was generated from, minus `transparent`). Filter by name or hex; double-click or Copy Name puts the quoted name on the clipboard.
+The dialog leads with the version, because "mainly I want to know what version I'm running" is what issue #379 asked for, and lists **openscad_cpp_evaluator** beside it: geometry comes from there, it moves independently of the app, and a bug report needs both. A **Copy Versions** button puts the plain-text form on the clipboard so a version reaches an issue without being retyped. Documentation opens the wiki. **Font List** (`window/font_list.py`) lists every face `text()` can resolve — family, style, and the exact `font=` spec that selects it — with a live filter over family and style, sortable columns, and double-click (or the button) to copy the spec. Regular shows as the bare family, so what you copy is what you type. Families whose name starts with a dot — macOS's private system faces, which Font Book hides too — are left out of both the list and the picker (`is_private_family`, issue #402); `load_fonts()` is the one place both get their fonts, so the filter lives there and `text()` itself is unaffected. A **Sample** column (issue #388) paints a pangram plus the digits in each face, via a `QStyledItemDelegate` that registers the row's font file with Qt the first time that row is painted — nothing is pre-rendered, so opening the list costs nothing extra and only rows scrolled into view pay. The sentence is chosen per family by crc32, so a face keeps it across sorts, filters and sessions. The Qt-side face resolution (`qt_family_for`/`qt_font_for`, `font_picker.py`) is shared with the picker's live preview. **Color List** (`window/color_list.py`) is the same idea for `color()`: a window, not OpenSCAD's dock, listing all 1,097 names `color()` accepts (as OpenSCAD's `parse_color` and openscad_cpp_evaluator >= 1.29.0 read them) with a swatch, hex and `[r, g, b]`: the 147 CSS names of Qt's list (the colour picker's `_PICKABLE_NAMES`, less `transparent`, whose swatch would be a lie) plus `rebeccapurple`, which Qt never adopted, and the 949 xkcd survey names as `xkcd:<name>` (`window/xkcd_colors.py`, generated from OpenSCAD's `XkcdColors.h`, as the evaluator's table is). **Sort by** Name (on the bare name, so `red` and `xkcd:red` sit together), Hue (the picker's 30° hue bands, dark to light; a hueless grey counts as hue 0 -- Saturation is the sort that gathers the neutrals), Saturation (HSV -- HSL's rates near-whites fully saturated), Chroma (max − min of r, g, b), Lightness (HSL, (max + min) / 2), Value (HSV, max) or Luminance (WCAG relative luminance: how light it looks), low to high; ties fall back to hue. Filter by name or hex, and **Hide xkcd colors** to list only the CSS names; double-click or Copy Name puts the quoted name -- `"xkcd:dark mint"` for an xkcd one -- on the clipboard.
 
 It reads `openscad_cpp_evaluator.list_fonts()`, **not** Qt's `QFontDatabase`: the names a system font dialog shows are frequently not the names OpenSCAD takes, and that mismatch is the whole complaint the feature answers (*"All too often I specify an interesting font only to get the default Liberation Sans instead"*). The evaluator reports from the same FreeType index `text()`/`textmetrics()`/`fontmetrics()` match against.
 

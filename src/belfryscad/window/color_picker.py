@@ -21,13 +21,15 @@ the script.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+    QColorDialog, QDialog, QDialogButtonBox, QFormLayout,
     QFrame, QLineEdit, QPushButton, QVBoxLayout,
 )
 
 from belfryscad.window.color_literals import _HEX, color_for_name, name_for
+from belfryscad.window.color_list import ColorTable
+from belfryscad.window.color_names import _PICKABLE_NAMES  # noqa: F401 -- re-exported for tests
 
 
 def literal_for(original: str, color: QColor, spelling: str | None = None) -> str:
@@ -66,12 +68,20 @@ class ColorPickerDialog(QDialog):
     def __init__(self, original: str, color: QColor, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Choose Color")
+        self.resize(520, 640)
         self._original = original
         self._color = QColor(color)
         self._initial = QColor(color)
         self._spelling: str | None = None
         self._updating = False
         self._has_alpha = original.startswith("[") and original.count(",") >= 3
+        # A name literal shows its own name while the colour is unchanged:
+        # name_for() reverses only the CSS names, so "xkcd:dark mint" (or a
+        # CSS name sharing its rgb with another) would otherwise show blank
+        # or as the other name.
+        content = original[1:-1] if original.startswith('"') else ""
+        self._orig_name = content if content and not content.startswith("#") \
+            and color_for_name(content) is not None else None
 
         layout = QVBoxLayout(self)
         self._swatch = QFrame()
@@ -80,16 +90,13 @@ class ColorPickerDialog(QDialog):
         layout.addWidget(self._swatch)
 
         form = QFormLayout()
-        self._names = QComboBox()
-        self._names.setEditable(True)            # type to jump through 147 names
-        self._names.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self._names.addItem("")                  # shown when the colour has no name
-        for name in _PICKABLE_NAMES:
-            pm = QPixmap(14, 14)
-            pm.fill(QColor(name))
-            self._names.addItem(QIcon(pm), name)
-        self._names.textActivated.connect(self._on_name)
-        form.addRow("Name:", self._names)
+        # The Color List's table -- filter, Sort by, Hide xkcd colors -- over
+        # every name color() takes. Selecting a row picks that colour.
+        self._colors = ColorTable()
+        self._colors.current_changed.connect(self._on_name)
+        # Double-click = pick it and Save, as in any pick-from-a-list dialog.
+        self._colors.activated.connect(lambda name: (self._on_name(name), self.accept()))
+        layout.addWidget(self._colors, 1)
 
         self._hex = QLineEdit()
         self._hex.setPlaceholderText("#rgb or #rrggbb")
@@ -148,50 +155,18 @@ class ColorPickerDialog(QDialog):
             return
         self._updating = True
         try:
-            name = self._spelling if (self._spelling and not self._spelling.startswith("#")) \
-                else name_for(c)
-            self._names.setCurrentText(name or "")
+            if self._spelling and not self._spelling.startswith("#"):
+                name = self._spelling
+            elif self._orig_name and c == self._initial:
+                name = self._orig_name
+            else:
+                name = name_for(c)
+            self._colors.select(name)
             if not from_hex:
                 self._hex.setText(c.name(QColor.NameFormat.HexRgb))
         finally:
             self._updating = False
 
 
-
-#: Below this chroma (max - min of r, g, b), and at least this light, a
-#: colour reads as a tinted white rather than as its hue: `snow` is hue 0, but
-#: sorting it by that put it among the strong reds. The lightness floor keeps
-#: dim low-chroma colours (`rosybrown`, `darkseagreen`) with the colours.
-_PASTEL_CHROMA = 0.2
-_PASTEL_LIGHTNESS = 0.75
-
-
-def _hue_order(name: str):
-    """Three groups: colours, then pastels, then greys (chroma 0, or
-    named as one).
-
-    Colours go in twelve 30-degree hue bands around the wheel (red centred
-    on 0), dark to light within each -- bands rather than raw hue, since
-    sorted by exact hue, lightness only broke ties, so dark and light
-    alternated along any stretch of similar hues. Pastels (tinted whites,
-    all near-equally light) go round the wheel by exact hue. Greys go dark
-    to light."""
-    c = QColor(name)
-    r, g, b, _ = c.getRgbF()
-    chroma = max(r, g, b) - min(r, g, b)
-    # By name as well as by chroma: the slate greys carry a blue tint
-    # (chroma 0.125-0.133) but are named, and used, as greys.
-    if chroma == 0 or "gray" in name or "grey" in name:
-        return (2, 0, c.lightnessF())
-    if chroma < _PASTEL_CHROMA and c.lightnessF() >= _PASTEL_LIGHTNESS:
-        return (1, c.hsvHue(), c.lightnessF())
-    return (0, (c.hsvHue() + 15) % 360 // 30, c.lightnessF())
-
-
-#: Qt's names, minus `transparent` (as an rgb it is black, so it would write
-#: a name that does not mean what the swatch shows), in hue order: a list of
-#: 147 names read alphabetically puts `aliceblue` beside `antiquewhite`.
-_PICKABLE_NAMES = sorted((n for n in QColor.colorNames() if n != "transparent"),
-                         key=_hue_order)
 
 
