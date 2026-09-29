@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from belfryscad.window.color_names import SORT_KEYS, sorted_colors
@@ -41,6 +41,15 @@ def matches(row: tuple, needle: str) -> bool:
     """Case-insensitive substring over the name and hex."""
     needle = needle.casefold().strip()
     return not needle or needle in row[0] or needle in row[1]
+
+
+class _SwatchDelegate(QStyledItemDelegate):
+    """The swatch cell in its own colour, selected or not. The default
+    delegate paints a selected cell in the selection colour, so the one row
+    you were looking at showed the wrong colour."""
+
+    def paint(self, painter, option, index):
+        painter.fillRect(option.rect, index.data(Qt.ItemDataRole.BackgroundRole))
 
 
 class ColorTable(QWidget):
@@ -83,6 +92,7 @@ class ColorTable(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setItemDelegateForColumn(0, _SwatchDelegate(self._table))
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(_NAME_COL, QHeaderView.ResizeMode.Stretch)

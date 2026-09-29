@@ -103,3 +103,34 @@ print(json.dumps(out))
     assert out["hidden_xkcd"] == "0 of 1097 colors"
     assert out["css_only"] == "148 of 1097 colors"
     assert out["any_xkcd_visible"] is False
+
+
+def test_a_selected_rows_swatch_keeps_its_colour(tmp_path):
+    """The selection highlight must not paint over the swatch: it is the
+    one cell whose colour means something."""
+    driver = tmp_path / "_swatch.py"
+    driver.write_text("""
+import json
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.color_list import ColorTable
+t = ColorTable(); t.resize(500, 400); t.show()
+t._search.setText("red")
+t.select("red")
+app.processEvents()
+table = t._table
+row = table.currentRow()
+rect = table.visualItemRect(table.item(row, 0))
+img = table.viewport().grab().toImage()
+swatch = img.pixelColor(rect.center()).name()
+name_cell = img.pixelColor(table.visualItemRect(table.item(row, 1)).center()).name()
+print(json.dumps({"swatch": swatch, "expected": t._rows[row][3].name(), "name_cell": name_cell}))
+""", encoding="utf-8")
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                         env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                              "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["swatch"] == out["expected"] == "#ff0000"
+    # The rest of the row still shows it is selected.
+    assert out["name_cell"] != "#ffffff"
