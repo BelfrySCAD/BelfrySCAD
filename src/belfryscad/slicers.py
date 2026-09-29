@@ -13,7 +13,9 @@ question, and OctoPrint's own slicing is a dead end.
 from __future__ import annotations
 
 import glob
+import ntpath
 import os
+import posixpath
 import re
 import shutil
 import sys
@@ -83,15 +85,17 @@ def detect(platform: str | None = None, env=None, exists=os.path.exists, which=s
     for sid, name, bundles, win_paths, commands, flatpaks in _KNOWN:
         hit = None
         if platform == "darwin":
-            roots = ["/Applications", os.path.join(env.get("HOME", ""), "Applications")]
-            hit = next(((p, "app") for r in roots for b in bundles if exists(p := os.path.join(r, b))), None)
+            # posixpath/ntpath, not os.path: each branch describes one
+            # platform's layout, and the tests run every branch on every OS.
+            roots = ["/Applications", posixpath.join(env.get("HOME", ""), "Applications")]
+            hit = next(((p, "app") for r in roots for b in bundles if exists(p := posixpath.join(r, b))), None)
         elif platform.startswith("win"):
             roots = [env.get(k) for k in ("ProgramFiles", "ProgramFiles(x86)")]
             if env.get("LOCALAPPDATA"):
-                roots.append(os.path.join(env["LOCALAPPDATA"], "Programs"))
+                roots.append(ntpath.join(env["LOCALAPPDATA"], "Programs"))
             for root in filter(None, roots):
                 for pattern in win_paths:
-                    matches = sorted(globber(os.path.join(root, pattern)), key=_version_key)
+                    matches = sorted(globber(ntpath.join(root, pattern)), key=_version_key)
                     if matches:
                         hit = (matches[-1], "exe")   # the newest of several side-by-side installs
                         break
@@ -100,10 +104,10 @@ def detect(platform: str | None = None, env=None, exists=os.path.exists, which=s
         else:
             hit = next(((p, "exe") for c in commands if (p := which(c))), None)
             if hit is None:
-                homes = [os.path.join(env.get("HOME", ""), ".local/share/flatpak/exports/share/applications"),
+                homes = [posixpath.join(env.get("HOME", ""), ".local/share/flatpak/exports/share/applications"),
                          "/var/lib/flatpak/exports/share/applications"]
                 hit = next(((f, "flatpak") for f in flatpaks for h in homes
-                            if exists(os.path.join(h, f + ".desktop"))), None)
+                            if exists(posixpath.join(h, f + ".desktop"))), None)
         if hit:
             found.append(Slicer(sid, name, hit[0], hit[1]))
     return found

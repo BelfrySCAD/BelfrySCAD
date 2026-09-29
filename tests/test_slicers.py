@@ -1,5 +1,6 @@
 """Design ▸ Send to Slicer: detection, launch commands, and the send itself."""
 import json
+import ntpath
 import os
 import subprocess
 import sys
@@ -21,9 +22,9 @@ def test_windows_takes_the_newest_cura_and_looks_in_local_programs():
     env = {"ProgramFiles": r"C:\PF", "LOCALAPPDATA": r"C:\Users\me\AppData\Local"}
 
     def globber(pattern):
-        if pattern == os.path.join(r"C:\PF", r"UltiMaker Cura*\UltiMaker-Cura.exe"):
+        if pattern == ntpath.join(r"C:\PF", r"UltiMaker Cura*\UltiMaker-Cura.exe"):
             return [r"C:\PF\UltiMaker Cura 5.7.0\UltiMaker-Cura.exe", r"C:\PF\UltiMaker Cura 5.10.1\UltiMaker-Cura.exe"]
-        if pattern == os.path.join(r"C:\Users\me\AppData\Local", "Programs", r"OrcaSlicer\orca-slicer.exe"):
+        if pattern == ntpath.join(r"C:\Users\me\AppData\Local", "Programs", r"OrcaSlicer\orca-slicer.exe"):
             return [pattern]
         return []
     found = {s.id: s.path for s in slicers.detect("win32", env, globber=globber)}
