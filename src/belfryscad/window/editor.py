@@ -1,5 +1,7 @@
 import re
 
+from belfryscad.scad_templates import expand as expand_template
+
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
@@ -2352,6 +2354,40 @@ class CodeEditor(QPlainTextEdit):
         cursor.insertText(" " * (self._next_indent_stop(col) - col))
         self.setTextCursor(cursor)
 
+    def insert_template(self, content: str):
+        """Replace the selection (or insert at the caret) with a template,
+        one undo step, leaving the caret at its ^~^ marker. Continuation
+        lines take the current line's indentation, so a block inserted
+        inside a block lines up; tabs become this editor's indent."""
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        line = self.document().findBlock(start).text()
+        text, at = expand_template(content, " " * self._indent_size,
+                                   line[:len(line) - len(line.lstrip(" \t"))])
+        cursor.insertText(text)
+        # Qt positions count UTF-16 units, Python's len counts code points.
+        cursor.setPosition(start + len(text[:at].encode("utf-16-le")) // 2)
+        self.setTextCursor(cursor)
+
+    def show_template_menu(self):
+        """Edit > Insert Template: every template by name, in a popup at the
+        caret. A template file that would not load is reported on the
+        console, as OpenSCAD logs it, rather than silently missing."""
+        if self.isReadOnly():
+            return
+        from belfryscad.scad_templates import load
+        templates, _builtins, errors = load()
+        for e in errors:
+            self.print_to_console.emit(e)
+        menu = QMenu(self)
+        for key in sorted(templates, key=str.casefold):
+            act = menu.addAction(key)
+            act.triggered.connect(
+                lambda checked=False, c=templates[key].content: self.insert_template(c))
+        if not templates:
+            menu.addAction("(No templates)").setEnabled(False)
+        menu.exec(self.viewport().mapToGlobal(self.cursorRect().bottomLeft()))
+
     def _unindent_lines(self):
         # Mirror of _indent_lines: back to the previous stop, so an off-grid
         # line snaps onto the grid rather than staying off it.
@@ -3040,6 +3076,9 @@ class CodeEditor(QPlainTextEdit):
             use_act.triggered.connect(
                 lambda checked=False: self.use_library_requested.emit())
             menu.addAction(use_act)
+            tpl_act = QAction("Insert Template…", self)
+            tpl_act.triggered.connect(lambda checked=False: self.show_template_menu())
+            menu.addAction(tpl_act)
 
         # What the menu acts on is WHERE YOU CLICKED, not where the caret
         # happens to be. macOS moves the caret to a right-click and Windows
