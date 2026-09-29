@@ -23,7 +23,6 @@ def test_the_window_opens_recents_and_examples(tmp_path):
     driver = tmp_path / "_welcome.py"
     driver.write_text(f'''
 import json, tempfile
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
 from belfryscad.settings import app_settings, use_scratch_settings
@@ -31,9 +30,6 @@ use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-welcome-"), seed=False)
 app_settings().setValue("recentFiles", [{str(scad)!r}])
 from belfryscad.window.main_window import MainWindow
 w = MainWindow(); w.skip_unsaved_prompts = True
-from PySide6.QtWidgets import QMessageBox
-errors = []
-QMessageBox.critical = staticmethod(lambda *a, **k: errors.append(str(a[2:])))
 help_menu = next(m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))
                  if m.title().replace("&", "") == "Help")
 out = {{"in_help": "Welcome Screen…" in [a.text() for a in help_menu.actions()]}}
@@ -44,9 +40,6 @@ out["categories"] = [dlg.example_tree.topLevelItem(i).text(0)
                      for i in range(dlg.example_tree.topLevelItemCount())]
 dlg.recent_list.itemActivated.emit(dlg.recent_list.item(0))
 out["opened"] = str(w._current_tab().file_path)
-out["tabs"] = [str(w._tabs.widget(i).file_path) for i in range(w._tabs.count())]
-out["errors"] = errors
-out["recent_data"] = dlg.recent_list.item(0).data(Qt.ItemDataRole.UserRole)
 
 dlg = w.show_welcome()
 leaf = dlg.example_tree.topLevelItem(0).child(0)
@@ -65,13 +58,15 @@ print(json.dumps(out))
 ''', encoding="utf-8")  # the … in "Welcome Screen…"; Windows defaults to cp1252
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
-                              "HOME": str(tmp_path)})
+                              "HOME": str(tmp_path),
+                              # Path.home() on Windows reads USERPROFILE, not HOME
+                              "USERPROFILE": str(tmp_path)})
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
     assert out["in_help"]
     assert out["recents"] == ["mine.scad"]
     assert out["categories"] == [c for c, _ in example_categories()]
-    assert out["opened"] == str(scad.resolve()), json.dumps({k: out[k] for k in ("opened", "tabs", "errors", "recent_data")}) + res.stderr[-3000:]
+    assert out["opened"] == str(scad.resolve()), res.stderr  # a slot's exception only reaches stderr
     # An example opens as an untitled, editable copy, not the bundled file.
     assert out["example_tab_path"] is None
     assert out["example_suggested"] == example_categories()[0][1][0].name
