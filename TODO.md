@@ -113,8 +113,6 @@ is a commitment to build it — it is the list of what is not there.
 - **Development-snapshot update channel** (`AutoUpdater`'s snapshot option).
   The release check itself is done (see below); there is nothing to point a
   snapshot channel at until snapshots are published somewhere.
-- **Welcome/launching screen** (`LaunchingScreen`) — recent files and examples
-  on startup.
 
 **Done since this list was written:**
 
@@ -141,6 +139,8 @@ is a commitment to build it — it is the list of what is not there.
   to the release page, and there is no macOS installer to link to.
 - **Color List** (`ColorList`) — a Help ▸ Color List… window rather than a
   dock (`window/color_list.py`).
+- **Welcome screen** (`LaunchingScreen`) — recent files and examples at
+  startup, `window/welcome.py`; Help ▸ Welcome Screen… reopens it.
 
 **Decided against — do not re-propose:**
 
@@ -188,7 +188,7 @@ stepping are all present.
 - Preference toggles with no equivalent: bring window to front after automatic
   reload; play a sound on render complete; clear console before render; check
   parameter range for builtin modules; UI localization; docking/undocking helper
-  widgets into separate windows; always show welcome / export / print dialogs
+  widgets into separate windows; always show export / print dialogs
 
 Preferences has four tabs (Editor, Viewport, Render, AI) against OpenSCAD's seven
 pages, which is where most of that last group comes from.

@@ -132,6 +132,21 @@ def examples_dir() -> Path:
     return _EXAMPLES_DIR
 
 
+def example_categories() -> list[tuple[str, list[Path]]]:
+    """(category, example paths) from the bundled manifest, skipping any
+    file or category that is missing. Empty if the manifest is."""
+    try:
+        manifest = json.loads((examples_dir() / "examples.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for category, names in manifest.items():
+        paths = [p for p in (examples_dir() / category / n for n in names) if p.is_file()]
+        if paths:
+            out.append((category, paths))
+    return out
+
+
 def _fmt_elapsed(elapsed_ms: float) -> str:
     if elapsed_ms >= 1000:
         return f"({elapsed_ms / 1000:.3f}s)"
@@ -1788,6 +1803,7 @@ class MainWindow(QMainWindow):
         # read from the evaluator's own index (issue #379).
         self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
         self._add_action(help_menu, "Color List…", lambda: show_color_list(self))
+        self._add_action(help_menu, "Welcome Screen…", self.show_welcome)
         self._add_action(help_menu, "Show Library Folder", self._show_library_folder)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
@@ -2693,6 +2709,13 @@ class MainWindow(QMainWindow):
     def _open_recent(self, path: str):
         self.open_file_by_path(path)
 
+    def show_welcome(self):
+        from belfryscad.window.welcome import WelcomeDialog
+        recents = app_settings().value("recentFiles", [], type=list)
+        dlg = WelcomeDialog(self, recents, example_categories())
+        dlg.show()
+        return dlg
+
     def _clear_recent_files(self):
         settings = app_settings()
         settings.setValue("recentFiles", [])
@@ -3490,24 +3513,15 @@ class MainWindow(QMainWindow):
         """
         menu = self._examples_menu
         menu.clear()
-        try:
-            manifest = json.loads((examples_dir() / "examples.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            manifest = {}
-        found = False
-        for category, names in manifest.items():
-            paths = [examples_dir() / category / n for n in names]
-            paths = [p for p in paths if p.is_file()]
-            if not paths:
-                continue
+        categories = example_categories()
+        for category, paths in categories:
             sub = menu.addMenu(category)
             for path in paths:
                 act = sub.addAction(path.stem.replace("_", " "))
                 act.setStatusTip(str(path))
                 act.triggered.connect(
                     lambda checked=False, p=str(path): self._open_example(p))
-            found = True
-        if not found:
+        if not categories:
             act = menu.addAction("(No examples installed)")
             act.setEnabled(False)
 

@@ -286,6 +286,10 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     window.show()
     for path in files_to_open:
         window.open_file_by_path(path)
+    # Not under --testing: its launches are scripted, and the window would
+    # sit on top of whatever they came to look at.
+    if not files_to_open and not testing and app_settings().value("app/showWelcome", True, type=bool):
+        window.show_welcome()
     if not testing:
         # Never under --testing: a test launch must not reach the network.
         from PySide6.QtCore import QTimer

@@ -101,6 +101,8 @@ _DEFAULTS = {
     # Read once at launch, in main.py, before any window exists.
     "app/openInRunningInstance": True,
     "app/checkForUpdates": True,
+    # The Welcome window at startup, when no file was named to open.
+    "app/showWelcome": True,
     # The Customizer's "Automatic update" box (#397): a field change renders
     # 2s later. Off keeps the write-back and leaves rendering to F6.
     "customizer/autoUpdate": True,
@@ -272,6 +274,15 @@ class PreferencesDialog(QDialog):
         self._check_updates.toggled.connect(
             lambda v: self._emit("app/checkForUpdates", bool(v)))
         form.addRow("Updates:", self._check_updates)
+
+        # The Welcome window's own "Show this window at startup" box
+        self._show_welcome = QCheckBox("Show the Welcome window when BelfrySCAD starts without a file")
+        self._show_welcome.setChecked(
+            s.value("app/showWelcome", _DEFAULTS["app/showWelcome"], type=bool))
+        self._show_welcome.setToolTip("Help > Welcome Screen... opens it either way.")
+        self._show_welcome.toggled.connect(
+            lambda v: self._emit("app/showWelcome", bool(v)))
+        form.addRow("Startup:", self._show_welcome)
 
         self._tint_covered = QCheckBox("Coverage overlay also tints covered spans green")
         self._tint_covered.setChecked(
