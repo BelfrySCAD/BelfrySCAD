@@ -16,13 +16,19 @@ leave a fringe. Then writes:
 - resources/belfryscad-<N>.png       Linux (AppImage, Flatpak): 16-512px.
                                      briefcase looks for exactly these names and
                                      silently used its default icon without them
-- src/belfryscad/resources/logo.png  192px, the Welcome window's logo
+- src/belfryscad/resources/logo.png  192px (About-style uses of the logo)
+- src/belfryscad/resources/logo_mesh.npz  the model itself, per coloured body
+                                     (vertices, triangles, colour): the Welcome
+                                     window's logo is a live viewport drawing
+                                     this, so the app never has to parse or
+                                     evaluate anything to show it
 
 Downscales by repeated halving, since a single smooth scale from 1024 to 16
 samples too few source pixels and aliases.
 """
 from __future__ import annotations
 
+import hashlib
 import shutil
 import struct
 import subprocess
@@ -68,6 +74,29 @@ def _render(tmp: Path) -> QImage:
     rgba = np.dstack([np.clip(rgb, 0, 255), alpha * 255]).round().astype(np.uint8)
     img = QImage(rgba.tobytes(), MASTER, MASTER, MASTER * 4, QImage.Format.Format_RGBA8888)
     return img.copy()   # own the pixels; rgba goes out of scope
+
+
+def _bake_mesh(path: Path):
+    """The evaluated model's bodies as plain arrays, for the Welcome logo."""
+    from belfryscad.headless import _evaluate
+
+    result = _evaluate(str(SOURCE), {}, quiet=True)
+    if result is None:
+        sys.exit("evaluation failed")
+    arrays = {}
+    for i, b in enumerate(result[0]):
+        if b.tri_colors is not None or b.color is None:
+            sys.exit("the logo mesh needs one explicit color() per body")
+        mesh = b.body.to_mesh()
+        arrays[f"v{i}"] = np.asarray(mesh.vert_properties, dtype=np.float32)[:, :3]
+        arrays[f"t{i}"] = np.asarray(mesh.tri_verts, dtype=np.int32)
+        arrays[f"c{i}"] = np.asarray(b.color, dtype=np.float32)
+    # What it was baked from, so test_welcome can tell the icons are stale
+    # without re-rendering (the font the "B" uses exists only on macOS).
+    # Line endings normalised: git on Windows checks the file out as CRLF.
+    text = SOURCE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    arrays["source_sha256"] = np.array(hashlib.sha256(text.encode("utf-8")).hexdigest())
+    np.savez_compressed(path, **arrays)
 
 
 def _scaled(master: QImage, size: int) -> QImage:
@@ -118,6 +147,7 @@ def main():
     for s in (16, 32, 64, 128, 256, 512):
         _scaled(master, s).save(str(RES / f"belfryscad-{s}.png"))
     _scaled(master, 192).save(str(ROOT / "src" / "belfryscad" / "resources" / "logo.png"))
+    _bake_mesh(ROOT / "src" / "belfryscad" / "resources" / "logo_mesh.npz")
     print("icons written")
 
 
