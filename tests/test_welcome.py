@@ -23,6 +23,7 @@ def test_the_window_opens_recents_and_examples(tmp_path):
     driver = tmp_path / "_welcome.py"
     driver.write_text(f'''
 import json, tempfile
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
 from belfryscad.settings import app_settings, use_scratch_settings
@@ -40,6 +41,8 @@ out["categories"] = [dlg.example_tree.topLevelItem(i).text(0)
                      for i in range(dlg.example_tree.topLevelItemCount())]
 dlg.recent_list.itemActivated.emit(dlg.recent_list.item(0))
 out["opened"] = str(w._current_tab().file_path)
+out["tabs"] = [str(w._tabs.widget(i).file_path) for i in range(w._tabs.count())]
+out["recent_data"] = dlg.recent_list.item(0).data(Qt.ItemDataRole.UserRole)
 
 dlg = w.show_welcome()
 leaf = dlg.example_tree.topLevelItem(0).child(0)
@@ -64,7 +67,7 @@ print(json.dumps(out))
     assert out["in_help"]
     assert out["recents"] == ["mine.scad"]
     assert out["categories"] == [c for c, _ in example_categories()]
-    assert out["opened"] == str(scad.resolve())
+    assert out["opened"] == str(scad.resolve()), out
     # An example opens as an untitled, editable copy, not the bundled file.
     assert out["example_tab_path"] is None
     assert out["example_suggested"] == example_categories()[0][1][0].name
