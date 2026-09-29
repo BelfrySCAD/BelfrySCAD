@@ -148,7 +148,7 @@ The viewport always shows the last render's result; it stays static while the us
 
 **A PR does not bump the version.** Merge as many as accumulate at the same version number.
 
-**The bump belongs to the release.** When cutting one, set `version` in both `[project]` and `[tool.briefcase]` in `pyproject.toml` (kept identical), run `uv lock` to sync `uv.lock`'s pinned self-version, and commit that as its own change before tagging. Patch bump at minimum; use judgment for minor/major given everything the release covers — which is the point of bumping here rather than per PR, since the version can then describe the whole release instead of whichever change happened to land last.
+**The bump belongs to the release.** When cutting one, set `version` in both `[project]` and `[tool.briefcase]` in `pyproject.toml` (kept identical), set `VERSION` and `DATE` (today, ISO) in `src/belfryscad/release.py` -- the About and Welcome windows show that date, and `tests/test_release.py` fails if the version moves without it -- run `uv lock` to sync `uv.lock`'s pinned self-version, and commit that as its own change before tagging. Patch bump at minimum; use judgment for minor/major given everything the release covers — which is the point of bumping here rather than per PR, since the version can then describe the whole release instead of whichever change happened to land last.
 
 ### `briefcase update` leaves dependencies at their old versions
 
