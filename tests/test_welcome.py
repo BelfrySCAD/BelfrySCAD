@@ -38,7 +38,10 @@ dlg = w.show_welcome()
 out["recents"] = [dlg.recent_list.item(i).text() for i in range(dlg.recent_list.count())]
 out["categories"] = [dlg.example_tree.topLevelItem(i).text(0)
                      for i in range(dlg.example_tree.topLevelItemCount())]
-dlg.recent_list.itemActivated.emit(dlg.recent_list.item(0))
+out["open_recent_enabled_before"] = dlg.open_recent_btn.isEnabled()
+dlg.recent_list.setCurrentRow(0)
+out["open_recent_enabled_after"] = dlg.open_recent_btn.isEnabled()
+dlg.open_recent_btn.click()
 out["opened"] = str(w._current_tab().file_path)
 
 dlg = w.show_welcome()
@@ -50,7 +53,7 @@ out["example_suggested"] = tab.suggested_name
 out["example_has_text"] = bool(tab.editor.toPlainText().strip())
 
 dlg = w.show_welcome()
-dlg.show_at_startup.setChecked(False)
+dlg.dont_show.setChecked(True)
 out["pref"] = app_settings().value("app/showWelcome", True, type=bool)
 dlg.close()
 w.close()
@@ -66,6 +69,7 @@ print(json.dumps(out))
     assert out["in_help"]
     assert out["recents"] == ["mine.scad"]
     assert out["categories"] == [c for c, _ in example_categories()]
+    assert out["open_recent_enabled_before"] is False and out["open_recent_enabled_after"] is True
     assert out["opened"] == str(scad.resolve()), res.stderr  # a slot's exception only reaches stderr
     # An example opens as an untitled, editable copy, not the bundled file.
     assert out["example_tab_path"] is None
