@@ -71,7 +71,7 @@ print(json.dumps(out))
     assert out["in_help"]
     assert out["recents"] == ["mine.scad"]
     assert out["categories"] == [c for c, _ in example_categories()]
-    assert out["opened"] == str(scad.resolve()), json.dumps({k: out[k] for k in ("opened", "tabs", "errors", "recent_data")})
+    assert out["opened"] == str(scad.resolve()), json.dumps({k: out[k] for k in ("opened", "tabs", "errors", "recent_data")}) + res.stderr[-3000:]
     # An example opens as an untitled, editable copy, not the bundled file.
     assert out["example_tab_path"] is None
     assert out["example_suggested"] == example_categories()[0][1][0].name
