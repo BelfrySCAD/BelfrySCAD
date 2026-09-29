@@ -55,7 +55,7 @@ out["pref"] = app_settings().value("app/showWelcome", True, type=bool)
 dlg.close()
 w.close()
 print(json.dumps(out))
-''')
+''', encoding="utf-8")  # the … in "Welcome Screen…"; Windows defaults to cp1252
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
                               "HOME": str(tmp_path)})
