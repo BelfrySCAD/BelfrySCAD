@@ -31,6 +31,9 @@ use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-welcome-"), seed=False)
 app_settings().setValue("recentFiles", [{str(scad)!r}])
 from belfryscad.window.main_window import MainWindow
 w = MainWindow(); w.skip_unsaved_prompts = True
+from PySide6.QtWidgets import QMessageBox
+errors = []
+QMessageBox.critical = staticmethod(lambda *a, **k: errors.append(str(a[2:])))
 help_menu = next(m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))
                  if m.title().replace("&", "") == "Help")
 out = {{"in_help": "Welcome Screen…" in [a.text() for a in help_menu.actions()]}}
@@ -42,6 +45,7 @@ out["categories"] = [dlg.example_tree.topLevelItem(i).text(0)
 dlg.recent_list.itemActivated.emit(dlg.recent_list.item(0))
 out["opened"] = str(w._current_tab().file_path)
 out["tabs"] = [str(w._tabs.widget(i).file_path) for i in range(w._tabs.count())]
+out["errors"] = errors
 out["recent_data"] = dlg.recent_list.item(0).data(Qt.ItemDataRole.UserRole)
 
 dlg = w.show_welcome()
@@ -67,7 +71,7 @@ print(json.dumps(out))
     assert out["in_help"]
     assert out["recents"] == ["mine.scad"]
     assert out["categories"] == [c for c, _ in example_categories()]
-    assert out["opened"] == str(scad.resolve()), json.dumps({k: out[k] for k in ("opened", "tabs", "recent_data")})
+    assert out["opened"] == str(scad.resolve()), json.dumps({k: out[k] for k in ("opened", "tabs", "errors", "recent_data")})
     # An example opens as an untitled, editable copy, not the bundled file.
     assert out["example_tab_path"] is None
     assert out["example_suggested"] == example_categories()[0][1][0].name
