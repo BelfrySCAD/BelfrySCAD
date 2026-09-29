@@ -7,10 +7,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFont,
                            QIcon, QShortcut, QUndoCommand, QUndoGroup,
                            QUndoStack, QTextCursor)
-from PySide6.QtCore import (Qt, QSize, QSettings, QThread, QObject, QTimer, QUrl,
+from PySide6.QtCore import (Qt, QProcess, QSize, QSettings, QThread, QObject, QTimer, QUrl,
                             Signal, Slot)
 from belfryscad.settings import app_settings
 import os
+import tempfile
 import threading
 import time
 
@@ -40,7 +41,7 @@ from belfryscad.window.export_options import ask_export_options, export_kwargs
 from belfryscad.window.color_list import show_color_list
 from belfryscad.window.font_list import show_font_list
 from belfryscad.window.preferences import (PreferencesDialog, load_preference,
-                                           parse_guide_columns)
+                                           parse_guide_columns, save_preferences)
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
 from belfryscad.window.document_manager import get_document_manager
 
@@ -1571,6 +1572,11 @@ class MainWindow(QMainWindow):
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
+        # OpenSCAD's Design > 3D Print, and its key. A slicer is the one
+        # hand-off that reaches every printer -- see belfryscad/slicers.py.
+        self._add_action(design_menu, "Send to Slicer", self._send_to_slicer, QKeySequence("F8"))
+        self._add_action(design_menu, "Choose Slicer…", self._choose_slicer)
+        design_menu.addSeparator()
         # Tests are project-wide, not per-file, so this asks for a directory
         # rather than acting on the current tab. Coverage comes from a test
         # run or not at all -- see window/testing.py.
@@ -2776,6 +2782,92 @@ class MainWindow(QMainWindow):
             # that. Caught here so it reaches the user as the dialog every
             # other export problem gets, instead of a traceback on stderr.
             QMessageBox.critical(self, "Export Error", str(e))
+
+    def _current_slicer(self):
+        """The slicer chosen last time, if it is still there."""
+        from belfryscad import slicers
+        choice = load_preference("print/slicer", str)
+        if choice == "system":
+            return slicers.SYSTEM_DEFAULT
+        if choice == "custom":
+            path = load_preference("print/slicerPath", str)
+            return slicers.custom(path) if path and os.path.exists(path) else None
+        return next((s for s in slicers.detect() if s.id == choice), None)
+
+    def _choose_slicer(self):
+        """Design > Choose Slicer: the slicers found here, the system's
+        default app for .3mf, or any other application. Remembered for
+        Send to Slicer. Returns the choice, or None if cancelled."""
+        from PySide6.QtWidgets import QInputDialog
+        from belfryscad import slicers
+        options = slicers.detect() + [slicers.SYSTEM_DEFAULT]
+        other = "Other Application…"
+        names = [s.name for s in options] + [other]
+        current = self._current_slicer()
+        start = next((i for i, s in enumerate(options) if current and s.path == current.path and s.id == current.id), 0)
+        name, ok = QInputDialog.getItem(self, "Choose Slicer", "Send models to:", names, start, False)
+        if not ok:
+            return None
+        if name == other:
+            start_dir = "/Applications" if sys.platform == "darwin" else ""
+            path, _f = QFileDialog.getOpenFileName(
+                self, "Choose Slicer Application", start_dir,
+                "Applications (*.app)" if sys.platform == "darwin" else "")
+            if not path:
+                return None
+            chosen = slicers.custom(path)
+            save_preferences({"print/slicer": "custom", "print/slicerPath": path})
+        else:
+            chosen = options[names.index(name)]
+            save_preferences({"print/slicer": chosen.id})
+        self.statusBar().showMessage(f"Send to Slicer will use {chosen.name}.", 3000)
+        return chosen
+
+    def _send_to_slicer(self):
+        """Design > Send to Slicer (F8): export the current render as 3MF --
+        colour and separate parts, which Orca and Bambu Studio read as
+        multi-material -- to a temporary file, and open it in the chosen
+        slicer. Asks which slicer the first time."""
+        from belfryscad import slicers
+        from belfryscad.window.export_options import saved_values
+        if not self._bodies:
+            self._render()
+        if not self._bodies or self._geometry is None:
+            QMessageBox.warning(self, "Send to Slicer", "No geometry to send. Render first.")
+            return
+        if all(getattr(b, "flat_preview", False) for b in self._bodies):
+            QMessageBox.warning(self, "Send to Slicer",
+                                "This model is 2D. A slicer needs a 3D model: extrude it first.")
+            return
+        slicer = self._current_slicer() or self._choose_slicer()
+        if slicer is None:
+            return
+        # A folder of its own, left behind: the slicer reads the file after
+        # this returns, perhaps much later, so there is no moment to delete it.
+        name = os.path.basename(self._default_export_path()) or "model"
+        path = os.path.join(tempfile.mkdtemp(prefix="belfryscad-slicer-"), name + ".3mf")
+        tab = self._current_tab()
+        design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
+        try:
+            # The last 3MF export's choices (split pieces, one object per
+            # colour), so a send matches what an export would have written.
+            for problem in exporters.export_model(path, self._geometry,
+                                                   **export_kwargs(".3mf", saved_values(".3mf"), design)):
+                self.log(f"WARNING: export: {problem}")
+        except Exception as e:
+            QMessageBox.critical(self, "Send to Slicer", str(e))
+            return
+        argv = slicers.launch_command(slicer, path)
+        if argv is None:
+            ok = QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        else:
+            started = QProcess.startDetached(argv[0], argv[1:])
+            ok = started[0] if isinstance(started, tuple) else bool(started)
+        if ok:
+            self.log(f"Sent {name}.3mf to {slicer.name}.")
+        else:
+            QMessageBox.warning(self, "Send to Slicer",
+                                f"Could not start {slicer.name}. Design > Choose Slicer picks another.\n\n{path}")
 
     def _viewport_params(self) -> dict:
         """Snapshot camera state and animation time as OpenSCAD $vp*/$t special variables."""

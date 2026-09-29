@@ -101,8 +101,15 @@ is a commitment to build it — it is the list of what is not there.
 - **3D-mouse / game controller input** (`src/gui/input/`) — SpaceNavigator,
   HIDAPI, joystick, gamepad and DBus drivers, plus the Axis/Button/Mouse
   configuration pages in Preferences. Designed; see "Input devices" below.
-- **3D Print** (`PrintService`, `PrintInitDialog`, `ExternalToolInterface`) —
-  remote print services and handing the model off to a local slicer.
+- **Online print services** — the rest of OpenSCAD's 3D Print. The local
+  hand-off is done (Design ▸ Send to Slicer, which reaches every printer the
+  slicer knows); a service is a partnership question more than a coding one.
+  Researched 2026-09-29: there is no standard protocol, only per-service APIs.
+  Craftcloud's public v5 API needs no key (upload, then open its cart page);
+  Treatstock, PCBWay (whose KiCad plugin shows the keyless upload-and-redirect
+  shape they would need to offer us), JLC3DP and Sculpteo need a partner
+  agreement; Xometry has none. OpenSCAD's own "Print a Thing" goes through
+  OpenSCAD's proxy and is not ours to use.
 - **Development-snapshot update channel** (`AutoUpdater`'s snapshot option).
   The release check itself is done (see below); there is nothing to point a
   snapshot channel at until snapshots are published somewhere.
@@ -161,8 +168,8 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Design menu
 
-- 3D Print
-  (`Display CSG Tree` is covered by `Dump CSG Tree to Console`)
+Nothing left: 3D Print is Send to Slicer (online services above), and
+`Display CSG Tree` is covered by `Dump CSG Tree to Console`.
 
 ### View and viewport
 
