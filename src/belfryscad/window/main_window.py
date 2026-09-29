@@ -2266,12 +2266,15 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentIndex(idx)
         return tab
 
-    def _open_file(self):
+    def _choose_files(self, parent=None) -> list[str]:
         # Several at once, one tab each, as OpenSCAD's own Open does (#392).
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Open Files", "", "OpenSCAD Files (*.scad);;All Files (*)"
+            parent or self, "Open Files", "", "OpenSCAD Files (*.scad);;All Files (*)"
         )
-        for path in paths:
+        return paths
+
+    def _open_file(self):
+        for path in self._choose_files():
             self.open_file_by_path(path)
 
     def open_file_by_path(self, path: str, render: bool = True):
@@ -2281,6 +2284,10 @@ class MainWindow(QMainWindow):
         rather than working on it -- stepping the selection into a library
         must not replace the geometry the selection belongs to.
         """
+        # A file arriving any other way (Finder, a second launch handing its
+        # file over) bypasses the startup Welcome window.
+        if self._startup_welcome is not None:
+            self._startup_welcome.close()
         resolved = str(Path(path).resolve())
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -2714,12 +2721,31 @@ class MainWindow(QMainWindow):
     def _open_recent(self, path: str):
         self.open_file_by_path(path)
 
-    def show_welcome(self):
+    #: The Welcome window shown at startup INSTEAD of this one, until it is
+    #: dismissed or bypassed; None once this window is showing.
+    _startup_welcome = None
+
+    def show_welcome(self, startup: bool = False):
+        """Help > Welcome Screen..., or with `startup`, the Welcome window
+        shown in place of this one: this window appears only when Welcome
+        closes -- by any of its buttons, its close box, or a file opened
+        some other way (open_file_by_path closes it)."""
         from belfryscad.window.welcome import WelcomeDialog
         recents = app_settings().value("recentFiles", [], type=list)
-        dlg = WelcomeDialog(self, recents, example_categories())
+        dlg = WelcomeDialog(self, recents, example_categories(), startup=startup)
+        if startup:
+            self._startup_welcome = dlg
+            dlg.finished.connect(self._end_startup_welcome)
         dlg.show()
         return dlg
+
+    def _end_startup_welcome(self, *_):
+        if self._startup_welcome is None:
+            return
+        self._startup_welcome = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _clear_recent_files(self):
         settings = app_settings()

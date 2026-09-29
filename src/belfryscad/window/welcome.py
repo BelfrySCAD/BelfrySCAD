@@ -83,9 +83,14 @@ class WelcomeDialog(QDialog):
     open_file_by_path (recent files) and _open_example (examples, which
     open as an editable copy)."""
 
-    def __init__(self, window, recents: list[str], examples: list[tuple[str, list[Path]]]):
+    def __init__(self, window, recents: list[str], examples: list[tuple[str, list[Path]]],
+                 startup: bool = False):
+        # Parented to the main window even at startup, while that is still
+        # hidden: on macOS that keeps its menu bar, and so Quit and the other
+        # shortcuts, working while this is the only window up.
         super().__init__(window)
         self._window = window
+        self._startup = startup
         self.setWindowTitle("Welcome to BelfrySCAD")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setStyleSheet(_STYLE)
@@ -110,9 +115,11 @@ class WelcomeDialog(QDialog):
 
         # -- left column: New / Open / Help, then the recent files
         new_btn = QPushButton("New")
-        new_btn.clicked.connect(lambda: self._then(window._new_document))
+        # At startup the main window already holds an empty document, so New
+        # just goes to it rather than adding a second.
+        new_btn.clicked.connect(self.close if startup else lambda: self._then(window._new_document))
         open_btn = QPushButton("Open")
-        open_btn.clicked.connect(lambda: self._then(window._open_file))
+        open_btn.clicked.connect(self._open_files)
         help_btn = QPushButton("Help")
         help_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(DOCS_URL)))
         top_buttons = QHBoxLayout()
@@ -265,8 +272,15 @@ class WelcomeDialog(QDialog):
         if path:   # a category row just expands/collapses
             self._then(lambda: self._window._open_example(path))
 
+    def _open_files(self):
+        """Open's file dialog, over this window. Cancelling it leaves Welcome
+        up, as OpenSCAD's does, instead of dropping into an empty editor."""
+        paths = self._window._choose_files(self)
+        if paths:
+            self._then(lambda: [self._window.open_file_by_path(p) for p in paths])
+
     def _then(self, action):
-        # Close first: Open raises its own file dialog, which should not
-        # appear behind this one.
+        # Close first: at startup that is what shows the main window, which
+        # the action then works in.
         self.close()
         action()

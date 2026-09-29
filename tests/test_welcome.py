@@ -95,3 +95,59 @@ def test_the_logo_mesh_and_icons_were_made_from_the_current_scad():
         "resources/belfryscad.scad changed: run `uv run python scripts/make_icons.py`")
     bodies = [k for k in data.files if k.startswith("v")]
     assert bodies and all(len(data["t" + k[1:]]) and data["c" + k[1:]].shape == (4,) for k in bodies)
+
+
+def test_at_startup_the_main_window_waits_for_welcome(tmp_path):
+    """The main window appears only once Welcome is dismissed or bypassed."""
+    scad = tmp_path / "mine.scad"
+    scad.write_text("cube(1);\n")
+    driver = tmp_path / "_startup.py"
+    driver.write_text(f'''
+import json, tempfile
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-startup-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+out = {{}}
+
+def fresh():
+    w = MainWindow(); w.skip_unsaved_prompts = True
+    return w, w.show_welcome(startup=True)
+
+# Dismissed by its close box.
+w, dlg = fresh()
+out["hidden_while_up"] = not w.isVisible() and dlg.isVisible()
+dlg.close()
+out["shown_after_close"] = w.isVisible()
+w.close()
+
+# New at startup goes to the empty document already there.
+w, dlg = fresh()
+tabs = w._tabs.count()
+next(b for b in dlg.findChildren(type(dlg.open_recent_btn)) if b.text() == "New").click()
+out["new_shows"] = w.isVisible()
+out["new_adds_no_tab"] = w._tabs.count() == tabs
+w.close()
+
+# Open, cancelled: Welcome stays, the main window stays hidden.
+w, dlg = fresh()
+w._choose_files = lambda parent=None: []
+dlg._open_files()
+out["cancel_keeps_welcome"] = dlg.isVisible() and not w.isVisible()
+# Then bypassed: a file arrives from elsewhere (Finder, a second launch).
+w.open_file_by_path({str(scad)!r}, render=False)
+out["bypass_shows"] = w.isVisible() and not dlg.isVisible()
+out["bypass_opened"] = str(w._current_tab().file_path)
+w.close()
+print(json.dumps(out))
+''', encoding="utf-8")
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                         env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                              "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["hidden_while_up"] and out["shown_after_close"]
+    assert out["new_shows"] and out["new_adds_no_tab"]
+    assert out["cancel_keeps_welcome"]
+    assert out["bypass_shows"] and out["bypass_opened"] == str(scad.resolve())
