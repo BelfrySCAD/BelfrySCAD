@@ -91,3 +91,54 @@ def test_bookmarks():
     assert out["after_delete"] == [5, 11, 16]
     assert out["after_set_plain"] and out["after_select_all"]
     assert out["pill_on_mark"] and not out["pill_off_mark"]
+
+
+BREAKPOINT_DRIVER = '''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QTextCursor
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
+from belfryscad.window.main_window import MainWindow
+w = MainWindow(); w.skip_unsaved_prompts = True
+w._render = lambda *a, **k: None
+d = tempfile.mkdtemp(); path = os.path.join(d, "bp.scad")
+open(path, "w").write("\\n".join(f"line{i:02d} = {i};" for i in range(12)))
+w.open_file_by_path(path)
+tab = w._current_tab(); ed = tab.editor
+seen = []
+ed.breakpoints_changed.connect(lambda lines: seen.append(sorted(lines)))
+ed.toggle_breakpoint(4); ed.toggle_breakpoint(8)
+out = {"set": sorted(ed.breakpoint_lines())}
+seen.clear()
+c = ed.textCursor(); c.setPosition(0); c.insertText("a = 1;\\nb = 2;\\n")
+out["moved"] = sorted(ed.breakpoint_lines())
+out["text"] = [ed.document().findBlockByNumber(n).text() for n in sorted(ed.breakpoint_lines())]
+out["signalled"] = list(seen)
+seen.clear()
+c = ed.textCursor(); c.setPosition(ed.document().findBlockByNumber(0).position() + 3); c.insertText("  ")
+out["same_line_edit_signals"] = list(seen)
+out["collected"] = sorted(next(iter(w._collect_breakpoints().values())))
+ed.setPlainText(ed.toPlainText())
+out["after_set_plain"] = sorted(ed.breakpoint_lines())
+print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+'''
+
+
+def test_breakpoints_follow_their_lines():
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    proc = subprocess.run([sys.executable, "-c", BREAKPOINT_DRIVER], capture_output=True, text=True, env=env,
+                          timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["set"] == [4, 8]
+    # Two lines inserted above: the breakpoints stay on their code, and a
+    # running debug session is told (it would otherwise stop on the old lines).
+    assert out["moved"] == [6, 10]
+    assert out["text"] == ["line04 = 4;", "line08 = 8;"]
+    assert out["signalled"] == [[6, 10]]
+    assert out["same_line_edit_signals"] == []          # no move, no signal
+    assert out["collected"] == [7, 11]                  # 1-indexed, for the debugger
+    assert out["after_set_plain"] == [6, 10]

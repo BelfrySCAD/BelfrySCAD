@@ -370,6 +370,51 @@ class LineNumberArea(QWidget):
                 ed.toggle_breakpoint(block.blockNumber())
 
 
+class _LineMarks:
+    """Marked lines that stay on their text: a cursor anchored at each, so
+    a mark moves as lines are added or removed above it, and deleting a
+    marked line folds its mark into the neighbour. Bookmarks and
+    breakpoints are both these.
+
+    A whole-document replace (setPlainText, a select-all insert) would
+    collapse every cursor to the top, so the lines as of the last edit are
+    kept too, and re-anchored on. setPlainText arrives as two changes --
+    everything removed, then the new text -- so that waits until there is
+    text to anchor in."""
+
+    def __init__(self, document):
+        self._doc = document
+        self._cursors: list[QTextCursor] = []
+        self._lines: list[int] = []
+        self._pending = False
+
+    def lines(self) -> list[int]:
+        """0-indexed block numbers, ascending."""
+        return sorted({c.blockNumber() for c in self._cursors})
+
+    def toggle(self, line: int):
+        kept = [c for c in self._cursors if c.blockNumber() != line]
+        if len(kept) == len(self._cursors):
+            kept.append(QTextCursor(self._doc.findBlockByNumber(line)))
+        self._cursors = kept
+        self._lines = self.lines()
+
+    def document_changed(self, whole: bool) -> bool:
+        """Follow an edit. True if the marked lines changed."""
+        if not self._cursors:
+            return False
+        if whole:
+            self._pending = True
+        if self._pending:
+            if self._doc.characterCount() <= 1:
+                return False
+            last = self._doc.blockCount() - 1
+            self._cursors = [QTextCursor(self._doc.findBlockByNumber(min(n, last))) for n in self._lines]
+            self._pending = False
+        before, self._lines = self._lines, self.lines()
+        return self._lines != before
+
+
 _OPENERS = "([{"
 _CLOSERS = ")]}"
 
@@ -1377,17 +1422,13 @@ class CodeEditor(QPlainTextEdit):
         self._update_completer_words()
 
         self._debug_locals: dict | None = None
-        self._breakpoints: set[int] = set()  # 0-indexed block numbers
-        # Bookmarks (Edit menu, Ctrl+F2 / F2 / Shift+F2): a cursor anchored at
-        # each marked line, so the mark moves with its text as lines are
-        # added or removed above it. A whole-document replace (setPlainText,
-        # a select-all insert) would collapse every cursor to the top, so the
-        # lines as of the last edit are kept too, to re-anchor on.
-        self._bookmarks: list[QTextCursor] = []
-        self._bookmark_lines: list[int] = []
-        self._bookmarks_pending = False
+        # Bookmarks (Edit menu, Ctrl+F2 / F2 / Shift+F2) and breakpoints (the
+        # gutter's left column): both stay on their text as lines are added
+        # or removed above them -- see _LineMarks.
+        self._bookmarks = _LineMarks(self.document())
+        self._breakpoint_marks = _LineMarks(self.document())
         self._doc_chars = self.document().characterCount()
-        self.document().contentsChange.connect(self._track_bookmarks)
+        self.document().contentsChange.connect(self._track_marks)
 
         self._fold_regions: dict[int, int] = {}
         self._folded: set[int] = set()
@@ -1544,11 +1585,12 @@ class CodeEditor(QPlainTextEdit):
         bp_w = self._BP_W
         num_w = self._line_number_area.width() - 16 - bp_w
         bookmarked = set(self.bookmark_lines())
+        breakpoints = self.breakpoint_lines()
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 # Breakpoint dot
-                if block_number in self._breakpoints:
+                if block_number in breakpoints:
                     r = min(bp_w, lh) // 2 - 2
                     if r > 0:
                         cx = bp_w // 2
@@ -2581,16 +2623,11 @@ class CodeEditor(QPlainTextEdit):
 
     def bookmark_lines(self) -> list[int]:
         """Bookmarked lines, 0-indexed block numbers, ascending."""
-        return sorted({c.blockNumber() for c in self._bookmarks})
+        return self._bookmarks.lines()
 
     def toggle_bookmark(self):
         """Mark or unmark the cursor's line."""
-        line = self.textCursor().blockNumber()
-        kept = [c for c in self._bookmarks if c.blockNumber() != line]
-        if len(kept) == len(self._bookmarks):
-            kept.append(QTextCursor(self.document().findBlockByNumber(line)))
-        self._bookmarks = kept
-        self._bookmark_lines = self.bookmark_lines()
+        self._bookmarks.toggle(self.textCursor().blockNumber())
         self._line_number_area.update()
 
     def jump_to_bookmark(self, forward: bool = True) -> bool:
@@ -2612,32 +2649,23 @@ class CodeEditor(QPlainTextEdit):
         self.centerCursor()
         return True
 
-    def _track_bookmarks(self, position: int, removed: int, _added: int):
+    def _track_marks(self, position: int, removed: int, _added: int):
         whole = position == 0 and self._doc_chars > 1 and removed >= self._doc_chars - 1
         self._doc_chars = self.document().characterCount()
-        if not self._bookmarks:
-            return
-        # setPlainText arrives as two changes -- everything removed, then the
-        # new text inserted -- so re-anchor once there is text to anchor in,
-        # not on the empty document in between.
-        if whole:
-            self._bookmarks_pending = True
-        if self._bookmarks_pending:
-            if self._doc_chars <= 1:
-                return
-            last = self.document().blockCount() - 1
-            self._bookmarks = [QTextCursor(self.document().findBlockByNumber(min(n, last)))
-                               for n in self._bookmark_lines]
-            self._bookmarks_pending = False
-        self._bookmark_lines = self.bookmark_lines()
+        self._bookmarks.document_changed(whole)
+        if self._breakpoint_marks.document_changed(whole):
+            # A running debug session is told, or it would stop on the line
+            # the breakpoint USED to be on.
+            self.breakpoints_changed.emit(self.breakpoint_lines())
+
+    def breakpoint_lines(self) -> set[int]:
+        """Lines with a breakpoint, 0-indexed block numbers."""
+        return set(self._breakpoint_marks.lines())
 
     def toggle_breakpoint(self, block_number: int):
-        if block_number in self._breakpoints:
-            self._breakpoints.discard(block_number)
-        else:
-            self._breakpoints.add(block_number)
+        self._breakpoint_marks.toggle(block_number)
         self._line_number_area.update()
-        self.breakpoints_changed.emit(self._breakpoints)
+        self.breakpoints_changed.emit(self.breakpoint_lines())
 
     def scroll_to_line(self, line: int, margin: int = 5):
         """Scroll so that *line* (1-indexed) is visible with *margin* lines of context."""
