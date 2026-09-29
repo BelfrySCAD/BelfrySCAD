@@ -31,6 +31,8 @@ from belfryscad.window.about import DOCS_URL, about_info
 SHOW_KEY = "app/showWelcome"
 _PATH = Qt.ItemDataRole.UserRole
 _LOGO = Path(__file__).parent.parent / "resources" / "logo.png"
+_LOGO_MESH = Path(__file__).parent.parent / "resources" / "logo_mesh.npz"
+_LOGO_SIZE = 96
 # The olive of the logo's cube, for "Belfry" as OpenSCAD colours its "Open".
 _OLIVE = "#8a8412"
 
@@ -43,6 +45,37 @@ QPushButton:disabled { color: #f4f4f4; border-color: #a8a8a8;
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #cfcfcf, stop:1 #b4b4b4); }
 QListWidget, QTreeWidget { background: transparent; border: none; }
 """
+
+
+class _Mesh:
+    """The slice of a Manifold mesh SceneRenderer reads: vertices, triangles
+    and one run covering every triangle."""
+
+    def __init__(self, verts, tris):
+        self.vert_properties = verts
+        self.tri_verts = tris
+        self.run_original_id = [0]
+        self.run_index = [0, 3 * len(tris)]
+
+
+class _ColoredMesh:
+    """A ColoredBody-shaped wrapper around baked arrays, for load_geometry."""
+
+    tri_colors = None
+    flat_preview = False
+    role = "normal"
+
+    def __init__(self, verts, tris, color):
+        self.verts = verts
+        self._mesh = _Mesh(verts, tris)
+        self.body = self
+        self.color = color
+
+    def is_empty(self):
+        return len(self._mesh.tri_verts) == 0
+
+    def to_mesh(self):
+        return self._mesh
 
 
 class WelcomeDialog(QDialog):
@@ -60,14 +93,7 @@ class WelcomeDialog(QDialog):
         info = about_info()
 
         # -- header: logo, name, tagline
-        logo = QLabel()
-        pix = QPixmap(str(_LOGO))
-        if not pix.isNull():
-            ratio = self.devicePixelRatioF()
-            pix = pix.scaled(int(96 * ratio), int(96 * ratio), Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
-            pix.setDevicePixelRatio(ratio)
-            logo.setPixmap(pix)
+        logo = self._logo_viewport() or self._logo_image()
         title = QLabel(f"<span style='font-size:22pt; font-weight:bold'>"
                        f"<span style='color:{_OLIVE}'>Belfry</span>SCAD</span>")
         tagline = QLabel(info["description"])
@@ -161,6 +187,59 @@ class WelcomeDialog(QDialog):
         layout.addLayout(grid, 1)
         layout.addSpacing(20)
         layout.addLayout(footer)
+
+    def _logo_image(self) -> QLabel:
+        logo = QLabel()
+        pix = QPixmap(str(_LOGO))
+        if not pix.isNull():
+            ratio = self.devicePixelRatioF()
+            pix = pix.scaled(int(_LOGO_SIZE * ratio), int(_LOGO_SIZE * ratio),
+                             Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pix.setDevicePixelRatio(ratio)
+            logo.setPixmap(pix)
+        return logo
+
+    def _logo_viewport(self):
+        """The logo as a live 3D view of the icon's own model, which sits
+        there looking like the picture until someone drags it.
+
+        The ordinary Viewport, axes and overlays off, in the Daylight Gem
+        theme -- but on the dialog's own background, so it has no visible
+        edge. Drawn from logo_mesh.npz (scripts/make_icons.py bakes it with
+        the icons), so showing it never runs the parser or evaluator, which
+        must not run beside a render. Named `_logo_view` and not `_vp`:
+        MainWindow re-themes every top-level window's `_vp` to the user's
+        theme when preferences change. None if the mesh cannot be read."""
+        try:
+            import numpy as np
+            from belfryscad.window.color_themes import COLOR_THEMES
+            from belfryscad.window.viewport import Viewport
+
+            data = np.load(_LOGO_MESH)
+            bodies = [_ColoredMesh(data[f"v{i}"], data[f"t{i}"], tuple(data[f"c{i}"]))
+                      for i in range(sum(1 for k in data.files if k.startswith("v")))]
+        except Exception:     # a missing or unreadable file costs the joke, nothing else
+            return None
+        vp = Viewport(self, selectable=False)
+        vp.setFixedSize(_LOGO_SIZE, _LOGO_SIZE)
+        vp.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        vp._persp_btn.hide()      # the one overlay a plain Viewport always shows
+        r = vp._renderer
+        theme = COLOR_THEMES["Daylight Gem"]
+        r._default_color = theme["object"]
+        r.axes_color = theme["axes"]
+        base = self.palette().base().color()
+        r.bg_color = (base.redF(), base.greenF(), base.blueF(), 1.0)
+        r.show_axes = r.show_crosshairs = r.show_scale_markers = r.show_edges = False
+        verts = np.concatenate([b.verts for b in bodies])
+        lo, hi = verts.min(axis=0), verts.max(axis=0)
+
+        def load():
+            vp.load_geometry(bodies)
+            vp.frame_scene(lo, hi)
+        vp.schedule_load(load)
+        self._logo_view = vp
+        return vp
 
     def paintEvent(self, event):
         """The base colour, with the window colour swept up across the lower
