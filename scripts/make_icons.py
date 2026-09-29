@@ -93,7 +93,9 @@ def _bake_mesh(path: Path):
         arrays[f"c{i}"] = np.asarray(b.color, dtype=np.float32)
     # What it was baked from, so test_welcome can tell the icons are stale
     # without re-rendering (the font the "B" uses exists only on macOS).
-    arrays["source_sha256"] = np.array(hashlib.sha256(SOURCE.read_bytes()).hexdigest())
+    # Line endings normalised: git on Windows checks the file out as CRLF.
+    text = SOURCE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    arrays["source_sha256"] = np.array(hashlib.sha256(text.encode("utf-8")).hexdigest())
     np.savez_compressed(path, **arrays)
 
 

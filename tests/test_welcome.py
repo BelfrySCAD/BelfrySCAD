@@ -89,7 +89,9 @@ def test_the_logo_mesh_and_icons_were_made_from_the_current_scad():
 
     data = np.load(welcome._LOGO_MESH)
     source = Path(__file__).parent.parent / "resources" / "belfryscad.scad"
-    assert str(data["source_sha256"]) == hashlib.sha256(source.read_bytes()).hexdigest(), (
+    # As make_icons.py hashes it: git on Windows checks the file out as CRLF.
+    text = source.read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert str(data["source_sha256"]) == hashlib.sha256(text.encode("utf-8")).hexdigest(), (
         "resources/belfryscad.scad changed: run `uv run python scripts/make_icons.py`")
     bodies = [k for k in data.files if k.startswith("v")]
     assert bodies and all(len(data["t" + k[1:]]) and data["c" + k[1:]].shape == (4,) for k in bodies)
