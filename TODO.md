@@ -139,6 +139,10 @@ is a commitment to build it — it is the list of what is not there.
   to the release page, and there is no macOS installer to link to.
 - **Color List** (`ColorList`) — a Help ▸ Color List… window rather than a
   dock (`window/color_list.py`).
+- **Insert Template** (Edit menu, Alt+Ins, and the editor's right-click
+  menu), in OpenSCAD's JSON format and OpenSCAD's user folder, so templates
+  are shared both ways; plus Edit ▸ Manage Templates…, which OpenSCAD lacks
+  (`scad_templates.py`, `window/template_manager.py`).
 - **Welcome screen** (`LaunchingScreen`) — recent files and examples at
   startup, `window/welcome.py`; Help ▸ Welcome Screen… reopens it.
 
@@ -164,7 +168,7 @@ is a commitment to build it — it is the list of what is not there.
 
 ### Edit menu
 
-- Insert Template
+Nothing left: Insert Template is done (see above).
 
 ### Design menu
 

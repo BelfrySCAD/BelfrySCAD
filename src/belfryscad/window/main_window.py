@@ -1534,6 +1534,11 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Move Line Down", lambda: self._move_lines(1), QKeySequence("Alt+Down"))
         self._add_action(edit_menu, "Convert Tabs to Spaces", self._convert_tabs_to_spaces)
         edit_menu.addSeparator()
+        # OpenSCAD's Alt+Ins. Macs have no Insert key; the menu and the
+        # editor's right-click menu reach it there.
+        self._add_action(edit_menu, "Insert Template…", self._insert_template, QKeySequence("Alt+Ins"))
+        self._add_action(edit_menu, "Manage Templates…", self._manage_templates)
+        edit_menu.addSeparator()
         self._add_action(edit_menu, "Increase Font Size", self._font_size_increase, QKeySequence("Ctrl++"))
         self._add_action(edit_menu, "Decrease Font Size", self._font_size_decrease, QKeySequence("Ctrl+-"))
         edit_menu.addSeparator()
@@ -4848,6 +4853,22 @@ class MainWindow(QMainWindow):
             cursor = tab.editor.textCursor()
             cursor.setPosition(min(cursor_pos, len(new_source)))
             tab.editor.setTextCursor(cursor)
+
+    def _insert_template(self):
+        if e := self._current_editor():
+            e.show_template_menu()
+
+    def _manage_templates(self):
+        from belfryscad.window.template_manager import TemplateManager
+        dlg = getattr(self, "_template_manager", None)
+        if dlg is None:
+            dlg = self._template_manager = TemplateManager(self)
+        elif not dlg.isVisible():
+            dlg._reload()     # the folder may have changed since it was last open
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
 
     def _current_editor(self):
         tab = self._current_tab()
