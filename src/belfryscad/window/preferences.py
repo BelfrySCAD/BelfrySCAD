@@ -85,6 +85,11 @@ _DEFAULTS = {
     "export/pdfOrientation": "portrait",
     "export/pdfShowScale": True,
     "export/pdfShowGrid": False,
+    # Design > Send to Slicer: a belfryscad.slicers id, "system" (the
+    # desktop's default app for .3mf) or "custom" (print/slicerPath). Empty
+    # until the first send, which asks.
+    "print/slicer": "",
+    "print/slicerPath": "",
     # Down arrow on the LAST line appends a new one. A deliberate
     # convenience, off by default: every other editor stops at the end of
     # the file, and a document that grows while you navigate it surprised a
