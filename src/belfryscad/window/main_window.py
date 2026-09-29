@@ -2762,6 +2762,7 @@ class MainWindow(QMainWindow):
             # a save the user asked for would be worse than saying so.
             # The design's own name, for the PDF page: the writer has no
             # way to know it, and draws it only when asked to.
+            tab = self._current_tab()
             design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
             for problem in exporters.export_model(path, self._geometry,
                                                    **export_kwargs(ext, options, design)):
