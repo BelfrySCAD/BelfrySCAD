@@ -152,7 +152,7 @@ class WelcomeDialog(QDialog):
         footer = QHBoxLayout()
         footer.addWidget(self.dont_show)
         footer.addStretch()
-        footer.addWidget(QLabel(f"BelfrySCAD {info['version']}"))
+        footer.addWidget(QLabel(f"BelfrySCAD {info['version']} ({info['released']})"))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 18)

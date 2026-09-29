@@ -28,6 +28,12 @@ def _version_of(package: str) -> str:
     return package_version(package, default="not installed")
 
 
+def _released() -> str:
+    from belfryscad.release import DATE
+
+    return DATE
+
+
 def about_info() -> dict:
     """Everything the About box states, as plain strings.
 
@@ -38,6 +44,7 @@ def about_info() -> dict:
     return {
         "name": "BelfrySCAD",
         "version": _version_of("belfryscad"),
+        "released": _released(),
         "description": "Hybrid OpenSCAD + WYSIWYG procedural CAD system",
         "author": "Revar Desmera",
         "license": "MIT",
@@ -54,7 +61,8 @@ def about_html(info: dict | None = None) -> str:
         for name, version in info["components"].items()
     )
     return (
-        f"<h2 style='margin-bottom:2px'>{info['name']} {info['version']}</h2>"
+        f"<h2 style='margin-bottom:2px'>{info['name']} {info['version']}"
+        f" <span style='font-size:small; font-weight:normal'>released {info['released']}</span></h2>"
         f"<p style='margin-top:0'>{info['description']}</p>"
         f"<p>{info['license']} licence &middot; {info['author']}</p>"
         f"<p><a href='{PROJECT_URL}'>Project</a> &middot; "
@@ -70,7 +78,7 @@ def about_text(info: dict | None = None) -> str:
     """The same facts as plain text, for copying into a bug report."""
     info = info or about_info()
     lines = [
-        f"{info['name']} {info['version']}",
+        f"{info['name']} {info['version']} (released {info['released']})",
         f"{info['license']} licence, {info['author']}",
         f"Python {info['python']}",
     ]
