@@ -4316,7 +4316,7 @@ class MainWindow(QMainWindow):
                 continue
             if block < 0 or block >= tab.editor.document().blockCount():
                 continue
-            if block not in tab.editor._breakpoints:
+            if block not in tab.editor.breakpoint_lines():
                 tab.editor.toggle_breakpoint(block)
                 added.append(block + 1)
 
@@ -4765,8 +4765,8 @@ class MainWindow(QMainWindow):
         breakpoints: dict[str, set[int]] = {}
         for i in range(self._tabs.count()):
             t = self._tabs.widget(i)
-            if t and t.file_path and t.editor._breakpoints:
-                bp_set = {bn + 1 for bn in t.editor._breakpoints}
+            if t and t.file_path and t.editor.breakpoint_lines():
+                bp_set = {bn + 1 for bn in t.editor.breakpoint_lines()}
                 breakpoints[str(Path(t.file_path).resolve())] = bp_set
         return breakpoints
 
