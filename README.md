@@ -18,7 +18,7 @@ A hybrid procedural CAD application combining OpenSCAD-style script-based modeli
 - **Testing and coverage** — run `.scadtest` suites and see which statements, branch arms and module bodies a script actually ran
 - **AI chat** — provider-agnostic assistant that proposes source edits for review before applying
 - **Command line** — headless render and export, animation frames, dependency lists, test runner
-- **Export** — 3MF, AMF, OBJ, OFF, PLY, STL, VRML and X3D, plus SVG and PDF for 2D designs; colour is carried by the formats that support it
+- **Export** — 3MF, AMF, OBJ, OFF, PLY, STL, VRML and X3D, plus SVG, PDF and DXF for 2D designs; colour is carried by the formats that support it
 
 ## Installation
 

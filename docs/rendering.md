@@ -141,7 +141,7 @@ Sanitising keeps `[A-Za-z0-9_+.-]` and replaces every other character with one u
 ## Export
 
 **Export lives in openscad_cpp_evaluator, not here.** Every writer -- STL
-(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D, SVG and PDF -- and the whole
+(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D, SVG, PDF and DXF -- and the whole
 colour pipeline behind them now live in that package's `export.cpp`. This used to
 be ~400 lines of Python in `exporters.py` that the evaluator's own CLI never
 saw, and the two disagreed: the CLI wrote `cube(100); cube(100,
@@ -156,7 +156,7 @@ colour with the later shape winning an overlap, the connected-component
 split, per-triangle colour, and the sliver-strip/mesh-check repair policy --
 are documented in openscad_cpp_evaluator's own `CLAUDE.md`.
 
-**SVG and PDF are the 2D formats, and the ones that can refuse.** It writes a
+**SVG, PDF and DXF are the 2D formats, and the ones that can refuse.** Each writes a
 model that is all 2D at 1:1 in millimetres -- so a print of it measures
 what the script says, which is what the format was asked for (BelfrySCAD
 #367: a printed paper scale for calibrating a laser printer). None of the

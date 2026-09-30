@@ -71,12 +71,14 @@ _EXPORT_FORMATS = (
     ("AMF Files (*.amf)", ".amf"),
     ("OFF Files (*.off)", ".off"),
     ("PLY Files (*.ply)", ".ply"),
-    # The two 2D formats: a model that is all 2D, written at 1:1 in
-    # millimetres so a print of it measures what the script says. Exporting
-    # anything 3D to either fails, as it does in OpenSCAD. PDF adds the
-    # page setup (size, orientation, ruler) from Preferences > Export.
+    # The 2D formats: a model that is all 2D, written at 1:1 in millimetres
+    # so a print (or a cut) of it measures what the script says. Exporting
+    # anything 3D to any of them fails, as it does in OpenSCAD. PDF's page
+    # setup and SVG's stroke are asked after the save dialog
+    # (window/export_options.py); DXF has nothing to ask.
     ("SVG Files (*.svg)", ".svg"),
     ("PDF Files (*.pdf)", ".pdf"),
+    ("DXF Files (*.dxf)", ".dxf"),
     ("VRML Files (*.wrl)", ".wrl"),
     ("X3D Files (*.x3d)", ".x3d"),
 )
