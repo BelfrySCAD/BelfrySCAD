@@ -9,7 +9,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
-    "PySide6",
+    "PySide6-Essentials",
     "manifold3d",
     "moderngl",
     "numpy",
@@ -57,7 +57,7 @@ description = "Hybrid OpenSCAD + WYSIWYG procedural CAD system"
 icon = "resources/belfryscad"
 sources = ["src/belfryscad"]
 requires = [
-    "PySide6",
+    "PySide6-Essentials",
     "manifold3d",
     "moderngl",
     "numpy",
