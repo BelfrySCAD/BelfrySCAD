@@ -32,9 +32,7 @@ def exportable(bodies):
     return [b for b in bodies if getattr(b, "role", "normal") != "background"]
 
 
-def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
-                 strip_slivers: bool = True, split_components: bool = False,
-                 split_colors: bool = True, pdf_options: dict | None = None) -> list:
+def export_model(path: str, geometry, **options) -> list:
     """Write `geometry` to `path`; returns the warnings to surface.
 
     `geometry` is the opaque handle the evaluator stashes on itself as
@@ -42,30 +40,35 @@ def export_model(path: str, geometry, format: str = "", ascii_stl: bool = False,
     to do real CSG, and going through the flattened arrays the renderer
     gets would mean rebuilding every Manifold first.
 
-    Format comes from the extension unless `format` overrides it. Nothing
-    here refuses to write: a deliberately open surface is a legitimate
-    export, so problems come back as warnings for the caller to log.
+    `options` go straight to openscad_cpp_evaluator.export_model, which
+    documents them and rejects a name it does not know: `format`,
+    `ascii_stl`, `strip_slivers`, `split_components`, `split_colors`, the
+    `svg_*` set, `pdf_options` and `pov_camera`. They used to be restated
+    here, and the copy fell behind: from #371 on, the Export dialog's SVG
+    answers arrived as `svg_fill`/`svg_stroke_width`, which this wrapper
+    did not take, so every SVG export from the GUI died with a TypeError.
+    `window.export_options.export_kwargs()` builds them from what the
+    export dialog asked.
 
-    `split_components` gives every disconnected piece its own object in the
-    multi-object formats. Off by default, which is what OpenSCAD writes;
-    turning it on used to be the only behaviour, and a model in many pieces
-    then filled a slicer's object list (issue #319).
-
-    `split_colors` (the default) writes one object per colour, which is what
-    a multi-material print wants -- each colour is something the slicer
-    assigns to a filament. Off welds the model into one solid for a
-    single-material print, which has no use for the colours.
-
-    `pdf_options` is the `.pdf` page setup -- paper size, orientation, the
-    ruler switches -- keyed as OpenSCAD names its own `-O export-pdf/...`
-    settings. `window.export_options.export_kwargs()` builds it from what
-    the export dialog asked.
+    Nothing here refuses to write: a deliberately open surface is a
+    legitimate export, so problems come back as warnings for the caller to
+    log.
     """
     from openscad_cpp_evaluator import export_model as _export_model
 
-    return _export_model(path, geometry, format=format, ascii_stl=ascii_stl,
-                         strip_slivers=strip_slivers, split_components=split_components,
-                         split_colors=split_colors, pdf_options=pdf_options)
+    return _export_model(path, geometry, **options)
+
+
+def pov_camera(vp: dict) -> list | None:
+    """A .pov export's camera from OpenSCAD's viewport variables: `$vpt`,
+    `$vpr`, `$vpd` and `$vpf` (field of view; OpenSCAD's 22.5 when absent)
+    as the eight numbers openscad_cpp_evaluator takes. None when the view
+    is not fully stated, which frames the model from its bounding box."""
+    try:
+        return ([float(x) for x in vp["$vpt"]] + [float(x) for x in vp["$vpr"]]
+                + [float(vp["$vpd"]), float(vp.get("$vpf", 22.5))])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def export_extensions() -> list:

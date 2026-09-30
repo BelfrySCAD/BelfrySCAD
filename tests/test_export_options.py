@@ -196,3 +196,31 @@ print(json.dumps(out))
     assert out["after"]["export/pdfShowScale"] is not out["defaults"]["export/pdfShowScale"]
     assert out["svg"]["export/svgStrokeWidth"] == 1.25
     assert out["off"] == {}
+
+
+@pytest.mark.parametrize("ext", [e for _f, e in _EXPORT_FORMATS])
+def test_every_formats_dialog_answers_survive_a_real_export(ext, tmp_path):
+    """export_kwargs' output must be something export_model takes. It was
+    not: from #371 the SVG answers arrived as svg_fill/svg_stroke_width,
+    which exporters.export_model did not accept, and every SVG export from
+    the GUI died with a TypeError while the tests above -- which stop at
+    export_kwargs -- all passed."""
+    from openscad_cpp_evaluator import Evaluator
+    from belfryscad import exporters
+
+    src = tmp_path / "m.scad"
+    src.write_text("square(10);" if ext in (".svg", ".pdf", ".dxf") else "cube(10);")
+    ev = Evaluator()
+    ev.evaluate(str(src), {})
+    values = {f.key: _sample(f) for f in export_fields(ext)}
+    out = tmp_path / f"m{ext}"
+    exporters.export_model(str(out), ev.geometry, **export_kwargs(ext, values, "m.scad"))
+    assert out.stat().st_size > 0
+
+
+def test_pov_takes_the_viewport_camera():
+    from belfryscad.exporters import pov_camera
+    vp = {"$vpt": [1, 2, 3], "$vpr": [55, 0, 25], "$vpd": 140, "$vpf": 30}
+    assert pov_camera(vp) == [1, 2, 3, 55, 0, 25, 140, 30]
+    assert pov_camera({"$vpt": [0, 0, 0], "$vpr": [55, 0, 25], "$vpd": 140})[-1] == 22.5
+    assert pov_camera({}) is None        # no camera: frame the bounding box

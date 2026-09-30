@@ -139,6 +139,9 @@ is a commitment to build it — it is the list of what is not there.
   to the release page, and there is no macOS installer to link to.
 - **Color List** (`ColorList`) — a Help ▸ Color List… window rather than a
   dock (`window/color_list.py`).
+- **POV-Ray export** — one solid `mesh2` per object (OpenSCAD writes a flat
+  `polygon` per face), framed by the viewport's camera, with OpenSCAD's
+  camera bugs fixed (translate/rotate order, vertical-vs-horizontal fov).
 - **DXF export** — written by openscad_cpp_evaluator in OpenSCAD's own layout,
   at full coordinate precision rather than OpenSCAD's 6 significant digits.
 - **Insert Template** (Edit menu, Alt+Ins, and the editor's right-click
@@ -164,7 +167,7 @@ is a commitment to build it — it is the list of what is not there.
 
 ### File menu
 
-- Export formats we cannot write: **CSG**, **POV-Ray**
+- Export formats we cannot write: **CSG**
 - The whole Python submenu (venv select/create, revoke trusted files);
   upstream OpenSCAD now ships Python scripting
 
