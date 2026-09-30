@@ -76,3 +76,15 @@ def test_normals_of_a_tiny_face_are_unit_length():
     v2 = np.array([[0, TINY, 0]], np.float32)
     n = _unit_normals(v0, v1, v2)
     assert n.dtype == np.float32 and np.allclose(n, [[0, 0, 1]])
+
+
+def test_a_camera_inside_a_large_scene_keeps_depth_precision():
+    # #663: a 550mm square under a 50mm model puts the eye inside the scene's
+    # bounding sphere when zoomed in; near fell to far * 1e-7 and the model's
+    # faces lost their depth order.
+    cam = Camera()
+    cam.scene_bounds = (np.array([-275.0, -275, -30]), np.array([275.0, 275, 25]))
+    cam.distance = 250.0
+    near, far = cam.clip_planes()
+    assert cam.distance ** 2 / (near * 2 ** 24) < 0.01  # depth step at the target, mm
+    assert near < cam.distance < far
