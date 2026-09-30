@@ -23,6 +23,8 @@ def test_a_format_with_nothing_to_choose_asks_nothing():
     preferences pane this replaces."""
     assert export_fields(".off") == []
     assert export_kwargs(".off", {}) == {}
+    assert export_fields(".dxf") == []
+    assert export_kwargs(".dxf", {}) == {}
 
 
 def test_pdf_asks_about_the_page():

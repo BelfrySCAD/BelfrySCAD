@@ -191,6 +191,29 @@ def test_svg_export_refuses_a_3d_model(tmp_path):
         exporters.export_model(str(tmp_path / "solid.svg"), g)
 
 
+# --- DXF: the 2D format a cutter reads ---------------------------------
+def test_dxf_export_writes_a_2d_model_at_true_size(tmp_path):
+    """The bytes are pinned against real OpenSCAD in the evaluator's suite;
+    this is the boundary check, plus the one place ours differs on purpose:
+    coordinates at full precision, not OpenSCAD's 6 significant digits."""
+    g = geometry_for("difference() { square([1234.5678, 20]); translate([5,5]) square(10); }", tmp_path)
+    out = tmp_path / "flat.dxf"
+    assert exporters.export_model(str(out), g) == []
+    text = out.read_text()
+    assert text.startswith("999\nDXF from OpenSCAD\n") and text.endswith("  0\nEOF\n")
+    assert text.count("LWPOLYLINE") == 2          # the outline and its hole
+    # More than OpenSCAD's 6 digits ("1234.57"). Not exactly 1234.5678 either:
+    # difference() runs through Manifold's 2D boolean, which rounds points to
+    # its own grid, and the writer prints the geometry it was given.
+    assert "\n$EXTMAX\n 10\n1234.5678" in text
+
+
+def test_dxf_export_refuses_a_3d_model(tmp_path):
+    g = geometry_for("cube(10);", tmp_path)
+    with pytest.raises(Exception, match="not a 2D object"):
+        exporters.export_model(str(tmp_path / "solid.dxf"), g)
+
+
 # --- PDF: 2D on a fixed page (#368) -----------------------------------
 def test_pdf_export_centres_the_drawing_on_a4_by_default(tmp_path):
     g = geometry_for("square([70, 25]);", tmp_path)
