@@ -9,11 +9,11 @@ color("yellow")
 color("cyan")
     sphere(d=100);
 
-color("xkcd:light periwinkle")
+color("white")
     translate([0,-35,0])
     rotate([90,0,0])
         linear_extrude(height=20, center=false)
-            text("B", size=50,
-                font="Superclarendon",
+            text("B", size=55,
+                font="Times New Roman:style=Bold",
                 halign="center",
                 valign="center");
