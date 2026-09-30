@@ -579,10 +579,13 @@ class Camera:
         far = 1.05 * max(to_center + radius,
                          float(np.linalg.norm(eye)) + _axis_extent(self),
                          self.distance * 3.0)
-        # 1e-7 of far is the floor: a camera inside a large model still gets
-        # a usable depth range (24-bit depth), close enough for detail at
-        # about a millionth of the model's size.
-        near = max(0.9 * (to_center - radius), far * 1e-7)
+        # Inside the scene's bounding sphere the bracket gives nothing, so the
+        # floor decides. It follows the orbit distance, as OpenSCAD's does
+        # (0.1 * dist; ours clips less): a floor of far * 1e-7 left a 1e7
+        # ratio whose depth step at the model was ~40mm, so a big flat
+        # square under a 50mm model turned it to confetti on zooming in
+        # (#663). Distance-relative, so a 1e-12 model still works (#568).
+        near = max(0.9 * (to_center - radius), 0.01 * self.distance)
         return near, far
 
     def projection_matrix(self, aspect: float) -> np.ndarray:
