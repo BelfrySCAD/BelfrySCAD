@@ -283,7 +283,12 @@ jobs:
       - name: Install flatpak
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          # --no-install-recommends: the recommended set is ~110 MB of video
+          # codecs and media libraries (x264, x265, dav1d, libplacebo, SDL2,
+          # ...) a Flatpak builder never uses. The x86_64 runners fetch from
+          # azure.archive.ubuntu.com, which delivered it at 141 kB/s -- 13
+          # minutes, two releases running -- so the size is the cost.
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
           flatpak remote-add --if-not-exists --user flathub \
               https://flathub.org/repo/flathub.flatpakrepo
 
