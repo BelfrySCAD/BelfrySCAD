@@ -11,8 +11,14 @@ name: BOSL2 docs check
 # An evaluator bump changes uv.lock, which is a trigger below, so the next
 # such change fails here, on the bump PR, before a release.
 #
-# ~9 minutes on an M1, ~13 on ubuntu-latest, so it runs only when something it covers changes,
+# ~9 minutes on an M1, ~18 on ubuntu-latest, so it runs only when something it covers changes,
 # weekly (BOSL2 itself moves), and on demand. Not a required check.
+#
+# A release bump touches pyproject.toml and uv.lock too, but only BelfrySCAD's
+# own version, which nothing here depends on -- yet it paid the full run on the
+# release PR and again on main. The first step recognises that case
+# (.github/scripts/version_only_change.py, which parses both files so an
+# evaluator bump still runs the whole check) and passes without running it.
 
 on:
   pull_request:
@@ -23,6 +29,7 @@ on:
       - pyproject.toml
       - uv.lock
       - .github/workflows/bosl2-docs.yml
+      - .github/scripts/version_only_change.py
   push:
     branches: [main]
     paths:
@@ -32,6 +39,7 @@ on:
       - pyproject.toml
       - uv.lock
       - .github/workflows/bosl2-docs.yml
+      - .github/scripts/version_only_change.py
   schedule:
     - cron: "17 6 * * 1"    # Mondays
   workflow_dispatch:
@@ -41,20 +49,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0    # the version-only check diffs against the base
+
+      - name: Is this only a version bump?
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=$(git merge-base "$PR_BASE" "$PR_HEAD"); HEAD="$PR_HEAD" ;;
+            push)         BASE="$PUSH_BEFORE"; HEAD="$GITHUB_SHA" ;;
+            *)            echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0 ;;   # schedule, dispatch: always run
+          esac
+          if python3 .github/scripts/version_only_change.py "$BASE" "$HEAD"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only BelfrySCAD's own version changed; the BOSL2 docs check has nothing new to check."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/checkout@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           repository: BelfrySCAD/BOSL2
           path: bosl2
 
       - name: Install Qt/GL dependencies
+        if: steps.gate.outputs.skip != 'true'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libgl1-mesa-dri
 
       - uses: astral-sh/setup-uv@v7
+        if: steps.gate.outputs.skip != 'true'
         with:
           enable-cache: true
 
       - run: uv sync --frozen
+        if: steps.gate.outputs.skip != 'true'
 
       # BOSL2's own matcher turns each "!! ERROR at file:line" into an
       # annotation on the run. Its path is from the workspace root, not the
@@ -62,6 +96,7 @@ jobs:
       # images; -m still builds the markdown, so parser errors count too.
       # docsgen exits non-zero if any example failed.
       - name: Run every BOSL2 example
+        if: steps.gate.outputs.skip != 'true'
         working-directory: bosl2
         run: |
           echo "::add-matcher::bosl2/.github/openscad_docsgen.json"
