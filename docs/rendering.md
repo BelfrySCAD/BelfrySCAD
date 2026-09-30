@@ -141,7 +141,7 @@ Sanitising keeps `[A-Za-z0-9_+.-]` and replaces every other character with one u
 ## Export
 
 **Export lives in openscad_cpp_evaluator, not here.** Every writer -- STL
-(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D, SVG, PDF and DXF -- and the whole
+(binary/ASCII), OBJ, OFF, 3MF, PLY, VRML, X3D, POV-Ray, SVG, PDF and DXF -- and the whole
 colour pipeline behind them now live in that package's `export.cpp`. This used to
 be ~400 lines of Python in `exporters.py` that the evaluator's own CLI never
 saw, and the two disagreed: the CLI wrote `cube(100); cube(100,

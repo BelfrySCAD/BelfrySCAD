@@ -598,9 +598,15 @@ def main():
                 pdf_options["show-scale"] = False
             if args.pdf_grid:
                 pdf_options["show-grid"] = True
+            # A .pov scene takes --camera as its camera, so the render frames
+            # what `-o x.png` with the same --camera would; without one the
+            # model is framed from its bounding box.
+            from belfryscad.exporters import pov_camera
+            from belfryscad.headless_render import viewport_params_from_camera
             mesh_common = dict(common, export_format=args.export_format,
                                 split_components=args.split_components,
-                                pdf_options=pdf_options)
+                                pdf_options=pdf_options,
+                                pov_camera=pov_camera(viewport_params_from_camera(args.camera)))
             if args.animate is not None:
                 from belfryscad.headless import render_and_export_animation
                 code = render_and_export_animation(

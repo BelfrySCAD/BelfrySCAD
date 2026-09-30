@@ -81,6 +81,9 @@ _EXPORT_FORMATS = (
     ("DXF Files (*.dxf)", ".dxf"),
     ("VRML Files (*.wrl)", ".wrl"),
     ("X3D Files (*.x3d)", ".x3d"),
+    # A scene for POV-Ray to render, not a mesh for a machine: framed by the
+    # viewport's camera as it stands at export time (_export).
+    ("POV-Ray Files (*.pov)", ".pov"),
 )
 
 
@@ -2826,8 +2829,12 @@ class MainWindow(QMainWindow):
             # way to know it, and draws it only when asked to.
             tab = self._current_tab()
             design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
-            for problem in exporters.export_model(path, self._geometry,
-                                                   **export_kwargs(ext, options, design)):
+            kwargs = export_kwargs(ext, options, design)
+            if ext == ".pov":
+                # The scene is framed as the viewport is now, so a POV-Ray
+                # render shows what was on screen when Export was chosen.
+                kwargs["pov_camera"] = exporters.pov_camera(self._viewport_params())
+            for problem in exporters.export_model(path, self._geometry, **kwargs):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
         except OSError as e:
