@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Red-Cyan Color Anaglyph: the stereo glasses with real red and cyan
+       lenses. The lens colours are not ink, so the theme leaves them alone. -->
+  <path d="M 4.5 12.5 H 13.5 V 18 A 2 2 0 0 1 11.5 20 H 6.5 A 2 2 0 0 1 4.5 18 Z" fill="#E0302A"/>
+  <path d="M 18.5 12.5 H 27.5 V 18 A 2 2 0 0 1 25.5 20 H 20.5 A 2 2 0 0 1 18.5 18 Z" fill="#20C8D8"/>
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <line x1="2" y1="12.5" x2="30" y2="12.5"/>
+    <path d="M 4.5 12.5 V 18 A 2 2 0 0 0 6.5 20 H 11.5 A 2 2 0 0 0 13.5 18 V 12.5"/>
+    <path d="M 18.5 12.5 V 18 A 2 2 0 0 0 20.5 20 H 25.5 A 2 2 0 0 0 27.5 18 V 12.5"/>
+    <path d="M 13.5 15 Q 16 13.5 18.5 15"/>
+    <line x1="2" y1="12.5" x2="3.5" y2="9"/>
+    <line x1="30" y1="12.5" x2="28.5" y2="9"/>
+  </g>
+</svg>

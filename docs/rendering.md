@@ -52,7 +52,7 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
 
 ## Stereo modes
 
-**View ▸ Stereo** is four modes -- Off, Cross-eye, Red-Blue Anaglyph, Red-Cyan Color Anaglyph -- picked from that radio submenu, or stepped through in that order by the Tools toolbar's glasses button and Ctrl+Cmd+3 (`MainWindow._set_stereo_mode` / `_cycle_stereo`; the button shows pressed in either stereo mode). Saved as `stereoMode`; an old boolean `stereo` setting reads as cross-eye.
+**View ▸ Stereo** is four modes -- Off, Cross-eye, Red-Blue Anaglyph, Red-Cyan Color Anaglyph -- picked from that radio submenu, or stepped through in that order by the Tools toolbar's glasses button and Ctrl+Cmd+3 (`MainWindow._set_stereo_mode` / `_cycle_stereo`; the button shows pressed in any stereo mode). The button's icon follows the mode (`_STEREO_ICONS`): plain glasses for Off and Red-Blue, red/cyan lenses for the colour anaglyph, two views with crossed lines of sight for Cross-eye. Entering either anaglyph mode logs a console note recommending red-cyan glasses, with red-blue as the fallback. Saved as `stereoMode`; an old boolean `stereo` setting reads as cross-eye.
 
 ### Cross-eye
 

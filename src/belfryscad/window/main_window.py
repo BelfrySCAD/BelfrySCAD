@@ -5707,6 +5707,13 @@ class MainWindow(QMainWindow):
         self._act_perspective.blockSignals(False)
 
     _STEREO_MODES = ("off", "cross", "anaglyph", "anaglyph-color")
+    #: The glasses button's icon in each mode: plain glasses (unpressed) for
+    #: off, red/cyan lenses for the colour anaglyph, crossed lines of sight
+    #: for cross-eye.
+    _STEREO_ICONS = {"off": "stereo", "cross": "stereo-cross", "anaglyph": "stereo",
+                     "anaglyph-color": "stereo-color"}
+    _ANAGLYPH_NOTE = ("Note: anaglyph stereo is best seen through red-cyan 3D glasses. "
+                      "Red-blue glasses mostly work too, if you cannot find red-cyan ones.")
     _STEREO_LABELS = {"off": "Off", "cross": "Cross-eye", "anaglyph": "Red-Blue Anaglyph",
                       "anaglyph-color": "Red-Cyan Color Anaglyph"}
 
@@ -5720,6 +5727,7 @@ class MainWindow(QMainWindow):
         anaglyph (Dubois; see ANAGLYPH_MATRICES)."""
         if mode not in self._STEREO_MODES:
             mode = "off"
+        entering_anaglyph = mode.startswith("anaglyph") and mode != getattr(self, "_stereo_mode", "off")
         self._stereo_mode = mode
         vp = self._target_viewport()
         vp._renderer.camera.stereo = mode == "cross"
@@ -5729,6 +5737,9 @@ class MainWindow(QMainWindow):
         # A click on a checkable action has already flipped it; set it from
         # the mode, which is the only state that means anything.
         self._act_stereo.setChecked(mode != "off")
+        self._set_toolbar_icon(self._act_stereo, self._STEREO_ICONS[mode])
+        if entering_anaglyph and hasattr(self, "_console"):
+            self.log(self._ANAGLYPH_NOTE)
         nxt = self._STEREO_MODES[(self._STEREO_MODES.index(mode) + 1) % len(self._STEREO_MODES)]
         key = self._act_stereo.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
         self._act_stereo.setToolTip(
