@@ -382,6 +382,8 @@ class PreferencesDialog(QDialog):
         self._stereo_scale.valueChanged.connect(
             lambda v: self._emit("viewport/stereoDepthScale", v / 100.0)
         )
+        # A form row on macOS stays at its size hint, which left these short.
+        self._stereo_scale.setMinimumWidth(2 * self._stereo_scale.sizeHint().width())
         scale_row.addWidget(self._stereo_scale)
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
@@ -400,6 +402,8 @@ class PreferencesDialog(QDialog):
             "image looks brighter than the other eye's.")
         self._anaglyph_red.valueChanged.connect(lambda v: self._anaglyph_red_label.setText(f"{v}%"))
         self._anaglyph_red.valueChanged.connect(lambda v: self._emit("viewport/anaglyphRedLevel", v / 100.0))
+        # A form row on macOS stays at its size hint, which left these short.
+        self._anaglyph_red.setMinimumWidth(2 * self._anaglyph_red.sizeHint().width())
         red_row.addWidget(self._anaglyph_red)
         red_row.addWidget(self._anaglyph_red_label)
         vp_form.addRow("Anaglyph red level:", red_row)
