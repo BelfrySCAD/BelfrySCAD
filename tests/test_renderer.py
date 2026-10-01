@@ -307,7 +307,7 @@ class TestCameraRoll:
         assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
 
     @pytest.mark.parametrize("style", ["red-blue", "red-cyan"])
-    def test_red_level_scales_only_the_left_eyes_red(self, style):
+    def test_red_level_scales_only_the_red_channel(self, style):
         from belfryscad.engine.renderer import ANAGLYPH_MATRICES, anaglyph_composite
         left, right, offset = anaglyph_composite(style, 0.6)
         base_left, base_right = ANAGLYPH_MATRICES[style]
@@ -316,8 +316,12 @@ class TestCameraRoll:
         # The red level applies to red-blue's colour style as well.
         rb = anaglyph_composite("red-blue-color", 0.6)[0]
         assert np.allclose(rb[0], [0.6, 0, 0])
-        # The colour style is fitted to the lenses already: untouched.
-        assert np.allclose(anaglyph_composite("color", 0.6)[0], ANAGLYPH_MATRICES["color"][0])
+        # Dubois' colour style too, across its whole red row (both eyes'
+        # terms) and nothing else.
+        cl, cr, _ = anaglyph_composite("color", 0.6)
+        bl, br = ANAGLYPH_MATRICES["color"]
+        assert np.allclose(cl[0], 0.6 * bl[0]) and np.allclose(cr[0], 0.6 * br[0])
+        assert np.allclose(cl[1:], bl[1:]) and np.allclose(cr[1:], br[1:])
 
     def test_color_anaglyph_keeps_hue(self):
         """The point of the Dubois style: a green part reads green, where the

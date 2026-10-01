@@ -398,7 +398,7 @@ class PreferencesDialog(QDialog):
         self._anaglyph_red_label = QLabel(f"{int(round(current_red * 100))}%")
         self._anaglyph_red_label.setMinimumWidth(40)
         self._anaglyph_red.setToolTip(
-            "For the Red-Blue and Red-Cyan anaglyphs: how bright the red (left-eye) image is.\n"
+            "For the anaglyphs: how bright the red (left-eye) image is.\n"
             "Lower it if the blue or cyan eye sees a red ghost, or if the red eye's\n"
             "image looks brighter than the other eye's.")
         self._anaglyph_red.valueChanged.connect(lambda v: self._anaglyph_red_label.setText(f"{v}%"))
