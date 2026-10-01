@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Cross-eye stereo: two side-by-side views, and two eyes whose lines of
+       sight cross, each looking at the OPPOSITE view, which is the whole
+       trick of cross-eye viewing. -->
+  <g fill="none" stroke="#444" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="2.5" y="3.5" width="11" height="9" rx="1"/>
+    <rect x="18.5" y="3.5" width="11" height="9" rx="1"/>
+    <line x1="10" y1="24" x2="23.5" y2="14.5" stroke-width="1.5" stroke-dasharray="2 2"/>
+    <line x1="22" y1="24" x2="8.5" y2="14.5" stroke-width="1.5" stroke-dasharray="2 2"/>
+  </g>
+  <circle cx="9" cy="26.5" r="2.75" fill="#444"/>
+  <circle cx="23" cy="26.5" r="2.75" fill="#444"/>
+</svg>

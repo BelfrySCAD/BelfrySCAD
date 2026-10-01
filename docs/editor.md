@@ -603,7 +603,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+0 | Isometric view |
 | Ctrl+Cmd+1 | Toggle Spin |
 | Ctrl+Cmd+2 | Toggle Perspective |
-| Ctrl+Cmd+3 | Cycle Stereo: Off → Cross-eye → Red-Blue Anaglyph |
+| Ctrl+Cmd+3 | Toggle Stereo (the mode is Preferences ▸ Viewport ▸ Stereo mode) |
 | Shift+Cmd+V | View All |
 | Shift+Cmd+0 | Center (origin back to the middle) |
 | Cmd++ | Increase editor font size |
@@ -644,6 +644,7 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
 | Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
+| Stereo mode | `viewport/stereoMode` | `"cross"` | Viewport — `cross`, `wall`, `anaglyph-gray`, `anaglyph-color` |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |
@@ -1361,7 +1362,7 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 - Zoom In (Cmd+]) / Zoom Out (Cmd+[) — `_zoom_viewport(direction)` calls `Viewport.zoom(direction)` (`window/viewport.py`), a uniform ±3% `camera.distance` step centered on the current target, distinct from `wheelEvent`'s cursor-centered zoom. Previously a bare `QShortcut` with no menu presence; moved into the View menu (same `_target_viewport()`/`ApplicationShortcut` treatment as the view presets above) so the shortcut is discoverable and to avoid a duplicate-registration ambiguity risk against any future menu-based binding of the same keys.
 - —
 - Spin
-- Perspective (toggle perspective/orthographic projection) / Stereo ▶ (Off, Cross-eye, Red-Blue Anaglyph)
+- Perspective (toggle perspective/orthographic projection) / Stereo (toggle; the mode is a Viewport preference)
 - —
 - Show Edges / Show Axes / Show Scale Markers / Show Crosshairs
 

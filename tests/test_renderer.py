@@ -262,6 +262,58 @@ class TestCameraRoll:
         assert ndc_x(left_view, near) > ndc_x(right_view, near)
 
 
+    def test_anaglyph_puts_the_whole_model_behind_the_screen(self):
+        """behind_screen converges on the front of the scene bounds, so no
+        corner has crossed (in-front-of-screen) parallax: every point sits
+        at or further left in the left eye's image than in the right's."""
+        cam = Camera()
+        lo, hi = np.array([-30.0, -10, -10]), np.array([30.0, 10, 10])
+        cam.frame_bounds(lo, hi, aspect=1100 / 700)
+        right_view, left_view = cam.stereo_view_matrices(1100, 700, behind_screen=True)
+        proj = cam.projection_matrix(1100 / 700)
+
+        def ndc_x(view, p):
+            v = proj @ view @ np.append(p, 1.0)
+            return v[0] / v[3]
+
+        gaps = [ndc_x(left_view, c) - ndc_x(right_view, c)
+                for c in ([x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                          for z in (lo[2], hi[2]))]
+        assert max(gaps) <= 1e-6 and min(gaps) < -1e-4
+        # The default (cross-eye) still converges on the target, so the
+        # front of the model comes out of the screen.
+        right_t, left_t = cam.stereo_view_matrices(1100, 700)
+        assert max(ndc_x(left_t, np.array(c)) - ndc_x(right_t, np.array(c))
+                   for c in ([x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                             for z in (lo[2], hi[2]))) > 1e-4
+
+    @pytest.mark.parametrize("style", ["gray", "color"])
+    def test_anaglyph_styles_keep_white_white_and_black_black(self, style):
+        """The composite is clamp(L @ left + R @ right). White and black in
+        both eyes must stay themselves, or the default background (and every
+        neutral surface) takes a cast."""
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES[style]
+        white = left @ np.ones(3) + right @ np.ones(3)
+        assert np.allclose(white, 1.0, atol=0.01)
+        assert np.allclose(left @ np.zeros(3) + right @ np.zeros(3), 0.0)
+
+    def test_gray_anaglyph_is_left_brightness_in_red_right_in_green_blue(self):
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES["gray"]
+        L, R = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
+        assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
+
+    def test_color_anaglyph_keeps_hue(self):
+        """The point of the Dubois style: a green part reads green, where the
+        grey style turns every colour into a brightness."""
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES["color"]
+        green = np.array([0, 1.0, 0])
+        out = np.clip(left @ green + right @ green, 0, 1)
+        assert out[1] > 0.6 and out[0] < 0.5 and out[2] < 0.1
+
+
 class TestCameraOrbitFree:
     """Camera.orbit_free -- true trackball rotation for the "Orbit"
     Shift+drag mode: rotates around the camera's OWN current up/right

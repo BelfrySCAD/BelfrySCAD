@@ -1731,30 +1731,17 @@ class MainWindow(QMainWindow):
         self._act_perspective.setToolTip("Perspective (" + self._act_perspective.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText) + "); off is orthographic")
         self._tools_toolbar.insertAction(self._act_spin, self._act_perspective)
-        # Stereo is three modes, not a toggle: a radio submenu picks one, and
-        # the Tools toolbar's glasses button (and its shortcut) steps
-        # Off -> Cross-eye -> Red-Blue Anaglyph -> Off. The button shows
-        # pressed in either stereo mode.
-        from PySide6.QtGui import QActionGroup
-        stereo_menu = view_menu.addMenu("Stereo")
-        stereo_group = QActionGroup(self)
-        self._stereo_mode_acts = {}
-        for mode in self._STEREO_MODES:
-            act = QAction(self._STEREO_LABELS[mode], self)
-            act.setCheckable(True)
-            act.triggered.connect(lambda _=False, m=mode: self._set_stereo_mode(m))
-            stereo_group.addAction(act)
-            stereo_menu.addAction(act)
-            self._stereo_mode_acts[mode] = act
-        self._stereo_mode = "off"
+        # Stereo is on or off here; WHICH stereo (cross-eyed, wall-eyed or one
+        # of three anaglyphs) is Preferences > Viewport > Stereo mode.
+        self._stereo_on = False
         self._act_stereo = QAction("Stereo", self)
         self._act_stereo.setCheckable(True)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
         self._act_stereo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_stereo.triggered.connect(self._cycle_stereo)
-        self._set_toolbar_icon(self._act_stereo, "stereo")
+        self._act_stereo.triggered.connect(self._set_stereo)
+        view_menu.addAction(self._act_stereo)
         self._tools_toolbar.insertAction(self._act_animate_tb, self._act_stereo)
-        self._set_stereo_mode("off")
+        self._set_stereo(False)
         view_menu.addSeparator()
         self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
@@ -5395,6 +5382,8 @@ class MainWindow(QMainWindow):
             vp._renderer.axes_color = theme["axes"]
             vp._renderer.unselected_vertex_color = theme["unselected_vertex"]
             vp.update()
+        if hasattr(self, "_act_stereo"):
+            self._apply_stereo()
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool,
@@ -5452,12 +5441,17 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
         self._toggle_perspective(perspective)
-        # "stereoMode" replaced the old on/off "stereo", which only ever
-        # meant cross-eye.
-        stereo_mode = s.value("stereoMode", None)
-        if stereo_mode is None:
-            stereo_mode = "cross" if s.value("stereo", False, type=bool) else "off"
-        self._set_stereo_mode(str(stereo_mode))
+        # "stereo" is on/off; the mode is a preference. Before that, one
+        # "stereoMode" setting held both (off/cross/anaglyph), and before
+        # THAT "stereo" alone meant cross-eye -- which still reads right.
+        old_mode = s.value("stereoMode", None)
+        if old_mode is not None:
+            s.remove("stereoMode")
+            old_mode = str(old_mode)
+            s.setValue("stereo", old_mode != "off")
+            if old_mode in self._OLD_STEREO_MODES:
+                save_preferences({"viewport/stereoMode": self._OLD_STEREO_MODES[old_mode]})
+        self._set_stereo(s.value("stereo", False, type=bool))
         word_wrap = s.value("wordWrap", False, type=bool)
         self._act_word_wrap.blockSignals(True)
         self._act_word_wrap.setChecked(word_wrap)
@@ -5574,7 +5568,7 @@ class MainWindow(QMainWindow):
             s.setValue("windowState", self.saveState())
             s.setValue("layoutVersion", self._LAYOUT_VERSION)
             s.setValue("perspective", self._act_perspective.isChecked())
-            s.setValue("stereoMode", self._stereo_mode)
+            s.setValue("stereo", self._stereo_on)
             s.setValue("wordWrap", self._act_word_wrap.isChecked())
             # Flush settings to disk now: the app exits via os._exit() (see
             # main.py), which skips QSettings' normal sync-on-destruction.
@@ -5706,30 +5700,39 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
 
-    _STEREO_MODES = ("off", "cross", "anaglyph")
-    _STEREO_LABELS = {"off": "Off", "cross": "Cross-eye", "anaglyph": "Red-Blue Anaglyph"}
+    #: The glasses button's icon for each stereo mode preference.
+    _STEREO_ICONS = {"cross": "stereo-cross", "wall": "stereo-wall", "anaglyph-gray": "stereo",
+                     "anaglyph-color": "stereo-color"}
+    #: What the old combined "stereoMode" setting's values mean now. Its
+    #: "anaglyph" was the same brightness composite as Grayscale Anaglyph.
+    _OLD_STEREO_MODES = {"cross": "cross", "anaglyph": "anaglyph-gray",
+                         "anaglyph-color": "anaglyph-color"}
 
-    def _cycle_stereo(self):
-        i = self._STEREO_MODES.index(self._stereo_mode)
-        self._set_stereo_mode(self._STEREO_MODES[(i + 1) % len(self._STEREO_MODES)])
+    def _set_stereo(self, on: bool):
+        """Stereo on or off (the toolbar's glasses, View > Stereo)."""
+        self._stereo_on = bool(on)
+        self._apply_stereo()
 
-    def _set_stereo_mode(self, mode: str):
-        """Off, cross-eye (two panels side by side) or red/blue anaglyph (one
-        full-width image, colour given up for depth; see _ANAGLYPH_FRAG)."""
-        if mode not in self._STEREO_MODES:
-            mode = "off"
-        self._stereo_mode = mode
+    def _apply_stereo(self):
+        """Put the camera in the stereo mode the preference names, or none.
+        Called on the toggle and on every preference change."""
+        from belfryscad.window.preferences import STEREO_MODES
+        mode = load_preference("viewport/stereoMode")
+        if mode not in STEREO_MODES:
+            mode = "cross"
+        effective = mode if self._stereo_on else "off"
         vp = self._target_viewport()
-        vp._renderer.camera.stereo = mode == "cross"
-        vp._renderer.camera.anaglyph = mode == "anaglyph"
-        self._stereo_mode_acts[mode].setChecked(True)
-        # A click on a checkable action has already flipped it; set it from
-        # the mode, which is the only state that means anything.
-        self._act_stereo.setChecked(mode != "off")
-        nxt = self._STEREO_MODES[(self._STEREO_MODES.index(mode) + 1) % len(self._STEREO_MODES)]
+        cam = vp._renderer.camera
+        cam.stereo = effective in ("cross", "wall")
+        cam.wall_eyed = effective == "wall"
+        cam.anaglyph = effective.startswith("anaglyph")
+        cam.anaglyph_style = "color" if effective == "anaglyph-color" else "gray"
+        # A click has already flipped the action; set it from the state.
+        self._act_stereo.setChecked(self._stereo_on)
+        self._set_toolbar_icon(self._act_stereo, self._STEREO_ICONS[mode])
         key = self._act_stereo.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
         self._act_stereo.setToolTip(
-            f"Stereo: {self._STEREO_LABELS[mode]} ({key}) -- click for {self._STEREO_LABELS[nxt]}")
+            f"Stereo: {STEREO_MODES[mode]} ({key}); change the mode in Preferences > Viewport")
         vp.update()
 
     def _toggle_axes(self, visible):

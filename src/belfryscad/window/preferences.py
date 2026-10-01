@@ -54,6 +54,14 @@ def _which_github_copilot() -> str | None:
     found = shutil.which("copilot")
     return found if found and _is_github_copilot(found) else None
 
+#: Preferences > Viewport > Stereo mode: what the Stereo toggle turns on.
+STEREO_MODES = {
+    "cross": "Cross-eyed Stereo",
+    "wall": "Wall-eyed Stereo",
+    "anaglyph-gray": "Grayscale Anaglyph",
+    "anaglyph-color": "Color Anaglyph",
+}
+
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
     "editor/fontSize": 13,
@@ -61,6 +69,7 @@ _DEFAULTS = {
     "docs/fontSize": 0,          # 0 = follow the application default
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
+    "viewport/stereoMode": "cross",     # a key of STEREO_MODES
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
@@ -323,6 +332,19 @@ class PreferencesDialog(QDialog):
         vp_form = QFormLayout(viewport_tab)
         vp_form.setSpacing(8)
 
+        self._stereo_mode = QComboBox()
+        for key, label in STEREO_MODES.items():
+            self._stereo_mode.addItem(label, key)
+        current_mode = s.value("viewport/stereoMode", _DEFAULTS["viewport/stereoMode"])
+        self._stereo_mode.setCurrentIndex(max(0, self._stereo_mode.findData(current_mode)))
+        self._stereo_mode.setToolTip(
+            "What View > Stereo (the toolbar's glasses) shows.\n"
+            "Cross-eyed and wall-eyed put the two eyes' views side by side, swapped for cross-eyed.\n"
+            "The anaglyphs need red/blue or red/cyan glasses; the colour one needs red/cyan.")
+        self._stereo_mode.currentIndexChanged.connect(
+            lambda _: self._emit("viewport/stereoMode", self._stereo_mode.currentData()))
+        vp_form.addRow("Stereo mode:", self._stereo_mode)
+
         current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
         self._viewer_ipd = QDoubleSpinBox()
         self._viewer_ipd.setRange(40.0, 100.0)
@@ -358,9 +380,12 @@ class PreferencesDialog(QDialog):
         self._stereo_scale.valueChanged.connect(
             lambda v: self._emit("viewport/stereoDepthScale", v / 100.0)
         )
+        # A form row on macOS stays at its size hint, which left these short.
+        self._stereo_scale.setMinimumWidth(2 * self._stereo_scale.sizeHint().width())
         scale_row.addWidget(self._stereo_scale)
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
+
 
         current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
         self._color_theme = QComboBox()
