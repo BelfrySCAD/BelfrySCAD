@@ -313,9 +313,6 @@ class TestCameraRoll:
         base_left, base_right = ANAGLYPH_MATRICES[style]
         assert np.allclose(left[0], 0.6 * base_left[0]) and np.allclose(left[1:], base_left[1:])
         assert np.allclose(right, base_right) and not offset.any()
-        # The red level applies to red-blue's colour style as well.
-        rb = anaglyph_composite("red-blue-color", 0.6)[0]
-        assert np.allclose(rb[0], [0.6, 0, 0])
         # Dubois' colour style too, across its whole red row (both eyes'
         # terms) and nothing else.
         cl, cr, _ = anaglyph_composite("color", 0.6)

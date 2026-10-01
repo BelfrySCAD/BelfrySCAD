@@ -59,9 +59,8 @@ STEREO_MODES = {
     "cross": "Cross-eyed Stereo",
     "wall": "Wall-eyed Stereo",
     "anaglyph-red-blue": "Red-Blue Anaglyph",
-    "anaglyph-red-blue-color": "Red-Blue Color Anaglyph",
     "anaglyph-red-cyan": "Red-Cyan Anaglyph",
-    "anaglyph-color": "Red-Cyan Color Anaglyph",
+    "anaglyph-color": "Color Anaglyph",
 }
 
 _DEFAULTS = {

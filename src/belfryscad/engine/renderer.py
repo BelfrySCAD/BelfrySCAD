@@ -383,12 +383,6 @@ _ZERO = (0.0, 0.0, 0.0)
 ANAGLYPH_MATRICES = {
     "red-blue": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
     "red-cyan": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
-    # Full colour for red/blue glasses: the left eye's red in red, the right
-    # eye's green and blue in green and blue. Red and blue parts keep their
-    # hue; green shows only as far as the blue lens passes it. Dubois
-    # published no red/blue fit to use instead.
-    "red-blue-color": (np.array([[1.0, 0, 0], _ZERO, _ZERO]),
-                       np.array([_ZERO, [0, 1.0, 0], [0, 0, 1.0]])),
     "color": (np.array([[0.437, 0.449, 0.164],
                         [-0.062, -0.062, -0.024],
                         [-0.048, -0.050, -0.017]]),

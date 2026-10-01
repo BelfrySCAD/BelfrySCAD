@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Red-Cyan Color Anaglyph: the stereo glasses with real red and cyan
+  <!-- Color Anaglyph: the stereo glasses with real red and cyan
        lenses. The lens colours are not ink, so the theme leaves them alone. -->
   <path d="M 4.5 12.5 H 13.5 V 18 A 2 2 0 0 1 11.5 20 H 6.5 A 2 2 0 0 1 4.5 18 Z" fill="#E0302A"/>
   <path d="M 18.5 12.5 H 27.5 V 18 A 2 2 0 0 1 25.5 20 H 20.5 A 2 2 0 0 1 18.5 18 Z" fill="#20C8D8"/>
