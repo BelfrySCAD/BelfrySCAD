@@ -382,6 +382,11 @@ _ZERO = (0.0, 0.0, 0.0)
 ANAGLYPH_MATRICES = {
     "red-blue": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _ZERO, _LUMA])),
     "red-cyan": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
+    # Full colour for red/blue glasses: each eye keeps its own primary. Red
+    # parts read red and blue parts blue, but green reaches neither lens, so
+    # greens go dark -- the most colour red/blue glasses can carry. Dubois
+    # published no red/blue fit to use instead.
+    "red-blue-color": (np.array([[1.0, 0, 0], _ZERO, _ZERO]), np.array([_ZERO, _ZERO, [0, 0, 1.0]])),
     "color": (np.array([[0.437, 0.449, 0.164],
                         [-0.062, -0.062, -0.024],
                         [-0.048, -0.050, -0.017]]),
@@ -393,8 +398,8 @@ ANAGLYPH_MATRICES = {
 
 def anaglyph_composite(style: str, red_level: float = 1.0):
     """(left_mat, right_mat, offset) for `_ANAGLYPH_FRAG`: ANAGLYPH_MATRICES'
-    pair, with the red (left-eye) channel scaled by `red_level` in the
-    monochrome styles.
+    pair, with the red (left-eye) channel scaled by `red_level` in every
+    style but Dubois' "color".
 
     Turning red down is the one correction that works for blue/cyan lenses
     that pass some red. That eye sees a dim red ghost of the left image, and

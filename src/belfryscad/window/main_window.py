@@ -5702,7 +5702,8 @@ class MainWindow(QMainWindow):
 
     #: The glasses button's icon for each stereo mode preference.
     _STEREO_ICONS = {"cross": "stereo-cross", "wall": "stereo-wall", "anaglyph-red-blue": "stereo",
-                     "anaglyph-red-cyan": "stereo", "anaglyph-color": "stereo-color"}
+                     "anaglyph-red-cyan": "stereo", "anaglyph-color": "stereo-color",
+                     "anaglyph-red-blue-color": "stereo-red-blue-color"}
     #: What the old combined "stereoMode" setting's values mean now. Its
     #: "anaglyph" was labelled Red-Blue, so it stays red-blue.
     _OLD_STEREO_MODES = {"cross": "cross", "anaglyph": "anaglyph-red-blue",
@@ -5728,6 +5729,7 @@ class MainWindow(QMainWindow):
         cam.anaglyph = effective.startswith("anaglyph")
         cam.anaglyph_red_level = load_preference("viewport/anaglyphRedLevel", float)
         cam.anaglyph_style = {"anaglyph-red-blue": "red-blue",
+                              "anaglyph-red-blue-color": "red-blue-color",
                               "anaglyph-color": "color"}.get(effective, "red-cyan")
         # A click has already flipped the action; set it from the state.
         self._act_stereo.setChecked(self._stereo_on)
