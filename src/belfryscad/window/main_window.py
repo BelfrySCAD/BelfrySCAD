@@ -1734,7 +1734,6 @@ class MainWindow(QMainWindow):
         # Stereo is on or off here; WHICH stereo (cross-eyed, wall-eyed or one
         # of three anaglyphs) is Preferences > Viewport > Stereo mode.
         self._stereo_on = False
-        self._stereo_effective = "off"
         self._act_stereo = QAction("Stereo", self)
         self._act_stereo.setCheckable(True)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
@@ -5708,8 +5707,6 @@ class MainWindow(QMainWindow):
     #: "anaglyph" was labelled Red-Blue, so it stays red-blue.
     _OLD_STEREO_MODES = {"cross": "cross", "anaglyph": "anaglyph-red-blue",
                          "anaglyph-color": "anaglyph-color"}
-    _ANAGLYPH_NOTE = ("Note: anaglyph stereo is best seen through red-cyan 3D glasses. "
-                      "Red-blue glasses mostly work too, if you cannot find red-cyan ones.")
 
     def _set_stereo(self, on: bool):
         """Stereo on or off (the toolbar's glasses, View > Stereo)."""
@@ -5724,8 +5721,6 @@ class MainWindow(QMainWindow):
         if mode not in STEREO_MODES:
             mode = "cross"
         effective = mode if self._stereo_on else "off"
-        entering_anaglyph = effective.startswith("anaglyph") and effective != self._stereo_effective
-        self._stereo_effective = effective
         vp = self._target_viewport()
         cam = vp._renderer.camera
         cam.stereo = effective in ("cross", "wall")
@@ -5739,8 +5734,6 @@ class MainWindow(QMainWindow):
         key = self._act_stereo.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
         self._act_stereo.setToolTip(
             f"Stereo: {STEREO_MODES[mode]} ({key}); change the mode in Preferences > Viewport")
-        if entering_anaglyph and hasattr(self, "_console"):
-            self.log(self._ANAGLYPH_NOTE)
         vp.update()
 
     def _toggle_axes(self, visible):
