@@ -5701,11 +5701,11 @@ class MainWindow(QMainWindow):
         self._act_perspective.blockSignals(False)
 
     #: The glasses button's icon for each stereo mode preference.
-    _STEREO_ICONS = {"cross": "stereo-cross", "wall": "stereo-wall", "anaglyph-red-blue": "stereo",
-                     "anaglyph-red-cyan": "stereo", "anaglyph-color": "stereo-color"}
+    _STEREO_ICONS = {"cross": "stereo-cross", "wall": "stereo-wall", "anaglyph-gray": "stereo",
+                     "anaglyph-color": "stereo-color"}
     #: What the old combined "stereoMode" setting's values mean now. Its
-    #: "anaglyph" was labelled Red-Blue, so it stays red-blue.
-    _OLD_STEREO_MODES = {"cross": "cross", "anaglyph": "anaglyph-red-blue",
+    #: "anaglyph" was the same brightness composite as Grayscale Anaglyph.
+    _OLD_STEREO_MODES = {"cross": "cross", "anaglyph": "anaglyph-gray",
                          "anaglyph-color": "anaglyph-color"}
 
     def _set_stereo(self, on: bool):
@@ -5727,8 +5727,7 @@ class MainWindow(QMainWindow):
         cam.wall_eyed = effective == "wall"
         cam.anaglyph = effective.startswith("anaglyph")
         cam.anaglyph_red_level = load_preference("viewport/anaglyphRedLevel", float)
-        cam.anaglyph_style = {"anaglyph-red-blue": "red-blue",
-                              "anaglyph-color": "color"}.get(effective, "red-cyan")
+        cam.anaglyph_style = "color" if effective == "anaglyph-color" else "gray"
         # A click has already flipped the action; set it from the state.
         self._act_stereo.setChecked(self._stereo_on)
         self._set_toolbar_icon(self._act_stereo, self._STEREO_ICONS[mode])

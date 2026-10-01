@@ -58,8 +58,7 @@ def _which_github_copilot() -> str | None:
 STEREO_MODES = {
     "cross": "Cross-eyed Stereo",
     "wall": "Wall-eyed Stereo",
-    "anaglyph-red-blue": "Red-Blue Anaglyph",
-    "anaglyph-red-cyan": "Red-Cyan Anaglyph",
+    "anaglyph-gray": "Grayscale Anaglyph",
     "anaglyph-color": "Color Anaglyph",
 }
 
@@ -397,7 +396,7 @@ class PreferencesDialog(QDialog):
         self._anaglyph_red_label = QLabel(f"{int(round(current_red * 100))}%")
         self._anaglyph_red_label.setMinimumWidth(40)
         self._anaglyph_red.setToolTip(
-            "For the Red-Blue and Red-Cyan anaglyphs: how bright the red (left-eye) image is.\n"
+            "For the Grayscale Anaglyph: how bright the red (left-eye) image is.\n"
             "Lower it if the blue or cyan eye sees a red ghost, or if the red eye's\n"
             "image looks brighter than the other eye's.")
         self._anaglyph_red.valueChanged.connect(lambda v: self._anaglyph_red_label.setText(f"{v}%"))
@@ -407,10 +406,10 @@ class PreferencesDialog(QDialog):
         red_row.addWidget(self._anaglyph_red)
         red_row.addWidget(self._anaglyph_red_label)
         vp_form.addRow("Anaglyph red level:", red_row)
-        # Only the monochrome anaglyphs use the red level: Color Anaglyph is
+        # Only the grayscale anaglyph uses the red level: Color Anaglyph is
         # Dubois' fit, and side-by-side stereo has no red channel to scale.
         def _red_level_enabled(_=None):
-            on = self._stereo_mode.currentData() in ("anaglyph-red-blue", "anaglyph-red-cyan")
+            on = self._stereo_mode.currentData() == "anaglyph-gray"
             self._anaglyph_red.setEnabled(on)
             self._anaglyph_red_label.setEnabled(on)
         self._stereo_mode.currentIndexChanged.connect(_red_level_enabled)

@@ -644,8 +644,8 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Indent size | `editor/indentSize` | `4` | Editor |
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
 | Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
-| Stereo mode | `viewport/stereoMode` | `"cross"` | Viewport — `cross`, `wall`, `anaglyph-red-blue`, `anaglyph-red-cyan`, `anaglyph-color` |
-| Anaglyph red level | `viewport/anaglyphRedLevel` | `1.0` | Viewport — red channel scale in the Red-Blue and Red-Cyan anaglyphs; disabled in every other stereo mode |
+| Stereo mode | `viewport/stereoMode` | `"cross"` | Viewport — `cross`, `wall`, `anaglyph-gray`, `anaglyph-color` |
+| Anaglyph red level | `viewport/anaglyphRedLevel` | `1.0` | Viewport — red channel scale in the Grayscale Anaglyph; disabled in every other stereo mode |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |
