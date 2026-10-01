@@ -306,6 +306,24 @@ class TestCameraRoll:
         left, right = ANAGLYPH_MATRICES["red-blue"]
         assert np.allclose(left @ L + right @ R, [0.299, 0, 0.114])
 
+    @pytest.mark.parametrize("style", ["red-blue", "red-cyan"])
+    def test_ghost_cancellation_removes_the_red_leak_from_the_other_eye(self, style):
+        """With a fraction k of the red channel leaking through the blue/cyan
+        lens, that eye must see only the right image (rescaled), whatever
+        the left image is -- and nothing may clip."""
+        from belfryscad.engine.renderer import anaglyph_composite
+        k = 0.2
+        left, right, offset = anaglyph_composite(style, k)
+        seen = []
+        for L in (np.zeros(3), np.ones(3), np.array([1.0, 0.3, 0.0])):
+            out = left @ L + right @ np.array([0.2, 0.5, 0.8]) + offset
+            assert np.all(out >= -1e-9) and np.all(out <= 1 + 1e-9)
+            seen.append(out[2] + k * out[0])           # what the blue lens passes
+        assert np.allclose(seen, seen[0])
+        # k = 0 is the plain composite.
+        l0, r0, o0 = anaglyph_composite(style, 0.0)
+        assert not o0.any()
+
     def test_color_anaglyph_keeps_hue(self):
         """The point of the Dubois style: a green part reads green, where the
         grey style turns every colour into a brightness."""

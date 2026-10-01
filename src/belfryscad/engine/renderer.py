@@ -359,8 +359,9 @@ uniform sampler2D right_eye;
 out vec4 fragColor;
 uniform mat3 left_mat;
 uniform mat3 right_mat;
+uniform vec3 offset;
 void main() {
-    vec3 c = left_mat * texture(left_eye, v_uv).rgb + right_mat * texture(right_eye, v_uv).rgb;
+    vec3 c = left_mat * texture(left_eye, v_uv).rgb + right_mat * texture(right_eye, v_uv).rgb + offset;
     fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """
@@ -388,6 +389,31 @@ ANAGLYPH_MATRICES = {
                         [0.377, 0.761, 0.009],
                         [-0.026, -0.093, 1.234]])),
 }
+
+
+def anaglyph_composite(style: str, ghost: float = 0.0):
+    """(left_mat, right_mat, offset) for `_ANAGLYPH_FRAG`: ANAGLYPH_MATRICES'
+    pair with crosstalk cancellation for the monochrome styles.
+
+    A blue (or cyan) lens that lets through a fraction `ghost` of the red
+    channel shows that eye a faint copy of the LEFT image -- ghosting, in
+    that eye only, since red lenses block blue well. Taking `ghost` times
+    the left image out of the right eye's channels cancels it: that eye
+    sees `out + ghost * red = ghost + (1 - ghost) * right`. The `ghost`
+    offset keeps the subtraction from clipping at black, at the cost of
+    that much of the eye's contrast. How much leaks depends on the glasses
+    and the monitor, so it is a preference to tune by eye, not a constant.
+    The colour style is left alone: Dubois' matrices already model the
+    lenses' leakage."""
+    left, right = (m.copy() for m in ANAGLYPH_MATRICES[style])
+    offset = np.zeros(3)
+    if style != "color" and ghost > 0:
+        for ch in (1, 2):
+            if right[ch].any():
+                left[ch] -= ghost * left[0]
+                right[ch] *= 1.0 - ghost
+                offset[ch] = ghost
+    return left, right, offset
 
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
@@ -476,6 +502,7 @@ class Camera:
         self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
         self.anaglyph_style = "red-cyan"  # a key of ANAGLYPH_MATRICES
+        self.anaglyph_ghost = 0.0        # crosstalk cancelled (anaglyph_composite)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1740,7 +1767,9 @@ class SceneRenderer:
         fbo.use()
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
-        left_mat, right_mat = ANAGLYPH_MATRICES[self.camera.anaglyph_style]
+        left_mat, right_mat, offset = anaglyph_composite(self.camera.anaglyph_style,
+                                                         self.camera.anaglyph_ghost)
+        self._anaglyph_prog["offset"].value = tuple(offset)
         # GLSL mat3 is column-major, so the rows above go in transposed.
         self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
         self._anaglyph_prog["right_mat"].value = tuple(right_mat.T.ravel())

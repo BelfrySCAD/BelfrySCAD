@@ -71,6 +71,7 @@ _DEFAULTS = {
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
     "viewport/stereoMode": "cross",     # a key of STEREO_MODES
+    "viewport/anaglyphGhost": 0.1,      # red leaking through the blue/cyan lens
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
@@ -384,6 +385,24 @@ class PreferencesDialog(QDialog):
         scale_row.addWidget(self._stereo_scale)
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
+
+        ghost_row = QHBoxLayout()
+        ghost_row.setSpacing(8)
+        current_ghost = s.value("viewport/anaglyphGhost", _DEFAULTS["viewport/anaglyphGhost"], type=float)
+        self._anaglyph_ghost = QSlider(Qt.Orientation.Horizontal)
+        self._anaglyph_ghost.setRange(0, 40)
+        self._anaglyph_ghost.setValue(int(round(current_ghost * 100)))
+        self._anaglyph_ghost_label = QLabel(f"{int(round(current_ghost * 100))}%")
+        self._anaglyph_ghost_label.setMinimumWidth(40)
+        self._anaglyph_ghost.setToolTip(
+            "For the Red-Blue and Red-Cyan anaglyphs: how much of the red image leaks\n"
+            "through your glasses' blue or cyan lens. Raise it until the ghost that eye\n"
+            "sees disappears; too far and a reversed ghost appears. Costs that eye some contrast.")
+        self._anaglyph_ghost.valueChanged.connect(lambda v: self._anaglyph_ghost_label.setText(f"{v}%"))
+        self._anaglyph_ghost.valueChanged.connect(lambda v: self._emit("viewport/anaglyphGhost", v / 100.0))
+        ghost_row.addWidget(self._anaglyph_ghost)
+        ghost_row.addWidget(self._anaglyph_ghost_label)
+        vp_form.addRow("Anaglyph ghost cancel:", ghost_row)
 
         current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
         self._color_theme = QComboBox()

@@ -5726,6 +5726,7 @@ class MainWindow(QMainWindow):
         cam.stereo = effective in ("cross", "wall")
         cam.wall_eyed = effective == "wall"
         cam.anaglyph = effective.startswith("anaglyph")
+        cam.anaglyph_ghost = load_preference("viewport/anaglyphGhost", float)
         cam.anaglyph_style = {"anaglyph-red-blue": "red-blue",
                               "anaglyph-color": "color"}.get(effective, "red-cyan")
         # A click has already flipped the action; set it from the state.
