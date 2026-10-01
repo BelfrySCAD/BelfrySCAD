@@ -407,9 +407,10 @@ class PreferencesDialog(QDialog):
         red_row.addWidget(self._anaglyph_red)
         red_row.addWidget(self._anaglyph_red_label)
         vp_form.addRow("Anaglyph red level:", red_row)
-        # Color Anaglyph is Dubois' fit and ignores the red level.
+        # Only the monochrome anaglyphs use the red level: Color Anaglyph is
+        # Dubois' fit, and side-by-side stereo has no red channel to scale.
         def _red_level_enabled(_=None):
-            on = self._stereo_mode.currentData() != "anaglyph-color"
+            on = self._stereo_mode.currentData() in ("anaglyph-red-blue", "anaglyph-red-cyan")
             self._anaglyph_red.setEnabled(on)
             self._anaglyph_red_label.setEnabled(on)
         self._stereo_mode.currentIndexChanged.connect(_red_level_enabled)
