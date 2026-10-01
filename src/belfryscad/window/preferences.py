@@ -54,6 +54,15 @@ def _which_github_copilot() -> str | None:
     found = shutil.which("copilot")
     return found if found and _is_github_copilot(found) else None
 
+#: Preferences > Viewport > Stereo mode: what the Stereo toggle turns on.
+STEREO_MODES = {
+    "cross": "Cross-eyed Stereo",
+    "wall": "Wall-eyed Stereo",
+    "anaglyph-red-blue": "Red-Blue Anaglyph",
+    "anaglyph-red-cyan": "Red-Cyan Anaglyph",
+    "anaglyph-color": "Red-Cyan Color Anaglyph",
+}
+
 _DEFAULTS = {
     "editor/fontFamily": "Menlo",
     "editor/fontSize": 13,
@@ -61,6 +70,7 @@ _DEFAULTS = {
     "docs/fontSize": 0,          # 0 = follow the application default
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
+    "viewport/stereoMode": "cross",     # a key of STEREO_MODES
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
@@ -322,6 +332,19 @@ class PreferencesDialog(QDialog):
         viewport_tab = QWidget()
         vp_form = QFormLayout(viewport_tab)
         vp_form.setSpacing(8)
+
+        self._stereo_mode = QComboBox()
+        for key, label in STEREO_MODES.items():
+            self._stereo_mode.addItem(label, key)
+        current_mode = s.value("viewport/stereoMode", _DEFAULTS["viewport/stereoMode"])
+        self._stereo_mode.setCurrentIndex(max(0, self._stereo_mode.findData(current_mode)))
+        self._stereo_mode.setToolTip(
+            "What View > Stereo (the toolbar's glasses) shows.\n"
+            "Cross-eyed and wall-eyed put the two eyes' views side by side, swapped for cross-eyed.\n"
+            "The anaglyphs need red/blue or red/cyan glasses; the colour one needs red/cyan.")
+        self._stereo_mode.currentIndexChanged.connect(
+            lambda _: self._emit("viewport/stereoMode", self._stereo_mode.currentData()))
+        vp_form.addRow("Stereo mode:", self._stereo_mode)
 
         current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
         self._viewer_ipd = QDoubleSpinBox()

@@ -287,7 +287,7 @@ class TestCameraRoll:
                    for c in ([x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                              for z in (lo[2], hi[2]))) > 1e-4
 
-    @pytest.mark.parametrize("style", ["grey", "color"])
+    @pytest.mark.parametrize("style", ["red-cyan", "color"])
     def test_anaglyph_styles_keep_white_white_and_black_black(self, style):
         """The composite is clamp(L @ left + R @ right). White and black in
         both eyes must stay themselves, or the default background (and every
@@ -298,11 +298,13 @@ class TestCameraRoll:
         assert np.allclose(white, 1.0, atol=0.01)
         assert np.allclose(left @ np.zeros(3) + right @ np.zeros(3), 0.0)
 
-    def test_grey_anaglyph_is_left_brightness_in_red_right_in_green_blue(self):
+    def test_monochrome_anaglyphs_are_left_brightness_in_red_right_in_blue(self):
         from belfryscad.engine.renderer import ANAGLYPH_MATRICES
-        left, right = ANAGLYPH_MATRICES["grey"]
+        left, right = ANAGLYPH_MATRICES["red-cyan"]
         L, R = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
         assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
+        left, right = ANAGLYPH_MATRICES["red-blue"]
+        assert np.allclose(left @ L + right @ R, [0.299, 0, 0.114])
 
     def test_color_anaglyph_keeps_hue(self):
         """The point of the Dubois style: a green part reads green, where the

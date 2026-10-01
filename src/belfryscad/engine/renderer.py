@@ -336,7 +336,7 @@ void main() {
 
 # Anaglyph composite: each eye is rendered in full colour to its own
 # texture, then this mixes them with one 3x3 matrix per eye
-# (ANAGLYPH_MATRICES). The grey style puts the LEFT eye's brightness in red
+# (ANAGLYPH_MATRICES). The red-cyan style puts the LEFT eye's brightness in red
 # and the RIGHT eye's in green and blue. Brightness, not colour: a pure red part would
 # otherwise be invisible to the cyan eye and a pure blue one to the red eye,
 # and two images that different cannot be fused. Green and blue together
@@ -369,14 +369,18 @@ _LUMA = (0.299, 0.587, 0.114)
 _ZERO = (0.0, 0.0, 0.0)
 
 #: (left eye, right eye) matrices, rows = output R, G, B, for each anaglyph
-#: style. "grey" is the brightness composite described above. "color" is
+#: style. "red-cyan" is the brightness composite described above;
+#: "red-blue" leaves green dark, which a blue lens would block anyway. "color" is
 #: Eric Dubois' least-squares red/cyan matrices (the "optimized" anaglyph,
 #: as ffmpeg's stereo3d `arcd`), applied to the gamma-encoded colours as
 #: ffmpeg does: most of each eye's colour survives, with the least ghosting
 #: of the colour methods. It needs red/CYAN glasses -- red/blue loses green.
-#: Both map white to white and black to black, so the background stays put.
+#: Red-cyan and colour map white to white and black to black, so the
+#: background stays put; red-blue's comes out magenta-grey, but the glasses
+#: see it as an even grey.
 ANAGLYPH_MATRICES = {
-    "grey": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
+    "red-blue": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _ZERO, _LUMA])),
+    "red-cyan": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
     "color": (np.array([[0.437, 0.449, 0.164],
                         [-0.062, -0.062, -0.024],
                         [-0.048, -0.050, -0.017]]),
@@ -468,9 +472,10 @@ class Camera:
         self.scene_bounds = None
         self.fov = self.DEFAULT_FOV
         self.orthographic = False
-        self.stereo = False              # cross-eye, side by side
+        self.stereo = False              # side by side: cross-eyed, or
+        self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
-        self.anaglyph_style = "grey"     # a key of ANAGLYPH_MATRICES
+        self.anaglyph_style = "red-cyan"  # a key of ANAGLYPH_MATRICES
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1663,6 +1668,9 @@ class SceneRenderer:
             aspect = half_gl_w / gl_h if gl_h > 0 else 1.0
             proj = self.camera.projection_matrix(aspect)
             left_view, right_view = self.camera.stereo_view_matrices(half_gl_w, gl_h)
+            if self.camera.wall_eyed:
+                # Each eye looks at the panel on its own side.
+                left_view, right_view = right_view, left_view
 
             # Use logical half-width for scale-dependent calculations (labels, ticks)
             self._viewport = (w // 2, h)
