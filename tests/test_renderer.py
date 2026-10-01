@@ -298,13 +298,13 @@ class TestCameraRoll:
         assert np.allclose(white, 1.0, atol=0.01)
         assert np.allclose(left @ np.zeros(3) + right @ np.zeros(3), 0.0)
 
-    def test_monochrome_anaglyphs_are_left_brightness_in_red_right_in_blue(self):
+    def test_monochrome_anaglyphs_are_left_brightness_in_red_right_in_green_blue(self):
         from belfryscad.engine.renderer import ANAGLYPH_MATRICES
         left, right = ANAGLYPH_MATRICES["red-cyan"]
         L, R = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
         assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
         left, right = ANAGLYPH_MATRICES["red-blue"]
-        assert np.allclose(left @ L + right @ R, [0.299, 0, 0.114])
+        assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
 
     @pytest.mark.parametrize("style", ["red-blue", "red-cyan"])
     def test_red_level_scales_only_the_left_eyes_red(self, style):

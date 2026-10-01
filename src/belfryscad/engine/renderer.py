@@ -370,8 +370,9 @@ _LUMA = (0.299, 0.587, 0.114)
 _ZERO = (0.0, 0.0, 0.0)
 
 #: (left eye, right eye) matrices, rows = output R, G, B, for each anaglyph
-#: style. "red-cyan" is the brightness composite described above;
-#: "red-blue" leaves green dark, which a blue lens would block anyway. "color" is
+#: style. "red-cyan" is the brightness composite described above.
+#: "red-blue" is the same: the right eye's green goes out too, which keeps
+#: the picture grey rather than magenta for anyone not wearing the glasses. "color" is
 #: Eric Dubois' least-squares red/cyan matrices (the "optimized" anaglyph,
 #: as ffmpeg's stereo3d `arcd`), applied to the gamma-encoded colours as
 #: ffmpeg does: most of each eye's colour survives, with the least ghosting
@@ -380,13 +381,14 @@ _ZERO = (0.0, 0.0, 0.0)
 #: background stays put; red-blue's comes out magenta-grey, but the glasses
 #: see it as an even grey.
 ANAGLYPH_MATRICES = {
-    "red-blue": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _ZERO, _LUMA])),
+    "red-blue": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
     "red-cyan": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
-    # Full colour for red/blue glasses: each eye keeps its own primary. Red
-    # parts read red and blue parts blue, but green reaches neither lens, so
-    # greens go dark -- the most colour red/blue glasses can carry. Dubois
+    # Full colour for red/blue glasses: the left eye's red in red, the right
+    # eye's green and blue in green and blue. Red and blue parts keep their
+    # hue; green shows only as far as the blue lens passes it. Dubois
     # published no red/blue fit to use instead.
-    "red-blue-color": (np.array([[1.0, 0, 0], _ZERO, _ZERO]), np.array([_ZERO, _ZERO, [0, 0, 1.0]])),
+    "red-blue-color": (np.array([[1.0, 0, 0], _ZERO, _ZERO]),
+                       np.array([_ZERO, [0, 1.0, 0], [0, 0, 1.0]])),
     "color": (np.array([[0.437, 0.449, 0.164],
                         [-0.062, -0.062, -0.024],
                         [-0.048, -0.050, -0.017]]),
