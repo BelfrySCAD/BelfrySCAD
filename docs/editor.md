@@ -645,7 +645,7 @@ Preferences live under the `editor/`/`viewport/` key groups in `QSettings("Belfr
 | Show column guide | `editor/showColumnGuide` | `True` | Editor |
 | Column guide column(s) | `editor/columnGuide` | `"80"` | Editor — comma-separated, e.g. `67, 100` |
 | Stereo mode | `viewport/stereoMode` | `"cross"` | Viewport — `cross`, `wall`, `anaglyph-red-blue`, `anaglyph-red-cyan`, `anaglyph-color` |
-| Anaglyph ghost cancel | `viewport/anaglyphGhost` | `0.1` | Viewport — red leaking through the blue/cyan lens, cancelled in the monochrome anaglyphs |
+| Anaglyph red level | `viewport/anaglyphRedLevel` | `1.0` | Viewport — red channel scale in the monochrome anaglyphs |
 | Eye separation (IPD) | `viewport/viewerIPD` | `65.0` | Viewport |
 | Screen distance | `viewport/viewerScreenDist` | `600.0` | Viewport |
 | Stereo depth scale | `viewport/stereoDepthScale` | `0.75` | Viewport |

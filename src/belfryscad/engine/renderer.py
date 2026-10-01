@@ -391,29 +391,24 @@ ANAGLYPH_MATRICES = {
 }
 
 
-def anaglyph_composite(style: str, ghost: float = 0.0):
+def anaglyph_composite(style: str, red_level: float = 1.0):
     """(left_mat, right_mat, offset) for `_ANAGLYPH_FRAG`: ANAGLYPH_MATRICES'
-    pair with crosstalk cancellation for the monochrome styles.
+    pair, with the red (left-eye) channel scaled by `red_level` in the
+    monochrome styles.
 
-    A blue (or cyan) lens that lets through a fraction `ghost` of the red
-    channel shows that eye a faint copy of the LEFT image -- ghosting, in
-    that eye only, since red lenses block blue well. Taking `ghost` times
-    the left image out of the right eye's channels cancels it: that eye
-    sees `out + ghost * red = ghost + (1 - ghost) * right`. The `ghost`
-    offset keeps the subtraction from clipping at black, at the cost of
-    that much of the eye's contrast. How much leaks depends on the glasses
-    and the monitor, so it is a preference to tune by eye, not a constant.
-    The colour style is left alone: Dubois' matrices already model the
-    lenses' leakage."""
+    Turning red down is the one correction that works for blue/cyan lenses
+    that pass some red. That eye sees a dim red ghost of the left image, and
+    removing blue where the ghost falls only makes it match the brightness
+    around it -- it stays red, so a red ghost becomes a blue one (tried, and
+    measured useless on real red-blue glasses). Less red means a smaller
+    ghost, and it also evens out the two eyes: a red lens passes far more
+    light than a blue one. How much depends on the glasses and monitor, so
+    it is a preference. The colour style is left alone: Dubois' matrices are
+    fitted to the lenses already."""
     left, right = (m.copy() for m in ANAGLYPH_MATRICES[style])
-    offset = np.zeros(3)
-    if style != "color" and ghost > 0:
-        for ch in (1, 2):
-            if right[ch].any():
-                left[ch] -= ghost * left[0]
-                right[ch] *= 1.0 - ghost
-                offset[ch] = ghost
-    return left, right, offset
+    if style != "color":
+        left[0] *= red_level
+    return left, right, np.zeros(3)
 
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
@@ -502,7 +497,7 @@ class Camera:
         self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
         self.anaglyph_style = "red-cyan"  # a key of ANAGLYPH_MATRICES
-        self.anaglyph_ghost = 0.0        # crosstalk cancelled (anaglyph_composite)
+        self.anaglyph_red_level = 1.0    # red channel scale (anaglyph_composite)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1768,7 +1763,7 @@ class SceneRenderer:
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
         left_mat, right_mat, offset = anaglyph_composite(self.camera.anaglyph_style,
-                                                         self.camera.anaglyph_ghost)
+                                                         self.camera.anaglyph_red_level)
         self._anaglyph_prog["offset"].value = tuple(offset)
         # GLSL mat3 is column-major, so the rows above go in transposed.
         self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
