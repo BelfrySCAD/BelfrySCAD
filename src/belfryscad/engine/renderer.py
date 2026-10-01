@@ -394,7 +394,8 @@ ANAGLYPH_MATRICES = {
 
 def anaglyph_composite(style: str, red_level: float = 1.0):
     """(left_mat, right_mat, offset) for `_ANAGLYPH_FRAG`: ANAGLYPH_MATRICES'
-    pair, with the red output channel scaled by `red_level`.
+    pair, with the red output channel scaled by `red_level` in every style
+    but Dubois' "color".
 
     Turning red down is the one correction that works for blue/cyan lenses
     that pass some red. That eye sees a dim red ghost of the left image, and
@@ -403,13 +404,11 @@ def anaglyph_composite(style: str, red_level: float = 1.0):
     measured useless on real red-blue glasses). Less red means a smaller
     ghost, and it also evens out the two eyes: a red lens passes far more
     light than a blue one. How much depends on the glasses and monitor, so
-    it is a preference. It scales Dubois' "color" too: his matrices are
-    fitted to typical lenses, not to the pair being worn. The whole red row
-    is scaled, both eyes' terms, which is the red channel's brightness; in
-    the other styles the right eye has no red term anyway."""
+    it is a preference. Dubois' "color" is left alone (Preferences disables
+    the slider for it): his matrices are a fit of their own."""
     left, right = (m.copy() for m in ANAGLYPH_MATRICES[style])
-    left[0] *= red_level
-    right[0] *= red_level
+    if style != "color":
+        left[0] *= red_level
     return left, right, np.zeros(3)
 
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry

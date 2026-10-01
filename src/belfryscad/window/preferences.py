@@ -397,7 +397,7 @@ class PreferencesDialog(QDialog):
         self._anaglyph_red_label = QLabel(f"{int(round(current_red * 100))}%")
         self._anaglyph_red_label.setMinimumWidth(40)
         self._anaglyph_red.setToolTip(
-            "For the anaglyphs: how bright the red (left-eye) image is.\n"
+            "For the Red-Blue and Red-Cyan anaglyphs: how bright the red (left-eye) image is.\n"
             "Lower it if the blue or cyan eye sees a red ghost, or if the red eye's\n"
             "image looks brighter than the other eye's.")
         self._anaglyph_red.valueChanged.connect(lambda v: self._anaglyph_red_label.setText(f"{v}%"))
@@ -407,6 +407,13 @@ class PreferencesDialog(QDialog):
         red_row.addWidget(self._anaglyph_red)
         red_row.addWidget(self._anaglyph_red_label)
         vp_form.addRow("Anaglyph red level:", red_row)
+        # Color Anaglyph is Dubois' fit and ignores the red level.
+        def _red_level_enabled(_=None):
+            on = self._stereo_mode.currentData() != "anaglyph-color"
+            self._anaglyph_red.setEnabled(on)
+            self._anaglyph_red_label.setEnabled(on)
+        self._stereo_mode.currentIndexChanged.connect(_red_level_enabled)
+        _red_level_enabled()
 
         current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
         self._color_theme = QComboBox()

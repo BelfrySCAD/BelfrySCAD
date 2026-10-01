@@ -313,12 +313,10 @@ class TestCameraRoll:
         base_left, base_right = ANAGLYPH_MATRICES[style]
         assert np.allclose(left[0], 0.6 * base_left[0]) and np.allclose(left[1:], base_left[1:])
         assert np.allclose(right, base_right) and not offset.any()
-        # Dubois' colour style too, across its whole red row (both eyes'
-        # terms) and nothing else.
+        # Dubois' colour style is a fit of its own: untouched.
         cl, cr, _ = anaglyph_composite("color", 0.6)
         bl, br = ANAGLYPH_MATRICES["color"]
-        assert np.allclose(cl[0], 0.6 * bl[0]) and np.allclose(cr[0], 0.6 * br[0])
-        assert np.allclose(cl[1:], bl[1:]) and np.allclose(cr[1:], br[1:])
+        assert np.allclose(cl, bl) and np.allclose(cr, br)
 
     def test_color_anaglyph_keeps_hue(self):
         """The point of the Dubois style: a green part reads green, where the
