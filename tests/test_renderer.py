@@ -262,6 +262,33 @@ class TestCameraRoll:
         assert ndc_x(left_view, near) > ndc_x(right_view, near)
 
 
+    @pytest.mark.parametrize("style", ["grey", "color"])
+    def test_anaglyph_styles_keep_white_white_and_black_black(self, style):
+        """The composite is clamp(L @ left + R @ right). White and black in
+        both eyes must stay themselves, or the default background (and every
+        neutral surface) takes a cast."""
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES[style]
+        white = left @ np.ones(3) + right @ np.ones(3)
+        assert np.allclose(white, 1.0, atol=0.01)
+        assert np.allclose(left @ np.zeros(3) + right @ np.zeros(3), 0.0)
+
+    def test_grey_anaglyph_is_left_brightness_in_red_right_in_green_blue(self):
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES["grey"]
+        L, R = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
+        assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
+
+    def test_color_anaglyph_keeps_hue(self):
+        """The point of the Dubois style: a green part reads green, where the
+        grey style turns every colour into a brightness."""
+        from belfryscad.engine.renderer import ANAGLYPH_MATRICES
+        left, right = ANAGLYPH_MATRICES["color"]
+        green = np.array([0, 1.0, 0])
+        out = np.clip(left @ green + right @ green, 0, 1)
+        assert out[1] > 0.6 and out[0] < 0.5 and out[2] < 0.1
+
+
 class TestCameraOrbitFree:
     """Camera.orbit_free -- true trackball rotation for the "Orbit"
     Shift+drag mode: rotates around the camera's OWN current up/right

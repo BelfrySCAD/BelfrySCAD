@@ -1731,9 +1731,9 @@ class MainWindow(QMainWindow):
         self._act_perspective.setToolTip("Perspective (" + self._act_perspective.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText) + "); off is orthographic")
         self._tools_toolbar.insertAction(self._act_spin, self._act_perspective)
-        # Stereo is three modes, not a toggle: a radio submenu picks one, and
+        # Stereo is four modes, not a toggle: a radio submenu picks one, and
         # the Tools toolbar's glasses button (and its shortcut) steps
-        # Off -> Cross-eye -> Red-Blue Anaglyph -> Off. The button shows
+        # Off -> Cross-eye -> Red-Blue Anaglyph -> Red-Cyan Color Anaglyph -> Off. The button shows
         # pressed in either stereo mode.
         from PySide6.QtGui import QActionGroup
         stereo_menu = view_menu.addMenu("Stereo")
@@ -5706,22 +5706,25 @@ class MainWindow(QMainWindow):
         self._act_perspective.setChecked(perspective)
         self._act_perspective.blockSignals(False)
 
-    _STEREO_MODES = ("off", "cross", "anaglyph")
-    _STEREO_LABELS = {"off": "Off", "cross": "Cross-eye", "anaglyph": "Red-Blue Anaglyph"}
+    _STEREO_MODES = ("off", "cross", "anaglyph", "anaglyph-color")
+    _STEREO_LABELS = {"off": "Off", "cross": "Cross-eye", "anaglyph": "Red-Blue Anaglyph",
+                      "anaglyph-color": "Red-Cyan Color Anaglyph"}
 
     def _cycle_stereo(self):
         i = self._STEREO_MODES.index(self._stereo_mode)
         self._set_stereo_mode(self._STEREO_MODES[(i + 1) % len(self._STEREO_MODES)])
 
     def _set_stereo_mode(self, mode: str):
-        """Off, cross-eye (two panels side by side) or red/blue anaglyph (one
-        full-width image, colour given up for depth; see _ANAGLYPH_FRAG)."""
+        """Off, cross-eye (two panels side by side), red/blue anaglyph (one
+        full-width image, colour given up for depth) or red/cyan colour
+        anaglyph (Dubois; see ANAGLYPH_MATRICES)."""
         if mode not in self._STEREO_MODES:
             mode = "off"
         self._stereo_mode = mode
         vp = self._target_viewport()
         vp._renderer.camera.stereo = mode == "cross"
-        vp._renderer.camera.anaglyph = mode == "anaglyph"
+        vp._renderer.camera.anaglyph = mode.startswith("anaglyph")
+        vp._renderer.camera.anaglyph_style = "color" if mode == "anaglyph-color" else "grey"
         self._stereo_mode_acts[mode].setChecked(True)
         # A click on a checkable action has already flipped it; set it from
         # the mode, which is the only state that means anything.

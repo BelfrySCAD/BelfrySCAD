@@ -334,9 +334,10 @@ void main() {
 }
 """
 
-# Red/blue anaglyph composite: each eye is rendered in full colour to its own
-# texture, then this puts the LEFT eye's brightness in red and the RIGHT
-# eye's in green and blue. Brightness, not colour: a pure red part would
+# Anaglyph composite: each eye is rendered in full colour to its own
+# texture, then this mixes them with one 3x3 matrix per eye
+# (ANAGLYPH_MATRICES). The grey style puts the LEFT eye's brightness in red
+# and the RIGHT eye's in green and blue. Brightness, not colour: a pure red part would
 # otherwise be invisible to the cyan eye and a pure blue one to the red eye,
 # and two images that different cannot be fused. Green and blue together
 # suit red/cyan glasses as well as red/blue.
@@ -356,13 +357,33 @@ in vec2 v_uv;
 uniform sampler2D left_eye;
 uniform sampler2D right_eye;
 out vec4 fragColor;
-const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+uniform mat3 left_mat;
+uniform mat3 right_mat;
 void main() {
-    float l = dot(texture(left_eye, v_uv).rgb, LUMA);
-    float r = dot(texture(right_eye, v_uv).rgb, LUMA);
-    fragColor = vec4(l, r, r, 1.0);
+    vec3 c = left_mat * texture(left_eye, v_uv).rgb + right_mat * texture(right_eye, v_uv).rgb;
+    fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """
+
+_LUMA = (0.299, 0.587, 0.114)
+_ZERO = (0.0, 0.0, 0.0)
+
+#: (left eye, right eye) matrices, rows = output R, G, B, for each anaglyph
+#: style. "grey" is the brightness composite described above. "color" is
+#: Eric Dubois' least-squares red/cyan matrices (the "optimized" anaglyph,
+#: as ffmpeg's stereo3d `arcd`), applied to the gamma-encoded colours as
+#: ffmpeg does: most of each eye's colour survives, with the least ghosting
+#: of the colour methods. It needs red/CYAN glasses -- red/blue loses green.
+#: Both map white to white and black to black, so the background stays put.
+ANAGLYPH_MATRICES = {
+    "grey": (np.array([_LUMA, _ZERO, _ZERO]), np.array([_ZERO, _LUMA, _LUMA])),
+    "color": (np.array([[0.437, 0.449, 0.164],
+                        [-0.062, -0.062, -0.024],
+                        [-0.048, -0.050, -0.017]]),
+              np.array([[-0.011, -0.032, -0.007],
+                        [0.377, 0.761, 0.009],
+                        [-0.026, -0.093, 1.234]])),
+}
 
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
@@ -449,6 +470,7 @@ class Camera:
         self.orthographic = False
         self.stereo = False              # cross-eye, side by side
         self.anaglyph = False            # red/blue, full width (never both)
+        self.anaglyph_style = "grey"     # a key of ANAGLYPH_MATRICES
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1682,6 +1704,10 @@ class SceneRenderer:
         fbo.use()
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
+        left_mat, right_mat = ANAGLYPH_MATRICES[self.camera.anaglyph_style]
+        # GLSL mat3 is column-major, so the rows above go in transposed.
+        self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
+        self._anaglyph_prog["right_mat"].value = tuple(right_mat.T.ravel())
         eyes[0]["tex"].use(0)
         eyes[1]["tex"].use(1)
         self._anaglyph_vao.render(mgl.TRIANGLE_STRIP)

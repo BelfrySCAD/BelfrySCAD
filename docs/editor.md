@@ -603,7 +603,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+0 | Isometric view |
 | Ctrl+Cmd+1 | Toggle Spin |
 | Ctrl+Cmd+2 | Toggle Perspective |
-| Ctrl+Cmd+3 | Cycle Stereo: Off → Cross-eye → Red-Blue Anaglyph |
+| Ctrl+Cmd+3 | Cycle Stereo: Off → Cross-eye → Red-Blue Anaglyph → Red-Cyan Color Anaglyph |
 | Shift+Cmd+V | View All |
 | Shift+Cmd+0 | Center (origin back to the middle) |
 | Cmd++ | Increase editor font size |
@@ -1361,7 +1361,7 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 - Zoom In (Cmd+]) / Zoom Out (Cmd+[) — `_zoom_viewport(direction)` calls `Viewport.zoom(direction)` (`window/viewport.py`), a uniform ±3% `camera.distance` step centered on the current target, distinct from `wheelEvent`'s cursor-centered zoom. Previously a bare `QShortcut` with no menu presence; moved into the View menu (same `_target_viewport()`/`ApplicationShortcut` treatment as the view presets above) so the shortcut is discoverable and to avoid a duplicate-registration ambiguity risk against any future menu-based binding of the same keys.
 - —
 - Spin
-- Perspective (toggle perspective/orthographic projection) / Stereo ▶ (Off, Cross-eye, Red-Blue Anaglyph)
+- Perspective (toggle perspective/orthographic projection) / Stereo ▶ (Off, Cross-eye, Red-Blue Anaglyph, Red-Cyan Color Anaglyph)
 - —
 - Show Edges / Show Axes / Show Scale Markers / Show Crosshairs
 

@@ -52,7 +52,7 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
 
 ## Stereo modes
 
-**View ▸ Stereo** is three modes -- Off, Cross-eye, Red-Blue Anaglyph -- picked from that radio submenu, or stepped through in that order by the Tools toolbar's glasses button and Ctrl+Cmd+3 (`MainWindow._set_stereo_mode` / `_cycle_stereo`; the button shows pressed in either stereo mode). Saved as `stereoMode`; an old boolean `stereo` setting reads as cross-eye.
+**View ▸ Stereo** is four modes -- Off, Cross-eye, Red-Blue Anaglyph, Red-Cyan Color Anaglyph -- picked from that radio submenu, or stepped through in that order by the Tools toolbar's glasses button and Ctrl+Cmd+3 (`MainWindow._set_stereo_mode` / `_cycle_stereo`; the button shows pressed in either stereo mode). Saved as `stereoMode`; an old boolean `stereo` setting reads as cross-eye.
 
 ### Cross-eye
 
@@ -80,6 +80,8 @@ Every temp `.scad` in the app goes through `belfryscad/scad_temp.py` — the ren
 ### Red-Blue Anaglyph
 
 `Camera.anaglyph = True` (never together with `stereo`). `SceneRenderer._paint_anaglyph()` places the eyes with the same `stereo_view_matrices()` maths at FULL width, and not swapped: its second matrix is the left eye, behind the red lens. Each eye is drawn in full colour into its own multisampled framebuffer (so edges stay as smooth as the normal view), resolved to a texture, and one full-screen pass (`_ANAGLYPH_FRAG`) writes the left eye's **brightness** to red and the right eye's to green and blue. Brightness, not colour, is the trade: a pure red part would be invisible to the cyan eye and a pure blue one to the red eye, and images that different cannot be fused; the background comes out grey the same way. Green and blue both, so red/cyan glasses work as well as red/blue. Colour-coded cues (selection, gizmo axes, magenta back faces, the RGB axes) are lost while it is on -- it is a mode for looking, not editing. QPainter overlays (orientation cube, measurement labels, busy spinner) are drawn once, flat, after the composite. The per-eye targets are cached and rebuilt only on resize. `tests/test_renderer.py::test_anaglyph_eyes_give_the_right_depth_sign` pins the eye order: swapped eyes turn depth inside out with nothing else noticing.
+
+**Red-Cyan Color Anaglyph** is the same two eyes through a different composite. `_ANAGLYPH_FRAG` mixes the eyes with one 3x3 matrix each, `clamp(left_mat * L + right_mat * R)`, taken from `ANAGLYPH_MATRICES[Camera.anaglyph_style]`. `"grey"` is the brightness composite above, expressed as matrices. `"color"` is Eric Dubois' least-squares red/cyan pair (the "optimized" anaglyph; ffmpeg's `stereo3d` `arcd`), applied to the gamma-encoded colours as ffmpeg applies it. Hues survive, with less ghosting than plain "full" or "half" colour anaglyphs, at the cost of some retinal rivalry on saturated reds and cyans. It needs red/**cyan** glasses: red/blue ones lose the green. Both styles map white to white and black to black, so the background is unchanged (`test_anaglyph_styles_keep_white_white_and_black_black`).
 
 Stereo and Perspective are independently togglable. Both states are saved to `QSettings` and restored on launch. Keyboard shortcut: **Ctrl+Cmd+3**.
 
