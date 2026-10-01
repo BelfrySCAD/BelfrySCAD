@@ -668,12 +668,18 @@ class Camera:
         self.distance = new_distance
 
     def stereo_view_matrices(
-        self, half_vp_w: int, vp_h: int
+        self, half_vp_w: int, vp_h: int, behind_screen: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
         """(left_panel_view, right_panel_view) for cross-eye stereo.
 
         Cross-eye: left panel = right eye, right panel = left eye.
-        Both cameras toe-in toward the same target point.
+        Both cameras toe-in toward the same point, which is what sits AT the
+        screen: nearer comes out of it, farther goes into it. That point is
+        the target, or with `behind_screen` the front of the model's bounding
+        box (see `_front_depth`), so the whole model sits behind the screen
+        like a view through a window -- its edges are never cut off by the
+        window frame while appearing in front of it, which is what makes an
+        anaglyph hard to fuse.
 
         Eye separation is computed from physical viewer measurements:
           stereo_fraction = (IPD / screen_dist)
@@ -700,9 +706,31 @@ class Camera:
         half = self.distance * stereo_eye_sep * 0.5
         eye = self.eye_position()
         up = self._rolled_up(self.target - eye)
-        right_eye = _look_at(eye + right_vec * half, self.target, up)
-        left_eye  = _look_at(eye - right_vec * half, self.target, up)
+        focus = self.target
+        if behind_screen:
+            front = self._front_depth()
+            if front is not None:
+                fwd = (self.target - eye) / self.distance
+                focus = (eye + fwd * front).astype(np.float32)
+        right_eye = _look_at(eye + right_vec * half, focus, up)
+        left_eye  = _look_at(eye - right_vec * half, focus, up)
         return right_eye, left_eye  # left panel = right eye (cross-eye)
+
+    def _front_depth(self) -> float | None:
+        """Distance along the view direction to the nearest corner of
+        scene_bounds, or None with no scene, or with the eye inside it (there
+        is no front to put at the screen then). The box's nearest corner is
+        at or in front of the nearest surface, so the model lands just
+        behind the screen, never through it."""
+        if self.scene_bounds is None or self.distance <= 0:
+            return None
+        lo, hi = (np.asarray(b, dtype=np.float64) for b in self.scene_bounds)
+        eye = self.eye_position().astype(np.float64)
+        fwd = (self.target.astype(np.float64) - eye) / self.distance
+        corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                            for z in (lo[2], hi[2])])
+        front = float(((corners - eye) @ fwd).min())
+        return front if front > 0 else None
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray,
                       aspect: float | None = None):
@@ -1692,7 +1720,7 @@ class SceneRenderer:
         if gl_w <= 0 or gl_h <= 0:
             return
         proj = self.camera.projection_matrix(gl_w / gl_h)
-        right_view, left_view = self.camera.stereo_view_matrices(gl_w, gl_h)
+        right_view, left_view = self.camera.stereo_view_matrices(gl_w, gl_h, behind_screen=True)
         bg = (bg_color if bg_color is not None else self.bg_color)[:3]
         eyes = self._anaglyph_targets(gl_w, gl_h)
         for eye, view in zip(eyes, (left_view, right_view)):
