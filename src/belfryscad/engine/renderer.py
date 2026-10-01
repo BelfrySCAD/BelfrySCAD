@@ -359,9 +359,8 @@ uniform sampler2D right_eye;
 out vec4 fragColor;
 uniform mat3 left_mat;
 uniform mat3 right_mat;
-uniform vec3 offset;
 void main() {
-    vec3 c = left_mat * texture(left_eye, v_uv).rgb + right_mat * texture(right_eye, v_uv).rgb + offset;
+    vec3 c = left_mat * texture(left_eye, v_uv).rgb + right_mat * texture(right_eye, v_uv).rgb;
     fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """
@@ -386,25 +385,6 @@ ANAGLYPH_MATRICES = {
                         [-0.026, -0.093, 1.234]])),
 }
 
-
-def anaglyph_composite(style: str, red_level: float = 1.0):
-    """(left_mat, right_mat, offset) for `_ANAGLYPH_FRAG`: ANAGLYPH_MATRICES'
-    pair, with the red output channel scaled by `red_level` in every style
-    but Dubois' "color".
-
-    Turning red down is the one correction that works for blue/cyan lenses
-    that pass some red. That eye sees a dim red ghost of the left image, and
-    removing blue where the ghost falls only makes it match the brightness
-    around it -- it stays red, so a red ghost becomes a blue one (tried, and
-    measured useless on real red-blue glasses). Less red means a smaller
-    ghost, and it also evens out the two eyes: a red lens passes far more
-    light than a blue one. How much depends on the glasses and monitor, so
-    it is a preference. Dubois' "color" is left alone (Preferences disables
-    the slider for it): his matrices are a fit of their own."""
-    left, right = (m.copy() for m in ANAGLYPH_MATRICES[style])
-    if style != "color":
-        left[0] *= red_level
-    return left, right, np.zeros(3)
 
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
@@ -493,7 +473,6 @@ class Camera:
         self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
         self.anaglyph_style = "gray"     # a key of ANAGLYPH_MATRICES
-        self.anaglyph_red_level = 1.0    # red channel scale (anaglyph_composite)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1758,9 +1737,7 @@ class SceneRenderer:
         fbo.use()
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
-        left_mat, right_mat, offset = anaglyph_composite(self.camera.anaglyph_style,
-                                                         self.camera.anaglyph_red_level)
-        self._anaglyph_prog["offset"].value = tuple(offset)
+        left_mat, right_mat = ANAGLYPH_MATRICES[self.camera.anaglyph_style]
         # GLSL mat3 is column-major, so the rows above go in transposed.
         self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
         self._anaglyph_prog["right_mat"].value = tuple(right_mat.T.ravel())

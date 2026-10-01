@@ -304,18 +304,6 @@ class TestCameraRoll:
         L, R = np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
         assert np.allclose(left @ L + right @ R, [0.299, 0.114, 0.114])
 
-    def test_red_level_scales_only_the_red_channel(self):
-        from belfryscad.engine.renderer import ANAGLYPH_MATRICES, anaglyph_composite
-        style = "gray"
-        left, right, offset = anaglyph_composite(style, 0.6)
-        base_left, base_right = ANAGLYPH_MATRICES[style]
-        assert np.allclose(left[0], 0.6 * base_left[0]) and np.allclose(left[1:], base_left[1:])
-        assert np.allclose(right, base_right) and not offset.any()
-        # Dubois' colour style is a fit of its own: untouched.
-        cl, cr, _ = anaglyph_composite("color", 0.6)
-        bl, br = ANAGLYPH_MATRICES["color"]
-        assert np.allclose(cl, bl) and np.allclose(cr, br)
-
     def test_color_anaglyph_keeps_hue(self):
         """The point of the Dubois style: a green part reads green, where the
         grey style turns every colour into a brightness."""

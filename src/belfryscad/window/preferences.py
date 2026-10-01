@@ -70,7 +70,6 @@ _DEFAULTS = {
     "editor/showColumnGuide": True,
     "editor/columnGuide": "80",
     "viewport/stereoMode": "cross",     # a key of STEREO_MODES
-    "viewport/anaglyphRedLevel": 1.0,   # red channel scale, monochrome anaglyphs
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
@@ -387,33 +386,6 @@ class PreferencesDialog(QDialog):
         scale_row.addWidget(self._stereo_scale_label)
         vp_form.addRow("Stereo depth scale:", scale_row)
 
-        red_row = QHBoxLayout()
-        red_row.setSpacing(8)
-        current_red = s.value("viewport/anaglyphRedLevel", _DEFAULTS["viewport/anaglyphRedLevel"], type=float)
-        self._anaglyph_red = QSlider(Qt.Orientation.Horizontal)
-        self._anaglyph_red.setRange(30, 100)
-        self._anaglyph_red.setValue(int(round(current_red * 100)))
-        self._anaglyph_red_label = QLabel(f"{int(round(current_red * 100))}%")
-        self._anaglyph_red_label.setMinimumWidth(40)
-        self._anaglyph_red.setToolTip(
-            "For the Grayscale Anaglyph: how bright the red (left-eye) image is.\n"
-            "Lower it if the blue or cyan eye sees a red ghost, or if the red eye's\n"
-            "image looks brighter than the other eye's.")
-        self._anaglyph_red.valueChanged.connect(lambda v: self._anaglyph_red_label.setText(f"{v}%"))
-        self._anaglyph_red.valueChanged.connect(lambda v: self._emit("viewport/anaglyphRedLevel", v / 100.0))
-        # A form row on macOS stays at its size hint, which left these short.
-        self._anaglyph_red.setMinimumWidth(2 * self._anaglyph_red.sizeHint().width())
-        red_row.addWidget(self._anaglyph_red)
-        red_row.addWidget(self._anaglyph_red_label)
-        vp_form.addRow("Anaglyph red level:", red_row)
-        # Only the grayscale anaglyph uses the red level: Color Anaglyph is
-        # Dubois' fit, and side-by-side stereo has no red channel to scale.
-        def _red_level_enabled(_=None):
-            on = self._stereo_mode.currentData() == "anaglyph-gray"
-            self._anaglyph_red.setEnabled(on)
-            self._anaglyph_red_label.setEnabled(on)
-        self._stereo_mode.currentIndexChanged.connect(_red_level_enabled)
-        _red_level_enabled()
 
         current_theme = s.value("viewport/colorTheme", _DEFAULTS["viewport/colorTheme"])
         self._color_theme = QComboBox()
