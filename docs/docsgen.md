@@ -267,6 +267,25 @@ for a fast text-only validation pass.
 It rebuilds when the pane becomes visible, when the tab changes, and on
 demand — deliberately **not** on text changes.
 
+**Folder** previews the file as if it were in another folder: the one it is
+meant to end up in. A docs build takes several things from where a file lives:
+- the `.openscad_docsgen_rc` at or above it (`find_rc`);
+- the folder examples run in, and so how their relative includes resolve;
+- the library a checkout is taken for (`libshim`);
+- the sibling files that cross-file links resolve against;
+- where the live copy of the buffer goes (`self_include`).
+
+So a file written somewhere else, or not saved at all, would otherwise preview
+wrongly until it was moved. With a folder chosen, all of those use
+`docsgen.preview.planned_path`: the chosen folder plus the file's own name,
+or `untitled.scad` for an unsaved buffer, which can then be previewed at all.
+
+The choice is kept per file, keyed by real path, in `docs/targetFolders`
+across sessions; an unsaved buffer's choice lasts only for the session.
+Choosing the file's own folder, or **Use the File's Own Folder**, clears it.
+While a folder is set, the button reads `Folder: <name>` and the status line
+ends "As if in <name>".
+
 **Text size** is `A−`/`A+` in the pane's own button row (sized from the
 style's own `sizeHint` and the measured label width, never a hard-coded
 number -- 36px clipped the text on macOS, and an offscreen `sizeHint` does not
