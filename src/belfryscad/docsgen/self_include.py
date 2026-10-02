@@ -18,7 +18,8 @@ itself exactly as the run will.
 
 The Docs pane documents the live editor buffer, not the saved file, so it
 sets `live_copy` to a temporary copy of the buffer beside the source, and that
-is what gets included.
+is what gets included -- also in place of any `Includes:` line that names the
+documented file (example_includes).
 """
 from __future__ import annotations
 
@@ -32,6 +33,49 @@ _INCLUDE_RE = re.compile(r'\b(?:use|include)\s*<([^>]+)>')
 #: (documented file's basename, path of a copy of its live text) while the
 #: Docs pane is building a preview; None otherwise. See module docstring.
 live_copy: tuple[str, str] | None = None
+
+
+def example_includes(src_file: str, includes) -> list[str]:
+    """The include lines an example of `src_file` starts with: its
+    `Includes:`, then `include <the file>` if those do not already reach it.
+
+    With a live copy (the Docs pane), an `include`/`use` that names the
+    documented file itself -- `<gears.scad>`, `<BOSL2/gears.scad>`, or any
+    name that lands on its path -- is pointed at the copy instead. Otherwise
+    the example ran the *saved* file rather than the buffer being edited, and
+    one previewed as if in another folder (planned_path), where it does not
+    exist yet, failed with "Included file not found"."""
+    lines = list(includes)
+    if live_copy is not None:
+        own = _own_names(src_file, tuple(lines))
+        if own:
+            live = os.path.basename(live_copy[1])
+            lines = [_INCLUDE_RE.sub(lambda m: m.group(0).replace(m.group(1), live) if m.group(1) in own else m.group(0), line)
+                     for line in lines]
+            return lines          # the file is now reached, through its live copy
+    return lines + self_include_lines(src_file, lines)
+
+
+def _own_names(src_file: str, includes: tuple) -> set:
+    """The names in `includes` that resolve to the documented file's own
+    path -- whether or not it exists there yet."""
+    from belfryscad.libshim import detect
+    from belfryscad.scad_deps import _library_dirs
+    from .runner import runner
+    base = runner.src_dir_override
+    path = os.path.join(base, os.path.basename(src_file)) if base else os.path.abspath(src_file)
+    target = os.path.normcase(os.path.realpath(path))
+    src_dir = os.path.dirname(path)
+    shim = detect(src_dir, includes)
+    roots = [Path(src_dir), *(Path(d) for d in _library_dirs())]
+    own = set()
+    for line in includes:
+        for name in _INCLUDE_RE.findall(line):
+            lib, _, rest = name.partition("/")
+            candidates = [Path(shim[1]) / rest] if shim and lib == shim[0] and rest else [r / name for r in roots]
+            if any(os.path.normcase(os.path.realpath(c)) == target for c in candidates):
+                own.add(name)
+    return own
 
 
 def self_include_lines(src_file: str, includes) -> list[str]:

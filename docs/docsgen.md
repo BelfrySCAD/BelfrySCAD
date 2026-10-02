@@ -280,6 +280,13 @@ wrongly until it was moved. With a folder chosen, all of those use
 `docsgen.preview.planned_path`: the chosen folder plus the file's own name,
 or `untitled.scad` for an unsaved buffer, which can then be previewed at all.
 
+An `Includes:` line that names the documented file itself, such as
+`include <extruded8020.scad>` or `include <BOSL2/gears.scad>`, is pointed at
+the live copy (`self_include.example_includes`). In the target folder the file
+doesn't exist yet, so that include would otherwise fail with "Included file
+not found". In its own folder it would quietly run the saved file instead of
+the buffer being edited.
+
 The choice is kept per file, keyed by real path, in `docs/targetFolders`
 across sessions; an unsaved buffer's choice lasts only for the session.
 Choosing the file's own folder, or **Use the File's Own Folder**, clears it.

@@ -96,3 +96,33 @@ def test_the_markdown_still_shows_the_example_as_written(tmp_path, libdir):
     src.write_text(text)
     pv = build_preview(text, str(src), gen_images=False)
     assert "include <foo.scad>" not in pv.markdown
+
+
+def test_includes_naming_the_file_itself_run_the_live_buffer(tmp_path, libdir):
+    """`Includes: include <foo.scad>` names the documented file. The example
+    must run the buffer being edited, not the saved file (which says 7)."""
+    src = tmp_path / "mine" / "foo.scad"
+    src.parent.mkdir()
+    text = DOC.format(includes="//   include <foo.scad>")
+    src.write_text(text.replace("FOO_VALUE = 42;", "FOO_VALUE = 7;"))
+    pv = build_preview(text, str(src), gen_images=False)
+    assert pv.errors == [], pv.errors
+    assert "foo_says = 42" in pv.markdown
+
+
+def test_previewed_in_a_target_folder_where_it_does_not_exist_yet(tmp_path, libdir):
+    """The Docs pane's Folder: the file previews as if it were in `target`,
+    where no foo.scad exists. Its own `include <foo.scad>` must still find it
+    (the live copy) rather than fail with "Included file not found"."""
+    from belfryscad.docsgen.preview import planned_path
+    drafts = tmp_path / "drafts"
+    drafts.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    text = DOC.format(includes="//   include <foo.scad>")
+    (drafts / "foo.scad").write_text(text)
+    pv = build_preview(text, planned_path(str(drafts / "foo.scad"), str(target)), gen_images=False)
+    assert pv.errors == [], pv.errors
+    assert "foo_says = 42" in pv.markdown
+    assert not (target / "foo.scad").exists()
+    assert not any(p.name.startswith("tmp_docsgen_") for p in target.iterdir()), "the live copy is cleaned up"
