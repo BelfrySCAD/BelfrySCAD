@@ -32,6 +32,7 @@ import os.path
 import re
 from .errorlog import errorlog, ErrorLog
 from .runner import runner, camera_spec_from_dyn
+from belfryscad.memory_relief import release_free_memory
 
 # Upstream's OpenSCAD default view, reproduced here so a docs build looks
 # the same whichever tool made it.
@@ -317,6 +318,9 @@ class ImageManager:
                 frame_cb = (lambda n, t, finished=done - 1:
                             progress(finished, total, n, t))
             self.process_request(req, frame_progress=frame_cb)
+            # One process renders every image of a docs build; without this
+            # it keeps the high-water mark of every example (memory_relief).
+            release_free_memory()
             if progress:
                 progress(done, total, 0, 0)
         self.requests = []

@@ -40,6 +40,7 @@ from belfryscad.window.update_check import check_for_updates
 from belfryscad.window.export_options import ask_export_options, export_kwargs
 from belfryscad.window.color_list import show_color_list
 from belfryscad.window.font_list import show_font_list
+from belfryscad.memory_relief import release_free_memory
 from belfryscad.window.preferences import (PreferencesDialog, load_preference,
                                            parse_guide_columns, save_preferences)
 from belfryscad.window.color_themes import COLOR_THEMES, DEFAULT_COLOR_THEME, all_themes
@@ -3056,6 +3057,9 @@ class MainWindow(QMainWindow):
             if job in self._render_jobs:
                 self._render_jobs.remove(job)
             if not self._render_jobs:
+                # The render's evaluator is gone; give what it freed back to
+                # the OS rather than holding the session's high-water mark.
+                release_free_memory()
                 # Only now is it safe to start another render (see
                 # AnimatePane.render_busy_check/resume_deferred_advance's own
                 # doc comments) -- resume a step deferred by animation
