@@ -10,7 +10,7 @@ from .utils import flatten
 from .errorlog import ErrorLog, errorlog
 from .imagemanager import image_manager
 from .logmanager import log_manager
-from .self_include import self_include_lines
+from .self_include import example_includes
 
 
 class DocsGenException(Exception):
@@ -909,10 +909,9 @@ class LogBlock(GenericBlock):
             fileblock = fileblock.parent
 
         script_lines = []
-        script_lines.extend(fileblock.includes)
-        # BelfrySCAD departure (#560): the documented file, when its
-        # Includes do not already reach it. See self_include.py.
-        script_lines.extend(self_include_lines(self.origin.file, fileblock.includes))
+        # BelfrySCAD departure (#560): the Includes, plus the documented
+        # file when they do not already reach it. See self_include.py.
+        script_lines.extend(example_includes(self.origin.file, fileblock.includes))
         script_lines.extend(fileblock.common_code)
         for line in self.body:
             if line.strip().startswith("--"):
@@ -971,10 +970,9 @@ class ImageBlock(GenericBlock):
         self.image_req = None
 
         script_lines = []
-        script_lines.extend(fileblock.includes)
-        # BelfrySCAD departure (#560): the documented file, when its
-        # Includes do not already reach it. See self_include.py.
-        script_lines.extend(self_include_lines(self.origin.file, fileblock.includes))
+        # BelfrySCAD departure (#560): the Includes, plus the documented
+        # file when they do not already reach it. See self_include.py.
+        script_lines.extend(example_includes(self.origin.file, fileblock.includes))
         script_lines.extend(fileblock.common_code)
         for line in self.body:
             if line.strip().startswith("--"):

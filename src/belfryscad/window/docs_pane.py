@@ -17,7 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontInfo, QImage, QPalette, QTextBlockFormat, QTextCursor, QTextDocument,
                             QTextCharFormat, QTextFormat, QTextFrameFormat, QTextTable)
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu, QPushButton,
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton,
                                 QSplitter, QTextBrowser, QTreeWidget,
                                 QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -604,6 +604,25 @@ class DocsPane(QWidget):
             Qt.TextInteractionFlag.TextBrowserInteraction)
         self._status.linkActivated.connect(self._on_status_link)
 
+        # The folder the file is meant to end up in. A docs build takes a lot
+        # from where a file lives -- the .openscad_docsgen_rc above it, the
+        # folder its examples run in, the library a checkout stands for, its
+        # siblings for cross-file links -- so a file written somewhere else,
+        # or not saved yet, previews wrongly until it is moved. This lets it
+        # preview as if it were already there (docsgen.preview.planned_path).
+        self._folder_btn = QToolButton()
+        self._folder_btn.setText("Folder")
+        self._folder_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        folder_menu = QMenu(self._folder_btn)
+        folder_menu.addAction("Preview As If In Folder…", self._choose_target_folder)
+        self._use_own_folder_act = folder_menu.addAction("Use the File's Own Folder", self._clear_target_folder)
+        self._folder_btn.setMenu(folder_menu)
+        #: Real path ("" for an unsaved buffer) -> the folder it is previewed in.
+        self._targets = self._load_targets()
+        #: The real path of the file being shown, as the main window gave it.
+        self._real_path = ""
+        self._update_folder_button()
+
         # Text size, as buttons in the pane rather than only a preference:
         # the reader wants it bigger while they are reading, not after a
         # trip to a dialog (#465). Persisted all the same.
@@ -624,6 +643,7 @@ class DocsPane(QWidget):
         top = QHBoxLayout()
         top.setContentsMargins(4, 4, 4, 0)
         top.addWidget(self._refresh_btn)
+        top.addWidget(self._folder_btn)
         top.addWidget(self._smaller_btn)
         top.addWidget(self._bigger_btn)
         top.addWidget(self._status, 1)
@@ -785,10 +805,13 @@ class DocsPane(QWidget):
     source_fn = None
 
     def _live_source(self):
-        """The editor's current (text, path), falling back to the last build's."""
+        """The editor's current (text, planned path), falling back to the
+        last build's."""
         live = self.source_fn() if self.source_fn else None
-        if live and live[1]:
-            self._last_source = live
+        if live:
+            planned = self._planned(live[1] or "")
+            if planned:
+                self._last_source = (live[0], planned)
         return self._last_source
 
     def _on_status_link(self, href: str):
@@ -845,12 +868,87 @@ class DocsPane(QWidget):
         if not self._busy:
             self._start_pending()
 
+    # -- target folder ----------------------------------------------------
+
+    _TARGETS_KEY = "docs/targetFolders"
+
+    @classmethod
+    def _load_targets(cls) -> dict:
+        """Saved files' chosen folders, kept across sessions."""
+        import json
+        from belfryscad.settings import app_settings
+        try:
+            data = json.loads(app_settings().value(cls._TARGETS_KEY, "{}") or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+
+    def _save_targets(self):
+        import json
+        from belfryscad.settings import app_settings
+        # An unsaved buffer's choice is for this session only: "" names no file.
+        app_settings().setValue(self._TARGETS_KEY, json.dumps({k: v for k, v in self._targets.items() if k}))
+
+    def target_folder(self, real_path: str) -> str | None:
+        return self._targets.get(real_path or "")
+
+    def _planned(self, real_path: str) -> str:
+        from belfryscad.docsgen.preview import planned_path
+        return planned_path(real_path, self.target_folder(real_path))
+
+    def _choose_target_folder(self):
+        import os.path
+        start = self.target_folder(self._real_path) or os.path.dirname(self._real_path) or os.path.expanduser("~")
+        folder = QFileDialog.getExistingDirectory(self, "Preview As If In Folder", start)
+        if not folder:
+            return
+        self._set_target_folder(self._real_path, folder)
+
+    def _clear_target_folder(self):
+        self._set_target_folder(self._real_path, None)
+
+    def _set_target_folder(self, real_path: str, folder: str | None):
+        import os.path
+        key = real_path or ""
+        # Choosing the file's own folder is the same as choosing none.
+        if folder and real_path and os.path.normcase(os.path.abspath(folder)) == \
+                os.path.normcase(os.path.dirname(os.path.abspath(real_path))):
+            folder = None
+        if folder:
+            self._targets[key] = folder
+        else:
+            self._targets.pop(key, None)
+        self._save_targets()
+        self._update_folder_button()
+        self.refresh_requested.emit()
+
+    def _update_folder_button(self):
+        import os.path
+        folder = self.target_folder(self._real_path)
+        self._use_own_folder_act.setEnabled(bool(folder) and bool(self._real_path))
+        if folder:
+            self._folder_btn.setText(f"Folder: {os.path.basename(os.path.normpath(folder)) or folder}")
+            self._folder_btn.setToolTip(f"Previewing as if this file were in\n{folder}")
+        else:
+            self._folder_btn.setText("Folder")
+            self._folder_btn.setToolTip(
+                "Preview as if the file were in another folder -- the one it will be "
+                "placed in -- so that folder's .openscad_docsgen_rc, library and "
+                "neighbouring files are used.")
+
     def refresh(self, source_text: str, src_file: str):
         """Rebuild the preview for `source_text`. Safe to call on every
         keystroke: a request arriving mid-build replaces any other waiting
-        request rather than queueing behind it."""
+        request rather than queueing behind it.
+
+        `src_file` is the file's real path ("" for an unsaved buffer); the
+        preview is built for its planned path (see _planned)."""
+        self._real_path = src_file or ""
+        self._update_folder_button()
+        src_file = self._planned(self._real_path)
         if not src_file:
-            self._status.setText("Save the file first — the preview needs its name and folder.")
+            self._status.setText("Save the file first, or choose a Folder to preview it in "
+                                 "— the preview needs a name and folder.")
             return
         if self._invalidate_next:
             from belfryscad.docsgen.preview import invalidate_cache
@@ -1164,6 +1262,12 @@ class DocsPane(QWidget):
             self._status.setText(
                 f"{self._status.text()} &nbsp; Examples resolve "
                 f"<b>{self._library_as}</b> to this folder.")
+        if self.target_folder(self._real_path):
+            import html, os.path
+            folder = self.target_folder(self._real_path)
+            self._status.setText(
+                f"{self._status.text()} &nbsp; As if in "
+                f"<b>{html.escape(os.path.basename(os.path.normpath(folder)) or folder)}</b>.")
         if self._pending_images:
             n = len(self._pending_images)
             plural = "s" if n != 1 else ""

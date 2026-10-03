@@ -38,6 +38,26 @@ class DocsPreview:
         return any(level == ErrorLog.FAIL for _f, _l, _m, level in self.errors)
 
 
+UNTITLED_NAME = "untitled.scad"
+
+
+def planned_path(src_file: str, target_dir: str | None) -> str:
+    """Where to preview `src_file` as if it lived: `target_dir` plus its own
+    name, or `src_file` itself when no target is set.
+
+    Everything a docs build takes from a file's location keys off this one
+    path -- the .openscad_docsgen_rc above it (find_rc), the folder examples
+    run in and resolve relative includes from, the library a checkout is
+    taken for (libshim), the sibling files cross-file links resolve against,
+    and where the live copy of the buffer goes (self_include). So a file can
+    be written anywhere, or not saved at all, and still preview as it will
+    once it is placed in its library. An unsaved buffer takes UNTITLED_NAME.
+    """
+    if not target_dir:
+        return src_file
+    return os.path.join(target_dir, os.path.basename(src_file) or UNTITLED_NAME)
+
+
 def find_rc(src_file: str) -> str | None:
     """The nearest .openscad_docsgen_rc at or above src_file's directory.
 
