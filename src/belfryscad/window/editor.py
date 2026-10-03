@@ -344,32 +344,55 @@ class LineNumberArea(QWidget):
     def paintEvent(self, event):
         self._editor.line_number_area_paint_event(event)
 
+    def block_at_y(self, y: int):
+        """The visible block at gutter height `y`, or None below the text."""
+        ed = self._editor
+        block = ed.firstVisibleBlock()
+        top = round(ed.blockBoundingGeometry(block).translated(ed.contentOffset()).top())
+        while block.isValid():
+            if block.isVisible():
+                h = round(ed.blockBoundingRect(block).height())
+                if top <= y < top + h:
+                    return block
+                top += h
+            block = block.next()
+        return None
+
     def mousePressEvent(self, event):
+        # Left button only: a right-click opens the context menu, and must
+        # not also toggle the breakpoint or fold it lands on.
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
         x = event.position().x()
-        y = int(event.position().y())
         fold_x = self.width() - 14
         ed = self._editor
-
-        def _block_at_y(y):
-            block = ed.firstVisibleBlock()
-            top = round(ed.blockBoundingGeometry(block).translated(ed.contentOffset()).top())
-            while block.isValid():
-                if block.isVisible():
-                    h = round(ed.blockBoundingRect(block).height())
-                    if top <= y < top + h:
-                        return block
-                    top += h
-                block = block.next()
-            return None
-
         if x >= fold_x:
-            block = _block_at_y(y)
+            block = self.block_at_y(int(event.position().y()))
             if block:
                 ed.toggle_fold(block.blockNumber())
         elif x < 14:
-            block = _block_at_y(y)
+            block = self.block_at_y(int(event.position().y()))
             if block:
                 ed.toggle_breakpoint(block.blockNumber())
+
+    def context_menu(self, y: int):
+        """The gutter's right-click menu for the line at height `y`, or None
+        below the last line. Built separately from contextMenuEvent so it can
+        be inspected without opening a popup."""
+        block = self.block_at_y(y)
+        if block is None:
+            return None
+        line = block.blockNumber()
+        menu = QMenu(self)
+        marked = line in self._editor.bookmark_lines()
+        menu.addAction("Remove Bookmark" if marked else "Add Bookmark",
+                       lambda: self._editor.toggle_bookmark(line))
+        return menu
+
+    def contextMenuEvent(self, event):
+        menu = self.context_menu(int(event.pos().y()))
+        if menu is not None:
+            menu.exec(event.globalPos())
 
 
 class _LineMarks:
@@ -2661,9 +2684,11 @@ class CodeEditor(QPlainTextEdit):
         """Bookmarked lines, 0-indexed block numbers, ascending."""
         return self._bookmarks.lines()
 
-    def toggle_bookmark(self):
-        """Mark or unmark the cursor's line."""
-        self._bookmarks.toggle(self.textCursor().blockNumber())
+    def toggle_bookmark(self, block_number: int | None = None):
+        """Mark or unmark a line: `block_number` (0-indexed), or the cursor's."""
+        if block_number is None:
+            block_number = self.textCursor().blockNumber()
+        self._bookmarks.toggle(block_number)
         self._line_number_area.update()
 
     def jump_to_bookmark(self, forward: bool = True) -> bool:
