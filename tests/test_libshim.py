@@ -6,6 +6,56 @@ import pytest
 from belfryscad.libshim import detect, library_shim, shim_dir
 
 
+@pytest.fixture(autouse=True)
+def no_installed_libraries(tmp_path_factory, monkeypatch):
+    """By default no library is installed, so detection does not depend on
+    what the machine running the tests happens to have in its libraries
+    folder (BOSL2, on a developer's). Tests that want one install it."""
+    libraries = tmp_path_factory.mktemp("libraries")
+    monkeypatch.setenv("OPENSCADPATH", str(libraries))
+    return libraries
+
+
+def _install(libraries, name, files):
+    lib = libraries / name
+    lib.mkdir()
+    for f in files:
+        (lib / f).write_text("")
+    return lib
+
+
+BOSL2_FILES = ["std.scad", "transforms.scad", "shapes3d.scad", "shapes2d.scad", "isosurface.scad",
+               "skin.scad", "vnf.scad", "paths.scad", "regions.scad", "attachments.scad"]
+
+
+def test_a_folder_of_experiments_is_not_taken_for_the_library(tmp_path, no_installed_libraries):
+    """#565: `BOSL2 potential/` holds experiments and one copied library
+    file. `include <BOSL2/isosurface.scad>` found it there and pointed the
+    whole of BOSL2 at the folder, loading the experiment instead."""
+    _install(no_installed_libraries, "BOSL2", BOSL2_FILES)
+    potential = tmp_path / "BOSL2 potential"
+    potential.mkdir()
+    for f in ("isosurface.scad", "my_experiments.scad", "ideas.scad"):
+        (potential / f).write_text("")
+    assert detect(str(potential), ["include <BOSL2/isosurface.scad>"]) is None
+
+
+def test_a_whole_copy_of_an_installed_library_is_still_redirected(tmp_path, no_installed_libraries):
+    """A clone or branch -- here one version off: a file gone, one added --
+    is what the redirect is for."""
+    _install(no_installed_libraries, "BOSL2", BOSL2_FILES)
+    clone = tmp_path / "BOSL2-branch"
+    clone.mkdir()
+    for f in BOSL2_FILES[1:] + ["new_feature.scad"]:
+        (clone / f).write_text("")
+    assert detect(str(clone), ["include <BOSL2/isosurface.scad>"]) == ("BOSL2", str(clone))
+
+
+def test_the_installed_library_itself_is_fine(no_installed_libraries):
+    lib = _install(no_installed_libraries, "BOSL2", BOSL2_FILES)
+    assert detect(str(lib), ["include <BOSL2/std.scad>"]) == ("BOSL2", str(lib))
+
+
 def test_detect_names_the_library_the_directory_provides(tmp_path):
     (tmp_path / "std.scad").write_text("// the library\n")
     assert detect(str(tmp_path), ["include <BOSL2/std.scad>", "cube(1);"]) == ("BOSL2", str(tmp_path))
