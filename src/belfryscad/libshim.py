@@ -17,6 +17,16 @@ Detection is by agreement rather than configuration: if a script says
 `include <NAME/rest>` and `rest` exists in the directory the script is being
 run from, then that directory IS the library called NAME. A file that merely
 *uses* BOSL2 has no `std.scad` beside it, so it is left alone.
+
+That alone was not enough (#565): a folder of experiments kept beside a few
+copied library files -- `BOSL2 potential/isosurface.scad` -- matched
+`include <BOSL2/isosurface.scad>`, and the whole name BOSL2 was pointed at
+it, so the Docs pane loaded the experiment instead of the file the include
+named. So a folder must also look like the whole library: hold at least
+half the .scad files of the installed library of that name. A clone or a
+branch, even some versions apart, passes easily; a handful of experiments
+does not. With no installed copy there is nothing to confuse it with, and
+the agreement alone decides.
 """
 from __future__ import annotations
 
@@ -42,6 +52,10 @@ _shims: dict[tuple[str, str], str] = {}
 #: those and anything similar without wandering off towards the home
 #: directory.
 _MAX_CLIMB = 3
+
+#: The share of an installed library's .scad files a folder must also hold
+#: to count as a copy of that library (#565).
+_WHOLE_COPY = 0.5
 
 
 def detect(src_dir: str, script_lines) -> tuple[str, str] | None:
@@ -73,9 +87,37 @@ def detect(src_dir: str, script_lines) -> tuple[str, str] | None:
             if not rest or not name or name in (".", ".."):
                 continue
             for root in roots:
-                if (root / rest).is_file():
+                if (root / rest).is_file() and _is_whole_copy(name, root):
                     return name, str(root)
     return None
+
+
+def _installed(name: str) -> Path | None:
+    """The library called `name` in the libraries folder, if there is one."""
+    from belfryscad.scad_deps import _library_dirs
+    for libraries in _library_dirs():
+        if (libraries / name).is_dir():
+            return libraries / name
+    return None
+
+
+def _is_whole_copy(name: str, root: Path) -> bool:
+    """Whether `root` can stand in for the installed library `name`: it holds
+    at least _WHOLE_COPY of the installed copy's .scad files (by name), or
+    there is no installed copy, or it is the installed copy."""
+    installed = _installed(name)
+    if installed is None:
+        return True
+    try:
+        if installed.resolve() == root.resolve():
+            return True
+    except OSError:
+        pass
+    wanted = {p.name for p in installed.glob("*.scad")}
+    if not wanted:
+        return True
+    present = {p.name for p in root.glob("*.scad")}
+    return len(wanted & present) >= _WHOLE_COPY * len(wanted)
 
 
 def _library_path_base() -> str:
