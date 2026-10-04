@@ -1816,6 +1816,8 @@ class MainWindow(QMainWindow):
         about_act = self._add_action(help_menu, "About BelfrySCAD", lambda: show_about_dialog(self))
         about_act.setMenuRole(QAction.MenuRole.AboutRole)
         self._add_action(help_menu, "Documentation", open_documentation)
+        from belfryscad.window.ai_setup import open_guide
+        self._add_action(help_menu, "AI Chat Setup Guide", open_guide)
         self._add_action(help_menu, "Report an Issue…", open_issue_tracker)
         self._add_action(help_menu, "Check for Updates…", lambda: check_for_updates(self))
         # Not Qt's font database: these are the names text() will accept,

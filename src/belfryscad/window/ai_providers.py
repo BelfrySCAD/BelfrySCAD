@@ -60,7 +60,7 @@ class Preset:
 # Base URLs verified reachable (an auth/validation error rather than a 404).
 PRESETS: list[Preset] = [
     Preset("anthropic", "Claude (Anthropic)", "anthropic",
-           "https://api.anthropic.com/v1", "e.g. claude-opus-5", needs_key=False),
+           "https://api.anthropic.com/v1", "e.g. claude-sonnet-5-5, or press Fetch", needs_key=False),
     Preset("openai", "ChatGPT (OpenAI)", "openai",
            "https://api.openai.com/v1", "e.g. gpt-4o"),
     Preset("google", "Gemma / Gemini (Google AI)", "openai",

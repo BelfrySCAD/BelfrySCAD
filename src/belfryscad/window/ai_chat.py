@@ -849,7 +849,8 @@ class AIChatPane(QWidget):
                           "enter an API key in Preferences → AI, or install "
                           "the `claude` CLI. If it is installed but not on "
                           "PATH, point at it with Preferences → AI → "
-                          "Claude CLI.")
+                          "Claude CLI. Step by step: Help → AI Chat Setup "
+                          "Guide.")
                 return
             if transport == "cli":
                 cli_session = self._ensure_cli_session(ctx, model)
