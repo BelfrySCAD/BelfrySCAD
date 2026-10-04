@@ -10,6 +10,7 @@ from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFo
 from PySide6.QtCore import (Qt, QProcess, QSize, QSettings, QThread, QObject, QTimer, QUrl,
                             Signal, Slot)
 from belfryscad.settings import app_settings
+import copy
 import os
 import tempfile
 import threading
@@ -17,6 +18,7 @@ import time
 
 from belfryscad import exporters
 from belfryscad.window.editor import CodeEditor
+from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
@@ -177,9 +179,10 @@ def _replace_text_keeping_scroll(editor, text: str):
     the text being looked at.
     """
     from PySide6.QtGui import QTextCursor
+    from belfryscad.qt_positions import qt_length, to_index, to_qt
     old = editor.toPlainText()
     if old == text:
-        return len(text), len(text)
+        return qt_length(text), qt_length(text)
     start = 0
     limit = min(len(old), len(text))
     while start < limit and old[start] == text[start]:
@@ -188,6 +191,9 @@ def _replace_text_keeping_scroll(editor, text: str):
     while tail < limit - start and old[-1 - tail] == text[-1 - tail]:
         tail += 1
     old_end, new_end = len(old) - tail, len(text) - tail
+    # Python indices so far; the document wants Qt's UTF-16 positions, which
+    # differ after any emoji -- one character, two positions.
+    start, old_end, new_end = to_qt(old, start), to_qt(old, old_end), to_qt(text, new_end)
 
     vbar, hbar = editor.verticalScrollBar(), editor.horizontalScrollBar()
     top = editor.firstVisibleBlock()
@@ -201,7 +207,7 @@ def _replace_text_keeping_scroll(editor, text: str):
     cursor.beginEditBlock()
     cursor.setPosition(start)
     cursor.setPosition(old_end, QTextCursor.MoveMode.KeepAnchor)
-    cursor.insertText(text[start:new_end])
+    cursor.insertText(text[to_index(text, start):to_index(text, new_end)])
     cursor.endEditBlock()
 
     if above:
@@ -211,6 +217,20 @@ def _replace_text_keeping_scroll(editor, text: str):
         vbar.setValue(min(block.firstLineNumber() + line_in_top, vbar.maximum()))
     hbar.setValue(min(h, hbar.maximum()))
     return start, new_end
+
+
+def _indexed_span(span, tab):
+    """`span` with its offsets as Python indices into `tab`'s text. The
+    evaluator reports UTF-8 bytes, so any non-ASCII character earlier in the
+    file -- an em dash in a comment -- shifted selection, gizmo edits and
+    nudges right by a byte or more per character."""
+    from belfryscad.qt_positions import byte_to_index
+    convert = byte_to_index(tab.editor.toPlainText())
+    if convert is None:
+        return span
+    span = copy.copy(span)
+    span.start_offset, span.end_offset = convert(span.start_offset), convert(span.end_offset)
+    return span
 
 
 def _cursor_position(editor) -> int:
@@ -237,13 +257,14 @@ def _place_cursor(editor, pos, changed=None) -> None:
     # Clamped both ends: a stored position can be -1 as well as past the end
     # (see `_cursor_position`). Qt rejects a negative one with a console
     # warning and leaves the cursor wherever it was.
-    cursor.setPosition(max(0, min(pos, len(editor.toPlainText()))))
+    end = editor.document().characterCount() - 1
+    cursor.setPosition(max(0, min(pos, end)))
     view = editor.viewport().rect()
     visible = view.contains(editor.cursorRect(cursor))
     change_visible = False
     if changed is not None:
         c = editor.textCursor()
-        c.setPosition(max(0, min(changed[0], len(editor.toPlainText()))))
+        c.setPosition(max(0, min(changed[0], end)))
         change_visible = view.intersects(editor.cursorRect(c))
     vbar, hbar = editor.verticalScrollBar(), editor.horizontalScrollBar()
     v, h = vbar.value(), hbar.value()
@@ -2174,7 +2195,7 @@ class MainWindow(QMainWindow):
         cursor_pos = editor.textCursor().position()
         editor.setPlainText(new_source)
         cursor = editor.textCursor()
-        cursor.setPosition(min(cursor_pos, len(new_source)))
+        cursor.setPosition(min(cursor_pos, qt_length(new_source)))
         editor.setTextCursor(cursor)
         # A render already in flight is now stale (it's computing geometry
         # for source this edit just superseded) -- cancel it right away
@@ -2525,9 +2546,9 @@ class MainWindow(QMainWindow):
         editor = tab.editor
         cursor_pos = editor.textCursor().position()
         scroll = editor.verticalScrollBar().value()
-        editor.replace_span(0, len(editor.toPlainText()), text)
+        editor.replace_text(0, len(editor.toPlainText()), text)
         cur = editor.textCursor()
-        cur.setPosition(min(cursor_pos, len(text)))
+        cur.setPosition(min(cursor_pos, qt_length(text)))
         editor.setTextCursor(cur)
         editor.verticalScrollBar().setValue(scroll)
 
@@ -3745,7 +3766,7 @@ class MainWindow(QMainWindow):
         cursor.select(QTextCursor.SelectionType.Document)
         cursor.insertText(converted)
         cursor.endEditBlock()
-        cursor.setPosition(min(pos, len(converted)))
+        cursor.setPosition(min(pos, qt_length(converted)))
         e.setTextCursor(cursor)
 
     def _copy_viewport_image(self):
@@ -4818,7 +4839,7 @@ class MainWindow(QMainWindow):
                     self.log("AI: those parameters already have those "
                              "values; nothing was applied.")
                     return
-                tab.editor.replace_span(0, len(live), new_text)
+                tab.editor.replace_text(0, len(live), new_text)
             elif proposal.anchor is not None:
                 # Re-found in the live buffer rather than trusting the
                 # whole-file content built from the turn-start snapshot: the
@@ -4836,10 +4857,10 @@ class MainWindow(QMainWindow):
                           "nothing was applied. Ask for it again.")
                     return
                 start = live.index(proposal.anchor)
-                tab.editor.replace_span(start, start + len(proposal.anchor),
+                tab.editor.replace_text(start, start + len(proposal.anchor),
                                         proposal.replacement or "")
             else:
-                tab.editor.replace_span(0, len(tab.editor.toPlainText()),
+                tab.editor.replace_text(0, len(tab.editor.toPlainText()),
                                         proposal.new_content)
             tab.editor.source_edited_externally.emit()
             idx = self._tabs.indexOf(tab)
@@ -4895,7 +4916,7 @@ class MainWindow(QMainWindow):
             cursor_pos = tab.editor.textCursor().position()
             tab.editor.setPlainText(new_source)
             cursor = tab.editor.textCursor()
-            cursor.setPosition(min(cursor_pos, len(new_source)))
+            cursor.setPosition(min(cursor_pos, qt_length(new_source)))
             tab.editor.setTextCursor(cursor)
 
     def _insert_template(self):
@@ -5967,7 +5988,7 @@ class MainWindow(QMainWindow):
         tab = self._tab_for_origin(span.origin)
         if tab is None:
             return None, None
-        return span, tab
+        return _indexed_span(span, tab), tab
 
     def _selectable_span_for_id(self, orig_id):
         """The span to highlight for the CURRENT pick, honouring any level

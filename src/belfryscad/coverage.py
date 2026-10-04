@@ -200,8 +200,9 @@ def nocov_lines(text: str) -> set[int]:
 
 
 def document_offset_map(source: bytes):
-    """Map the evaluator's BYTE offsets into `source` onto CHARACTER offsets
-    in the editor's document, or return None when they are the same thing.
+    """Map the evaluator's BYTE offsets into `source` onto positions in the
+    editor's document (Qt counts UTF-16 units: an emoji is two), or return
+    None when they are the same thing.
 
     The evaluator reports `start`/`end` as byte offsets into the file it
     parsed. A QTextDocument is indexed by character, and the editor loads a
@@ -237,6 +238,8 @@ def document_offset_map(source: bytes):
             i += width
             continue
         starts.append(byte_pos)
+        if ch >= "\U00010000":         # two Qt positions: the second sits inside it
+            starts.append(byte_pos + 2)
         byte_pos += len(ch.encode("utf-8"))
         i += 1
     starts.append(byte_pos)

@@ -23,7 +23,8 @@ def _pos(origin, start=0, end=5):
 
 def _tab(file_path=None, parse_path=None, read_only=False):
     return SimpleNamespace(file_path=file_path, _last_parse_path=parse_path,
-                           editor=SimpleNamespace(isReadOnly=lambda: read_only))
+                           editor=SimpleNamespace(isReadOnly=lambda: read_only,
+                                                  toPlainText=lambda: ""))
 
 
 class _FakeWindow:

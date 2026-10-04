@@ -72,7 +72,8 @@ def can_format(text: str) -> bool:
     """
     if not text.strip():
         return False
-    from openscad_cpp_evaluator import ParseError, parse_ast_string
+    from openscad_cpp_evaluator import ParseError
+    from belfryscad.qt_positions import parse_ast_string
     try:
         parse_ast_string(text)
         return True
@@ -422,7 +423,8 @@ def _space_separators(text: str) -> str:
     wrapped list) or a comment is left alone -- those are choices the user
     made, and this pass has no business overriding them.
     """
-    from openscad_cpp_evaluator import ParseError, parse_ast_string
+    from openscad_cpp_evaluator import ParseError
+    from belfryscad.qt_positions import parse_ast_string
 
     try:
         nodes = parse_ast_string(text, True)
@@ -522,7 +524,8 @@ def _wrap_one_long_list(text: str, width: int, indent_size: int,
     list then wraps on a later round, by which point its own indentation is
     already right.
     """
-    from openscad_cpp_evaluator import ParseError, parse_ast_string
+    from openscad_cpp_evaluator import ParseError
+    from belfryscad.qt_positions import parse_ast_string
 
     try:
         nodes = parse_ast_string(text, True)
@@ -624,7 +627,7 @@ def _shape(text: str):
     """A structure-only fingerprint of `text`'s AST: node kinds and nesting,
     with every position and literal value dropped. Two sources with the same
     fingerprint differ at most in whitespace between tokens."""
-    from openscad_cpp_evaluator import parse_ast_string
+    from belfryscad.qt_positions import parse_ast_string
 
     def walk(node):
         if isinstance(node, dict) and "kind" in node:
