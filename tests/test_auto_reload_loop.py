@@ -37,6 +37,11 @@ def fake_render(tab, *a, **k):               # what a real render does to the di
     renders.append(time.monotonic())
     scad_temp.remove(scad_temp.write_temp_scad(tab.editor.toPlainText(), near=path))
 w._render = fake_render
+# Prove the reload guard on its own: give the editor back Qt's lossy text,
+# so the file can never match it (CodeEditor.toPlainText now keeps U+2028).
+from PySide6.QtWidgets import QPlainTextEdit
+from belfryscad.window.editor import CodeEditor
+CodeEditor.toPlainText = QPlainTextEdit.toPlainText
 w.open_file_by_path(path, render=False)
 w._act_auto_reload.setChecked(True)
 
@@ -71,3 +76,44 @@ def test_auto_reload_renders_once_per_change_and_does_not_loop():
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["renders_after_external_change"] == 1
     assert out["renders_while_idle"] == 0
+
+
+ROUND_TRIP = r'''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
+from belfryscad.window.main_window import MainWindow
+w = MainWindow(); w.skip_unsaved_prompts = True
+w._render = lambda *a, **k: None
+path = os.path.join(tempfile.mkdtemp(), "t.scad")
+original = 'text("مرحبا नमस्ते");\na = 1; b = 2;\n'
+with open(path, "w", encoding="utf-8") as f:
+    f.write(original)
+w.open_file_by_path(path, render=False)
+tab = w._current_tab()
+w._write_file(tab, path)
+with open(path, encoding="utf-8") as f:
+    saved = f.read()
+print(json.dumps({"saved_same": saved == original, "editor_same": tab.editor.toPlainText() == original}))
+sys.stdout.flush()
+try:
+    w.persist_settings = False
+    w.close()
+except Exception:
+    pass
+os._exit(0)
+'''
+
+
+def test_saving_keeps_non_breaking_spaces_and_other_text_exactly():
+    """Qt's own toPlainText turns U+00A0 into a space and U+2028 into a
+    newline, so a file holding them was rewritten on every save. The
+    reported file: Arabic and Devanagari strings with non-breaking spaces."""
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    proc = subprocess.run([sys.executable, "-c", ROUND_TRIP], capture_output=True, text=True, env=env, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out == {"saved_same": True, "editor_same": True}
