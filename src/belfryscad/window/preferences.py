@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QApplication,
 )
 from PySide6.QtGui import QFont, QFontDatabase, QColor
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from belfryscad.settings import app_settings
 
 from belfryscad.window.color_themes import (
@@ -31,6 +31,8 @@ from belfryscad.window.ai_providers import (
     preset_for,
 )
 from belfryscad.window.ai_cli import CLI_PATH_KEY
+from belfryscad.window.ai_setup import (SETUP_STEPS, WIKI_URL, claude_route, friendly_error,
+                                        list_anthropic_models, check_connection)
 from belfryscad.window.ai_copilot_cli import (
     CLI_PATH_KEY as COPILOT_CLI_PATH_KEY, find_copilot_cli,
 )
@@ -457,6 +459,17 @@ class PreferencesDialog(QDialog):
         self._ai_preset.setCurrentIndex(idx if idx >= 0 else 0)
         ai_form.addRow("Service:", self._ai_preset)
 
+        # What to do, for whichever service is picked (#678): where a key
+        # comes from, that it is billed apart from a chat subscription, and
+        # the order to fill the fields in.
+        self._ai_steps = QLabel()
+        self._ai_steps.setWordWrap(True)
+        self._ai_steps.setTextFormat(Qt.TextFormat.RichText)
+        self._ai_steps.setOpenExternalLinks(True)
+        self._ai_steps.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self._ai_steps.setMinimumWidth(420)
+        ai_form.addRow("", self._ai_steps)
+
         self._ai_base_url = QLineEdit()
         self._ai_base_url.setMinimumWidth(220)
         self._ai_base_url.editingFinished.connect(self._save_ai_base_url)
@@ -484,6 +497,18 @@ class PreferencesDialog(QDialog):
         self._ai_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._ai_key.editingFinished.connect(self._save_ai_key)
         ai_form.addRow("API key:", self._ai_key)
+
+        test_row = QHBoxLayout()
+        test_row.setSpacing(8)
+        self._ai_test = QPushButton("Test")
+        self._ai_test.setToolTip("Send one tiny request with these settings and say how it went.")
+        self._ai_test.clicked.connect(self._test_ai_connection)
+        test_row.addWidget(self._ai_test)
+        self._ai_test_result = QLabel()
+        self._ai_test_result.setWordWrap(True)
+        self._ai_test_result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        test_row.addWidget(self._ai_test_result, 1)
+        ai_form.addRow("", test_row)
 
         # Shown only for the services that can run through a CLI (Claude,
         # Copilot). One row, relabelled and re-keyed per service, so the two
@@ -607,7 +632,9 @@ class PreferencesDialog(QDialog):
 
             self._ai_key.setText(get_api_key(p.id) or "")
             self._ai_key.setPlaceholderText(
-                "" if p.needs_key else "(not needed for this service)")
+                "" if p.needs_key
+                else "only for the API-key route" if p.protocol == "anthropic"
+                else "(not needed for this service)")
             # Hidden, not just empty, where a key can never be used -- a
             # local Ollama has no auth, so the field is dead space.
             self._ai_form.setRowVisible(self._ai_key, p.accepts_key)
@@ -618,7 +645,12 @@ class PreferencesDialog(QDialog):
             # ignored and Fetch has nothing to ask.
             no_endpoint = anthropic or p.id == "copilot"
             self._ai_base_url.setEnabled(not no_endpoint)
-            self._ai_fetch_models.setEnabled(not no_endpoint)
+            # Anthropic lists its models too (with a key); only Copilot has
+            # nothing to ask.
+            self._ai_fetch_models.setEnabled(p.id != "copilot")
+            self._ai_steps.setText(SETUP_STEPS.get(p.id, "") +
+                                   f"<p>Step-by-step guide: <a href='{WIKI_URL}'>AI Chat on the wiki</a></p>")
+            self._ai_test_result.setText("")
             svc = _CLI_SERVICES.get(p.id)
             self._ai_form.setRowVisible(self._ai_cli_row, svc is not None)
             self._ai_form.setRowVisible(self._ai_cli_status, svc is not None)
@@ -628,10 +660,10 @@ class PreferencesDialog(QDialog):
                 self._ai_cli_path.setPlaceholderText(
                     "Found on PATH" if svc[2]() else "Not found on PATH — set it here")
                 self._update_ai_cli_status()
+            # Claude's line answers "is this set up?", so not greyed out.
+            self._ai_note.setEnabled(anthropic)
             if anthropic:
-                self._ai_note.setText(
-                    "Tried in order: ANTHROPIC_API_KEY, then the `claude` CLI "
-                    "if installed (needs no key), then the key above.")
+                self._ai_note.setText(self._claude_route()[1])
             elif p.id == "copilot":
                 self._ai_note.setText(
                     "Runs through the `copilot` CLI, which uses your GitHub "
@@ -681,8 +713,52 @@ class PreferencesDialog(QDialog):
             set_api_key(preset_id, key)
         else:
             delete_api_key(preset_id)
+        if self._current_ai_preset().protocol == "anthropic":
+            self._ai_note.setText(self._claude_route()[1])
         if self._on_change:
             self._on_change()
+
+    def _claude_route(self) -> tuple[str, str]:
+        """How the chat would reach Claude right now, as (route, sentence)."""
+        from belfryscad.window.ai_cli import find_claude_cli
+        return claude_route(os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+                            find_claude_cli(), self._ai_key.text().strip())
+
+    def _test_ai_connection(self):
+        """Run the test off the GUI thread -- a CLI or a slow server can take
+        many seconds -- and report it when done."""
+        import threading
+        from belfryscad.window.ai_copilot_cli import find_copilot_cli
+        p = self._current_ai_preset()
+        base = self._ai_base_url.text().strip() or p.base_url
+        model = self._current_model_id()
+        key = self._ai_key.text().strip()
+        cli = None
+        if p.protocol == "anthropic":
+            route = self._claude_route()[0]
+            if route == "http-env":
+                key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+            elif route == "cli":
+                from belfryscad.window.ai_cli import find_claude_cli
+                key, cli = "", find_claude_cli()
+        copilot = find_copilot_cli() if p.id == "copilot" else None
+        self._ai_test.setEnabled(False)
+        self._ai_test_result.setText("Testing…")
+        result = {}
+        worker = threading.Thread(
+            target=lambda: result.update(r=check_connection(p, base, model, key, cli, copilot)),
+            daemon=True)
+        worker.start()
+
+        def poll():
+            if worker.is_alive():
+                QTimer.singleShot(150, poll)
+                return
+            ok, message = result.get("r", (False, "The test did not finish."))
+            self._ai_test.setEnabled(True)
+            self._ai_test_result.setStyleSheet("" if ok else "color: #c0392b;")
+            self._ai_test_result.setText(message)
+        QTimer.singleShot(150, poll)
 
     def _fetch_ai_models(self):
         p = self._current_ai_preset()
@@ -691,12 +767,24 @@ class PreferencesDialog(QDialog):
             self._ai_note.setText("Set a Base URL first.")
             return
         keep = self._current_model_id()
+        key = self._ai_key.text().strip() or get_api_key(p.id) or ""
+        if p.protocol == "anthropic":
+            key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or key
+            if not key:
+                self._ai_note.setText(
+                    "Listing Claude's models needs an API key. With the Claude CLI instead, "
+                    "leave Model empty to use its default, or type a model name.")
+                return
+        elif p.needs_key and not key:
+            self._ai_note.setText("Enter the API key first; listing models needs it.")
+            return
         self._ai_note.setText("Fetching models…")
         QApplication.processEvents()
         try:
-            models = list_models(base, get_api_key(p.id) or "")
+            models = (list_anthropic_models(base, key) if p.protocol == "anthropic"
+                      else list_models(base, key))
         except Exception as e:      # noqa: BLE001 -- reported, not raised
-            self._ai_note.setText(f"Couldn't list models: {e}")
+            self._ai_note.setText(f"Couldn't list models: {friendly_error(e, p.label)}")
             return
         if not models:
             self._ai_note.setText("Server returned no models.")
