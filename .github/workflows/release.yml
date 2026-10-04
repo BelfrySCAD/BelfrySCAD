@@ -212,7 +212,14 @@ jobs:
           test -n "$IMAGE" -a -n "$APPDIR" || { echo "AppImage/AppDir not found"; exit 1; }
           BEFORE=$(stat -c%s "$IMAGE")
 
-          python3 scripts/fix_appimage_libs.py "$APPDIR"
+          python3 scripts/fix_appimage_libs.py "$APPDIR" | tee /tmp/fix_appimage_libs.log
+          # What the dedupe did, not what it saved: squashfs already stores
+          # identical files once, so dropping the duplicate Qt barely changes
+          # the compressed size, and a size check passed only by luck (1.64.0:
+          # 109KB smaller) until a newer appimagetool runtime outgrew the
+          # saving (1.65.0: failed at the same 156MB). The script's real job
+          # is RUNPATHs and #430's library, so check it found the duplicates.
+          ! grep -q "^Deduplicated 0 " /tmp/fix_appimage_libs.log || { echo "the dedupe found nothing"; exit 1; }
 
           # Fetched rather than reused: linuxdeploy carries appimagetool
           # inside its own AppImage and extracts it to a temp directory
@@ -228,8 +235,6 @@ jobs:
 
           AFTER=$(stat -c%s "$IMAGE")
           echo "AppImage: $((BEFORE / 1048576))MB -> $((AFTER / 1048576))MB"
-          # A repack that saved nothing means the dedupe silently missed.
-          test "$AFTER" -lt "$BEFORE" || { echo "no size reduction"; exit 1; }
 
       # The AppImage is the one artifact that cannot be smoke-tested by
       # building it, so run it. --version exits without needing a display.
