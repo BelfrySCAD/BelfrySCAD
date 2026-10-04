@@ -38,7 +38,7 @@ different tab are both out of scope (see the dialog's own doc comment).
 
 import re
 
-from openscad_cpp_evaluator import parse_ast_string
+from belfryscad.qt_positions import parse_ast_string    # offsets as Python indices
 from dataclasses import dataclass, field
 from typing import Any, Optional
 

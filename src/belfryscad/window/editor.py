@@ -1,5 +1,6 @@
 import re
 
+from belfryscad.qt_positions import byte_column_to_qt, qt_length, to_index, to_qt
 from belfryscad.scad_templates import expand as expand_template
 
 from PySide6.QtWidgets import (
@@ -1554,10 +1555,12 @@ class CodeEditor(QPlainTextEdit):
             return
         cursor = self.textCursor()
         block = cursor.block()
-        result = step_number(block.text(), cursor.positionInBlock(), steps)
+        line = block.text()
+        result = step_number(line, to_index(line, cursor.positionInBlock()), steps)
         if result is None:
             return
         new_line, new_col = result
+        new_col = to_qt(new_line, new_col)
         # One edit block, so each notch is one undo step.
         cursor.beginEditBlock()
         cursor.setPosition(block.position())
@@ -1765,7 +1768,8 @@ class CodeEditor(QPlainTextEdit):
         block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
             return
-        cursor_start = block.position() + max(0, col - 1)
+        # The parser's column counts UTF-8 bytes, not Qt's UTF-16 units.
+        cursor_start = block.position() + byte_column_to_qt(block.text(), col - 1)
         cursor_end = block.position() + block.length() - 1
         sel = QTextEdit.ExtraSelection()
         sel.format = fmt
@@ -1830,7 +1834,9 @@ class CodeEditor(QPlainTextEdit):
             # is what painted a bar of colour down the indent column.
             # Whitespace within a line stays tinted, or the tint breaks up
             # into one stripe per token.
-            for x, y in _line_segments(text, a, b):
+            # a, b are Qt positions; _line_segments works in Python indices.
+            for x, y in _line_segments(text, to_index(text, a), to_index(text, b)):
+                x, y = to_qt(text, x), to_qt(text, y)
                 sel = QTextEdit.ExtraSelection()
                 sel.format = uncovered if is_uncovered else covered
                 c = QTextCursor(doc)
@@ -1926,6 +1932,10 @@ class CodeEditor(QPlainTextEdit):
         return True
 
     def set_selection(self, start_offset: int, end_offset: int):
+        """Highlight [start_offset, end_offset): Python indices into the
+        text, like every source span once it is in BelfrySCAD."""
+        text = self.toPlainText()
+        start_offset, end_offset = to_qt(text, start_offset), to_qt(text, end_offset)
         fmt = QTextCharFormat()
         fmt.setBackground(QColor("#ADD6FF"))
         sel = QTextEdit.ExtraSelection()
@@ -1972,7 +1982,8 @@ class CodeEditor(QPlainTextEdit):
         from belfryscad.window.color_literals import describe, find_color_literal
 
         cursor = self.cursorForPosition(event.pos())
-        hit = find_color_literal(cursor.block().text(), cursor.positionInBlock())
+        line = cursor.block().text()
+        hit = find_color_literal(line, to_index(line, cursor.positionInBlock()))
         if hit is None:
             QToolTip.hideText()
             return
@@ -2032,7 +2043,7 @@ class CodeEditor(QPlainTextEdit):
             # Measured up to the CURSOR, not the whole line: text after it
             # moves down too, so it is the depth at the split that decides
             # where the new line sits.
-            before = block_text[:cursor.positionInBlock()]
+            before = block_text[:to_index(block_text, cursor.positionInBlock())]
             if unmatched_open_brackets(before):
                 indent += self._indent_size
             super().keyPressEvent(event)
@@ -2043,7 +2054,7 @@ class CodeEditor(QPlainTextEdit):
             if not cursor.hasSelection():
                 block_text = cursor.block().text()
                 pos_in_block = cursor.positionInBlock()
-                before_cursor = block_text[:pos_in_block]
+                before_cursor = block_text[:to_index(block_text, pos_in_block)]
                 n = self._indent_size
                 # Unindent a whole level only from an indent STOP. A line
                 # indented by a number of spaces that is not a multiple of
@@ -2127,7 +2138,13 @@ class CodeEditor(QPlainTextEdit):
         silently rewrote those characters. The raw text keeps them; only
         the paragraph separators between blocks need turning back into
         newlines, one character for one, so every position is unchanged."""
-        return self.document().toRawText().replace(" ", "\n")
+        return self.document().toRawText().replace("\u2029", "\n")
+
+    def replace_text(self, start: int, end: int, new_text: str):
+        """replace_span with PYTHON indices into toPlainText(), which is
+        what anything computed by slicing or searching the text has."""
+        text = self.toPlainText()
+        self.replace_span(to_qt(text, start), to_qt(text, end), new_text)
 
     def replace_span(self, start: int, end: int, new_text: str):
         """Replace document text in [start, end) with new_text. Native Qt
@@ -2176,7 +2193,7 @@ class CodeEditor(QPlainTextEdit):
                                                    format_scad)
         profile = PROFILES.get(profile_name) or PROFILES[DEFAULT_PROFILE]
         block = self.document().findBlock(start)
-        prefix = block.text()[:start - block.position()]
+        prefix = block.text()[:to_index(block.text(), start - block.position())]
         base_indent = prefix if prefix.strip() == "" else ""
         formatted = format_scad(selected_text, self._indent_size,
                                 profile, self.guide_width())
@@ -2279,7 +2296,7 @@ class CodeEditor(QPlainTextEdit):
         # geometry to re-render -- and doing so mid-edit flags syntax errors in
         # the lines the user has not commented out yet (#537).
         self.replace_span(start_block.position(),
-                          end_block.position() + len(end_block.text()),
+                          end_block.position() + qt_length(end_block.text()),
                           "\n".join(new_lines))
 
     def _reflow_target(self, cursor, use_selection=None):
@@ -2385,7 +2402,7 @@ class CodeEditor(QPlainTextEdit):
         so Tab at column 5 with size 4 adds 3, landing on 8, rather than
         always adding a full level and leaving the line off-grid."""
         cursor = self.textCursor()
-        col = cursor.positionInBlock()
+        col = to_index(cursor.block().text(), cursor.positionInBlock())
         cursor.insertText(" " * (self._next_indent_stop(col) - col))
         self.setTextCursor(cursor)
 
@@ -2631,7 +2648,8 @@ class CodeEditor(QPlainTextEdit):
         from belfryscad.window.signatures import signature_for
 
         cursor = self.textCursor()
-        name = self._word_before(cursor.positionInBlock() - 1, cursor.block().text())
+        line = cursor.block().text()
+        name = self._word_before(to_index(line, cursor.positionInBlock()) - 1, line)
         if not name:
             return
         sig = signature_for(name, getattr(self, "_scope", None),
@@ -2644,7 +2662,7 @@ class CodeEditor(QPlainTextEdit):
     def _text_under_cursor(self) -> str:
         cursor = self.textCursor()
         block_text = cursor.block().text()
-        pos = cursor.positionInBlock()
+        pos = to_index(block_text, cursor.positionInBlock())
         start = pos
         while start > 0 and (block_text[start - 1].isalnum() or block_text[start - 1] == '_'):
             start -= 1
@@ -2965,7 +2983,7 @@ class CodeEditor(QPlainTextEdit):
         cur = self.textCursor()
         doc = self.document()
         text = doc.toPlainText()
-        pos = cur.position()
+        pos = to_index(text, cur.position())       # a Python index from here on
 
         # Cursor on either side of any bracket character; prefer the character before
         bracket_pos = None
@@ -3011,7 +3029,7 @@ class CodeEditor(QPlainTextEdit):
             sel = QTextEdit.ExtraSelection()
             sel.format = fmt
             c = QTextCursor(doc)
-            c.setPosition(char_pos)
+            c.setPosition(to_qt(text, char_pos))
             c.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
             sel.cursor = c
             return sel
@@ -3237,7 +3255,7 @@ class CodeEditor(QPlainTextEdit):
             build_new_literal_menu,
         )
         text = self.toPlainText()
-        offset = click.position()
+        offset = to_index(text, click.position())   # the finders below index the Python text
 
         view_literals = find_viewable_literals(text, offset)
         edit_literals = find_editable_literals(text, offset) if not self.isReadOnly() else {}
@@ -3268,7 +3286,7 @@ class CodeEditor(QPlainTextEdit):
 
         if edit_literals:
             def on_commit(new_text, start, end):
-                self.replace_span(start, end, new_text)
+                self.replace_text(start, end, new_text)
                 self.source_edited_externally.emit()
 
             edit_sub = QMenu("Edit as...", self)
@@ -3289,7 +3307,7 @@ class CodeEditor(QPlainTextEdit):
                 preview = find_preview_text(text, offset)
 
                 def on_font_commit(new_spec, start=start, end=end):
-                    self.replace_span(start, end, '"' + new_spec.replace('"', '\\"') + '"')
+                    self.replace_text(start, end, '"' + new_spec.replace('"', '\\"') + '"')
                     self.source_edited_externally.emit()
 
                 if not menu.actions() or not menu.actions()[-1].isSeparator():
@@ -3303,10 +3321,11 @@ class CodeEditor(QPlainTextEdit):
             from belfryscad.window.color_literals import find_color_literal
             from belfryscad.window.color_picker import open_color_picker
             block = click.block()
-            color_hit = find_color_literal(block.text(), click.positionInBlock())
+            line = block.text()
+            color_hit = find_color_literal(line, to_index(line, click.positionInBlock()))
             if color_hit is not None:
-                c_start = block.position() + color_hit[0]
-                c_end = block.position() + color_hit[1]
+                c_start = block.position() + to_qt(line, color_hit[0])
+                c_end = block.position() + to_qt(line, color_hit[1])
 
                 def on_color_commit(new_text, start=c_start, end=c_end):
                     self.replace_span(start, end, new_text)
@@ -3325,7 +3344,7 @@ class CodeEditor(QPlainTextEdit):
             # consistent however the half-typed line was left.
             def on_new_commit(literal_text, name=name, indent=indent,
                               start=start, end=end):
-                self.replace_span(start, end, f"{indent}{name} = {literal_text};")
+                self.replace_text(start, end, f"{indent}{name} = {literal_text};")
                 self.source_edited_externally.emit()
 
             add_sub = QMenu("Add data literal...", self)
