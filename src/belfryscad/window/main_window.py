@@ -2305,6 +2305,9 @@ class MainWindow(QMainWindow):
                     self._rebuild_recent_menu()
                 return
         tab = self._create_and_add_tab(path, text)
+        # What the file held when last read or written: the automatic reload
+        # acts only when the disk moves on from this (see _reload_one).
+        tab._disk_text = None if in_memory is not None else text
         self._update_recent_files(path)
         self._refresh_watched_files()
         # Off lets a file that hangs or floods the renderer be opened to fix
@@ -2496,12 +2499,24 @@ class MainWindow(QMainWindow):
             # tab keeps what it has rather than being emptied.
             return False
 
+        # Act only on a file that is different from what we last read from
+        # or wrote to it. Comparing with the editor instead looped forever:
+        # every render writes a temp file beside the source (scad_temp), so
+        # the directory watch fires after every render, and text the editor
+        # cannot hold exactly (a U+2028 separator becomes a newline) never
+        # compared equal -- each check reloaded, rendered, and set off the
+        # next.
+        if not force and text == getattr(tab, "_disk_text", None):
+            return False
         if text == tab.editor.toPlainText():
+            tab._disk_text = text
             return False       # our own save, or a touch with no edit
 
         if tab.is_modified and not force:
             # Never discard unsaved work to pick up an external edit. The
-            # user is the only one who can say which version wins.
+            # user is the only one who can say which version wins. Said once
+            # per change on disk, not again after every render.
+            tab._disk_text = text
             self.log(f"WARNING: {Path(path).name} changed on disk, but this "
                      f"tab has unsaved changes -- not reloaded. Save or "
                      f"revert it to pick the change up.")
@@ -2517,6 +2532,7 @@ class MainWindow(QMainWindow):
         editor.verticalScrollBar().setValue(scroll)
 
         tab.is_modified = False
+        tab._disk_text = text
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._sync_tab_label(idx, tab)
@@ -2648,12 +2664,14 @@ class MainWindow(QMainWindow):
         self.log("Measurements cleared.")
 
     def _write_file(self, tab, path):
+        text = tab.editor.toPlainText()
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(tab.editor.toPlainText())
+                f.write(text)
         except OSError as e:
             QMessageBox.critical(self, "Save Error", str(e))
             return False
+        tab._disk_text = text
         old_path = tab.file_path
         tab.file_path = path
         tab.is_modified = False

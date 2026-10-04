@@ -2117,6 +2117,18 @@ class CodeEditor(QPlainTextEdit):
         elif text == ')':
             QToolTip.hideText()
 
+    def toPlainText(self) -> str:
+        """The text exactly as loaded or typed.
+
+        QPlainTextEdit's own turns every non-breaking space (U+00A0) into a
+        plain space, and a U+2028 line separator into a newline. So a file
+        holding one never matched its own copy on disk -- Automatic Reload
+        and Render then reloaded and re-rendered it forever -- and saving
+        silently rewrote those characters. The raw text keeps them; only
+        the paragraph separators between blocks need turning back into
+        newlines, one character for one, so every position is unchanged."""
+        return self.document().toRawText().replace(" ", "\n")
+
     def replace_span(self, start: int, end: int, new_text: str):
         """Replace document text in [start, end) with new_text. Native Qt
         undo is disabled on this widget (see __init__); this just fires
