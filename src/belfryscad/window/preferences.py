@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox, QLabel, QSlider,
     QPushButton, QLineEdit, QListWidget, QListWidgetItem, QColorDialog, QMessageBox,
-    QFileDialog, QSplitter, QApplication,
+    QFileDialog, QSplitter, QApplication, QScrollArea, QFrame,
 )
 from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
@@ -542,7 +542,14 @@ class PreferencesDialog(QDialog):
         self._ai_preset.currentIndexChanged.connect(self._on_ai_preset_changed)
         self._load_ai_preset_fields()
 
-        tabs.addTab(ai_tab, "AI")
+        # The per-service instructions run long enough to push the fields
+        # past the dialog's bottom edge, so the tab scrolls vertically.
+        ai_scroll = QScrollArea()
+        ai_scroll.setWidget(ai_tab)
+        ai_scroll.setWidgetResizable(True)
+        ai_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        ai_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tabs.addTab(ai_scroll, "AI")
 
         # --- Close button ---
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
