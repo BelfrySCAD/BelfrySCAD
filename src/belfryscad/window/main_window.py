@@ -155,6 +155,28 @@ def example_categories() -> list[tuple[str, list[Path]]]:
     return out
 
 
+def file_dialog_dir() -> str:
+    """Where File > Open and an untitled Save As start (#690): the folder a
+    .scad was last opened from or saved to, else Documents (see
+    main._default_working_dir).
+
+    Ours, not Qt's: given "", Qt falls back to its lastVisited -- one key
+    shared by every Qt app -- and then to the cwd, which for a Windows
+    Start-menu launch is the read-only install folder. Qt then hands that
+    to IFileDialog::SetFolder, which overrides Windows' own memory too.
+    Exports, include/use and import() never move it, as in OpenSCAD.
+    """
+    last = app_settings().value("lastFileDir", "")
+    if last and os.path.isdir(last):
+        return last
+    from belfryscad.main import _default_working_dir
+    return str(_default_working_dir() or "")
+
+
+def remember_file_dir(path: str) -> None:
+    app_settings().setValue("lastFileDir", os.path.dirname(os.path.abspath(path)))
+
+
 def _fmt_elapsed(elapsed_ms: float) -> str:
     if elapsed_ms >= 1000:
         return f"({elapsed_ms / 1000:.3f}s)"
@@ -2285,8 +2307,10 @@ class MainWindow(QMainWindow):
     def _choose_files(self, parent=None) -> list[str]:
         # Several at once, one tab each, as OpenSCAD's own Open does (#392).
         paths, _ = QFileDialog.getOpenFileNames(
-            parent or self, "Open Files", "", "OpenSCAD Files (*.scad);;All Files (*)"
+            parent or self, "Open Files", file_dialog_dir(), "OpenSCAD Files (*.scad);;All Files (*)"
         )
+        if paths:
+            remember_file_dir(paths[-1])
         return paths
 
     def _open_file(self):
@@ -2369,12 +2393,12 @@ class MainWindow(QMainWindow):
         if not tab:
             return False
         # A bare suggested_name (an example copy, or an AI-proposed script)
-        # is resolved against the working directory: QFileDialog given a
+        # is resolved against the remembered folder: QFileDialog given a
         # relative name picks its own starting directory, which is not
         # necessarily the one the user thinks they are in.
-        start = tab.file_path or ""
-        if not start and tab.suggested_name:
-            start = str(Path(os.getcwd()) / tab.suggested_name)
+        start = tab.file_path or file_dialog_dir()
+        if not tab.file_path and tab.suggested_name:
+            start = str(Path(start) / tab.suggested_name)
         path, _ = QFileDialog.getSaveFileName(
             self, "Save File", start,
             "OpenSCAD Files (*.scad);;All Files (*)"
@@ -2707,6 +2731,7 @@ class MainWindow(QMainWindow):
         if tab is self._current_tab():
             self._customizer_pane.set_file_path(path)
         self._update_recent_files(path)
+        remember_file_dir(path)
         self._refresh_watched_files()
         # Saving is not rendering (#395). The exception is Automatic Reload
         # and Render: with that on, a save is exactly the on-disk change it
@@ -2796,7 +2821,8 @@ class MainWindow(QMainWindow):
         if tab is None:
             return ""
         name = tab.export_name or default_export_name(tab.file_path)
-        return os.path.join(os.path.dirname(str(tab.file_path)), name) if tab.file_path else name
+        folder = os.path.dirname(str(tab.file_path)) if tab.file_path else file_dialog_dir()
+        return os.path.join(folder, name)
 
     def _export_image(self):
         """File > Export as Image: the 3D view as it is now, as a PNG at the
@@ -5849,9 +5875,10 @@ class MainWindow(QMainWindow):
 
     def _open_in_new_window(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open in New Window", "", "OpenSCAD Files (*.scad);;All Files (*)"
+            self, "Open in New Window", file_dialog_dir(), "OpenSCAD Files (*.scad);;All Files (*)"
         )
         if path:
+            remember_file_dir(path)
             win = MainWindow()
             win.show()
             win.open_file_by_path(path)
