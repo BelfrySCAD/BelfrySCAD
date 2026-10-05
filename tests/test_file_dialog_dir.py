@@ -1,6 +1,7 @@
 """File > Open / untitled Save As start in the last .scad folder, else
 Documents -- never the cwd, which on Windows is the install folder (#690)."""
 import os
+from pathlib import Path
 
 from belfryscad import settings
 from belfryscad.settings import app_settings, use_scratch_settings
@@ -11,7 +12,8 @@ from belfryscad import main
 def test_remembers_the_folder_and_falls_back_when_it_is_gone(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "_scratch_dir", settings._scratch_dir)  # restored after
     use_scratch_settings(str(tmp_path / "settings"), seed=False)
-    assert app_settings().fileName().startswith(str(tmp_path))  # never the real store
+    # never the real store; Path, since Qt writes "/" on Windows too
+    assert Path(app_settings().fileName()).resolve().is_relative_to(tmp_path.resolve())
     docs = tmp_path / "Documents"
     docs.mkdir()
     monkeypatch.setattr(main, "_default_working_dir", lambda: docs)
