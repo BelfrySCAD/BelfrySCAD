@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QLabel, QPushButton
 from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
                              QEasingCurve)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
-                            QPainter, QPixmap, QIcon, QInputDevice)
+                            QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent)
 
 from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
@@ -35,6 +35,19 @@ _WHEEL_ZOOM_BASE = 0.9
 # These stay named constants because they're the only plausible thing to
 # change if a future Qt or platform reverses either convention.
 _TRACKPAD_PAN_SIGN = 1.0
+
+
+# A swipe counts as the trackpad's if trackpad touch points arrived this
+# recently: macOS sends them while fingers rest on the pad, ahead of and
+# alongside the scroll, and none at all for a Magic Mouse (probed).
+_TRACKPAD_TOUCH_WINDOW = 0.5
+
+
+def _swipe_zooms(is_mac: bool, trackpad_touched: bool) -> bool:
+    """A swipe zooms when it is a Magic Mouse's -- on macOS, a swipe with no
+    trackpad touch points behind it -- and pans otherwise. Elsewhere a
+    swipe is always a trackpad's, so it pans."""
+    return is_mac and not trackpad_touched
 
 
 def _is_swipe(event: QWheelEvent) -> bool:
@@ -359,10 +372,6 @@ _GIZMO_TOOLS = (0, 1, 2) + EXTRUDE_GIZMOS
 
 
 class Viewport(QOpenGLWidget):
-    # Preferences ▸ Viewport ▸ Swipe scrolling; one setting for every
-    # viewport, data viewers included. Set by MainWindow._apply_preferences.
-    swipe_zooms = True
-
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
     selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
@@ -389,6 +398,13 @@ class Viewport(QOpenGLWidget):
         self._orbit_enabled: bool = True   # subclasses disable for locked 2D top-down views
         self._pan_speed = pan_speed   # data-viewer dialogs use 2x the main viewport's right-drag pan speed
         self.setMouseTracking(True)
+        # Trackpad touch points tell a trackpad swipe from a Magic Mouse one
+        # (wheelEvent). macOS only: elsewhere a widget accepting touch would
+        # stop a touchscreen's drags from reaching it as mouse events.
+        self._last_trackpad_touch = float("-inf")
+        self._swipe_zoom_mode = False
+        if sys.platform == "darwin":
+            self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         self._frame_count: int = 0
         self._pending_load = None
         self._last_bb_min: np.ndarray | None = None
@@ -1473,8 +1489,8 @@ class Viewport(QOpenGLWidget):
         cam.target += up_approx * dy * scale
 
     def wheelEvent(self, event: QWheelEvent):
-        """Mouse wheel zooms; so does a trackpad or Magic Mouse swipe, or it
-        pans with `swipe_zooms` off (Preferences ▸ Viewport). Cmd/Ctrl swaps the two.
+        """Mouse wheel zooms; a trackpad swipe pans; a Magic Mouse swipe
+        zooms (`_swipe_zooms`). Cmd/Ctrl swaps a swipe's pan and zoom.
 
         A swipe is told from a wheel by its scroll phase or a TouchPad
         device, never by `pixelDelta()`: Qt fills that in for ordinary
@@ -1483,8 +1499,9 @@ class Viewport(QOpenGLWidget):
         wheels do -- so plain wheels panned. Measured on macOS: trackpad and
         Magic Mouse both arrive as 'trackpad or magic mouse', type TouchPad,
         with phases; Wayland gives swipes phases and wheels none; X11 has no
-        phases but types the device. A Magic Mouse cannot be told from a
-        trackpad at all, hence the preference rather than a per-device rule.
+        phases but types the device. A Magic Mouse's swipe is identical to
+        a trackpad's, and Qt cannot count its fingers; but only the trackpad
+        also sends touch points (see `event`), which is what tells them apart.
         """
         self.stop_view_animation()
         cam = self._renderer.camera
@@ -1495,7 +1512,14 @@ class Viewport(QOpenGLWidget):
             # X11's libinput touchpad reports no pixel offset (increment 15),
             # only angleDelta at 8 units per pixel of travel.
             pixel = event.angleDelta() / 8
-        swipe_zooms = self.swipe_zooms != bool(mods & Qt.KeyboardModifier.ControlModifier)
+        if is_trackpad and event.phase() not in (Qt.ScrollPhase.ScrollMomentum,
+                                                 Qt.ScrollPhase.ScrollEnd):
+            # Decided while the fingers are down, then kept: the momentum
+            # after a trackpad swipe outlasts its touch points.
+            self._swipe_zoom_mode = _swipe_zooms(
+                sys.platform == "darwin",
+                time.monotonic() - self._last_trackpad_touch < _TRACKPAD_TOUCH_WINDOW)
+        swipe_zooms = self._swipe_zoom_mode != bool(mods & Qt.KeyboardModifier.ControlModifier)
 
         if mods & Qt.KeyboardModifier.ShiftModifier:
             delta = pixel.y() if is_trackpad else event.angleDelta().y()
@@ -1547,8 +1571,15 @@ class Viewport(QOpenGLWidget):
 
     def event(self, event):
         """Route macOS/Windows multi-touch gestures, which arrive as
-        QNativeGestureEvent rather than through any typed handler."""
+        QNativeGestureEvent rather than through any typed handler, and note
+        trackpad touch points, which only tell a trackpad swipe from a Magic
+        Mouse one (wheelEvent)."""
         if isinstance(event, QNativeGestureEvent) and self._handle_native_gesture(event):
+            return True
+        if (isinstance(event, QTouchEvent)
+                and event.pointingDevice().type() == QInputDevice.DeviceType.TouchPad):
+            self._last_trackpad_touch = time.monotonic()
+            event.accept()
             return True
         return super().event(event)
 
