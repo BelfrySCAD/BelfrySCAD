@@ -28,3 +28,14 @@ def test_about_reports_it():
     info = about_info()
     assert info["released"] == release.DATE
     assert release.DATE in about_html(info) and release.DATE in about_text(info)
+
+
+def test_the_metainfo_lists_this_release_first():
+    # Software centres show the newest <release> as "what's new"; one left
+    # behind advertises the previous version.
+    import xml.etree.ElementTree as ET
+    root = ET.parse(Path(__file__).parent.parent / "resources" / "com.belfrydw.belfryscad.metainfo.xml").getroot()
+    newest = root.find("releases/release")
+    assert (newest.get("version"), newest.get("date")) == (release.VERSION, release.DATE), (
+        "add a <release> for this version at the top of <releases> in "
+        "resources/com.belfrydw.belfryscad.metainfo.xml")
