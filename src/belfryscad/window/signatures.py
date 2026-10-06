@@ -58,6 +58,7 @@ BUILTIN_SIGNATURES: dict[str, str] = {
     "hull": "hull() { ... }",
     "minkowski": "minkowski(convexity) { ... }",
     "render": "render(convexity=1) { ... }",
+    "profile_time": "profile_time(label) { ... }  |  x = profile_time(label) expr;",
     # extrusion / import
     "linear_extrude": ("linear_extrude(height, center=false, convexity=10, "
                        "twist=0, slices, scale=1.0, $fn)"),
