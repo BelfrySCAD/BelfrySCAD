@@ -34,3 +34,13 @@ def test_a_phased_scroll_is_a_swipe():
 def test_a_touchpad_device_is_a_swipe_even_without_a_phase():
     # X11 reports no phases at all, but types the device.
     assert _is_swipe(_event((0, 0), device=_TOUCHPAD))
+
+
+def test_only_a_magic_mouse_swipe_zooms():
+    from belfryscad.window.viewport import _swipe_zooms
+    # macOS: no trackpad touch points behind the swipe means a Magic Mouse.
+    assert _swipe_zooms(is_mac=True, trackpad_touched=False)
+    assert not _swipe_zooms(is_mac=True, trackpad_touched=True)
+    # Elsewhere every swipe is a trackpad's, touch points or not.
+    assert not _swipe_zooms(is_mac=False, trackpad_touched=False)
+    assert not _swipe_zooms(is_mac=False, trackpad_touched=True)

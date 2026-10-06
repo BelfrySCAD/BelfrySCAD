@@ -27,8 +27,9 @@ Detailed design for viewport interaction, selection, and gizmo-driven AST edits.
 | Scroll wheel | Zoom centered on the cursor (adjusts `$vpd` distance and, since the zoomed-toward point generally isn't `$vpt`, `$vpt` too — see `Viewport._zoom_to_cursor`/`Camera.zoom_to_point`) |
 | Shift+scroll wheel | Adjust FOV (adjusts `$vpf`; clamped 1°–120°) |
 | Trackpad click+drag | Orbit (Turntable) |
-| Trackpad / Magic Mouse swipe | Zoom, or Pan with **Preferences ▸ Viewport ▸ Swipe scrolling** set to Pan (`Viewport.swipe_zooms`). Told from a wheel by a scroll phase or a `TouchPad` device (`_is_swipe`), never by `pixelDelta()`, which Qt also fills for plain wheels on macOS and X11. A Magic Mouse is indistinguishable from a trackpad to Qt, hence one setting for both |
-| Cmd+swipe (Ctrl on Windows/Linux) | The other of Zoom / Pan |
+| Trackpad swipe | Pan. Told from a wheel by a scroll phase or a `TouchPad` device (`_is_swipe`), never by `pixelDelta()`, which Qt also fills for plain wheels on macOS and X11 |
+| Magic Mouse swipe (macOS) | Zoom. Qt reports it exactly as a trackpad swipe and cannot count its fingers; only the trackpad also sends touch points, so a swipe with none behind it is the Magic Mouse's (`Viewport.event`, `_swipe_zooms`). Decided while the fingers are down and kept through the momentum |
+| Cmd+swipe (Ctrl on Windows/Linux) | Swaps the swipe's pan and zoom |
 | Trackpad pinch | Zoom, centered on the cursor (`ZoomNativeGesture`) |
 | Trackpad two-finger twist | Roll (`RotateNativeGesture`; value is clockwise-positive on macOS, contrary to Qt's docs) |
 | Trackpad two-finger double-tap | View All (`SmartZoomNativeGesture`) |
