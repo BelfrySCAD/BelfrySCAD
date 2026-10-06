@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QLabel, QPushButton
 from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
                              QEasingCurve)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
-                            QPainter, QPixmap, QIcon)
+                            QPainter, QPixmap, QIcon, QInputDevice)
 
 from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
@@ -35,6 +35,14 @@ _WHEEL_ZOOM_BASE = 0.9
 # These stay named constants because they're the only plausible thing to
 # change if a future Qt or platform reverses either convention.
 _TRACKPAD_PAN_SIGN = 1.0
+
+
+def _is_swipe(event: QWheelEvent) -> bool:
+    """A trackpad / Magic Mouse swipe rather than a wheel: it has a scroll
+    phase (macOS, Wayland) or comes from a TouchPad device (X11, macOS).
+    Not pixelDelta() -- see Viewport.wheelEvent."""
+    return (event.phase() != Qt.ScrollPhase.NoScrollPhase
+            or event.pointingDevice().type() == QInputDevice.DeviceType.TouchPad)
 _ROTATE_GESTURE_SIGN = 1.0
 
 
@@ -351,6 +359,10 @@ _GIZMO_TOOLS = (0, 1, 2) + EXTRUDE_GIZMOS
 
 
 class Viewport(QOpenGLWidget):
+    # Preferences ▸ Viewport ▸ Swipe scrolling; one setting for every
+    # viewport, data viewers included. Set by MainWindow._apply_preferences.
+    swipe_zooms = True
+
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
     selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
@@ -1461,22 +1473,29 @@ class Viewport(QOpenGLWidget):
         cam.target += up_approx * dy * scale
 
     def wheelEvent(self, event: QWheelEvent):
-        """Mouse wheel zooms; trackpad two-finger scroll pans.
+        """Mouse wheel zooms; so does a trackpad or Magic Mouse swipe, or it
+        pans with `swipe_zooms` off (Preferences ▸ Viewport). Cmd/Ctrl swaps the two.
 
-        `pixelDelta()` is the only reliable way Qt distinguishes the two:
-        a trackpad reports a real per-pixel scroll offset, while a mouse
-        wheel fills in `angleDelta()` alone (1/8-degree notch units) and
-        leaves pixelDelta null. They want opposite things — a wheel notch
-        is a discrete zoom step, whereas two-finger scroll is a continuous
-        1:1 drag of the content, which is what every other viewer on the
-        platform does with it. Cmd+scroll zooms on a trackpad, matching the
-        same convention.
+        A swipe is told from a wheel by its scroll phase or a TouchPad
+        device, never by `pixelDelta()`: Qt fills that in for ordinary
+        wheels too -- always on macOS (20 px per line), and on X11 whenever
+        the driver's scroll increment exceeds 15, as libinput's hi-res
+        wheels do -- so plain wheels panned. Measured on macOS: trackpad and
+        Magic Mouse both arrive as 'trackpad or magic mouse', type TouchPad,
+        with phases; Wayland gives swipes phases and wheels none; X11 has no
+        phases but types the device. A Magic Mouse cannot be told from a
+        trackpad at all, hence the preference rather than a per-device rule.
         """
         self.stop_view_animation()
         cam = self._renderer.camera
         pixel = event.pixelDelta()
         mods = event.modifiers()
-        is_trackpad = not pixel.isNull()
+        is_trackpad = _is_swipe(event)
+        if is_trackpad and pixel.isNull():
+            # X11's libinput touchpad reports no pixel offset (increment 15),
+            # only angleDelta at 8 units per pixel of travel.
+            pixel = event.angleDelta() / 8
+        swipe_zooms = self.swipe_zooms != bool(mods & Qt.KeyboardModifier.ControlModifier)
 
         if mods & Qt.KeyboardModifier.ShiftModifier:
             delta = pixel.y() if is_trackpad else event.angleDelta().y()
@@ -1484,7 +1503,7 @@ class Viewport(QOpenGLWidget):
                 return
             cam.fov = max(1.0, min(120.0, cam.fov * (0.99 if delta > 0 else 1.01)))
             self._on_zoom_changed()
-        elif is_trackpad and not (mods & Qt.KeyboardModifier.ControlModifier):
+        elif is_trackpad and not swipe_zooms:
             # Pan only slides the target; apparent scale is unchanged, so
             # no _on_zoom_changed() here -- which matters, since a trackpad
             # pan fires a great many events and rebuilding screen-space
@@ -1495,7 +1514,7 @@ class Viewport(QOpenGLWidget):
             if abs(delta) <= _WHEEL_DEADSPOT:
                 return
             if is_trackpad:
-                # Ctrl+two-finger scroll. A fixed small step suits continuous
+                # A zooming swipe. A fixed small step suits continuous
                 # input, where the gesture itself sets the pace.
                 factor = 0.99 if delta > 0 else 1.01
             else:

@@ -5420,6 +5420,7 @@ class MainWindow(QMainWindow):
         self._keep_minuend_color = keep
         if rerender and self._current_tab() is not None:
             self._render()
+        Viewport.swipe_zooms = load_preference("viewport/swipeZooms", bool)
         family = load_preference("editor/fontFamily")
         size = load_preference("editor/fontSize", int)
         indent = load_preference("editor/indentSize", int)
