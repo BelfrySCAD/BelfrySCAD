@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream MetaInfo: what software centres (GNOME Software, KDE Discover,
+  Flathub) show for BelfrySCAD. The id is the Flatpak app id, and must
+  match the desktop file's name (com.belfrydw.belfryscad.desktop).
+  Validate with appstreamcli validate, strict mode, on this file.
+  Add a <release> at the top of <releases> for every version shipped.
+-->
+<component type="desktop-application">
+  <id>com.belfrydw.belfryscad</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>BelfrySCAD</name>
+  <summary>Script-based 3D CAD you can also drag</summary>
+  <developer id="com.belfrydw">
+    <name>The Belfry DevWorks</name>
+  </developer>
+
+  <description>
+    <p>
+      BelfrySCAD is a procedural CAD application that runs the OpenSCAD
+      language and keeps the code and the 3D model in step. Edit the script
+      and the model follows; drag a shape in the viewport and the script
+      rewrites itself.
+    </p>
+    <ul>
+      <li>The full OpenSCAD language, with OpenSCAD-compatible .scad files</li>
+      <li>Click a shape to select the call you wrote, then move, rotate or scale it with a gizmo</li>
+      <li>Step any number or expression with the arrow keys and watch the model change</li>
+      <li>A debugger with breakpoints, a call stack and variable inspection</li>
+      <li>A Customizer for a script's parameters, with saved parameter sets</li>
+      <li>Library management, documentation generation, and a test runner with coverage</li>
+      <li>Export to 3MF, STL, OBJ, AMF, OFF, PLY, VRML, X3D and POV-Ray, and SVG, PDF and DXF for 2D designs</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.belfrydw.belfryscad.desktop</launchable>
+  <provides>
+    <binary>belfryscad</binary>
+    <mediatype>text/x-openscad</mediatype>
+  </provides>
+
+  <categories>
+    <category>Graphics</category>
+    <category>3DGraphics</category>
+    <category>Engineering</category>
+  </categories>
+  <keywords>
+    <keyword>OpenSCAD</keyword>
+    <keyword>CAD</keyword>
+    <keyword>3D printing</keyword>
+    <keyword>parametric</keyword>
+    <keyword>modeling</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/BelfrySCAD/BelfrySCAD</url>
+  <url type="bugtracker">https://github.com/BelfrySCAD/BelfrySCAD/issues</url>
+  <url type="help">https://github.com/BelfrySCAD/BelfrySCAD/wiki</url>
+  <url type="vcs-browser">https://github.com/BelfrySCAD/BelfrySCAD</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>A model and the script that builds it</caption>
+      <image>https://raw.githubusercontent.com/wiki/BelfrySCAD/BelfrySCAD/images/hero.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Selecting a shape highlights the call that made it</caption>
+      <image>https://raw.githubusercontent.com/wiki/BelfrySCAD/BelfrySCAD/images/selection.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Stepping through a script in the debugger</caption>
+      <image>https://raw.githubusercontent.com/wiki/BelfrySCAD/BelfrySCAD/images/debugger.png</image>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#cfeff0</color>
+    <color type="primary" scheme_preference="dark">#24414a</color>
+  </branding>
+
+  <content_rating type="oars-1.1"/>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <releases>
+    <release version="1.65.4" date="2026-10-05">
+      <description>
+        <p>A trackpad swipe pans again and a Magic Mouse swipe zooms, told apart automatically; the Swipe scrolling setting from 1.65.3 is gone.</p>
+      </description>
+    </release>
+    <release version="1.65.3" date="2026-10-05">
+      <description>
+        <p>Files with non-breaking spaces in their code render again, and the mouse wheel zooms again on macOS and on Linux with high-resolution wheels.</p>
+      </description>
+    </release>
+    <release version="1.65.2" date="2026-10-05">
+      <description>
+        <p>Open and Save start in the folder you last used. The AI preferences page scrolls.</p>
+      </description>
+    </release>
+    <release version="1.65.1" date="2026-10-04">
+      <description>
+        <p>BOSL2's newer extrusion modules work again, Automatic Reload and Render no longer loops, and AI setup is explained step by step.</p>
+      </description>
+    </release>
+  </releases>
+</component>
