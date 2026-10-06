@@ -22,6 +22,12 @@ slow = profile_time("fib_slow(22)") fib_slow(22);
 fast = profile_time("fib_fast(22)") fib_fast(22);
 echo(slow = slow, fast = fast);
 
+// At the front of a function's body, it times every call -- and the
+// function still returns its value. A function literal works the same way.
+function wave(n) = profile_time("wave") [for (i = [0 : n - 1]) sin(i * 7) * 5];
+spike = function (h) profile_time("spike") [[0, 0], [2, h], [4, 0]];
+echo(points = len(wave(2000)), spike = spike(6));
+
 // --- Timing geometry: what smoothness costs ---
 
 // The same plate with the same holes. Only $fn differs -- each hole gets
