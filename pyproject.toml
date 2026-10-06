@@ -72,7 +72,7 @@ extension = "scad"
 description = "OpenSCAD File"
 icon = "resources/belfryscad"
 url = "https://openscad.org"
-mime_type = "text/x-openscad"
+mime_type = "application/x-openscad"
 
 [tool.briefcase.app.belfryscad.document_type.scad.macOS]
 CFBundleTypeRole = "Editor"
