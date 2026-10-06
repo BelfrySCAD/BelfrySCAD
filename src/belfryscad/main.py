@@ -250,6 +250,10 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
 
     app = BelfrySCADApp(sys.argv)
     app.setApplicationName("BelfrySCAD")
+    # Wayland's app_id: how the desktop finds our .desktop file, and with it
+    # the name and icon in the dock and window switcher. Unset, Qt falls back
+    # to the executable's name -- "python3" in a Flatpak. No effect elsewhere.
+    app.setDesktopFileName("com.belfrydw.belfryscad")
     if testing:
         # Before MainWindow, which reads settings while constructing itself.
         path = _isolate_settings()

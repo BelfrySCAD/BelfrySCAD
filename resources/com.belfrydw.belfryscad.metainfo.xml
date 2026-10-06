@@ -38,7 +38,7 @@
   <launchable type="desktop-id">com.belfrydw.belfryscad.desktop</launchable>
   <provides>
     <binary>belfryscad</binary>
-    <mediatype>text/x-openscad</mediatype>
+    <mediatype>application/x-openscad</mediatype>
   </provides>
 
   <categories>

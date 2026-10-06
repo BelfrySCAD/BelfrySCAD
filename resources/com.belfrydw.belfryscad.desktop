@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=BelfrySCAD
+GenericName=3D CAD Modeller
+Comment=Script-based 3D CAD you can also drag
+Icon=com.belfrydw.belfryscad
+Exec=belfryscad %F
+Terminal=false
+StartupWMClass=BelfrySCAD
+MimeType=application/x-openscad;
+Categories=Graphics;3DGraphics;Engineering;
+Keywords=OpenSCAD;CAD;3D;printing;parametric;modeling;solid;STL;
