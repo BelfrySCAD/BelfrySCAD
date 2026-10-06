@@ -89,6 +89,18 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   quietly produces different geometry; no warning we can emit changes that.
   Implemented entirely in openscad_cpp_evaluator (`Evaluator::expandChildStatements` +
   `Op::CsgGroupChildren`); no parser or GUI change.
+- **Language extension — `profile_time()`**: `profile_time("label") { ... }` prints
+  `PROFILE: label: T ms (script S ms, geometry G ms)` -- the children's script code is timed in
+  the resolve pass and their geometry in the generate pass, so the line arrives once geometry is
+  built (or `script S ms (no geometry built)` from a resolve-only run). A ManifoldCache hit says
+  `geometry cached` rather than vanishing, including a hit on an ancestor, which skips the
+  profile_time() node entirely. `x = profile_time("label") expr;` prints `PROFILE: label: T ms`
+  and evaluates to `expr`'s value. The label is optional (defaults to `line N of file`). Each
+  time under 1 ms prints in microseconds (`4.7 µs`), so nothing reads `0.00 ms`.
+  **`profile_time` is a reserved keyword** (the expression form would otherwise be a function
+  call to LALR(1)), like `render`. Implemented in openscad_cpp_parser (`ProfileTimeOp`, the
+  statement form a plain ModularCall) and openscad_cpp_evaluator
+  (`src/builtins/profile_time.cpp`); `PROFILE:` lines go through the echo callback.
 - **Language extension — feature detection**: `$_SUPPORTED_FEATURE` is `true` wherever
   `supported_feature()` can be called — a capability name, not a vendor one, so any evaluator
   adding the function is meant to set it. Check it before calling — you cannot safely call what
@@ -99,7 +111,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `[major, minor, patch]`, and `supported_feature("name")` returns the level at which this build
   implements a named feature (`render-expr`, `polyhedron-vnf`, `separate-children`,
   `minkowski-diff`, `sphere-styles`, `export-name`, `simplify-op`, `expr-import`,
-  `object-function`, `roof-op`, `discretization-by-error` — one for every documented extension) or **0** for one it
+  `object-function`, `roof-op`, `discretization-by-error`, `profile-time` — one for every documented extension) or **0** for one it
   does not — including names it has never heard of, so probing for a future feature is safe.
   Both are `undef` in OpenSCAD, so the guard is portable. They exist because OpenSCAD silently
   ignores unknown *arguments*: `children(separate=true)` runs there and renders the wrong shape

@@ -2523,7 +2523,7 @@ class CodeEditor(QPlainTextEdit):
         "translate", "rotate", "scale", "mirror", "multmatrix",
         "color", "hull", "minkowski", "resize", "offset",
         "union", "difference", "intersection",
-        "echo", "assert", "children", "render",
+        "echo", "assert", "children", "render", "profile_time",
         "circle", "square", "polygon", "text",
         "linear_extrude", "rotate_extrude", "roof", "surface",
         "projection", "import",
