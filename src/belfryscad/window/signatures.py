@@ -33,42 +33,45 @@ from functools import lru_cache
 BUILTIN_SIGNATURES: dict[str, str] = {
     # 3D primitives
     "cube": "cube(size=1, center=false)",
-    "sphere": "sphere(r | d, $fa, $fs, $fn)",
-    "cylinder": "cylinder(h, r1 | d1, r2 | d2, center=false, $fa, $fs, $fn)",
+    "sphere": "sphere(r=1 | d, style=\"orig\", $fa, $fs, $fn)",
+    "cylinder": "cylinder(h=1, r=1 | d, r1 | d1, r2 | d2, center=false, $fa, $fs, $fn)",
     "polyhedron": "polyhedron(points, faces, convexity=1)",
     # 2D primitives
     "circle": "circle(r | d, $fa, $fs, $fn)",
     "square": "square(size=1, center=false)",
     "polygon": "polygon(points, paths, convexity=1)",
-    "text": ("text(t, size=10, font, halign=\"left\", valign=\"baseline\", "
+    "text": ("text(text, size=10 | em, font, halign=\"left\", valign=\"baseline\", "
              "spacing=1, direction=\"ltr\", language=\"en\", script=\"latin\", $fn)"),
     # transforms
     "translate": "translate(v) { ... }",
     "rotate": "rotate(a) | rotate(a, v) { ... }",
     "scale": "scale(v) { ... }",
-    "resize": "resize(newsize, auto=false, convexity=10) { ... }",
+    "resize": "resize(newsize, auto=false, convexity) { ... }",
     "mirror": "mirror(v) { ... }",
     "multmatrix": "multmatrix(m) { ... }",
     "color": "color(c, alpha=1.0) | color(\"name\", alpha) { ... }",
-    "offset": "offset(r | delta, chamfer=false) { ... }",
+    "offset": "offset(r=1 | delta, chamfer=false) { ... }",
     # CSG
     "union": "union() { ... }",
     "difference": "difference() { ... }",
     "intersection": "intersection() { ... }",
     "hull": "hull() { ... }",
+    "fill": "fill() { ... }",
+    "intersection_for": "intersection_for(i = [...]) { ... }",
     "minkowski": "minkowski(convexity) { ... }",
     "render": "render(convexity=1) { ... }",
     "profile_time": "profile_time(label) { ... }  |  x = profile_time(label) expr;",
     # extrusion / import
-    "linear_extrude": ("linear_extrude(height, center=false, convexity=10, "
-                       "twist=0, slices, scale=1.0, $fn)"),
-    "rotate_extrude": "rotate_extrude(angle=360, convexity=2, $fa, $fs, $fn)",
+    "linear_extrude": ("linear_extrude(height=100, v=[0,0,1], scale=1, center=false, "
+                       "twist=0, slices, segments, convexity, $fn)"),
+    "rotate_extrude": "rotate_extrude(angle=360, start=0 (180 with no angle), convexity, $fa, $fs, $fn)",
     "surface": "surface(file, center=false, invert=false, convexity=1)",
-    "projection": "projection(cut=false) { ... }",
-    "import": "import(file, convexity=1, layer, $fn)",
-    "roof": "roof(method=\"voronoi\", convexity=2) { ... }",
+    "projection": "projection(cut=false, convexity) { ... }",
+    "import": ("import(file, convexity=1, layer, origin=[0,0], scale=1, "
+               "center=false, dpi=72, id, $fn)"),
+    "roof": "roof(method=\"voronoi\", convexity) { ... }",
     # flow / misc modules
-    "children": "children(index | [start:end] | vector)",
+    "children": "children(index | [start:end] | vector, separate=false)",
     "echo": "echo(value, ...)",
     "assert": "assert(condition, message)",
     # math functions
@@ -97,8 +100,9 @@ BUILTIN_SIGNATURES: dict[str, str] = {
     "version": "version()", "version_num": "version_num()",
     "parent_module": "parent_module(index)",
     "object": "object(key=value, ...)",
-    "textmetrics": "textmetrics(text, size, font, halign, valign, spacing, direction, language, script)",
-    "fontmetrics": "fontmetrics(size, font)",
+    "textmetrics": ("textmetrics(text, size=10 | em, font, direction, language, script, "
+                    "halign, valign, spacing)"),
+    "fontmetrics": "fontmetrics(size=10 | em, font)",
 }
 
 #: `module NAME(` or `function NAME(`, at the start of a declaration.
