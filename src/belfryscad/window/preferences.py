@@ -77,6 +77,7 @@ _DEFAULTS = {
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "viewport/keepMinuendColor": False,  # difference() cut faces keep the minuend's colour
+    "viewport/swipeZooms": True,         # a trackpad/Magic Mouse swipe zooms; False pans
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
     "ai/claudeCliPath": "",   # empty -> look on PATH
@@ -407,6 +408,22 @@ class PreferencesDialog(QDialog):
             "when it has none, as OpenSCAD does. On re-renders the current design.")
         self._keep_minuend_color.toggled.connect(lambda v: self._emit("viewport/keepMinuendColor", bool(v)))
         vp_form.addRow("Cut faces:", self._keep_minuend_color)
+
+        # A Magic Mouse reports its swipes exactly as a trackpad does -- same
+        # device name and type, same phases -- so it cannot be given its own
+        # default; Zoom suits the mouse, and this is the switch for whoever
+        # wants a trackpad to pan.
+        self._swipe_scrolling = QComboBox()
+        self._swipe_scrolling.addItem("Pan", False)
+        self._swipe_scrolling.addItem("Zoom", True)
+        self._swipe_scrolling.setCurrentIndex(
+            int(s.value("viewport/swipeZooms", _DEFAULTS["viewport/swipeZooms"], type=bool)))
+        self._swipe_scrolling.setToolTip(
+            "What a swipe on a trackpad or Magic Mouse does. Cmd/Ctrl+swipe does the other.\n"
+            "A mouse wheel always zooms.")
+        self._swipe_scrolling.currentIndexChanged.connect(
+            lambda _: self._emit("viewport/swipeZooms", bool(self._swipe_scrolling.currentData())))
+        vp_form.addRow("Swipe scrolling:", self._swipe_scrolling)
 
         tabs.addTab(viewport_tab, "Viewport")
 
