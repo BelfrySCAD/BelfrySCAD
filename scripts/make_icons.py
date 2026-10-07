@@ -136,6 +136,7 @@ def main():
 
     master.save(str(RES / "BelfrySCAD.png"))
     iconset = RES / "belfryscad.iconset"
+    iconset.mkdir(exist_ok=True)   # untracked, so absent in a fresh checkout
     for s in (16, 32, 128, 256, 512):
         _scaled(master, s).save(str(iconset / f"icon_{s}x{s}.png"))
         _scaled(master, s * 2).save(str(iconset / f"icon_{s}x{s}@2x.png"))
