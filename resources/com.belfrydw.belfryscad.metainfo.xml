@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.67.1" date="2026-10-06">
+      <description>
+        <p>Subtracting a shape from an identical copy of itself, or an octa-style sphere from a rotated copy, now leaves nothing instead of a shell of thin slivers; sphere(style="octa") is now built as OpenSCAD builds it.</p>
+      </description>
+    </release>
     <release version="1.67.0" date="2026-10-06">
       <description>
         <p>linear_extrude() takes v= and rotate_extrude() takes start=, as in OpenSCAD, and both read positional arguments in OpenSCAD's order; text(), textmetrics() and fontmetrics() take em=. The editor's argument hints for builtin modules now match OpenSCAD.</p>
