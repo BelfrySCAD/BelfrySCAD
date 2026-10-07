@@ -1,55 +1,66 @@
 """Alt/Option + mouse wheel steps the number at the text cursor.
 
-OpenSCAD's "number scroll" (ScintillaEditor::modifyNumber), ported: the digit
-just LEFT of the cursor is the one that moves, so the step is 1 in the units
-place, 0.1 in the tenths, 10 in the tens. Decimals, leading zeros and the sign
-are kept, and the cursor stays after the same digit.
-
-One departure: a leading sign belongs to the number only when it is unary.
-OpenSCAD takes `2-3` as `2` and `-3`, so stepping it up gives `2-2`.
-
-Qt-free, so it tests without a widget.
+The digit just left of the cursor sets the step (its place value); the
+cursor keeps its distance from the end of the number. Purely textual -- a
+number in a comment or string steps too. Qt-free, so it tests without a
+widget.
 """
 import re
+from decimal import Decimal, localcontext
 
-_NUM_BEFORE = re.compile(r"[-+]?\d*\.?\d*$")
-_NOT_NUM = re.compile(r"[^0-9.]")
-_NUMBER = re.compile(r"[-+]?\d*\.?\d+")
+_DIGITS = "0123456789"
+_NUMBER = re.compile(r"[+-]?[0-9]*\.?[0-9]+")
+
+
+def _is_name_char(ch: str) -> bool:
+    return ch.isalpha() or ch == "_"
 
 
 def step_number(line: str, col: int, delta: int):
     """`line` with the number whose digit sits just left of `col` moved by
     `delta` steps of that digit's place, and the new cursor column -- or
     None when there is no number there to step."""
-    begin = _NUM_BEFORE.search(line[:col]).start()
-    if line[begin:begin + 1] in "+-" and begin < col:
-        # Binary, not a sign: the operand before it owns the character.
-        prev = line[:begin].rstrip()
-        if prev and (prev[-1].isalnum() or prev[-1] in "_)]"):
-            begin += 1
-    if begin > 0 and (line[begin - 1].isalpha() or line[begin - 1] == "_"):
-        return None                      # part of a name, like x2
-    m = _NOT_NUM.search(line, col)
-    end = m.start() if m else len(line)
-    nr = line[begin:end]
-    if not _NUMBER.fullmatch(nr):
-        return None
-    signed = nr[0] in "+-"
-    curpos = col - begin
-    if curpos == 0 or (curpos == 1 and signed):
-        return None                      # no digit to the cursor's left
-    dot = nr.find(".")
-    decimals = 0 if dot < 0 else len(nr) - dot - 1
-    number = int(nr.replace(".", ""))
-    tail = len(nr) - curpos
-    exponent = tail - (1 if dot >= curpos else 0)
-    number += delta * 10 ** exponent
+    # Left part: digits/dots back from the cursor, at most one dot.
+    body = col
+    seen_dot = False
+    while body > 0 and line[body - 1] in _DIGITS + ".":
+        if line[body - 1] == ".":
+            if seen_dot:
+                break
+            seen_dot = True
+        body -= 1
+    if body == col:
+        return None          # nothing of the number left of the cursor
 
-    negative = number < 0
-    digits = str(abs(number))
-    if decimals:
-        digits = digits.rjust(decimals + 1, "0")
-        digits = digits[:-decimals] + "." + digits[-decimals:]
-    digits = digits.rjust(tail, "0")
-    new = ("-" if negative else "+" if nr[0] == "+" else "") + digits
-    return line[:begin] + new + line[end:], begin + len(new) - tail
+    # A sign is the number's only when unary: binary after an operand.
+    start = body
+    if body > 0 and line[body - 1] in "+-":
+        j = body - 2
+        while j >= 0 and line[j].isspace():
+            j -= 1
+        if not (j >= 0 and (line[j].isalnum() or line[j] in "_)]")):
+            start = body - 1
+
+    if start > 0 and _is_name_char(line[start - 1]):
+        return None          # part of a name (x2) or an exponent (1e5)
+
+    end = col
+    while end < len(line) and line[end] in _DIGITS + ".":
+        end += 1
+
+    token = line[start:end]
+    if not _NUMBER.fullmatch(token):
+        return None
+
+    decimals = len(token.partition(".")[2])
+    right = line[col:end]                    # t = len(right)
+    digits_right = len(right.replace(".", ""))
+    with localcontext() as ctx:
+        ctx.prec = len(token) + len(str(delta)) + 10   # exact, never rounds
+        new = Decimal(token) + delta * Decimal(1).scaleb(digits_right - decimals)
+        mag = f"{abs(new):.{decimals}f}"
+    # t + 1 keeps a digit left of the cursor (e.g. 1|00 - 1 -> 0|00).
+    mag = mag.rjust(len(right) + 1, "0")
+    sign = "-" if new < 0 else ("+" if token[0] == "+" else "")
+    rep = sign + mag
+    return line[:start] + rep + line[end:], start + len(rep) - len(right)

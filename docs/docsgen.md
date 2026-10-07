@@ -798,7 +798,7 @@ against `openscad-docsgen`'s output, and both tools reported exactly the
 same 33 `Invalid Link` errors (an artefact of parsing four files in
 isolation, not a defect in either).
 
-Images match in size, background (`#ffffe5` Cornfield), camera angle and
+Images match in size, background (`#f7f3e3` Cornfield), camera angle and
 framing — model coverage 22.0% of frame vs 18.8% on a spot check. They are
 not pixel-identical, and are not meant to be: BelfrySCAD's renderer draws
 heavier axis ticks with larger, more numerous labels than OpenSCAD's thin
