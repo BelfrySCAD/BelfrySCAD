@@ -55,7 +55,7 @@ def _is_grid(v) -> bool:
 def _quad_triangles(style: str, p00, p01, p10, p11, parity: int) -> list:
     """The triangles one grid quad becomes, as point triples.
 
-    Ported from BOSL2's `vnf_vertex_array` (vnf.scad). Its corner names map
+    Ported from BOSL2's `vnf_vertex_array` (vnf.scad). BOSL2 is BSD-2-Clause; see resources/THIRD_PARTY_NOTICES.md. Its corner names map
     to this grid's as i1=p00, i2=p10, i3=p11, i4=p01, so its two splits are
     the p00-p11 diagonal ("default") and the p01-p10 one ("alt"); every
     data-dependent style is a rule for choosing between exactly those two.

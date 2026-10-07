@@ -1,5 +1,7 @@
 """VNF tile textures: BOSL2's seam check, and moves that keep seams intact.
 
+Derived from BOSL2 (BSD-2-Clause; see resources/THIRD_PARTY_NOTICES.md).
+
 A VNF tile is a VNF whose X and Y lie in the unit square, repeated edge to
 edge to texture a surface (BOSL2's `texture=` on `linear_sweep()`, `cyl()`
 and friends). A tile only works if each vertex on a boundary edge has a

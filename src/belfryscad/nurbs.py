@@ -1,6 +1,7 @@
 """NURBS curve evaluation and interpolation for the Path viewer.
 
-Ported from BOSL2's `nurbs.scad` so the viewer draws exactly the curve a
+Ported from BOSL2's `nurbs.scad` (BSD-2-Clause; see
+resources/THIRD_PARTY_NOTICES.md) so the viewer draws exactly the curve a
 script would get from `nurbs_curve()` / `nurbs_interp()` for the same
 points, degree and closed flag. Only the subset the viewer can express is
 ported: uniform weights, default knots, and unconstrained centripetal

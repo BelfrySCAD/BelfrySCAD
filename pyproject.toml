@@ -6,8 +6,8 @@ build-backend = "hatchling.build"
 name = "belfryscad"
 version = "1.69.0"
 requires-python = ">=3.12"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "MIT AND BSD-2-Clause"
+license-files = ["LICENSE", "src/belfryscad/resources/THIRD_PARTY_NOTICES.md"]
 dependencies = [
     "PySide6-Essentials",
     "manifold3d",
