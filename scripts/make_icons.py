@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RES = ROOT / "resources"
 SOURCE = RES / "belfryscad.scad"
 MASTER = 1024
-CORNFIELD_OBJECT = (0.9765, 0.8431, 0.1725, 1.0)
+CORNFIELD_OBJECT = (0.8627, 0.698, 0.3059, 1.0)  # COLOR_THEMES['Cornfield']['object']
 
 
 def _render(tmp: Path) -> QImage:

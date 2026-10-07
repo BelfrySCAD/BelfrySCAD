@@ -1248,11 +1248,9 @@ class TestValidationColors:
     MIN_MUTUAL = 0.55
     MIN_VS_SURFACE = 0.40
 
-    # Orange on Solarized's dark gold is closer than that, and stays:
-    # orange for flipped normals was asked for directly. Listed rather
-    # than skipped, so any *other* collision still fails -- and so this
-    # one fails too if it ever gets worse.
-    KNOWN_CLOSE = {("flipped", "Solarized")}
+    # Allowed collisions, listed rather than skipped so any *other* one
+    # still fails. Empty: every built-in theme's object clears the bar.
+    KNOWN_CLOSE = set()
 
     @staticmethod
     def dist(a, b):
