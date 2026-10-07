@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.67.0" date="2026-10-06">
+      <description>
+        <p>linear_extrude() takes v= and rotate_extrude() takes start=, as in OpenSCAD, and both read positional arguments in OpenSCAD's order; text(), textmetrics() and fontmetrics() take em=. The editor's argument hints for builtin modules now match OpenSCAD.</p>
+      </description>
+    </release>
     <release version="1.66.0" date="2026-10-06">
       <description>
         <p>A new profile_time() times a block's script and geometry, or an expression, and prints the result; a new Profiling example shows how. Linux gets a proper desktop entry and .scad file association.</p>
