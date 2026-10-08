@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.3" date="2026-10-08">
+      <description>
+        <p>OFF, OBJ, 3MF, X3D and VRML files whose triangles do not share vertices now import as closed solids, and X3D/VRML Switch and LOD import only their active child.</p>
+      </description>
+    </release>
     <release version="1.70.2" date="2026-10-08">
       <description>
         <p>AMF files whose triangles do not share vertices now import as closed solids, as in OpenSCAD.</p>
