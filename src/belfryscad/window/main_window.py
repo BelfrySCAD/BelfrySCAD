@@ -2309,8 +2309,6 @@ class MainWindow(QMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(
             parent or self, "Open Files", file_dialog_dir(), "OpenSCAD Files (*.scad);;All Files (*)"
         )
-        if paths:
-            remember_file_dir(paths[-1])
         return paths
 
     def _open_file(self):
@@ -2328,6 +2326,12 @@ class MainWindow(QMainWindow):
         # file over) bypasses the startup Welcome window.
         if self._startup_welcome is not None:
             self._startup_welcome.close()
+        # Every way of opening a file counts, not just the Open dialog:
+        # Recent Files, a double-click in Explorer/Finder and a drop never
+        # went through it, so File > Open kept starting in Documents (#690).
+        # Not a library revealed by render=False.
+        if render:
+            remember_file_dir(path)
         resolved = str(Path(path).resolve())
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -5878,7 +5882,6 @@ class MainWindow(QMainWindow):
             self, "Open in New Window", file_dialog_dir(), "OpenSCAD Files (*.scad);;All Files (*)"
         )
         if path:
-            remember_file_dir(path)
             win = MainWindow()
             win.show()
             win.open_file_by_path(path)
