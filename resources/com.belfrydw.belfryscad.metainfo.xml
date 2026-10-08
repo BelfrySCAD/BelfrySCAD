@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.0" date="2026-10-07">
+      <description>
+        <p>SVG and DXF import match OpenSCAD and a failed import no longer stops the render; roof(method="straight") builds a true straight-skeleton roof; messages are worded as OpenSCAD words them; BOSL2 evaluates as fast as before 1.68; new viewport colour schemes; code derived from OpenSCAD GPL source is replaced by clean-room reimplementations.</p>
+      </description>
+    </release>
     <release version="1.69.0" date="2026-10-07">
       <description>
         <p>Builtin functions, assert(), let(), ranges, children() and textmetrics() now give the same values as OpenSCAD, finishing the builtin parity fixes.</p>
