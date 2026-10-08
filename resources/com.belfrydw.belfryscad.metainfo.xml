@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.2" date="2026-10-08">
+      <description>
+        <p>AMF files whose triangles do not share vertices now import as closed solids, as in OpenSCAD.</p>
+      </description>
+    </release>
     <release version="1.70.1" date="2026-10-07">
       <description>
         <p>The default roof() now roofs unions of touching pieces, where it gave nothing or ran out of memory.</p>
