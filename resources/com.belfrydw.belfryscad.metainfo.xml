@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.4" date="2026-10-08">
+      <description>
+        <p>File Open now starts in the folder of the last file opened by any means, including Recent Files, a double-click and a drop.</p>
+      </description>
+    </release>
     <release version="1.70.3" date="2026-10-08">
       <description>
         <p>OFF, OBJ, 3MF, X3D and VRML files whose triangles do not share vertices now import as closed solids, and X3D/VRML Switch and LOD import only their active child.</p>
