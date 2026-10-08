@@ -145,9 +145,10 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
         return None
 
     elapsed = time.perf_counter() - t0
-    if not bodies:
-        _print_error("Current top level object is not a 3D object.")
-        return None
+    # An empty model is left to the export, which refuses it in OpenSCAD's
+    # words for the format at hand ("... is empty." for a mesh, "... is not
+    # a 2D object." for SVG/PDF/DXF). This used to say "not a 3D object"
+    # for every format, and for SVG named the wrong dimension.
     return to_renderable_bodies(bodies), elapsed, evaluator.geometry
 
 
