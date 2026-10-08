@@ -394,3 +394,12 @@ class TestStrictCommas:
         err = capsys.readouterr().err
         assert "trailing comma in argument list" in err, err
         assert "line 1, column 7" in err, err
+
+
+def test_an_empty_model_is_refused_in_openscads_words(tmp_path, capsys):
+    src = tmp_path / "empty.scad"
+    src.write_text("x = 1;")
+    assert render_and_export(str(src), str(tmp_path / "empty.stl")) != 0
+    assert "Current top level object is empty." in capsys.readouterr().err
+    assert render_and_export(str(src), str(tmp_path / "empty.svg")) != 0
+    assert "Current top level object is not a 2D object." in capsys.readouterr().err

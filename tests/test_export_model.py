@@ -109,7 +109,8 @@ def test_an_unknown_format_raises(tmp_path):
 
 def test_an_empty_model_raises_rather_than_writing_nothing(tmp_path):
     g = geometry_for("// nothing here\n", tmp_path)
-    with pytest.raises(Exception, match="(?i)geometry"):
+    # Refused in OpenSCAD's words (evaluator 1.44.0).
+    with pytest.raises(Exception, match="Current top level object is empty"):
         exporters.export_model(str(tmp_path / "m.3mf"), g)
 
 
