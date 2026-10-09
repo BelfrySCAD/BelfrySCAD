@@ -63,6 +63,13 @@ out["after_view_all"] = cam()
 # shape -- which makes "is it deterministic?" the question worth asking.
 w._viewport._frame_all(w._viewport._renderer.camera)
 out["after_view_all_again"] = cam()
+
+# A script that now draws nothing must clear the viewport, not leave the
+# last render's shape standing.
+w._current_tab().editor.setPlainText("x = 1;")
+w._render(w._current_tab()); settle()
+out["empty_buffers"] = len(w._viewport._renderer._buffers)
+out["empty_bodies"] = len(w._bodies)
 w.close()
 print(json.dumps(out))
 '''
@@ -108,3 +115,8 @@ def test_view_all_still_works_after_an_unframed_render(tmp_path):
     # must hold is that the same request at the same size is repeatable.
     assert out["after_view_all_again"] == out["after_view_all"], \
         "View All is deterministic at a given viewport size"
+
+
+def test_a_render_that_draws_nothing_clears_the_viewport(tmp_path):
+    out = _run(tmp_path)
+    assert out["empty_buffers"] == 0 and out["empty_bodies"] == 0

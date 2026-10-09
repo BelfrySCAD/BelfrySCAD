@@ -851,8 +851,9 @@ class _RenderWorker(QObject):
         elapsed_ms = (_time.perf_counter() - _t0) * 1000
 
         if not bodies:
+            # Delivered anyway, empty: returning here left the last render's
+            # shape on screen, as if this script had drawn it.
             self._log(f"Render: no geometry produced.  {_fmt_elapsed(elapsed_ms)}")
-            return
 
         bodies = to_renderable_bodies(bodies)
         final_vp = {}
