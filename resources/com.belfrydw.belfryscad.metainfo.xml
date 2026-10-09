@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.5" date="2026-10-08">
+      <description>
+        <p>A render that produces no geometry now clears the viewport instead of leaving the previous shape on screen.</p>
+      </description>
+    </release>
     <release version="1.70.4" date="2026-10-08">
       <description>
         <p>File Open now starts in the folder of the last file opened by any means, including Recent Files, a double-click and a drop.</p>
