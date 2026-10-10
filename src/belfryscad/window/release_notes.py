@@ -21,8 +21,11 @@ from urllib.request import Request, urlopen
 
 RELEASES_API = "https://api.github.com/repos/BelfrySCAD/BelfrySCAD/releases"
 # The raw releases, not the markdown: filtered per reader, so two installed
-# versions sharing the cache each see only their own history.
-_CACHE = Path.home() / ".cache" / "BelfrySCAD" / "releases.json"
+# versions sharing the cache each see only their own history. A function, not
+# a constant: Path.home() raises on Windows without USERPROFILE, and this
+# module is imported with main_window.
+def _cache() -> Path:
+    return Path.home() / ".cache" / "BelfrySCAD" / "releases.json"
 _HEADING = re.compile(r"^(#{1,5})(?=\s)", re.MULTILINE)
 
 
@@ -87,14 +90,15 @@ def show_release_notes(parent=None):
     def work():
         try:
             releases = _fetch_releases()
-            _CACHE.parent.mkdir(parents=True, exist_ok=True)
-            _CACHE.write_text(json.dumps(releases), encoding="utf-8")
+            cache = _cache()
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(releases), encoding="utf-8")
             md = notes_markdown(releases, current)
         except Exception as e:  # network, HTTP, bad JSON
             try:
                 md = (f"*Could not fetch the latest notes ({e}); showing the copy from "
                       f"the last successful fetch.*\n\n"
-                      + notes_markdown(json.loads(_CACHE.read_text(encoding="utf-8")), current))
+                      + notes_markdown(json.loads(_cache().read_text(encoding="utf-8")), current))
             except Exception:
                 md = f"**Could not fetch the release notes.**\n\n    {e}"
         try:
