@@ -1366,7 +1366,7 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 
 **Window**: Minimize / Zoom / — / Move Tab to New Window / Show Next Tab / Show Previous Tab (Qt's NextChild/PreviousChild keys -- Ctrl+Tab / Ctrl+Shift+Tab on Windows and Linux, Cmd+Shift+] / Cmd+Shift+[ on macOS -- plus, on macOS, the physical Ctrl+Tab / Ctrl+Shift+Tab, which Qt's list leaves out and which otherwise reached the editor and indented the line; wraps round) / — / *(open document list)* / Bring All to Front / — / Show Editor Toolbar / Show 3D View Toolbar / Show Tools Toolbar / Show Tab Bar / Show Editor / Show Console / Show Debugger / Show Animate / Show Customizer / Show AI Chat / Show Docs / Show Status Bar / Show Testing (the toolbars' and docks' own `toggleViewAction()`s; at the top of View until moved here)
 
-**Help**: About BelfrySCAD / Documentation / Report an Issue… / Check for Updates… / Font List… / Color List… / Welcome Screen… / Show Library Folder
+**Help**: About BelfrySCAD / Documentation / Report an Issue… / Check for Updates… / Show Release Notes… (every published GitHub release's notes, newest first; cached in `~/.cache/BelfrySCAD` for offline use, see `window/release_notes.py`) / Font List… / Color List… / Welcome Screen… / Show Library Folder
 
 Show Library Folder (`library_manager.show_library_folder`) opens the libraries folder -- `~/Documents/OpenSCAD/libraries`, or `~/.local/share/OpenSCAD/libraries` on Linux -- in the platform's file manager, creating it first if it is missing, and logs its path to the console. It is the folder the Library Manager installs into, not `OPENSCADPATH`.
 
