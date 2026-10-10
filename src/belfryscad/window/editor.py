@@ -2821,6 +2821,7 @@ class CodeEditor(QPlainTextEdit):
         bottom = self.viewport().height()
         offset = self.contentOffset()
         block = self.firstVisibleBlock()
+        grew = False
         while block.isValid():
             if self.blockBoundingGeometry(block).translated(offset).top() > bottom:
                 break
@@ -2840,7 +2841,18 @@ class CodeEditor(QPlainTextEdit):
                     y += line.height()
                     first = False
                 layout.endLayout()
+                # Narrower rows can mean more of them. The scrollbar's range
+                # is the sum of every block's lineCount(), which Qt set from
+                # its own layout, so tell it: left stale, the error adds up
+                # line after line until the end of the file is out of reach
+                # (#728).
+                if layout.lineCount() != block.lineCount():
+                    block.setLineCount(layout.lineCount())
+                    grew = True
             block = block.next()
+        if grew:
+            doc_layout = self.document().documentLayout()
+            doc_layout.documentSizeChanged.emit(doc_layout.documentSize())
 
     @staticmethod
     def _already_indented(layout, indent: float) -> bool:
