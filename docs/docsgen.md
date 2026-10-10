@@ -11,7 +11,7 @@ Three entry points, one implementation:
 * **`belfryscad --mdimggen [options] [srcfiles...]`** — a drop-in replacement
   for `openscad-mdimggen`, which renders the ```` ```openscad ```` blocks in
   markdown files to images (BOSL2 builds its tutorials this way).
-* **View ▸ Show Docs** — the Docs pane, which renders the current editor
+* **Window ▸ Show Docs** — the Docs pane, which renders the current editor
   buffer's documentation, lists everything the parser objects to, and shows
   every Example and Figure as a real rendered image.
   An explicit `-D` **wins over the rc file's `DocsDirectory`**. The parser re-reads

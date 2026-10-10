@@ -1682,50 +1682,6 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("View")
-        # toggleViewAction, not a checkable of our own: it follows the
-        # toolbar, so a layout restored with a toolbar hidden shows unticked.
-        for bar, label in ((self._toolbar, "Show Editor Toolbar"),
-                           (self._view_toolbar, "Show 3D View Toolbar"),
-                           (self._tools_toolbar, "Show Tools Toolbar")):
-            act = bar.toggleViewAction()
-            act.setText(label)
-            view_menu.addAction(act)
-        self._act_show_tabs = self._add_checkable(view_menu, "Show Tab Bar", True, self._tab_bar_toolbar.setVisible)
-
-        self._act_show_editor = self._editor_dock.toggleViewAction()
-        self._act_show_editor.setText("Show Editor")
-        view_menu.addAction(self._act_show_editor)
-
-        self._act_show_console = self._console_dock.toggleViewAction()
-        self._act_show_console.setText("Show Console")
-        view_menu.addAction(self._act_show_console)
-
-        self._act_show_debugger = self._debugger_dock.toggleViewAction()
-        self._act_show_debugger.setText("Show Debugger")
-        view_menu.addAction(self._act_show_debugger)
-
-        self._act_show_animate = self._animate_dock.toggleViewAction()
-        self._act_show_animate.setText("Show Animate")
-        view_menu.addAction(self._act_show_animate)
-
-        self._act_show_customizer = self._customizer_dock.toggleViewAction()
-        self._act_show_customizer.setText("Show Customizer")
-        view_menu.addAction(self._act_show_customizer)
-
-        self._act_show_ai_chat = self._ai_chat_dock.toggleViewAction()
-        self._act_show_ai_chat.setText("Show AI Chat")
-        view_menu.addAction(self._act_show_ai_chat)
-
-        self._act_show_docs = self._docs_dock.toggleViewAction()
-        self._act_show_docs.setText("Show Docs")
-        view_menu.addAction(self._act_show_docs)
-
-        self._act_show_status = self._add_checkable(view_menu, "Show Status Bar", True, self._status_bar.setVisible)
-        self._act_show_testing = self._testing_dock.toggleViewAction()
-        self._act_show_testing.setText("Show Testing")
-        view_menu.addAction(self._act_show_testing)
-
-        view_menu.addSeparator()
         for label, preset, key in (
             ("Top",       "top",    "Ctrl+4"),
             ("Bottom",    "bottom", "Ctrl+5"),
@@ -1831,6 +1787,50 @@ class MainWindow(QMainWindow):
             act.setShortcuts(QKeySequence.keyBindings(std) + ([QKeySequence(extra)] if mac else []))
         window_menu.addSeparator()
         self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
+        # Toolbars, panes and the status bar, moved here from the top of View.
+        window_menu.addSeparator()
+        # toggleViewAction, not a checkable of our own: it follows the
+        # toolbar, so a layout restored with a toolbar hidden shows unticked.
+        for bar, label in ((self._toolbar, "Show Editor Toolbar"),
+                           (self._view_toolbar, "Show 3D View Toolbar"),
+                           (self._tools_toolbar, "Show Tools Toolbar")):
+            act = bar.toggleViewAction()
+            act.setText(label)
+            window_menu.addAction(act)
+        self._act_show_tabs = self._add_checkable(window_menu, "Show Tab Bar", True, self._tab_bar_toolbar.setVisible)
+
+        self._act_show_editor = self._editor_dock.toggleViewAction()
+        self._act_show_editor.setText("Show Editor")
+        window_menu.addAction(self._act_show_editor)
+
+        self._act_show_console = self._console_dock.toggleViewAction()
+        self._act_show_console.setText("Show Console")
+        window_menu.addAction(self._act_show_console)
+
+        self._act_show_debugger = self._debugger_dock.toggleViewAction()
+        self._act_show_debugger.setText("Show Debugger")
+        window_menu.addAction(self._act_show_debugger)
+
+        self._act_show_animate = self._animate_dock.toggleViewAction()
+        self._act_show_animate.setText("Show Animate")
+        window_menu.addAction(self._act_show_animate)
+
+        self._act_show_customizer = self._customizer_dock.toggleViewAction()
+        self._act_show_customizer.setText("Show Customizer")
+        window_menu.addAction(self._act_show_customizer)
+
+        self._act_show_ai_chat = self._ai_chat_dock.toggleViewAction()
+        self._act_show_ai_chat.setText("Show AI Chat")
+        window_menu.addAction(self._act_show_ai_chat)
+
+        self._act_show_docs = self._docs_dock.toggleViewAction()
+        self._act_show_docs.setText("Show Docs")
+        window_menu.addAction(self._act_show_docs)
+
+        self._act_show_status = self._add_checkable(window_menu, "Show Status Bar", True, self._status_bar.setVisible)
+        self._act_show_testing = self._testing_dock.toggleViewAction()
+        self._act_show_testing.setText("Show Testing")
+        window_menu.addAction(self._act_show_testing)
 
         help_menu = mb.addMenu("Help")
         # AboutRole moves this into the application menu on macOS, where
