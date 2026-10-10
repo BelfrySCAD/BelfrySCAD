@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.70.7" date="2026-10-10">
+      <description>
+        <p>With line wrapping on, the end of a file can be scrolled to again past a very long line, and levelset() takes edge as one spacing per axis.</p>
+      </description>
+    </release>
     <release version="1.70.6" date="2026-10-10">
       <description>
         <p>The toolbar and panel toggles (Show Editor, Show Console and the rest) moved from the top of the View menu to the end of the Window menu.</p>
