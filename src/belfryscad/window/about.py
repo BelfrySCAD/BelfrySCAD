@@ -112,6 +112,12 @@ def show_about_dialog(parent=None):
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     copy_btn = buttons.addButton("Copy Versions", QDialogButtonBox.ButtonRole.ActionRole)
     copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(about_text()))
+    from belfryscad.window.release_notes import show_release_notes
+    notes_btn = buttons.addButton("Release Notes…", QDialogButtonBox.ButtonRole.ActionRole)
+    # Parented like About itself, so the notes outlive closing About; to
+    # About when it has no parent, or nothing holds the window and it is
+    # collected at once.
+    notes_btn.clicked.connect(lambda: show_release_notes(parent or dlg))
     buttons.rejected.connect(dlg.close)
     layout.addWidget(buttons)
 
