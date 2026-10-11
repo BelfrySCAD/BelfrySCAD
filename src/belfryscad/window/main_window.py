@@ -39,6 +39,7 @@ from belfryscad.window.testing import TestingPane
 from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.about import open_documentation, open_issue_tracker, show_about_dialog
 from belfryscad.window.update_check import check_for_updates
+from belfryscad.window.release_notes import show_release_notes
 from belfryscad.window.export_options import ask_export_options, export_kwargs
 from belfryscad.window.color_list import show_color_list
 from belfryscad.window.font_list import show_font_list
@@ -1843,6 +1844,7 @@ class MainWindow(QMainWindow):
         self._add_action(help_menu, "AI Chat Setup Guide", open_guide)
         self._add_action(help_menu, "Report an Issue…", open_issue_tracker)
         self._add_action(help_menu, "Check for Updates…", lambda: check_for_updates(self))
+        self._add_action(help_menu, "Show Release Notes…", lambda: show_release_notes(self))
         # Not Qt's font database: these are the names text() will accept,
         # read from the evaluator's own index (issue #379).
         self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
