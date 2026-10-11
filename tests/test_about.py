@@ -118,5 +118,6 @@ print(json.dumps(out))
     assert out["title"] == "About BelfrySCAD"
     assert out["body_has_version"] is True
     assert "Copy Versions" in out["buttons"]
+    assert "Release Notes…" in out["buttons"]
     assert "Report an Issue…" in out["help_entries"], out["help_entries"]
     assert "Documentation" in out["help_entries"]
