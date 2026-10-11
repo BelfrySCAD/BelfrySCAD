@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.71.1" date="2026-10-11">
+      <description>
+        <p>A clearer Render toolbar icon (a page of code becoming a solid), and the view buttons' tooltips now read "View from Top" and so on.</p>
+      </description>
+    </release>
     <release version="1.71.0" date="2026-10-10">
       <description>
         <p>Help ▸ Show Release Notes… and a Release Notes… button in the About box show the notes for every release up to the one installed.</p>
