@@ -1510,12 +1510,12 @@ class MainWindow(QMainWindow):
         # handlers rather than reusing those QActions -- both just call
         # _set_view, which is the whole of what the menu items do.
         for label, preset, tip in (
-            ("Top View",       "top",    "Top (Ctrl+4)"),
-            ("Bottom View",    "bottom", "Bottom (Ctrl+5)"),
-            ("Left View",      "left",   "Left (Ctrl+6)"),
-            ("Right View",     "right",  "Right (Ctrl+7)"),
-            ("Front View",     "front",  "Front (Ctrl+8)"),
-            ("Back View",      "back",   "Back (Ctrl+9)"),
+            ("Top View",       "top",    "View from Top (Ctrl+4)"),
+            ("Bottom View",    "bottom", "View from Bottom (Ctrl+5)"),
+            ("Left View",      "left",   "View from Left (Ctrl+6)"),
+            ("Right View",     "right",  "View from Right (Ctrl+7)"),
+            ("Front View",     "front",  "View from Front (Ctrl+8)"),
+            ("Back View",      "back",   "View from Back (Ctrl+9)"),
             ("Isometric View", "iso",    "Reset orientation to isometric (Ctrl+0)"),
             ("View All",       "all",    "Zoom to fit the whole model (Shift+Ctrl+V)"),
             ("Center",         "center", "Put the origin back in the middle (Shift+Ctrl+0)"),
