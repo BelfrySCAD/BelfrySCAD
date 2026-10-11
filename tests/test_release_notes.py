@@ -16,3 +16,14 @@ def test_sections_per_release_newest_first_skipping_unpublished():
     assert "future" not in md and "1.3.0" not in md                  # newer than the app
     assert "secret" not in md and "beta" not in md
     assert "*No notes.*" in md and "\r" not in md
+
+
+def test_bare_urls_become_whole_autolinks():
+    # Qt's own autolinker stopped a compare URL at its "...", linking half of it.
+    url = "https://github.com/BelfrySCAD/BelfrySCAD/compare/v1.70.7...v1.70.8"
+    md = notes_markdown([{"tag_name": "v1.70.8", "body":
+        f"**Full Changelog**: {url}\n* x by @a in https://github.com/o/r/pull/735.\n"
+        "* [already](https://example.com/a) and <https://example.com/b>"}], current="1.70.8")
+    assert f"<{url}>" in md
+    assert "<https://github.com/o/r/pull/735>." in md          # sentence period stays outside
+    assert "(https://example.com/a)" in md and "<<" not in md   # existing links untouched

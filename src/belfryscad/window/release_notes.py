@@ -27,6 +27,11 @@ RELEASES_API = "https://api.github.com/repos/BelfrySCAD/BelfrySCAD/releases"
 def _cache() -> Path:
     return Path.home() / ".cache" / "BelfrySCAD" / "releases.json"
 _HEADING = re.compile(r"^(#{1,5})(?=\s)", re.MULTILINE)
+# A bare URL, not already a link target `](…)` or an autolink `<…>`. Qt's
+# markdown reader autolinks bare URLs itself but ends the link at `...`, so a
+# compare URL (v1.70.7...v1.70.8) linked only its first half. Trailing
+# sentence punctuation stays outside, as GitHub's own autolinker leaves it.
+_BARE_URL = re.compile(r"(?<![(<])\bhttps?://[^\s<>()]+?(?=[.,;:!?]*(?:\s|$))")
 
 
 def notes_markdown(releases: list[dict], current: str) -> str:
@@ -43,6 +48,7 @@ def notes_markdown(releases: list[dict], current: str) -> str:
         date = (r.get("published_at") or "")[:10]
         title = r.get("tag_name", "").lstrip("vV") + (f" — {date}" if date else "")
         body = _HEADING.sub(r"#\1", (r.get("body") or "").replace("\r\n", "\n")).strip()
+        body = _BARE_URL.sub(r"<\g<0>>", body)
         parts.append(f"# {title}\n\n{body or '*No notes.*'}")
     return "\n\n---\n\n".join(parts)
 
