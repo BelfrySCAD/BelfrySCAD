@@ -277,8 +277,9 @@ print(json.dumps(out))
 
 
 def test_the_picker_shares_hearts_views_and_used(tmp_path):
-    """#746: a click on a family's heart toggles it without selecting the
-    row, the view narrows the family pane, and Save counts as a use."""
+    """#746: hearts are per face, in the style pane; a press on one toggles
+    it without selecting the row. The family pane marks a family with any
+    favorite face, the view narrows both panes, and Save counts as a use."""
     driver = tmp_path / "_fpfav.py"
     driver.write_text('''
 import json
@@ -290,33 +291,40 @@ import tempfile
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 import belfryscad.window.font_picker as fp
-from belfryscad.window.font_list import favorite_families, used_families
+from belfryscad.window.font_list import favorite_faces, used_faces
 
 FONTS = [
     {"family": "Arial", "style": "Regular", "spec": "Arial", "path": "<bundled>"},
     {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
     {"family": "Liberation Sans", "style": "Bold", "spec": "Liberation Sans:style=Bold", "path": "<bundled>"},
 ]
-dlg = fp.FontPickerDialog("Arial", None, None, fonts=FONTS)
+dlg = fp.FontPickerDialog("Liberation Sans", None, None, fonts=FONTS)
 dlg.show(); app.processEvents()
-fams = dlg.findChildren(QListWidget)[0]
-names = lambda: [fams.item(i).text() for i in range(fams.count())]
-out = {"names": names()}
+fams, styles = dlg.findChildren(QListWidget)[:2]
+names = lambda w: [w.item(i).text() for i in range(w.count())]
+out = {"families": names(fams), "styles": names(styles)}
 
-lib = fams.findItems("Liberation Sans", Qt.MatchFlag.MatchExactly)[0]
-rect = fams.visualItemRect(lib)
+bold = styles.findItems("Bold", Qt.MatchFlag.MatchExactly)[0]
+rect = styles.visualItemRect(bold)
 pos = QPointF(rect.left() + 4, rect.center().y())
-press = QMouseEvent(QEvent.Type.MouseButtonPress, pos, fams.viewport().mapToGlobal(pos),
+press = QMouseEvent(QEvent.Type.MouseButtonPress, pos, styles.viewport().mapToGlobal(pos),
                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-QApplication.sendEvent(fams.viewport(), press)
-out["favs"] = sorted(favorite_families())
-out["selection_kept"] = fams.currentItem().text()
+QApplication.sendEvent(styles.viewport(), press)
+out["favs"] = sorted(favorite_faces())
+out["selection_kept"] = styles.currentItem().text()
+# The family pane's icon is an indicator: Liberation Sans has one now, Arial not.
+def drawn(icon):
+    img = icon.pixmap(16, 16).toImage()
+    return any(img.pixelColor(x, y).alpha() for x in range(img.width()) for y in range(img.height()))
+out["family_marked"] = {n: drawn(fams.findItems(n, Qt.MatchFlag.MatchExactly)[0].icon())
+                        for n in names(fams)}
 
 view = dlg.findChild(QComboBox)
 view.setCurrentText("Favorites")
-out["fav_names"] = names()
-dlg.toggle_favorite("Liberation Sans")
-out["fav_names_after_unheart"] = names()
+out["fav_families"] = names(fams)
+out["fav_styles"] = names(styles)
+dlg.toggle_favorite("Bold")
+out["fav_families_after_unheart"] = names(fams)
 view.setCurrentText("All")
 dlg.close()
 
@@ -328,7 +336,7 @@ def press_save():
             w.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()
 QTimer.singleShot(0, press_save)
 fp.open_font_picker("Liberation Sans:style=Bold", None, lambda s: None, None)
-out["used"] = used_families()
+out["used"] = used_faces()
 print(json.dumps(out))
 ''')
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
@@ -336,9 +344,12 @@ print(json.dumps(out))
                                "HOME": str(tmp_path)})
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
-    assert out["names"] == ["Arial", "Liberation Sans"]
-    assert out["favs"] == ["Liberation Sans"]
-    assert out["selection_kept"] == "Arial"
-    assert out["fav_names"] == ["Liberation Sans"]
-    assert out["fav_names_after_unheart"] == []
-    assert out["used"] == ["Liberation Sans"]
+    assert out["families"] == ["Arial", "Liberation Sans"]
+    assert out["styles"] == ["Regular", "Bold"]
+    assert out["favs"] == ["Liberation Sans:style=Bold"]
+    assert out["selection_kept"] == "Regular"
+    assert out["family_marked"] == {"Arial": False, "Liberation Sans": True}
+    assert out["fav_families"] == ["Liberation Sans"]
+    assert out["fav_styles"] == ["Bold"]
+    assert out["fav_families_after_unheart"] == []
+    assert out["used"] == ["Liberation Sans:style=Bold"]

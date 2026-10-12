@@ -250,29 +250,31 @@ def scratch_settings(tmp_path):
     bs_settings._scratch_dir = before
 
 
-def test_favorites_and_used_families_persist(scratch_settings):
-    """#746: favorites are families, used is newest first and keyed by the
-    family of whatever spec was taken."""
+def test_favorites_and_used_faces_persist(scratch_settings):
+    """#746: a favorite is one face (family AND style), stored as its
+    canonical spec, and used is newest first, keyed the same way."""
     from belfryscad.window.font_list import (
-        favorite_families, in_view, record_used, set_favorite, used_families,
+        face_key, families_of, favorite_faces, in_view, record_used, set_favorite, used_faces,
     )
-    assert favorite_families() == set() and used_families() == []
-    set_favorite("Liberation Sans", True)
-    set_favorite("Helvetica Neue", True)
-    set_favorite("Helvetica Neue", False)
-    assert favorite_families() == {"Liberation Sans"}
+    assert favorite_faces() == set() and used_faces() == []
+    set_favorite(face_key("Liberation Sans", "Regular"), True)
+    set_favorite(face_key("Helvetica Neue", "Thin"), True)
+    set_favorite(face_key("Helvetica Neue", "Thin"), False)
+    assert favorite_faces() == {"Liberation Sans"}
 
     record_used("Helvetica Neue:style=Thin")
-    record_used("Liberation Sans")
-    record_used("Helvetica Neue")
-    assert used_families() == ["Helvetica Neue", "Liberation Sans"]
+    record_used("Liberation Sans:style=Regular")   # the same face as the bare family
+    record_used("Helvetica Neue:style=Thin")
+    assert used_faces() == ["Helvetica Neue:style=Thin", "Liberation Sans"]
+    assert families_of(used_faces()) == {"Helvetica Neue", "Liberation Sans"}
 
-    favs, used = favorite_families(), set(used_families())
+    favs, used = favorite_faces(), set(used_faces())
     assert in_view("Arial", "All", favs, used)
     assert not in_view("Arial", "Favorites", favs, used)
     assert in_view("Liberation Sans", "Favorites", favs, used)
-    assert in_view("Helvetica Neue", "Used", favs, used)
-    assert not in_view("Arial", "Used", favs, used)
+    assert not in_view("Liberation Sans:style=Bold", "Favorites", favs, used)
+    assert in_view("Helvetica Neue:style=Thin", "Used", favs, used)
+    assert not in_view("Helvetica Neue", "Used", favs, used)
 
 
 def test_hearts_and_views_in_the_font_list(tmp_path):
@@ -284,7 +286,7 @@ app = QApplication([])
 import tempfile
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
-from belfryscad.window.font_list import FontListDialog, favorite_families, used_families, HEART_ON
+from belfryscad.window.font_list import FontListDialog, favorite_faces, used_faces, HEART_ON
 
 FAKE = [
     {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
@@ -293,21 +295,24 @@ FAKE = [
 ]
 dlg = FontListDialog(None, fonts=FAKE)
 t = dlg._table
-rows = lambda: [t.item(r, 1).text() for r in range(t.rowCount()) if not t.isRowHidden(r)]
+row_of = lambda fam, sty: next(r for r in range(t.rowCount())
+                               if t.item(r, 1).text() == fam and t.item(r, 2).text() == sty)
+rows = lambda: sorted(t.item(r, 3).text() for r in range(t.rowCount()) if not t.isRowHidden(r))
 out = {}
-# Clicking a heart marks the whole family, every row of it.
-t.cellClicked.emit(0, 0)
-out["favs"] = sorted(favorite_families())
-out["hearts"] = sorted(t.item(r, 0).text() == HEART_ON for r in range(t.rowCount()))
+# Clicking Regular's heart marks Regular only, not the family's other styles.
+t.cellClicked.emit(row_of("Liberation Sans", "Regular"), 0)
+out["favs"] = sorted(favorite_faces())
+# The row did not move: the table sorts by family, not by the hearts.
+out["sorted_by"] = t.horizontalHeader().sortIndicatorSection()
+out["hearts"] = {t.item(r, 3).text(): t.item(r, 0).text() == HEART_ON for r in range(t.rowCount())}
 dlg._view.setCurrentText("Favorites")
 out["fav_rows"] = rows()
 dlg._view.setCurrentText("Used")
 out["used_rows_before"] = rows()
 dlg._view.setCurrentText("All")
-r = [t.item(i, 1).text() for i in range(t.rowCount())].index("Helvetica Neue")
-t.setCurrentCell(r, 3)
+t.setCurrentCell(row_of("Helvetica Neue", "Italic"), 3)
 dlg._copy_selected()
-out["used"] = used_families()
+out["used"] = used_faces()
 dlg._view.setCurrentText("Used")
 out["used_rows_after"] = rows()
 # The view is remembered for the next window.
@@ -320,9 +325,11 @@ print(json.dumps(out))
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
     assert out["favs"] == ["Liberation Sans"]
-    assert out["hearts"] == [False, True, True]
-    assert out["fav_rows"] == ["Liberation Sans", "Liberation Sans"]
+    assert out["sorted_by"] == 1
+    assert out["hearts"] == {"Liberation Sans": True, "Liberation Sans:style=Bold": False,
+                             "Helvetica Neue:style=Italic": False}
+    assert out["fav_rows"] == ["Liberation Sans"]
     assert out["used_rows_before"] == []
-    assert out["used"] == ["Helvetica Neue"]
-    assert out["used_rows_after"] == ["Helvetica Neue"]
+    assert out["used"] == ["Helvetica Neue:style=Italic"]
+    assert out["used_rows_after"] == ["Helvetica Neue:style=Italic"]
     assert out["reopened_view"] == "Used"
