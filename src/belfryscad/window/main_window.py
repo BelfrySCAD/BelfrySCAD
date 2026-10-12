@@ -1639,6 +1639,12 @@ class MainWindow(QMainWindow):
 
         # Design
         design_menu = mb.addMenu("Design")
+        self._act_auto_reload = self._add_checkable(
+            design_menu, "Automatic Reload and Render",
+            app_settings().value(
+                "autoReload", False, type=bool),
+            self._set_auto_reload)
+        design_menu.addSeparator()
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
@@ -1659,12 +1665,6 @@ class MainWindow(QMainWindow):
         measure_menu.addSeparator()
         self._add_action(measure_menu, "Clear Measurements",
                           self._clear_measurements)
-        design_menu.addSeparator()
-        self._act_auto_reload = self._add_checkable(
-            design_menu, "Automatic Reload and Render",
-            app_settings().value(
-                "autoReload", False, type=bool),
-            self._set_auto_reload)
         design_menu.addSeparator()
         self._add_action(design_menu, "Check Validity", self._check_validity)
         self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
