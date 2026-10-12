@@ -11,6 +11,9 @@ have styles that do not reduce to those four — Helvetica Neue alone has
 fourteen, including the Thin and UltraLight faces a curated list would
 make unreachable. What is listed is literally what goes after `:style=`.
 
+The family pane carries the Font List's favourite hearts and its
+All/Used/Favorites view (issue #746); click a heart to toggle it.
+
 Nothing here parses OpenSCAD: the finder is lexical, like
 `find_editable_literals`, and works on the source text around the cursor.
 """
@@ -182,6 +185,28 @@ def group_by_family(fonts: list) -> dict:
     }
 
 
+def _heart_icon(on: bool):
+    """A heart glyph as an icon, red when on, so the item text stays the
+    bare family name."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+    from PySide6.QtWidgets import QApplication
+    from belfryscad.window.font_list import HEART_OFF, HEART_ON
+
+    pix = QPixmap(32, 32)
+    pix.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pix)
+    font = QFont()
+    font.setPixelSize(26)
+    p.setFont(font)
+    p.setPen(QColor("#d0304a") if on else QApplication.palette().text().color())
+    p.drawText(pix.rect(), int(Qt.AlignmentFlag.AlignCenter), HEART_ON if on else HEART_OFF)
+    p.end()
+    icon = QIcon(pix)
+    icon.addPixmap(pix, QIcon.Mode.Selected)  # Qt otherwise tints a selected row's heart
+    return icon
+
+
 class FontPickerDialog:
     """Two panes, a preview, and a Save that writes the spec back.
 
@@ -192,13 +217,14 @@ class FontPickerDialog:
 
     def __new__(cls, spec: str = "", preview_text: str | None = None, parent=None,
                 fonts: list | None = None):
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QFont, QFontDatabase
+        from PySide6.QtCore import QEvent, QObject, Qt
         from PySide6.QtWidgets import (
             QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
             QVBoxLayout,
         )
-        from belfryscad.window.font_list import load_fonts
+        from belfryscad.window.font_list import (
+            favorite_families, in_view, load_fonts, set_favorite, used_families, view_combo,
+        )
 
         all_fonts = load_fonts() if fonts is None else list(fonts)
         families = group_by_family(all_fonts)
@@ -221,7 +247,14 @@ class FontPickerDialog:
         search = QLineEdit()
         search.setPlaceholderText("Filter families…")
         search.setClearButtonEnabled(True)
-        layout.addWidget(search)
+        view = view_combo(lambda: fill_families(search.text()))
+        top = QHBoxLayout()
+        top.addWidget(search, 1)
+        top.addWidget(view)
+        layout.addLayout(top)
+        favorites = favorite_families()
+        used = set(used_families())
+        hearts = (_heart_icon(False), _heart_icon(True))
 
         panes = QHBoxLayout()
         family_list = QListWidget()
@@ -289,12 +322,42 @@ class FontPickerDialog:
         def fill_families(needle: str = ""):
             needle = needle.casefold()
             family_list.clear()
-            names = [f for f in families if needle in f.casefold()]
-            family_list.addItems(names)
+            names = [f for f in families
+                     if needle in f.casefold() and in_view(f, view.currentText(), favorites, used)]
+            for name in names:
+                family_list.addItem(name)
+                family_list.item(family_list.count() - 1).setIcon(hearts[name in favorites])
             if want_family in names:
                 family_list.setCurrentRow(names.index(want_family))
             elif names:
                 family_list.setCurrentRow(0)
+
+        def toggle_favorite(item):
+            name = item.text()
+            on = name not in favorites
+            set_favorite(name, on)
+            favorites.clear()
+            favorites.update(favorite_families())
+            item.setIcon(hearts[on])
+            if view.currentText() == "Favorites" and not on:
+                fill_families(search.text())
+
+        class _HeartClicks(QObject):
+            """A press on an item's heart icon toggles it, and does not select."""
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.MouseButtonPress:
+                    item = family_list.itemAt(event.position().toPoint())
+                    if item is not None:
+                        rect = family_list.visualItemRect(item)
+                        if event.position().x() - rect.left() < family_list.iconSize().width() + 6:
+                            toggle_favorite(item)
+                            return True
+                return False
+
+        heart_clicks = _HeartClicks(family_list)
+        family_list.viewport().installEventFilter(heart_clicks)
+        dlg.toggle_favorite = lambda name: toggle_favorite(
+            family_list.findItems(name, Qt.MatchFlag.MatchExactly)[0])
 
         search.textChanged.connect(fill_families)
         family_list.currentItemChanged.connect(lambda *_: fill_styles())
@@ -330,7 +393,10 @@ def open_font_picker(spec: str, preview_text: str | None, on_commit, parent=None
     knows whether it is writing into source (quotes) or a Customizer field
     (no quotes).
     """
+    from belfryscad.window.font_list import record_used
+
     dlg = FontPickerDialog(spec, preview_text, parent)
     if dlg.exec():
+        record_used(dlg.chosen_spec())
         on_commit(dlg.chosen_spec())
     return dlg

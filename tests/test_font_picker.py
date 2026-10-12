@@ -122,6 +122,9 @@ def test_the_dialog_lists_styles_per_family_and_saves_a_spec(tmp_path):
 import json
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.font_picker import FontPickerDialog
 
 FONTS = [
@@ -226,6 +229,9 @@ import json
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QListWidget
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.font_picker import FontPickerDialog, open_font_picker
 import belfryscad.window.font_picker as fp
 
@@ -268,3 +274,71 @@ print(json.dumps(out))
     out = json.loads(res.stdout.strip().splitlines()[-1])
     assert out["error"] is None, out["error"]
     assert out["committed"] == ["Liberation Sans:style=Bold"]
+
+
+def test_the_picker_shares_hearts_views_and_used(tmp_path):
+    """#746: a click on a family's heart toggles it without selecting the
+    row, the view narrows the family pane, and Save counts as a use."""
+    driver = tmp_path / "_fpfav.py"
+    driver.write_text('''
+import json
+from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QListWidget
+app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+import belfryscad.window.font_picker as fp
+from belfryscad.window.font_list import favorite_families, used_families
+
+FONTS = [
+    {"family": "Arial", "style": "Regular", "spec": "Arial", "path": "<bundled>"},
+    {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
+    {"family": "Liberation Sans", "style": "Bold", "spec": "Liberation Sans:style=Bold", "path": "<bundled>"},
+]
+dlg = fp.FontPickerDialog("Arial", None, None, fonts=FONTS)
+dlg.show(); app.processEvents()
+fams = dlg.findChildren(QListWidget)[0]
+names = lambda: [fams.item(i).text() for i in range(fams.count())]
+out = {"names": names()}
+
+lib = fams.findItems("Liberation Sans", Qt.MatchFlag.MatchExactly)[0]
+rect = fams.visualItemRect(lib)
+pos = QPointF(rect.left() + 4, rect.center().y())
+press = QMouseEvent(QEvent.Type.MouseButtonPress, pos, fams.viewport().mapToGlobal(pos),
+                    Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+QApplication.sendEvent(fams.viewport(), press)
+out["favs"] = sorted(favorite_families())
+out["selection_kept"] = fams.currentItem().text()
+
+view = dlg.findChild(QComboBox)
+view.setCurrentText("Favorites")
+out["fav_names"] = names()
+dlg.toggle_favorite("Liberation Sans")
+out["fav_names_after_unheart"] = names()
+view.setCurrentText("All")
+dlg.close()
+
+real = fp.FontPickerDialog.__new__
+fp.FontPickerDialog = lambda spec, preview, parent: real(fp.FontPickerDialog, spec, preview, parent, fonts=FONTS)
+def press_save():
+    for w in app.topLevelWidgets():
+        if w.windowTitle() == "Choose Font" and w.isVisible():
+            w.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()
+QTimer.singleShot(0, press_save)
+fp.open_font_picker("Liberation Sans:style=Bold", None, lambda s: None, None)
+out["used"] = used_families()
+print(json.dumps(out))
+''')
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["names"] == ["Arial", "Liberation Sans"]
+    assert out["favs"] == ["Liberation Sans"]
+    assert out["selection_kept"] == "Arial"
+    assert out["fav_names"] == ["Liberation Sans"]
+    assert out["fav_names_after_unheart"] == []
+    assert out["used"] == ["Liberation Sans"]
