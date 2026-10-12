@@ -934,7 +934,7 @@ class DocsPane(QWidget):
             self._folder_btn.setToolTip(
                 "Preview as if the file were in another folder -- the one it will be "
                 "placed in -- so that folder's .openscad_docsgen_rc, library and "
-                "neighbouring files are used.")
+                "neighboring files are used.")
 
     def refresh(self, source_text: str, src_file: str):
         """Rebuild the preview for `source_text`. Safe to call on every

@@ -342,7 +342,7 @@ class PreferencesDialog(QDialog):
         self._stereo_mode.setToolTip(
             "What View > Stereo (the toolbar's glasses) shows.\n"
             "Cross-eyed and wall-eyed put the two eyes' views side by side, swapped for cross-eyed.\n"
-            "The anaglyphs need red/blue or red/cyan glasses; the colour one needs red/cyan.")
+            "The anaglyphs need red/blue or red/cyan glasses; the color one needs red/cyan.")
         self._stereo_mode.currentIndexChanged.connect(
             lambda _: self._emit("viewport/stereoMode", self._stereo_mode.currentData()))
         vp_form.addRow("Stereo mode:", self._stereo_mode)
@@ -353,7 +353,7 @@ class PreferencesDialog(QDialog):
         self._viewer_ipd.setSuffix(" mm")
         self._viewer_ipd.setDecimals(1)
         self._viewer_ipd.setValue(current_ipd)
-        self._viewer_ipd.setToolTip("Distance between the centres of your pupils.")
+        self._viewer_ipd.setToolTip("Distance between the centers of your pupils.")
         self._viewer_ipd.valueChanged.connect(lambda v: self._emit("viewport/viewerIPD", v))
         vp_form.addRow("Eye separation (IPD):", self._viewer_ipd)
 
@@ -399,11 +399,11 @@ class PreferencesDialog(QDialog):
         # cut object's. A viewer option rather than a language one: it is
         # honest for every existing script, and a cross-section of a
         # multi-colour model is the case it exists for (#412).
-        self._keep_minuend_color = QCheckBox("Faces cut by difference() keep the colour of the object they were cut from")
+        self._keep_minuend_color = QCheckBox("Faces cut by difference() keep the color of the object they were cut from")
         self._keep_minuend_color.setChecked(
             s.value("viewport/keepMinuendColor", _DEFAULTS["viewport/keepMinuendColor"], type=bool))
         self._keep_minuend_color.setToolTip(
-            "Off (the default) paints a cut face with the cutting object's colour, or green\n"
+            "Off (the default) paints a cut face with the cutting object's color, or green\n"
             "when it has none, as OpenSCAD does. On re-renders the current design.")
         self._keep_minuend_color.toggled.connect(lambda v: self._emit("viewport/keepMinuendColor", bool(v)))
         vp_form.addRow("Cut faces:", self._keep_minuend_color)

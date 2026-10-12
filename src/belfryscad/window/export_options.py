@@ -70,7 +70,7 @@ def export_fields(ext: str) -> list:
                   choice_labels=tuple(n.capitalize() for n in PDF_ORIENTATIONS),
                   tip="Auto turns the page sideways when the model is wider than it is tall."),
             Field("export/pdfShowScale", "bool", "Scale:", caption="Ruler and calibration caption",
-                  tip="Draws a millimetre ruler along two edges, labelled in MODEL\n"
+                  tip="Draws a millimeter ruler along two edges, labeled in MODEL\n"
                       "coordinates, with a caption explaining what to measure. That is\n"
                       "what lets a printed page show how far off a printer's scaling is."),
             Field("export/pdfShowGrid", "bool", "Grid:", caption="Grid over the page"),
@@ -79,7 +79,7 @@ def export_fields(ext: str) -> list:
         return [
             Field("export/svgStrokeWidth", "float", "Stroke width:",
                   minimum=0.0, maximum=10.0, step=0.05, decimals=2,
-                  tip="Millimetres. Also pads the page, so a wider stroke makes a\n"
+                  tip="Millimeters. Also pads the page, so a wider stroke makes a\n"
                       "larger document. 0 with stroke off leaves an unstroked outline."),
             Field("export/svgFill", "bool", "Fill:", caption="Fill the shape",
                   tip="Off (the default) writes outlines only, which is what a cutter\n"
@@ -98,10 +98,10 @@ def export_fields(ext: str) -> list:
                 Field("export/printType", "choice", "Printing for:",
                       choices=PRINT_TYPES,
                       choice_labels=("Multi-material print", "Single-material print"),
-                      tip="Multi-material writes one object per colour, so a slicer can\n"
+                      tip="Multi-material writes one object per color, so a slicer can\n"
                           "assign each to a filament or a tool.\n\n"
                           "Single-material welds the whole model into one solid. A\n"
-                          "single-material print has no use for the colours, and splitting\n"
+                          "single-material print has no use for the colors, and splitting\n"
                           "on them only fills the slicer's object list."))
         fields.append(
             Field("export/splitComponents", "bool", "Separate pieces:",

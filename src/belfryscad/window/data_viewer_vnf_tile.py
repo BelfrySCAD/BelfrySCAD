@@ -41,7 +41,7 @@ class VNFTileViewer(VNFViewer):
         self.setWindowTitle(f"{label}: {title}" if title else label)
         self._tile_cb = QCheckBox("Show tiling")
         self._tile_cb.setToolTip(
-            "Draw the tile's eight neighbours as the texture would repeat,\n"
+            "Draw the tile's eight neighbors as the texture would repeat,\n"
             "so the seams between copies are visible.")
         self._tile_cb.toggled.connect(self._on_tiling_toggled)
         self._btn_row.insertWidget(1, self._tile_cb)

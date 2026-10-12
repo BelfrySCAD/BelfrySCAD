@@ -18,7 +18,7 @@ translate([55, 0, 0]) linear_extrude(8)
         translate([30, 0]) circle(8, $fn=32);
     }
 
-// Hulling each neighbouring pair, rather than all at once, follows a
+// Hulling each neighboring pair, rather than all at once, follows a
 // path instead of swallowing it.
 translate([0, 45, 0]) {
     pts = [for (i = [0:5]) [i * 18, 12 * sin(i * 60)]];

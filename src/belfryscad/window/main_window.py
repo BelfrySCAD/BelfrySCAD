@@ -2232,7 +2232,7 @@ class MainWindow(QMainWindow):
         if self._render_cancel is not None and self._render_busy():
             self._render_cancel.set()
             self._set_render_busy(False)
-            self.log("Render cancelled — Customizer field changed.")
+            self.log("Render canceled — Customizer field changed.")
         if not self._customizer_pane.auto_update():
             return          # #397: the source is updated; the render waits for F6
         self._customizer_render_tab = tab
@@ -4308,7 +4308,7 @@ class MainWindow(QMainWindow):
                     f"({pct(s.cumulative_time):.1f}%)")
             return "\n".join(lines)
         except Exception as e:      # noqa: BLE001
-            return f"Error: the profile could not be summarised ({e})."
+            return f"Error: the profile could not be summarized ({e})."
 
     def _register_temp_path(self, path: str, tab: "FileTab"):
         """Remember that `path` is really `tab`, for message rewriting.
@@ -5599,7 +5599,7 @@ class MainWindow(QMainWindow):
         if self._render_cancel is not None and self._render_busy():
             self._render_cancel.set()
             self._set_render_busy(False)
-            self.log("Render cancelled.")
+            self.log("Render canceled.")
             return True
         if self._debug_session is not None and self._debug_session.is_running():
             # Through the same handler the Stop button uses, so the panes,
