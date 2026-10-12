@@ -17,7 +17,14 @@ digits, painted by a delegate in the face itself. Nothing is pre-rendered
 -- a row's font file is registered with Qt the first time that row is
 painted, so opening the list costs nothing extra and scrolling only pays
 for the rows that come into view.
+
+Favourites and recently used families (issue #746) are shared with the
+font= picker: click a row's heart to mark its family, and the view menu
+narrows either window to All, Used or Favorites -- macOS ships hundreds of
+faces nobody can delete, and a long list is the problem being solved. A
+family counts as used once its spec is copied here or saved in the picker.
 """
+import json
 import zlib
 from functools import lru_cache
 
@@ -30,9 +37,12 @@ from PySide6.QtWidgets import (
 #: Column order. The spec comes before the sample: it is what gets read
 #: across from a family the user already spotted, and the sample is the
 #: widest thing on the row.
-_COLUMNS = ("Family", "Style", "font= spec", "Sample")
-_SPEC_COL = 2
-_SAMPLE_COL = 3
+_COLUMNS = ("\u2665", "Family", "Style", "font= spec", "Sample")
+_HEART_COL = 0
+_FAMILY_COL = 1
+_STYLE_COL = 2
+_SPEC_COL = 3
+_SAMPLE_COL = 4
 _SAMPLE_POINT_SIZE = 16
 
 #: One of these per row, chosen by family so a face keeps its sentence
@@ -147,6 +157,93 @@ def load_fonts() -> list:
     return [f for f in list_fonts() if not is_private_family(f["family"])]
 
 
+HEART_ON = "\u2665"
+HEART_OFF = "\u2661"
+VIEWS = ("All", "Used", "Favorites")
+_FAVORITES_KEY = "fonts/favorites"
+_USED_KEY = "fonts/used"
+_VIEW_KEY = "fonts/view"
+_MAX_USED = 50
+
+
+# JSON strings rather than QSettings lists: a one-element list comes back
+# from the macOS plist as a bare string.
+def _read_list(key: str) -> list:
+    from belfryscad.settings import app_settings
+    try:
+        value = json.loads(app_settings().value(key, "[]") or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def _write_list(key: str, values: list):
+    from belfryscad.settings import app_settings
+    app_settings().setValue(key, json.dumps(values))
+
+
+def favorite_families() -> set:
+    return set(_read_list(_FAVORITES_KEY))
+
+
+def set_favorite(family: str, on: bool):
+    favs = favorite_families()
+    if on:
+        favs.add(family)
+    else:
+        favs.discard(family)
+    _write_list(_FAVORITES_KEY, sorted(favs, key=str.casefold))
+
+
+def used_families() -> list:
+    """Most recent first."""
+    return _read_list(_USED_KEY)
+
+
+def record_used(spec: str):
+    """Note the family of a spec the user just took. Capped, newest first."""
+    from belfryscad.window.font_picker import parse_spec
+    family = parse_spec(spec)[0]
+    if not family:
+        return
+    used = [f for f in used_families() if f != family]
+    _write_list(_USED_KEY, ([family] + used)[:_MAX_USED])
+
+
+def saved_view() -> str:
+    from belfryscad.settings import app_settings
+    view = app_settings().value(_VIEW_KEY, "All")
+    return view if view in VIEWS else "All"
+
+
+def save_view(view: str):
+    from belfryscad.settings import app_settings
+    app_settings().setValue(_VIEW_KEY, view)
+
+
+def in_view(family: str, view: str, favorites, used) -> bool:
+    if view == "Favorites":
+        return family in favorites
+    if view == "Used":
+        return family in used
+    return True
+
+
+def view_combo(on_change):
+    """The All/Used/Favorites selector both windows put beside their filter."""
+    from PySide6.QtWidgets import QComboBox
+    combo = QComboBox()
+    combo.addItems(VIEWS)
+    combo.setCurrentText(saved_view())
+    combo.setToolTip("Show all fonts, recently used families, or favorites")
+
+    def changed(view):
+        save_view(view)
+        on_change()
+    combo.currentTextChanged.connect(changed)
+    return combo
+
+
 def matches(font: dict, needle: str) -> bool:
     """Case-insensitive substring over family and style.
 
@@ -157,6 +254,12 @@ def matches(font: dict, needle: str) -> bool:
         return True
     needle = needle.casefold()
     return needle in font["family"].casefold() or needle in font["style"].casefold()
+
+
+def _set_heart(item, on: bool):
+    from PySide6.QtGui import QBrush, QColor
+    item.setText(HEART_ON if on else HEART_OFF)
+    item.setForeground(QBrush(QColor("#d0304a")) if on else QBrush())
 
 
 class FontListDialog(QDialog):
@@ -173,13 +276,20 @@ class FontListDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
-            "Fonts <b>text()</b> can use. Double-click a row to copy its <b>font=</b> spec."))
+            "Fonts <b>text()</b> can use. Double-click a row to copy its <b>font=</b> spec; "
+            f"click {HEART_OFF} to make its family a favorite."))
 
+        self._favorites = favorite_families()
+        self._used = set(used_families())
         self._search = QLineEdit()
         self._search.setPlaceholderText("Filter by family or style…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._apply_filter)
-        layout.addWidget(self._search)
+        self._view = view_combo(lambda: self._apply_filter(self._search.text()))
+        top = QHBoxLayout()
+        top.addWidget(self._search, 1)
+        top.addWidget(self._view)
+        layout.addLayout(top)
 
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
@@ -192,7 +302,12 @@ class FontListDialog(QDialog):
         self._table.horizontalHeader().setSectionResizeMode(
             _SAMPLE_COL, QHeaderView.ResizeMode.Stretch)
         self._table.setItemDelegateForColumn(_SAMPLE_COL, _SampleDelegate(self._table))
-        self._table.itemDoubleClicked.connect(lambda _item: self._copy_selected())
+        self._table.horizontalHeader().setSectionResizeMode(
+            _HEART_COL, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeaderItem(_HEART_COL).setToolTip("Favorite")
+        self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.itemDoubleClicked.connect(
+            lambda item: item.column() != _HEART_COL and self._copy_selected())
         layout.addWidget(self._table)
 
         self._count = QLabel()
@@ -217,7 +332,11 @@ class FontListDialog(QDialog):
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(self._fonts))
         for r, font in enumerate(self._fonts):
-            for c, key in enumerate(("family", "style", "spec")):
+            heart = QTableWidgetItem()
+            heart.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            _set_heart(heart, font["family"] in self._favorites)
+            self._table.setItem(r, _HEART_COL, heart)
+            for c, key in ((_FAMILY_COL, "family"), (_STYLE_COL, "style"), (_SPEC_COL, "spec")):
                 self._table.setItem(r, c, QTableWidgetItem(font[key]))
             # No text: the delegate paints it. The dict rides along so the
             # delegate can find the face after any sort or filter.
@@ -233,16 +352,32 @@ class FontListDialog(QDialog):
         # table, after which row r is no longer the r'th font and every
         # filter would hide the wrong lines.
         shown = 0
+        view = self._view.currentText()
         for r in range(self._table.rowCount()):
-            family = self._table.item(r, 0)
-            style = self._table.item(r, 1)
-            hit = matches({"family": family.text() if family else "",
-                            "style": style.text() if style else ""}, needle)
+            family = self._table.item(r, _FAMILY_COL)
+            style = self._table.item(r, _STYLE_COL)
+            name = family.text() if family else ""
+            hit = (matches({"family": name, "style": style.text() if style else ""}, needle)
+                   and in_view(name, view, self._favorites, self._used))
             self._table.setRowHidden(r, not hit)
             shown += hit
         total = self._table.rowCount()
         self._count.setText(
             f"{total} fonts" if shown == total else f"{shown} of {total} fonts")
+
+    def _on_cell_clicked(self, row: int, col: int):
+        if col == _HEART_COL:
+            self.toggle_favorite(self._table.item(row, _FAMILY_COL).text())
+
+    def toggle_favorite(self, family: str):
+        """Every row of the family changes: favorites are families, not faces."""
+        on = family not in self._favorites
+        set_favorite(family, on)
+        self._favorites = favorite_families()
+        for r in range(self._table.rowCount()):
+            if self._table.item(r, _FAMILY_COL).text() == family:
+                _set_heart(self._table.item(r, _HEART_COL), on)
+        self._apply_filter(self._search.text())
 
     def _copy_selected(self):
         row = self._table.currentRow()
@@ -251,6 +386,8 @@ class FontListDialog(QDialog):
         item = self._table.item(row, _SPEC_COL)
         if item is not None:
             QApplication.clipboard().setText(item.text())
+            record_used(item.text())
+            self._used = set(used_families())
 
 
 def show_font_list(parent=None):

@@ -82,6 +82,9 @@ def test_the_dialog_lists_filters_and_copies(tmp_path):
 import json
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.font_list import FontListDialog
 
 FAKE = [
@@ -100,7 +103,7 @@ out["count_filtered"] = dlg._count.text()
 dlg._search.setText("")
 dlg._table.sortItems(0)
 dlg._search.setText("helvetica")
-visible = [dlg._table.item(r, 0).text() for r in range(dlg._table.rowCount())
+visible = [dlg._table.item(r, 1).text() for r in range(dlg._table.rowCount())
            if not dlg._table.isRowHidden(r)]
 out["visible_after_sort"] = visible
 
@@ -108,7 +111,7 @@ dlg._search.setText("")
 dlg._table.setCurrentCell(0, 0)
 dlg._copy_selected()
 out["clipboard"] = QApplication.clipboard().text()
-out["spec_col_of_row0"] = dlg._table.item(0, 2).text()
+out["spec_col_of_row0"] = dlg._table.item(0, 3).text()
 print(json.dumps(out))
 ''')
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
@@ -145,6 +148,9 @@ import json
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.font_list import FontListDialog, _SAMPLE_COL, sample_text_for
 FAKE = [
     {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
@@ -165,7 +171,7 @@ print(json.dumps(out))
                                "HOME": str(tmp_path)})
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
-    assert out["columns"] == 4
+    assert out["columns"] == 5
     assert out["sample_item_text"] == ""            # the delegate paints it; nothing to sort or filter on
     assert out["sample_item_font"] == "Regular"
     assert out["painted"]
@@ -233,3 +239,90 @@ print(json.dumps(out))
     # preference set elsewhere is not silently rewritten by opening the
     # dialog. Everything else offered is a real monospaced family.
     assert set(out["families"]) <= set(out["offered"]), out["offered"]
+
+
+@pytest.fixture
+def scratch_settings(tmp_path):
+    from belfryscad import settings as bs_settings
+    before = bs_settings._scratch_dir
+    bs_settings.use_scratch_settings(str(tmp_path), seed=False)
+    yield
+    bs_settings._scratch_dir = before
+
+
+def test_favorites_and_used_families_persist(scratch_settings):
+    """#746: favorites are families, used is newest first and keyed by the
+    family of whatever spec was taken."""
+    from belfryscad.window.font_list import (
+        favorite_families, in_view, record_used, set_favorite, used_families,
+    )
+    assert favorite_families() == set() and used_families() == []
+    set_favorite("Liberation Sans", True)
+    set_favorite("Helvetica Neue", True)
+    set_favorite("Helvetica Neue", False)
+    assert favorite_families() == {"Liberation Sans"}
+
+    record_used("Helvetica Neue:style=Thin")
+    record_used("Liberation Sans")
+    record_used("Helvetica Neue")
+    assert used_families() == ["Helvetica Neue", "Liberation Sans"]
+
+    favs, used = favorite_families(), set(used_families())
+    assert in_view("Arial", "All", favs, used)
+    assert not in_view("Arial", "Favorites", favs, used)
+    assert in_view("Liberation Sans", "Favorites", favs, used)
+    assert in_view("Helvetica Neue", "Used", favs, used)
+    assert not in_view("Arial", "Used", favs, used)
+
+
+def test_hearts_and_views_in_the_font_list(tmp_path):
+    driver = tmp_path / "_flfav.py"
+    driver.write_text('''
+import json
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.font_list import FontListDialog, favorite_families, used_families, HEART_ON
+
+FAKE = [
+    {"family": "Liberation Sans", "style": "Regular", "spec": "Liberation Sans", "path": "<bundled>"},
+    {"family": "Liberation Sans", "style": "Bold", "spec": "Liberation Sans:style=Bold", "path": "<bundled>"},
+    {"family": "Helvetica Neue", "style": "Italic", "spec": "Helvetica Neue:style=Italic", "path": "<bundled>"},
+]
+dlg = FontListDialog(None, fonts=FAKE)
+t = dlg._table
+rows = lambda: [t.item(r, 1).text() for r in range(t.rowCount()) if not t.isRowHidden(r)]
+out = {}
+# Clicking a heart marks the whole family, every row of it.
+t.cellClicked.emit(0, 0)
+out["favs"] = sorted(favorite_families())
+out["hearts"] = sorted(t.item(r, 0).text() == HEART_ON for r in range(t.rowCount()))
+dlg._view.setCurrentText("Favorites")
+out["fav_rows"] = rows()
+dlg._view.setCurrentText("Used")
+out["used_rows_before"] = rows()
+dlg._view.setCurrentText("All")
+r = [t.item(i, 1).text() for i in range(t.rowCount())].index("Helvetica Neue")
+t.setCurrentCell(r, 3)
+dlg._copy_selected()
+out["used"] = used_families()
+dlg._view.setCurrentText("Used")
+out["used_rows_after"] = rows()
+# The view is remembered for the next window.
+out["reopened_view"] = FontListDialog(None, fonts=FAKE)._view.currentText()
+print(json.dumps(out))
+''')
+    res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
+                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                               "HOME": str(tmp_path)})
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["favs"] == ["Liberation Sans"]
+    assert out["hearts"] == [False, True, True]
+    assert out["fav_rows"] == ["Liberation Sans", "Liberation Sans"]
+    assert out["used_rows_before"] == []
+    assert out["used"] == ["Helvetica Neue"]
+    assert out["used_rows_after"] == ["Helvetica Neue"]
+    assert out["reopened_view"] == "Used"
