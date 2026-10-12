@@ -11,8 +11,10 @@ have styles that do not reduce to those four — Helvetica Neue alone has
 fourteen, including the Thin and UltraLight faces a curated list would
 make unreachable. What is listed is literally what goes after `:style=`.
 
-The family pane carries the Font List's favourite hearts and its
-All/Used/Favorites view (issue #746); click a heart to toggle it.
+The style pane carries the Font List's favourite hearts (one per face;
+click to toggle), the family pane shows a heart for a family with any
+favourite face, and both panes follow the shared All/Used/Favorites view
+(issue #746).
 
 Nothing here parses OpenSCAD: the finder is lexical, like
 `find_editable_literals`, and works on the source text around the cursor.
@@ -185,9 +187,9 @@ def group_by_family(fonts: list) -> dict:
     }
 
 
-def _heart_icon(on: bool):
+def _heart_icon(on: bool | None):
     """A heart glyph as an icon, red when on, so the item text stays the
-    bare family name."""
+    bare name. None is a blank of the same size, for alignment."""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
     from PySide6.QtWidgets import QApplication
@@ -195,6 +197,8 @@ def _heart_icon(on: bool):
 
     pix = QPixmap(32, 32)
     pix.fill(Qt.GlobalColor.transparent)
+    if on is None:
+        return QIcon(pix)
     p = QPainter(pix)
     font = QFont()
     font.setPixelSize(26)
@@ -223,7 +227,7 @@ class FontPickerDialog:
             QVBoxLayout,
         )
         from belfryscad.window.font_list import (
-            favorite_families, in_view, load_fonts, set_favorite, used_families, view_combo,
+            families_of, favorite_faces, in_view, load_fonts, set_favorite, used_faces, view_combo,
         )
 
         all_fonts = load_fonts() if fonts is None else list(fonts)
@@ -252,9 +256,10 @@ class FontPickerDialog:
         top.addWidget(search, 1)
         top.addWidget(view)
         layout.addLayout(top)
-        favorites = favorite_families()
-        used = set(used_families())
+        favorites = favorite_faces()
+        used = set(used_faces())
         hearts = (_heart_icon(False), _heart_icon(True))
+        blank = _heart_icon(None)
 
         panes = QHBoxLayout()
         family_list = QListWidget()
@@ -312,8 +317,13 @@ class FontPickerDialog:
             style_list.clear()
             if item is None:
                 return
-            styles = families.get(item.text(), [])
-            style_list.addItems(styles)
+            family = item.text()
+            styles = [st for st in families.get(family, [])
+                      if in_view(spec_for(family, st), view.currentText(), favorites, used)]
+            for st in styles:
+                style_list.addItem(st)
+                style_list.item(style_list.count() - 1).setIcon(
+                    hearts[spec_for(family, st) in favorites])
             wanted = want_style if want_style in styles else (styles[0] if styles else None)
             if wanted is not None:
                 style_list.setCurrentRow(styles.index(wanted))
@@ -322,42 +332,51 @@ class FontPickerDialog:
         def fill_families(needle: str = ""):
             needle = needle.casefold()
             family_list.clear()
+            fav_families = families_of(favorites)
             names = [f for f in families
-                     if needle in f.casefold() and in_view(f, view.currentText(), favorites, used)]
+                     if needle in f.casefold()
+                     and in_view(f, view.currentText(), fav_families, families_of(used))]
             for name in names:
                 family_list.addItem(name)
-                family_list.item(family_list.count() - 1).setIcon(hearts[name in favorites])
+                # An indicator only: favorites are faces, toggled in the
+                # style pane.
+                family_list.item(family_list.count() - 1).setIcon(
+                    hearts[True] if name in fav_families else blank)
             if want_family in names:
                 family_list.setCurrentRow(names.index(want_family))
             elif names:
                 family_list.setCurrentRow(0)
 
         def toggle_favorite(item):
-            name = item.text()
-            on = name not in favorites
-            set_favorite(name, on)
+            fam = family_list.currentItem()
+            if fam is None:
+                return
+            key = spec_for(fam.text(), item.text())
+            on = key not in favorites
+            set_favorite(key, on)
             favorites.clear()
-            favorites.update(favorite_families())
+            favorites.update(favorite_faces())
             item.setIcon(hearts[on])
+            fam.setIcon(hearts[True] if fam.text() in families_of(favorites) else blank)
             if view.currentText() == "Favorites" and not on:
                 fill_families(search.text())
 
         class _HeartClicks(QObject):
-            """A press on an item's heart icon toggles it, and does not select."""
+            """A press on a style's heart icon toggles it, and does not select."""
             def eventFilter(self, obj, event):
                 if event.type() == QEvent.Type.MouseButtonPress:
-                    item = family_list.itemAt(event.position().toPoint())
+                    item = style_list.itemAt(event.position().toPoint())
                     if item is not None:
-                        rect = family_list.visualItemRect(item)
-                        if event.position().x() - rect.left() < family_list.iconSize().width() + 6:
+                        rect = style_list.visualItemRect(item)
+                        if event.position().x() - rect.left() < style_list.iconSize().width() + 6:
                             toggle_favorite(item)
                             return True
                 return False
 
-        heart_clicks = _HeartClicks(family_list)
-        family_list.viewport().installEventFilter(heart_clicks)
-        dlg.toggle_favorite = lambda name: toggle_favorite(
-            family_list.findItems(name, Qt.MatchFlag.MatchExactly)[0])
+        heart_clicks = _HeartClicks(style_list)
+        style_list.viewport().installEventFilter(heart_clicks)
+        dlg.toggle_favorite = lambda style: toggle_favorite(
+            style_list.findItems(style, Qt.MatchFlag.MatchExactly)[0])
 
         search.textChanged.connect(fill_families)
         family_list.currentItemChanged.connect(lambda *_: fill_styles())
