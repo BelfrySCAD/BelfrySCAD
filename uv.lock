@@ -58,7 +58,7 @@ requires-dist = [
     { name = "manifold3d" },
     { name = "moderngl" },
     { name = "numpy" },
-    { name = "openscad-cpp-evaluator", specifier = ">=1.47.0" },
+    { name = "openscad-cpp-evaluator", specifier = ">=1.48.0" },
     { name = "pyside6-essentials" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "setproctitle", specifier = ">=1.3.7" },
@@ -868,19 +868,19 @@ wheels = [
 
 [[package]]
 name = "openscad-cpp-evaluator"
-version = "1.47.0"
+version = "1.48.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/23/b234049d61accd5550f61e193e164daf93b305a6d9d7bf5af15571aad527/openscad_cpp_evaluator-1.47.0.tar.gz", hash = "sha256:a9883052e56fe817e690b9b993c19f6bf9f088c1172a869a5c2a998d110d8184", size = 1807340, upload-time = "2026-10-12T04:03:19.653Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/1b/17d4af84051544683249d13688bdbb7e9247cf1ad27547063b2dd3b7eabb/openscad_cpp_evaluator-1.48.0.tar.gz", hash = "sha256:6351ab4a0f351ffd63d0740eebaa65170c98c056dd0510421d220ac262aa3727", size = 1809227, upload-time = "2026-10-12T07:59:38.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/30/5fd934556bf7844ccb4dedb03223b87a9e63c27a494ac8ea1029ff5b487c/openscad_cpp_evaluator-1.47.0-cp312-abi3-macosx_13_0_arm64.whl", hash = "sha256:fdf9c8836e0f78a1780f5a1a818792db9410b344e8259a7f6c71d46c32aa863e", size = 5756722, upload-time = "2026-10-12T04:03:09.42Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/84/be15791664f2068f6c5c1eebef8ca0912dc06c46997762db560e979fd6ad/openscad_cpp_evaluator-1.47.0-cp312-abi3-macosx_13_0_x86_64.whl", hash = "sha256:ec14d3579d35a09e961a50d78086350aee1783f324dd21379313e0b228d00257", size = 6074898, upload-time = "2026-10-12T04:03:11.448Z" },
-    { url = "https://files.pythonhosted.org/packages/20/1e/7bc3c0a28e890fb9dc5cc5a9b78317a03374ff103579c9970de74ea23317/openscad_cpp_evaluator-1.47.0-cp312-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7aea85d72925fa04119fc346fc1aa4b428482835dbabed5b9914b179494747cc", size = 7153264, upload-time = "2026-10-12T04:03:13.027Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/db/ca2a41a8019c73ddc5a5905d14f2ac2937306ecd8d2e6e5d720dc2eeb2e3/openscad_cpp_evaluator-1.47.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4fe5c9cfcb4a4afca099b1dfae75834eba6c0320ee8ca8d51245d84f60308215", size = 7564867, upload-time = "2026-10-12T04:03:14.697Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/be/a0bf68a01c2691e7622cd2cefd30f4c1ae0faa5afbad89a23f06c3e92de2/openscad_cpp_evaluator-1.47.0-cp312-abi3-win_amd64.whl", hash = "sha256:badd4743acbc2f66e9d7560dbb6189298c51538f2b3ea07aa42641173239d47d", size = 10953737, upload-time = "2026-10-12T04:03:16.097Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/6b/7fb8db0f9c814f662a8ba5c7a58a51610ac5c5b80738dc00daaa19eff481/openscad_cpp_evaluator-1.47.0-cp312-abi3-win_arm64.whl", hash = "sha256:238ec70a228445517da14391b2088e4cf9b57c924c0da675db85ada947791b30", size = 10517801, upload-time = "2026-10-12T04:03:17.973Z" },
+    { url = "https://files.pythonhosted.org/packages/87/ca/b0ca2df431f8c762066f7d9c0e58b3debc42f8bc79531084441f9e42deff/openscad_cpp_evaluator-1.48.0-cp312-abi3-macosx_13_0_arm64.whl", hash = "sha256:2c297eb614d3e1d00dd52c47f71ac0b33b528bbca25c28c206700aa0145f903a", size = 5758691, upload-time = "2026-10-12T07:59:26.194Z" },
+    { url = "https://files.pythonhosted.org/packages/58/18/3473d49e4e5be5b0f227d3da0d19a9eabdb72f939fc9c4e1b694289be655/openscad_cpp_evaluator-1.48.0-cp312-abi3-macosx_13_0_x86_64.whl", hash = "sha256:fd6efb6fc0b2d27f32595c8b3b32ffb5a4eec8b34da2d39325d120ac8baaf85f", size = 6077818, upload-time = "2026-10-12T07:59:28.001Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/a7/d301956544738546888e28566b57d140b6cac70b7957ae9a1937aa4ab405/openscad_cpp_evaluator-1.48.0-cp312-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:56d582506959199dbc597b75e32fa1d4e7c875c10fa0fea9cf883b76f96175ec", size = 7154265, upload-time = "2026-10-12T07:59:29.903Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/96/675e9486d6f9a07c11272ab007eec4662236bc83ef0ad8f973d135fc5693/openscad_cpp_evaluator-1.48.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5197520cb0a51b7966fb86648f1b116bb28c0ab06c6f42840206926ec9a759c1", size = 7566714, upload-time = "2026-10-12T07:59:31.606Z" },
+    { url = "https://files.pythonhosted.org/packages/db/f0/5e44aedfda89e22cc78cea322478502ae0801abe4b7a342d4fa239302f35/openscad_cpp_evaluator-1.48.0-cp312-abi3-win_amd64.whl", hash = "sha256:845ad55b9946ed887ab866682f86477e162b8eb2369b30a4190f3316f40eb33a", size = 10955474, upload-time = "2026-10-12T07:59:33.625Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/40/bcb8fdb037d6e20c9a01e6f1290c93944d6989699229d8a0c570d9237be4/openscad_cpp_evaluator-1.48.0-cp312-abi3-win_arm64.whl", hash = "sha256:cbb8bd731440481212f3cc28a3e8f864bc898befa2d42644e13a1f232e877a39", size = 10519010, upload-time = "2026-10-12T07:59:36.297Z" },
 ]
 
 [[package]]
