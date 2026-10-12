@@ -1066,6 +1066,12 @@ class MainWindow(QMainWindow):
         self._file_watcher.fileChanged.connect(self._on_watched_file_changed)
         self._file_watcher.directoryChanged.connect(self._on_watched_dir_changed)
         self._pending_reloads: set = set()
+        # tab path -> (its mtime, the files it uses/includes/imports), and
+        # watched dependency -> the tab paths that reach it. Scanning BOSL2's
+        # std.scad takes ~75 ms, and the watch is refreshed after every
+        # render, so a tab is rescanned only when it or a dependency changes.
+        self._dep_cache: dict[str, tuple[int, list[str]]] = {}
+        self._dep_owners: dict[str, set[str]] = {}
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._service_pending_reloads)
@@ -2445,15 +2451,32 @@ class MainWindow(QMainWindow):
         s.setValue("autoReload", bool(on))
         self._refresh_watched_files()
         self.log("Automatic Reload and Render is "
-                 + ("on: changes made to open files outside BelfrySCAD will "
-                    "be loaded and rendered." if on else "off."))
+                 + ("on: changes made outside BelfrySCAD to open files, or to "
+                    "the files they use or include, will be loaded and "
+                    "rendered." if on else "off."))
 
     def _auto_reload_enabled(self) -> bool:
         act = getattr(self, "_act_auto_reload", None)
         return bool(act and act.isChecked())
 
+    def _deps_of(self, path: str) -> list[str]:
+        """The files `path` uses, includes or imports, transitively, from
+        the cache while `path` is unchanged on disk."""
+        from belfryscad.scad_deps import scan_dependencies
+        try:
+            mtime = os.stat(path).st_mtime_ns
+        except OSError:
+            return []
+        cached = self._dep_cache.get(path)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        deps = scan_dependencies(path)[1:]     # [0] is path itself
+        self._dep_cache[path] = (mtime, deps)
+        return deps
+
     def _refresh_watched_files(self):
-        """Watch exactly the open, saved files -- no more, no less.
+        """Watch exactly the open, saved files and what they use or include
+        -- no more, no less.
 
         Called whenever that set can change: open, save, close, and after
         every reload -- see _service_pending_reloads for why the last one
@@ -2462,7 +2485,7 @@ class MainWindow(QMainWindow):
         watcher = getattr(self, "_file_watcher", None)
         if watcher is None:
             return
-        want, want_dirs = set(), set()
+        want, want_dirs, owners = set(), set(), {}
         if self._auto_reload_enabled():
             for i in range(self._tabs.count()):
                 tab = self._tabs.widget(i)
@@ -2471,6 +2494,13 @@ class MainWindow(QMainWindow):
                     continue
                 if Path(path).is_file():
                     want.add(path)
+                    # ponytail: dependency watches are re-armed here, not by
+                    # a directory watch, so one deleted and recreated stays
+                    # unwatched until the next open/save/reload.
+                    for dep in self._deps_of(path):
+                        if Path(dep).is_file():
+                            want.add(dep)
+                            owners.setdefault(dep, set()).add(path)
                 # The containing directory is watched whether or not the
                 # file is there right now. A watched file that stops
                 # existing is dropped for good and never re-armed when it
@@ -2480,6 +2510,7 @@ class MainWindow(QMainWindow):
                 parent = str(Path(path).parent)
                 if Path(parent).is_dir():
                     want_dirs.add(parent)
+        self._dep_owners = owners
         have = set(watcher.files())
         if have - want:
             watcher.removePaths(list(have - want))
@@ -2517,6 +2548,17 @@ class MainWindow(QMainWindow):
         for path in sorted(paths):
             if self._reload_one(path):
                 rendered = True
+        # A changed library renders the current tab if that tab reaches it.
+        # Its own includes may have changed too, so every tab is rescanned.
+        current = self._current_tab()
+        current_path = getattr(current, "file_path", None)
+        changed_deps = [p for p in paths if p in self._dep_owners]
+        if changed_deps:
+            self._dep_cache.clear()
+            for dep in changed_deps:
+                if current_path in self._dep_owners[dep]:
+                    self.log(f"{Path(dep).name} changed on disk.")
+                    rendered = True
         # Re-arm after the fact. A watched path that stops existing, even
         # for a moment, is dropped and never picked back up on its own --
         # measured: after a delete, QFileSystemWatcher reports the file
