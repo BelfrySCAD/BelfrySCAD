@@ -802,7 +802,7 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
 
         self._tile_cb = QCheckBox("Show tiling")
         self._tile_cb.setToolTip(
-            "Draw the tile's neighbours as the texture would repeat, so the\n"
+            "Draw the tile's neighbors as the texture would repeat, so the\n"
             "seam between one copy and the next is visible. Only the middle\n"
             "copy is editable.")
         self._tile_cb.toggled.connect(self._on_tiling_toggled)

@@ -75,7 +75,7 @@ class TestRunWorker(QObject):
         try:
             for path in self._files:
                 if self._cancel:
-                    self.logged.emit("Cancelled.")
+                    self.logged.emit("Canceled.")
                     break
                 try:
                     tests = parse_scadtest_file(path)

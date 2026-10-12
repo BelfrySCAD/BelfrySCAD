@@ -260,7 +260,7 @@ class TestScheduleFollowup:
 
     def test_zero_cancels(self, tmp_path):
         got = []
-        assert "cancelled" in schedule_followup(self._ctx_fu(tmp_path, got), 0)
+        assert "canceled" in schedule_followup(self._ctx_fu(tmp_path, got), 0)
         assert got == [None]
 
     def test_prompt_required_unless_cancelling(self, tmp_path):
@@ -372,7 +372,7 @@ class TestRenderTriggeredFollowup:
 
     def test_zero_delay_still_cancels(self, tmp_path):
         got = []
-        assert "cancelled" in schedule_followup(self._ctx_fu(tmp_path, got), 0)
+        assert "canceled" in schedule_followup(self._ctx_fu(tmp_path, got), 0)
         assert got == [None]
 
 

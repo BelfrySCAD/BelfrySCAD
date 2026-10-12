@@ -812,7 +812,7 @@ def schedule_followup(ctx: AIToolContext, delay_seconds: float = 0,
 
     if when == TRIGGER_DELAY and delay <= 0:
         ctx.on_followup(None)
-        return "Any pending follow-up has been cancelled."
+        return "Any pending follow-up has been canceled."
     if not prompt.strip():
         return "Error: prompt is required unless delay_seconds is 0 to cancel."
 

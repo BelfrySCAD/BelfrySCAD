@@ -954,7 +954,7 @@ class AIChatPane(QWidget):
 
     def _cancel_turn(self):
         self._cancel.set()
-        self._say("(cancelled)")
+        self._say("(canceled)")
 
     def cancel_turn(self):
         """Stop the running turn, if any. For the ask_user dialog: dismissing
@@ -1141,7 +1141,7 @@ class AIChatPane(QWidget):
         self._followup_timer.stop()
         self._followup_bar.hide()
         if had and say:
-            self._say("Follow-up cancelled.")
+            self._say("Follow-up canceled.")
 
     def mode(self) -> str:
         return self._mode.currentData() or MODE_MANUAL

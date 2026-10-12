@@ -64,7 +64,7 @@ def about_html(info: dict | None = None) -> str:
         f"<h2 style='margin-bottom:2px'>{info['name']} {info['version']}"
         f" <span style='font-size:small; font-weight:normal'>released {info['released']}</span></h2>"
         f"<p style='margin-top:0'>{info['description']}</p>"
-        f"<p>{info['license']} licence &middot; {info['author']}</p>"
+        f"<p>{info['license']} license &middot; {info['author']}</p>"
         f"<p><a href='{PROJECT_URL}'>Project</a> &middot; "
         f"<a href='{DOCS_URL}'>Documentation</a> &middot; "
         f"<a href='{ISSUES_URL}'>Report an issue</a></p>"
@@ -79,7 +79,7 @@ def about_text(info: dict | None = None) -> str:
     info = info or about_info()
     lines = [
         f"{info['name']} {info['version']} (released {info['released']})",
-        f"{info['license']} licence, {info['author']}",
+        f"{info['license']} license, {info['author']}",
         f"Python {info['python']}",
     ]
     lines += [f"{name} {version}" for name, version in info["components"].items()]
