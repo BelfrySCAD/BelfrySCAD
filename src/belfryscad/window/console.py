@@ -222,12 +222,17 @@ class ConsoleWidget(QTextBrowser):
             cursor.insertText(line, _plain_fmt())
         last_body_bn = doc.blockCount() - 1
         self._fold_headers[fold_id] = (header_bn, first_body_bn, last_body_bn)
-        # Banded as one region: an ERROR and the TRACE lines under it are a
-        # single message, and banding only the header would leave the trace
-        # looking like unrelated output.
+        # The header takes the block's worst severity, so a folded error
+        # still reads as one. Body lines are banded only when they carry a
+        # severity themselves: banding the TRACE lines too buried the ERROR
+        # line in a wall of red, where OpenSCAD colors the error alone.
         kind = _severity_of(summary + "\n" + detail)
         if kind:
-            self._band(header_bn, last_body_bn, kind)
+            self._band(header_bn, header_bn, kind)
+            for bn, line in enumerate(detail.split('\n'), first_body_bn):
+                line_kind = _severity_of(line)
+                if line_kind:
+                    self._band(bn, bn, line_kind)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def mouseMoveEvent(self, event):
