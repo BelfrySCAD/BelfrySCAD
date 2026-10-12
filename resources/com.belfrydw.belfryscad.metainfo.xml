@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.72.2" date="2026-10-12">
+      <description>
+        <p>An error in the console is highlighted on its own line, no longer buried in a highlighted backtrace; interface text uses American spellings.</p>
+      </description>
+    </release>
     <release version="1.72.1" date="2026-10-12">
       <description>
         <p>Font favorites are now individual faces: hearting a family's Regular no longer hearts every style of it.</p>
