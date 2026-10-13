@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.72.6" date="2026-10-13">
+      <description>
+        <p>With word wrap on, a wrapped line's first character lines up with every other line's instead of sitting a few pixels to the left.</p>
+      </description>
+    </release>
     <release version="1.72.5" date="2026-10-12">
       <description>
         <p>An if statement that takes its branch counts as an operand of intersection() even when it draws nothing, as in OpenSCAD, so BOSL2's partition() can show one piece alone.</p>
