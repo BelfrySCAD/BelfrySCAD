@@ -42,3 +42,28 @@ def test_the_end_of_the_file_can_be_scrolled_to_past_a_long_wrapped_line():
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["last_bottom"] <= out["viewport"] + 1, out
+
+
+
+FIRST_ROW_DRIVER = DRIVER.split("sb = ed.verticalScrollBar()")[0] + '''
+ed.viewport().repaint()
+doc = ed.document()
+plain = doc.findBlockByNumber(0).layout().lineAt(0).x()
+wrapped = doc.findBlockByNumber(2).layout()
+print(json.dumps({"plain": plain, "rows": wrapped.lineCount(),
+                  "first": wrapped.lineAt(0).x(), "second": wrapped.lineAt(1).x()}), flush=True)
+os._exit(0)
+'''
+
+
+def test_a_wrapped_first_row_starts_where_an_unwrapped_line_does():
+    # Qt puts every row at x = documentMargin. The hanging-indent re-layout
+    # put a wrapped block's first row at 0, so it sat a few pixels left of
+    # the lines around it.
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    proc = subprocess.run([sys.executable, "-c", FIRST_ROW_DRIVER], capture_output=True, text=True, env=env, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["rows"] > 1, out
+    assert out["first"] == out["plain"], out
+    assert out["second"] > out["plain"], out
