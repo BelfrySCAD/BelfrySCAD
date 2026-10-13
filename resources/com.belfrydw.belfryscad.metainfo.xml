@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.72.5" date="2026-10-12">
+      <description>
+        <p>An if statement that takes its branch counts as an operand of intersection() even when it draws nothing, as in OpenSCAD, so BOSL2's partition() can show one piece alone.</p>
+      </description>
+    </release>
     <release version="1.72.4" date="2026-10-12">
       <description>
         <p>levelset() meshes every 3D field on a regular grid, as BOSL2's isosurface() does, so function fields and per-axis edges no longer look dimpled.</p>
