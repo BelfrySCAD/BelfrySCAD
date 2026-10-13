@@ -134,8 +134,9 @@ def test_lookups_use_source_lines_not_wrapped_rows():
     assert out["indent_unit"] > 0
     xs = out["wrapped_xs"]
     assert len(xs) > 1, "the fixture's first line must wrap"
-    assert xs[0] == 0.0, xs
-    assert all(x == out["indent_unit"] for x in xs[1:]), xs
+    # The first row sits at Qt's own document margin, where every unwrapped
+    # line does (test_wrapped_scroll_end checks that against one).
+    assert all(abs(x - xs[0] - out["indent_unit"]) < 1e-6 for x in xs[1:]), xs
     assert out["height_consistent"], "block heights must match their lines"
     assert out["narrow_survived"], "a viewport narrower than the indent must not break"
     assert out["wrapping_on"] and out["marker_rows"] > 0

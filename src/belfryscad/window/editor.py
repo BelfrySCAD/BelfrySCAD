@@ -2815,7 +2815,11 @@ class CodeEditor(QPlainTextEdit):
         extra plumbing.
         """
         indent = self._wrap_indent()
-        width = self.viewport().width() - self.document().documentMargin() * 2
+        # Qt lays out every row at x = documentMargin; starting ours at 0
+        # left a wrapped block's first row that far left of every unwrapped
+        # line.
+        margin = self.document().documentMargin()
+        width = self.viewport().width() - margin * 2
         if width <= indent + 20:
             return                      # too narrow to indent into
         bottom = self.viewport().height()
@@ -2827,7 +2831,7 @@ class CodeEditor(QPlainTextEdit):
                 break
             layout = block.layout()
             count = layout.lineCount()
-            if count > 1 and not self._already_indented(layout, indent):
+            if count > 1 and not self._already_indented(layout, indent, margin):
                 layout.beginLayout()
                 y = 0.0
                 first = True
@@ -2837,7 +2841,7 @@ class CodeEditor(QPlainTextEdit):
                         break
                     x = 0.0 if first else indent
                     line.setLineWidth(width - x)
-                    line.setPosition(QPointF(x, y))
+                    line.setPosition(QPointF(margin + x, y))
                     y += line.height()
                     first = False
                 layout.endLayout()
@@ -2855,9 +2859,9 @@ class CodeEditor(QPlainTextEdit):
             doc_layout.documentSizeChanged.emit(doc_layout.documentSize())
 
     @staticmethod
-    def _already_indented(layout, indent: float) -> bool:
+    def _already_indented(layout, indent: float, margin: float) -> bool:
         for i in range(layout.lineCount()):
-            want = 0.0 if i == 0 else indent
+            want = margin + (0.0 if i == 0 else indent)
             if abs(layout.lineAt(i).x() - want) > 0.01:
                 return False
         return True
