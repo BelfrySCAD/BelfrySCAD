@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.73.0" date="2026-10-14">
+      <description>
+        <p>Design ▸ Reload and Render (F4) picks up a file changed on disk and renders it, and Automatic Reload notices changes to used and included libraries more reliably, including on Windows.</p>
+      </description>
+    </release>
     <release version="1.72.7" date="2026-10-14">
       <description>
         <p>A closing brace, bracket or parenthesis typed on a blank line now lines up with the line that opened it.</p>
