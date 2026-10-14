@@ -11,8 +11,11 @@ def no_installed_libraries(tmp_path_factory, monkeypatch):
     """By default no library is installed, so detection does not depend on
     what the machine running the tests happens to have in its libraries
     folder (BOSL2, on a developer's). Tests that want one install it."""
+    import belfryscad.scad_deps as sd
     libraries = tmp_path_factory.mktemp("libraries")
     monkeypatch.setenv("OPENSCADPATH", str(libraries))
+    # OPENSCADPATH adds to the default folder, so that has to move too.
+    monkeypatch.setattr(sd, "user_library_dir", lambda: libraries)
     return libraries
 
 
@@ -95,7 +98,7 @@ def test_shim_scopes_the_env_and_keeps_the_installed_libraries(tmp_path, monkeyp
     with library_shim(("BOSL2", str(real))):
         parts = os.environ["OPENSCADPATH"].split(os.pathsep)
         # Prepended, so it wins; and the existing path survives, because
-        # setting OPENSCADPATH replaces the default rather than adding to it.
+        # a library reached only through OPENSCADPATH must still be found.
         assert os.path.isdir(os.path.join(parts[0], "BOSL2"))
         assert "/somewhere/libraries" in parts
     assert os.environ["OPENSCADPATH"] == "/somewhere/libraries"

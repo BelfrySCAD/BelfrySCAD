@@ -123,9 +123,9 @@ def _is_whole_copy(name: str, root: Path) -> bool:
 def _library_path_base() -> str:
     """What OPENSCADPATH should fall back to when we prepend to it.
 
-    Setting OPENSCADPATH *replaces* the platform default rather than adding
-    to it (api.cpp: `env = envPath ? envPath : dfltPath`), so a shim that
-    simply assigned the variable would hide every installed library.
+    The parser now ADDS the default folder after OPENSCADPATH (api.cpp's
+    librarySearchDirs), but an existing OPENSCADPATH must still survive the
+    shim, or a library reached only through it would vanish.
     """
     existing = os.environ.get("OPENSCADPATH")
     if existing:
