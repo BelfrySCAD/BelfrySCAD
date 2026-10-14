@@ -187,7 +187,13 @@ class ColorTable(QWidget):
 
     def _edit_palettes(self):
         dlg = PaletteEditor(self._palettes, self._palette, self)
-        if dlg.exec():
+        accepted = dlg.exec()
+        # On macOS, closing a modal dialog makes the app's main window key,
+        # raising it over the modeless Color List this dialog came from.
+        owner = self.window()
+        owner.raise_()
+        owner.activateWindow()
+        if accepted:
             self._palettes = dlg.palettes
             color_palettes.save_palettes(self._palettes)
             self._fill_views(dlg.current)
