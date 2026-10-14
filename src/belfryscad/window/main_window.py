@@ -1066,12 +1066,22 @@ class MainWindow(QMainWindow):
         self._file_watcher.fileChanged.connect(self._on_watched_file_changed)
         self._file_watcher.directoryChanged.connect(self._on_watched_dir_changed)
         self._pending_reloads: set = set()
-        # tab path -> (its mtime, the files it uses/includes/imports), and
-        # watched dependency -> the tab paths that reach it. Scanning BOSL2's
-        # std.scad takes ~75 ms, and the watch is refreshed after every
-        # render, so a tab is rescanned only when it or a dependency changes.
+        # tab path -> (hash of the text scanned, the files it uses/includes/
+        # imports), and watched dependency -> the tab paths that reach it.
+        # Scanning BOSL2's std.scad takes ~75 ms, and the watch is refreshed
+        # after every render, so a tab is rescanned only when its text or a
+        # dependency changes.
         self._dep_cache: dict[str, tuple[int, list[str]]] = {}
         self._dep_owners: dict[str, set[str]] = {}
+        # Dependencies are POLLED, as OpenSCAD polls them: (mtime, size) per
+        # file every 200 ms. A file watcher drops a file deleted and
+        # recreated -- the save style of several editors -- and its Windows
+        # behaviour could not be verified (#770); a stat works everywhere.
+        # None stamps a missing file, so its reappearance counts as a change.
+        self._dep_stamps: dict[str, tuple[int, int] | None] = {}
+        self._dep_poll_timer = QTimer(self)
+        self._dep_poll_timer.setInterval(200)
+        self._dep_poll_timer.timeout.connect(self._poll_dependencies)
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._service_pending_reloads)
@@ -2461,28 +2471,36 @@ class MainWindow(QMainWindow):
         act = getattr(self, "_act_auto_reload", None)
         return bool(act and act.isChecked())
 
-    def _deps_of(self, path: str) -> list[str]:
-        """The files `path` uses, includes or imports, transitively, from
-        the cache while `path` is unchanged on disk."""
+    def _deps_of(self, tab) -> list[str]:
+        """The files `tab` uses, includes or imports, transitively, scanned
+        from its EDITOR text -- what renders, so an unsaved new `include`
+        counts, as OpenSCAD tracks what it last compiled. Cached while that
+        text is unchanged; a changed dependency clears the cache."""
         from belfryscad.scad_deps import scan_dependencies
-        try:
-            mtime = os.stat(path).st_mtime_ns
-        except OSError:
-            return []
-        cached = self._dep_cache.get(path)
-        if cached and cached[0] == mtime:
+        text = tab.editor.toPlainText()
+        key = hash(text)
+        cached = self._dep_cache.get(tab.file_path)
+        if cached and cached[0] == key:
             return cached[1]
-        deps = scan_dependencies(path)[1:]     # [0] is path itself
-        self._dep_cache[path] = (mtime, deps)
+        deps = scan_dependencies(tab.file_path, text)[1:]     # [0] is the tab's own file
+        self._dep_cache[tab.file_path] = (key, deps)
         return deps
 
-    def _refresh_watched_files(self):
-        """Watch exactly the open, saved files and what they use or include
-        -- no more, no less.
+    @staticmethod
+    def _stamp(path: str) -> tuple[int, int] | None:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
 
-        Called whenever that set can change: open, save, close, and after
-        every reload -- see _service_pending_reloads for why the last one
-        matters.
+    def _refresh_watched_files(self):
+        """Watch exactly the open, saved files and poll what they use or
+        include -- no more, no less.
+
+        Called whenever that set can change: open, save, close, after every
+        render, and after every reload -- see _service_pending_reloads for
+        why the last one matters.
         """
         watcher = getattr(self, "_file_watcher", None)
         if watcher is None:
@@ -2496,13 +2514,8 @@ class MainWindow(QMainWindow):
                     continue
                 if Path(path).is_file():
                     want.add(path)
-                    # ponytail: dependency watches are re-armed here, not by
-                    # a directory watch, so one deleted and recreated stays
-                    # unwatched until the next open/save/reload.
-                    for dep in self._deps_of(path):
-                        if Path(dep).is_file():
-                            want.add(dep)
-                            owners.setdefault(dep, set()).add(path)
+                for dep in self._deps_of(tab):
+                    owners.setdefault(dep, set()).add(path)
                 # The containing directory is watched whether or not the
                 # file is there right now. A watched file that stops
                 # existing is dropped for good and never re-armed when it
@@ -2513,6 +2526,15 @@ class MainWindow(QMainWindow):
                 if Path(parent).is_dir():
                     want_dirs.add(parent)
         self._dep_owners = owners
+        # A dependency new to the poll starts from its current stamp: only
+        # a change after this point is news.
+        self._dep_stamps = {dep: self._dep_stamps[dep] if dep in self._dep_stamps
+                            else self._stamp(dep) for dep in owners}
+        if owners:
+            if not self._dep_poll_timer.isActive():
+                self._dep_poll_timer.start()
+        else:
+            self._dep_poll_timer.stop()
         have = set(watcher.files())
         if have - want:
             watcher.removePaths(list(have - want))
@@ -2523,6 +2545,17 @@ class MainWindow(QMainWindow):
             watcher.removePaths(list(have_dirs - want_dirs))
         if want_dirs - have_dirs:
             watcher.addPaths(list(want_dirs - have_dirs))
+
+    def _poll_dependencies(self):
+        """Queue every dependency whose (mtime, size) moved since last seen."""
+        for dep, old in list(self._dep_stamps.items()):
+            new = self._stamp(dep)
+            if new != old:
+                self._dep_stamps[dep] = new
+                self._pending_reloads.add(dep)
+                # Restarted per change, so a library rewritten file by file
+                # renders once, after the burst -- OpenSCAD's waitAfterReload.
+                self._reload_timer.start(200)
 
     def _on_watched_dir_changed(self, dirpath: str):
         """Something appeared or vanished in a directory holding an open
@@ -3147,6 +3180,10 @@ class MainWindow(QMainWindow):
         source = tab.editor.toPlainText()
         if not source.strip():
             return
+        # What this text uses or includes is what Automatic Reload should
+        # now watch -- an `include` typed since the last save counts, as
+        # OpenSCAD watches what it last compiled. Cached while the text is.
+        self._refresh_watched_files()
 
         # Cancel any in-progress render (cooperative: worker checks the event between steps)
         if self._render_cancel is not None:
