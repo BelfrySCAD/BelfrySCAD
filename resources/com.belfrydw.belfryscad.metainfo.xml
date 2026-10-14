@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.74.0" date="2026-10-14">
+      <description>
+        <p>Your own color palettes, such as the filament on your shelf, in the color picker and the Color List, which now also offers Web and XKCD colors separately.</p>
+      </description>
+    </release>
     <release version="1.73.0" date="2026-10-14">
       <description>
         <p>Design ▸ Reload and Render (F4) picks up a file changed on disk and renders it, and Automatic Reload notices changes to used and included libraries more reliably, including on Windows.</p>
