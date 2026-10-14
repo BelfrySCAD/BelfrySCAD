@@ -37,21 +37,34 @@ def _strip_comments(text: str) -> str:
     return re.sub(r'//[^\n]*', '', text)
 
 
+def user_library_dir() -> Path:
+    """The user's own libraries folder, where the evaluator looks for
+    `use <NAME/...>` (openscad_cpp_parser's userLibraryDir).
+
+    On Windows, ASK where My Documents is, as the parser and OpenSCAD do:
+    OneDrive's Known Folder Move relocates it to ~\\OneDrive\\Documents, and
+    assuming ~\\Documents found no installed library there at all: not for
+    -d, the libshim, or Automatic Reload's dependency watch (#770).
+    """
+    if sys.platform == "win32":
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        # CSIDL_PERSONAL, SHGFP_TYPE_CURRENT -- the parser's exact call.
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:
+            return Path(buf.value) / "OpenSCAD" / "libraries"
+    elif sys.platform.startswith("linux"):
+        return Path.home() / ".local" / "share" / "OpenSCAD" / "libraries"
+    return Path.home() / "Documents" / "OpenSCAD" / "libraries"
+
+
 def _library_dirs() -> list[Path]:
     """Where a use/include is looked for when it is not next to its
-    includer: OPENSCADPATH if set, else the platform's default library
-    directory. Same list, same order, as the parser's own findLibraryFile.
+    includer: OPENSCADPATH's entries, then the user's libraries folder.
+    Same list, same order, as the parser's own librarySearchDirs -- which
+    ADDS the default after OPENSCADPATH rather than replacing it.
     """
-    import os
-    import platform
-
-    env = os.environ.get("OPENSCADPATH")
-    if env:
-        return [Path(part) for part in env.split(os.pathsep) if part]
-    home = Path.home()
-    if platform.system() == "Linux":
-        return [home / ".local" / "share" / "OpenSCAD" / "libraries"]
-    return [home / "Documents" / "OpenSCAD" / "libraries"]
+    env = os.environ.get("OPENSCADPATH", "")
+    return [Path(part) for part in env.split(os.pathsep) if part] + [user_library_dir()]
 
 
 def _resolve(target: str, base_dir: Path) -> Path | None:

@@ -2,7 +2,6 @@
 
 import json
 import os
-import platform
 import shutil
 import ssl
 import tempfile
@@ -64,10 +63,8 @@ _THUMB_CACHE_DIR = Path.home() / ".cache" / "BelfrySCAD" / "thumbnails"
 
 
 def _library_dir() -> Path:
-    system = platform.system()
-    if system == "Linux":
-        return Path.home() / ".local" / "share" / "OpenSCAD" / "libraries"
-    return Path.home() / "Documents" / "OpenSCAD" / "libraries"
+    from belfryscad.scad_deps import user_library_dir
+    return user_library_dir()
 
 
 def show_library_folder() -> Path:
