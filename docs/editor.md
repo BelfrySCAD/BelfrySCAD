@@ -385,6 +385,20 @@ that the position maps back to the right character — is covered by
 
 ### Choose Color… (editing a colour literal)
 
+**Your own palettes** (#766, `window/color_palettes.py`). Above the table a
+**Colors:** chooser picks the named colours or one of your palettes, and
+**Palettes…** opens `color_list.PaletteEditor` to make, rename, delete and
+edit them -- the filament on your shelf, say. A palette is edited as text, one
+colour per line (a name, then `#rrggbb`/`#rgb` or 0-255 `r, g, b`, with `//`
+comments), so a list can be pasted in; lines naming no colour are reported and
+left out. A palette colour's name is the user's own, not one `color()` takes,
+so the table's *token* for its row -- what `current_changed`/`activated`
+emit, what Copy Name copies and what the picker writes -- is its hex. Stored as
+JSON under `colors/palettes`; the palette last chosen is remembered
+(`colors/paletteView`) only when the user picks one, so merely opening the
+picker or the Color List writes nothing. Both windows share it, through
+`ColorTable`.
+
 `window/color_picker.py`. Right-clicking any literal the swatch recognises
 (same finder, same one-line rule) offers **Choose Color…**, a top-level item
 beside **Choose Font…**: a swatch, then the Color List's own table

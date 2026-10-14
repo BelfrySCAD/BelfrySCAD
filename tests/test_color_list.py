@@ -69,6 +69,9 @@ def test_dialog_sorts_filters_and_copies_quoted_name(tmp_path):
 import json
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
 from belfryscad.window.color_list import ColorListDialog
 dlg = ColorListDialog(None)
 out = {"title": dlg.windowTitle(), "count": dlg.colors._count.text(), "sorts": [dlg.colors._sort.itemText(i) for i in range(dlg.colors._sort.count())]}
@@ -113,6 +116,9 @@ def test_a_selected_rows_swatch_keeps_its_colour(tmp_path):
 import json
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
 from belfryscad.window.color_list import ColorTable
 t = ColorTable(); t.resize(500, 400); t.show()
 t._search.setText("red")
