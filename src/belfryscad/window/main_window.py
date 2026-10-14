@@ -2613,8 +2613,12 @@ class MainWindow(QMainWindow):
         if tab.is_modified and not force:
             # Never discard unsaved work to pick up an external edit. The
             # user is the only one who can say which version wins. Said once
-            # per change on disk, not again after every render.
-            tab._disk_text = text
+            # per change on disk, not again after every render -- marked
+            # apart from _disk_text, which must keep saying the disk moved
+            # on, or Reload and Render would not pick the change up.
+            if text == getattr(tab, "_warned_disk_text", None):
+                return False
+            tab._warned_disk_text = text
             self.log(f"WARNING: {Path(path).name} changed on disk, but this "
                      f"tab has unsaved changes -- not reloaded. Save or "
                      f"revert it to pick the change up.")
@@ -2662,12 +2666,21 @@ class MainWindow(QMainWindow):
 
     def _reload_and_render(self):
         """Design > Reload and Render (F4, as OpenSCAD's Reload and Preview):
-        File > Reload, then render -- even when the file itself is unchanged,
-        since what changed may be a file it includes (#770). An unsaved tab
-        has nothing to reload and just renders."""
+        reload the tab if its file changed on disk since it was last read or
+        saved, then render -- even when nothing reloaded, since what changed
+        may be a file it includes (#770). As in OpenSCAD, unsaved edits are
+        asked about only when the disk really moved on; otherwise they are
+        what renders. (OpenSCAD's F4 then does nothing at all; rendering
+        anyway is cheap with the geometry cache, and is what F4 is for.)"""
         tab = self._current_tab()
-        if tab is not None and tab.file_path and not self._reload_current():
-            return
+        if tab is not None and tab.file_path:
+            try:
+                with open(tab.file_path, "r", encoding="utf-8") as f:
+                    changed = f.read() != getattr(tab, "_disk_text", None)
+            except OSError:
+                changed = False      # gone: render what the tab holds
+            if changed and not self._reload_current():
+                return
         self._render()
 
     # ------------------------------------------------------------------
