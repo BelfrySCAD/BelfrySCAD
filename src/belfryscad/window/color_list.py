@@ -19,10 +19,10 @@ put `"name"` on the clipboard, ready to paste into `color(...)`.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFontDatabase
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
-    QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QStyledItemDelegate, QTableWidget,
+    QAbstractItemView, QApplication, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QStyledItemDelegate, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -257,12 +257,17 @@ class ColorTable(QWidget):
 
 
 class PaletteEditor(QDialog):
-    """Make, rename, delete and edit palettes. A palette is edited as text,
-    one colour per line (see color_palettes), so a list can be pasted in.
+    """Make, rename, delete and edit palettes. A palette is a table of Name,
+    Hex and a swatch: Hex takes `#rrggbb`, `#rgb` or `r, g, b` (rewritten as
+    hex), a value it cannot read is marked and left out, and double-clicking
+    a swatch opens the system colour panel. Paste (with the table focused)
+    adds one colour per line of the clipboard, as color_palettes reads them,
+    so a list can come straight from filamentcolors.xyz or a spreadsheet.
     Works on a copy: `palettes` and `current` are the result once accepted."""
 
-    _HELP = ("One color per line: a name, then <b>#rrggbb</b> or <b>r, g, b</b> (0-255). "
-             "Text after // is a comment.")
+    NAME, HEX, SWATCH = range(3)
+    _HELP = ("Hex takes <b>#rrggbb</b> or <b>r, g, b</b> (0-255). Double-click a swatch to "
+             "pick a color. Paste lines of <i>name  #rrggbb</i> to add several at once.")
 
     def __init__(self, palettes: dict, current: str | None, parent=None):
         super().__init__(parent)
@@ -270,7 +275,9 @@ class PaletteEditor(QDialog):
         self.resize(480, 520)
         self.palettes = {k: list(v) for k, v in palettes.items()}
         self.current = current if current in self.palettes else next(iter(self.palettes), None)
-        self._texts: dict[str, str] = {}
+        # Palette -> the table's rows as typed, [name, hex text], for every
+        # palette visited, so switching away keeps unsaved edits.
+        self._edits: dict[str, list[list[str]]] = {}
 
         layout = QVBoxLayout(self)
         row = QHBoxLayout()
@@ -285,12 +292,33 @@ class PaletteEditor(QDialog):
         help_ = QLabel(self._HELP)
         help_.setWordWrap(True)
         layout.addWidget(help_)
-        self._text = QPlainTextEdit()
-        # Fixed pitch, so format_palette's padded columns line up.
-        self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self._text.setPlaceholderText("Sunlu Cyan      #0074c3\nSunlu Magenta   196, 65, 136")
-        self._text.textChanged.connect(self._check)
-        layout.addWidget(self._text, 1)
+
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Name", "Hex", ""])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setItemDelegateForColumn(self.SWATCH, _SwatchDelegate(self._table))
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(self.NAME, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.HEX, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.SWATCH, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(self.SWATCH, 56)
+        self._table.itemChanged.connect(self._on_item)
+        self._table.cellDoubleClicked.connect(self._on_double_click)
+        paste = QShortcut(QKeySequence.StandardKey.Paste, self._table)
+        paste.setContext(Qt.ShortcutContext.WidgetShortcut)   # a cell being edited pastes into itself
+        paste.activated.connect(lambda: self.paste_text(QApplication.clipboard().text()))
+        layout.addWidget(self._table, 1)
+
+        edit_row = QHBoxLayout()
+        self._add_btn = QPushButton("Add Color")
+        self._add_btn.clicked.connect(self._add)
+        self._remove_btn = QPushButton("Remove")
+        self._remove_btn.clicked.connect(self._remove)
+        edit_row.addWidget(self._add_btn)
+        edit_row.addWidget(self._remove_btn)
+        edit_row.addStretch(1)
+        layout.addLayout(edit_row)
         self._status = QLabel()
         layout.addWidget(self._status)
         buttons = QDialogButtonBox(
@@ -300,6 +328,93 @@ class PaletteEditor(QDialog):
         layout.addWidget(buttons)
         self._shown: str | None = None
         self._relist(self.current)
+
+    # -- the table ---------------------------------------------------------
+
+    def _append(self, name: str, text: str):
+        self._table.blockSignals(True)
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, self.NAME, QTableWidgetItem(name))
+        self._table.setItem(r, self.HEX, QTableWidgetItem(text))
+        swatch = QTableWidgetItem()
+        swatch.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        swatch.setToolTip("Double-click to pick a color")
+        self._table.setItem(r, self.SWATCH, swatch)
+        self._table.blockSignals(False)
+        self._refresh_row(r)
+
+    def _refresh_row(self, r: int):
+        """Normalise row r's hex and paint its swatch, or mark it unreadable."""
+        self._table.blockSignals(True)
+        try:
+            hex_item = self._table.item(r, self.HEX)
+            hexa = color_palettes.parse_color_value(hex_item.text())
+            swatch = self._table.item(r, self.SWATCH)
+            if hexa:
+                hex_item.setText(hexa)
+                hex_item.setForeground(self._table.palette().text())
+                swatch.setBackground(QColor(hexa))
+            else:
+                hex_item.setForeground(QColor("#d03030"))
+                swatch.setBackground(self._table.palette().base())
+        finally:
+            self._table.blockSignals(False)
+        self._check()
+
+    def _on_item(self, item):
+        if item.column() == self.HEX:
+            self._refresh_row(item.row())
+        else:
+            self._check()
+
+    def _on_double_click(self, r: int, col: int):
+        if col != self.SWATCH:
+            return
+        start = QColor(color_palettes.parse_color_value(self._table.item(r, self.HEX).text()) or "#808080")
+        c = QColorDialog.getColor(start, self, "Choose Color")
+        if c.isValid():
+            self._table.item(r, self.HEX).setText(c.name(QColor.NameFormat.HexRgb))
+
+    def _rows(self) -> list[list[str]]:
+        return [[self._table.item(r, self.NAME).text(), self._table.item(r, self.HEX).text()]
+                for r in range(self._table.rowCount())]
+
+    def _add(self):
+        self._append("", "#808080")
+        r = self._table.rowCount() - 1
+        self._table.setCurrentCell(r, self.NAME)
+        self._table.editItem(self._table.item(r, self.NAME))
+
+    def _remove(self):
+        for r in sorted({i.row() for i in self._table.selectedItems()}, reverse=True):
+            self._table.removeRow(r)
+        self._check()
+
+    def paste_text(self, text: str):
+        """Add a row per line of `text` that names a colour."""
+        if self._shown is None:
+            return
+        entries, bad = color_palettes.parse_palette(text)
+        for name, hexa in entries:
+            self._append(name, hexa)
+        if bad:
+            self._status.setText(f"Pasted {len(entries)}; no color on line "
+                                 + ", ".join(map(str, bad)) + " of the clipboard.")
+
+    def _check(self):
+        if self._shown is None:
+            self._status.setText("Press New… to make a palette.")
+            return
+        rows = self._rows()
+        good = sum(bool(color_palettes.parse_color_value(t)) for _n, t in rows)
+        bad = [str(i) for i, (_n, t) in enumerate(rows, 1) if not color_palettes.parse_color_value(t)]
+        text = f"{good} color{'' if good == 1 else 's'}"
+        if bad:
+            text += f"; row {', '.join(bad)} {'has' if len(bad) == 1 else 'have'} no valid color and will be left out"
+        self._status.setText(text)
+
+    # -- palettes ----------------------------------------------------------
 
     def _relist(self, want: str | None):
         self._combo.blockSignals(True)
@@ -313,23 +428,19 @@ class PaletteEditor(QDialog):
 
     def _stash(self):
         if self._shown is not None:
-            self._texts[self._shown] = self._text.toPlainText()
+            self._edits[self._shown] = self._rows()
 
     def _switch(self, name: str):
         self._stash()
         self._shown = name or None
         self.current = self._shown
-        self._text.setEnabled(self._shown is not None)
-        self._text.setPlainText(self._texts.get(name, color_palettes.format_palette(self.palettes.get(name, []))))
-
-    def _check(self):
-        entries, bad = color_palettes.parse_palette(self._text.toPlainText())
-        if self._shown is None:
-            self._status.setText("Press New… to make a palette.")
-        elif bad:
-            self._status.setText("No color on line " + ", ".join(map(str, bad)) + " -- it will be left out.")
-        else:
-            self._status.setText(f"{len(entries)} color{'' if len(entries) == 1 else 's'}")
+        for w in (self._table, self._add_btn, self._remove_btn):
+            w.setEnabled(self._shown is not None)
+        self._table.setRowCount(0)
+        rows = self._edits.get(name, [list(e) for e in self.palettes.get(name, [])])
+        for n, t in rows:
+            self._append(n, t)
+        self._check()
 
     def _ask_name(self, title: str, initial: str = "") -> str | None:
         name, ok = QInputDialog.getText(self, title, "Palette name:", text=initial)
@@ -354,8 +465,9 @@ class PaletteEditor(QDialog):
         if name and name != old:
             self._stash()
             self.palettes = {(name if k == old else k): v for k, v in self.palettes.items()}
-            if old in self._texts:
-                self._texts[name] = self._texts.pop(old)
+            if old in self._edits:
+                self._edits[name] = self._edits.pop(old)
+            self._shown = None
             self._relist(name)
 
     def _delete(self):
@@ -363,15 +475,20 @@ class PaletteEditor(QDialog):
         if name and QMessageBox.question(self, "Delete Palette", f"Delete the palette “{name}”?") \
                 == QMessageBox.StandardButton.Yes:
             self.palettes.pop(name)
-            self._texts.pop(name, None)
+            self._edits.pop(name, None)
             self._shown = None
             self._relist(next(iter(self.palettes), None))
 
     def _save(self):
         self._stash()
-        for name, text in self._texts.items():
+        for name, rows in self._edits.items():
             if name in self.palettes:
-                self.palettes[name] = color_palettes.parse_palette(text)[0]
+                entries = []
+                for n, t in rows:
+                    hexa = color_palettes.parse_color_value(t)
+                    if hexa:
+                        entries.append((n.strip() or hexa, hexa))
+                self.palettes[name] = entries
         self.accept()
 
 

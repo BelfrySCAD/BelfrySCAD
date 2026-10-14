@@ -390,10 +390,15 @@ that the position maps back to the right character — is covered by
 **All named colors** (both, so one filter searches everything), or one of
 your palettes, and
 **Palettes…** opens `color_list.PaletteEditor` to make, rename, delete and
-edit them -- the filament on your shelf, say. A palette is edited as text, one
-colour per line (a name, then `#rrggbb`/`#rgb` or 0-255 `r, g, b`, with `//`
-comments), so a list can be pasted in; lines naming no colour are reported and
-left out. A palette colour's name is the user's own, not one `color()` takes,
+edit them -- the filament on your shelf, say. A palette is a table of
+**Name**, **Hex** and a swatch, with **Add Color** and **Remove**: Hex takes
+`#rrggbb`, `#rgb` or 0-255 `r, g, b` (`color_palettes.parse_color_value`,
+rewritten as hex), a value it cannot read turns red and is left out on Save,
+and double-clicking a swatch opens the system colour panel. Paste with the
+table focused adds a row per clipboard line (a name, then the colour, `//`
+comments allowed -- `parse_palette`), so a list from filamentcolors.xyz or a
+spreadsheet goes in at once; a shortcut on the table alone, so pasting into a
+cell being edited still pastes text. A palette colour's name is the user's own, not one `color()` takes,
 so the table's *token* for its row -- what `current_changed`/`activated`
 emit, what Copy Name copies and what the picker writes -- is its hex. Stored as
 JSON under `colors/palettes`; the palette last chosen is remembered

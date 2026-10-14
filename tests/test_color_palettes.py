@@ -71,17 +71,32 @@ out["literal"] = d.chosen_literal()
 v = ColorPickerDialog("[1, 0, 0]", QColor("red"))
 v._on_name("#0074c3")
 out["vector"] = v.chosen_literal()
-# The editor: a new palette, text pasted in, a rename, all saved together.
+# The editor: a new palette, rows added, typed and pasted, a rename, all
+# saved together.
 from belfryscad.window.color_list import PaletteEditor
 e = PaletteEditor(color_palettes.load_palettes(), "Shelf")
+out["columns"] = [e._table.horizontalHeaderItem(i).text() for i in range(3)]
+out["shelf_rows"] = e._rows()
 e._ask_name = lambda *a: "Silk"
 e._new()
-e._text.setPlainText("Gold  #d4af37\nnothing here\n")
+e._add()
+e._table.item(0, e.NAME).setText("Gold")
+e._table.item(0, e.HEX).setText("212, 175, 55")       # rgb, rewritten as hex
+out["normalised"] = e._table.item(0, e.HEX).text()
+out["swatch"] = e._table.item(0, e.SWATCH).background().color().name()
+e._add()
+e._table.item(1, e.NAME).setText("Broken")
+e._table.item(1, e.HEX).setText("#12")
+e.paste_text("Silver  #c0c0c0\nnothing here\n")
+out["paste_status"] = e._status.text()
+e._check()
 out["status"] = e._status.text()
 e._ask_name = lambda *a: "Silk PLA"
 e._rename()
 e._combo.setCurrentText("Shelf")
-out["shelf_text_kept"] = e._text.toPlainText().splitlines()[0].split()[-1]
+out["shelf_kept"] = e._rows()[0]
+e._combo.setCurrentText("Silk PLA")
+out["silk_kept"] = [r[0] for r in e._rows()]
 e._save()
 out["saved"] = {k: v for k, v in e.palettes.items()}
 print(json.dumps(out))
@@ -103,7 +118,12 @@ def test_a_palette_is_listed_picked_as_hex_and_remembered(tmp_path):
     assert out["picker_selected"] == "#0074c3"
     assert out["literal"] == '"#c44188"'
     assert out["vector"] == "[0, 0.455, 0.765]"
-    assert out["status"] == "No color on line 2 -- it will be left out."
-    assert out["shelf_text_kept"] == "#0074c3"
+    assert out["columns"] == ["Name", "Hex", ""]
+    assert out["shelf_rows"] == [["Sunlu Cyan", "#0074c3"], ["Sunlu Magenta", "#c44188"]]
+    assert out["normalised"] == "#d4af37" and out["swatch"] == "#d4af37"
+    assert out["paste_status"] == "Pasted 1; no color on line 2 of the clipboard."
+    assert out["status"] == "2 colors; row 2 has no valid color and will be left out"
+    assert out["shelf_kept"] == ["Sunlu Cyan", "#0074c3"]
+    assert out["silk_kept"] == ["Gold", "Broken", "Silver"]
     assert out["saved"] == {"Shelf": [["Sunlu Cyan", "#0074c3"], ["Sunlu Magenta", "#c44188"]],
-                            "Silk PLA": [["Gold", "#d4af37"]]}
+                            "Silk PLA": [["Gold", "#d4af37"], ["Silver", "#c0c0c0"]]}

@@ -2,9 +2,10 @@
 filament on your shelf, offered by the colour picker and the Color List
 beside the CSS and xkcd names.
 
-A palette is edited as plain text, one colour per line -- a name, then the
-colour as `#rrggbb` / `#rgb` or as 0-255 `r, g, b` -- so a list can be pasted
-from filamentcolors.xyz or a spreadsheet:
+A palette is edited as a table of names and colours (`color_list.PaletteEditor`);
+pasted text is read one colour per line -- a name, then the colour as
+`#rrggbb` / `#rgb` or as 0-255 `r, g, b` -- so a list can come straight from
+filamentcolors.xyz or a spreadsheet:
 
     Sunlu Cyan      #0074c3
     Sunlu Magenta   196, 65, 136
@@ -27,19 +28,30 @@ _HEX_TAIL = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\s*$")
 _RGB_TAIL = re.compile(r"[\[(]?\s*(\d{1,3})\s*[,;\s]\s*(\d{1,3})\s*[,;\s]\s*(\d{1,3})\s*[\])]?\s*$")
 
 
-def _parse_line(line: str) -> tuple[str, str] | None:
-    """(name, "#rrggbb") for one line, or None if it names no colour."""
+def _value_at_end(line: str):
+    """The match for a colour value ending `line`, and its "#rrggbb"."""
     m = _HEX_TAIL.search(line)
     if m:
         h = m.group(1).lower()
-        if len(h) == 3:
-            h = "".join(ch * 2 for ch in h)
-        hexa = "#" + h
-    else:
-        m = _RGB_TAIL.search(line)
-        if not m or any(int(v) > 255 for v in m.groups()):
-            return None
-        hexa = "#" + "".join(f"{int(v):02x}" for v in m.groups())
+        return m, "#" + (h if len(h) == 6 else "".join(ch * 2 for ch in h))
+    m = _RGB_TAIL.search(line)
+    if not m or any(int(v) > 255 for v in m.groups()):
+        return None, None
+    return m, "#" + "".join(f"{int(v):02x}" for v in m.groups())
+
+
+def parse_color_value(text: str) -> str | None:
+    """"#rrggbb" for a colour typed on its own -- `#rrggbb`, `#rgb` or
+    0-255 `r, g, b` -- or None."""
+    m, hexa = _value_at_end(text.strip())
+    return hexa if m is not None and m.start() == 0 else None
+
+
+def _parse_line(line: str) -> tuple[str, str] | None:
+    """(name, "#rrggbb") for one line, or None if it names no colour."""
+    m, hexa = _value_at_end(line)
+    if m is None:
+        return None
     name = line[:m.start()].strip().rstrip(",;:=\t ").strip()
     return name or hexa, hexa
 
