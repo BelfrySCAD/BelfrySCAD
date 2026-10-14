@@ -1651,6 +1651,8 @@ class MainWindow(QMainWindow):
                 "autoReload", False, type=bool),
             self._set_auto_reload)
         design_menu.addSeparator()
+        # OpenSCAD's Reload and Preview, and its key.
+        self._add_action(design_menu, "Reload and Render", self._reload_and_render, QKeySequence("F4"))
         self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
         self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
         self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
@@ -2639,11 +2641,13 @@ class MainWindow(QMainWindow):
         """File > Reload (Ctrl+R, as OpenSCAD): the current tab's text from
         disk. Asks first if that would discard unsaved edits -- and even
         then they are one Undo away, since the swap goes through the undo
-        stack. Does not render; Render or Automatic Reload does that."""
+        stack. Does not render; Design > Reload and Render does both.
+        False when nothing was reloaded because there is no file or the
+        user kept their edits."""
         tab = self._current_tab()
         if tab is None or not tab.file_path:
             self.statusBar().showMessage("Nothing to reload: this tab has never been saved.", 3000)
-            return
+            return False
         if tab.is_modified and not self.skip_unsaved_prompts:
             reply = QMessageBox.question(
                 self, "Reload",
@@ -2651,9 +2655,20 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel)
             if reply != QMessageBox.StandardButton.Yes:
-                return
+                return False
         if not self._reload_one(str(tab.file_path), force=True):
             self.statusBar().showMessage(f"{tab.display_name()} is unchanged on disk.", 3000)
+        return True
+
+    def _reload_and_render(self):
+        """Design > Reload and Render (F4, as OpenSCAD's Reload and Preview):
+        File > Reload, then render -- even when the file itself is unchanged,
+        since what changed may be a file it includes (#770). An unsaved tab
+        has nothing to reload and just renders."""
+        tab = self._current_tab()
+        if tab is not None and tab.file_path and not self._reload_current():
+            return
+        self._render()
 
     # ------------------------------------------------------------------
     # Measurement

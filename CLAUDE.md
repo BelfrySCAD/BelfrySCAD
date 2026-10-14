@@ -127,6 +127,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
 No live preview. Full Manifold CSG processing runs when:
 
 - The user selects **Render** (toolbar or Design menu)
+- The user selects **Design ▸ Reload and Render** (F4, OpenSCAD's Reload and Preview): File ▸ Reload, then a render even if the file is unchanged, since an included file may be what changed (#770)
 - A **gizmo drag commits** (mouse-up)
 - An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created), unless **Preferences ▸ Render ▸ Render a file when it is opened** is off -- so a file that hangs or floods the renderer can still be opened and fixed (#554)
