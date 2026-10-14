@@ -45,6 +45,27 @@ for name, p in [("inc", inc), ("used", used)]:
     out[name] = renders[:]
 renders.clear(); spin(1.5)
 out["idle"] = len(renders)
+# Saved by replacing the file, twice: a file watcher drops a replaced file
+# and never re-arms it; polling sees both.
+out["replaced"] = []
+for n in range(2):
+    spin(0.5); renders.clear()
+    tmp = used + ".tmp"
+    with open(tmp, "w") as f: f.write(f"function f() = {n + 2};\\n")
+    os.replace(tmp, used)
+    spin(2.0)
+    out["replaced"].append(renders[:])
+# An include typed but not saved is watched once the buffer renders (the
+# real _render refreshes the watch, as here).
+extra = os.path.join(d, "lib", "extra.scad")
+with open(extra, "w") as f: f.write("module e() cube(2);\\n")
+tab = w._current_tab()
+tab.editor.setPlainText("include <lib/inc.scad>\\ninclude <lib/extra.scad>\\nm();\\n")
+w._refresh_watched_files()
+spin(0.5); renders.clear()
+with open(extra, "a") as f: f.write("// edited\\n")
+spin(2.0)
+out["unsaved_include"] = renders[:]
 out["path"] = path
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
@@ -52,6 +73,8 @@ os._exit(0)
 
 
 def test_editing_a_used_or_included_file_renders_the_model_once():
+    # Also: a dependency saved by replacing it, and one included only in
+    # the unsaved buffer.
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     proc = subprocess.run([sys.executable, "-c", DRIVER], capture_output=True, text=True, env=env, timeout=120)
     assert proc.returncode == 0, proc.stderr[-2000:]
@@ -59,3 +82,5 @@ def test_editing_a_used_or_included_file_renders_the_model_once():
     assert out["inc"] == [out["path"]]
     assert out["used"] == [out["path"]]
     assert out["idle"] == 0
+    assert out["replaced"] == [[out["path"]], [out["path"]]]
+    assert out["unsaved_include"] == [out["path"]]

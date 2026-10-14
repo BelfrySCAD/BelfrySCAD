@@ -80,12 +80,15 @@ def _resolve(target: str, base_dir: Path) -> Path | None:
     return None
 
 
-def scan_dependencies(main_path: str) -> list[str]:
+def scan_dependencies(main_path: str, text: str | None = None) -> list[str]:
     """Every file real OpenSCAD's handle_dep() would have registered while
     parsing/evaluating main_path: the main file itself, every use/include
     target found (recursed into transitively), and every import()/surface()/
     *_extrude(file=...) literal target (included whether or not it exists
-    yet). Order: first-encountered; duplicates removed."""
+    yet). Order: first-encountered; duplicates removed.
+
+    `text` stands in for main_path's contents -- an editor's unsaved buffer,
+    which is what renders, so its new `include` counts before it is saved."""
     deps: list[str] = []
     seen: set[str] = set()
 
@@ -93,16 +96,17 @@ def scan_dependencies(main_path: str) -> list[str]:
         if path_str not in deps:
             deps.append(path_str)
 
-    def visit(path: Path):
+    def visit(path: Path, text: str | None = None):
         key = str(path.resolve()) if path.exists() else str(path)
         if key in seen:
             return
         seen.add(key)
         add(str(path))
-        try:
-            text = path.read_text(encoding='utf-8', errors='replace')
-        except OSError:
-            return
+        if text is None:
+            try:
+                text = path.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                return
         stripped = _strip_comments(text)
         base_dir = path.parent
 
@@ -115,7 +119,7 @@ def scan_dependencies(main_path: str) -> list[str]:
             resolved = _resolve(target, base_dir)
             add(str(resolved) if resolved is not None else str(base_dir / target))
 
-    visit(Path(main_path))
+    visit(Path(main_path), text)
     return deps
 
 
