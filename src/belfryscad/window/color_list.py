@@ -9,6 +9,9 @@ parse_color reads them (and openscad_cpp_evaluator >= 1.29.0 with it):
 - the 949 xkcd survey names, listed -- and copied -- as `xkcd:<name>`,
   which is how color() takes them (`xkcd_colors.py`).
 
+**Colors:** shows one set at a time -- Web colors (the default), XKCD colors,
+All named colors -- or one of your own palettes (`color_palettes`).
+
 Sort by name, hue (the picker's 30-degree bands, dark to light), saturation,
 chroma, lightness, value or luminance. Double-click a row (or press Copy Name) to
 put `"name"` on the clipboard, ready to paste into `color(...)`.
@@ -18,7 +21,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
+    QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QStyledItemDelegate, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -26,8 +29,11 @@ from PySide6.QtWidgets import (
 from belfryscad.window import color_palettes
 from belfryscad.window.color_names import SORT_KEYS, sorted_colors
 
-#: The palette chooser's first entry: the names color() takes.
-NAMED = "Named colors"
+#: The chooser's built-in views of the names color() takes, before your own
+#: palettes. Web is the CSS names (plus rebeccapurple); XKCD the 949 survey
+#: names as `xkcd:<name>`; All both, so one filter searches everything.
+WEB, XKCD, ALL = "Web colors", "XKCD colors", "All named colors"
+BUILTIN_VIEWS = (WEB, XKCD, ALL)
 
 _COLUMNS = ("", "Name", "Hex", "RGB")
 _NAME_COL = 1
@@ -63,7 +69,7 @@ class _SwatchDelegate(QStyledItemDelegate):
 
 
 class ColorTable(QWidget):
-    """Palette, Filter, Sort by, Hide xkcd colors and the swatch table, with
+    """Colors (view), Filter, Sort by and the swatch table, with
     a count under it. The Color List window and the colour picker are both
     built on it, so they list the same names in the same orders.
 
@@ -86,7 +92,7 @@ class ColorTable(QWidget):
         self._view.setToolTip("The named colors color() takes, or one of your own palettes")
         # Remembered only when the user picks one, never on opening.
         self._view.currentTextChanged.connect(
-            lambda text: (self._on_view(text), color_palettes.set_last_view(self._palette)))
+            lambda text: (self._on_view(text), color_palettes.set_last_view(text)))
         edit = QPushButton("Palettes…")
         edit.setToolTip("Make and edit your own palettes -- your filament colors, say")
         edit.clicked.connect(self._edit_palettes)
@@ -109,9 +115,6 @@ class ColorTable(QWidget):
         top.addWidget(QLabel("Sort by:"))
         top.addWidget(self._sort)
         layout.addLayout(top)
-        self._hide_xkcd = QCheckBox("Hide xkcd colors")
-        self._hide_xkcd.toggled.connect(lambda _on: self._apply_filter(self._search.text()))
-        layout.addWidget(self._hide_xkcd)
 
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
@@ -132,6 +135,7 @@ class ColorTable(QWidget):
         layout.addWidget(self._count)
         self._quiet = False
         self._palette: str | None = None
+        self._view_name = WEB
         self._fill_views(color_palettes.last_view())
 
     def _token(self, row: tuple) -> str:
@@ -142,19 +146,44 @@ class ColorTable(QWidget):
         return self._token(self._rows[row]) if 0 <= row < len(self._rows) else None
 
     def _fill_views(self, want: str | None):
-        """(Re)list the palettes in the chooser and show `want`, or the named
-        colours if there is no such palette."""
+        """(Re)list the views in the chooser and show `want`, or Web colors
+        if there is no such view."""
         self._view.blockSignals(True)
         self._view.clear()
-        self._view.addItems([NAMED, *self._palettes])
-        self._view.setCurrentText(want if want in self._palettes else NAMED)
+        self._view.addItems(BUILTIN_VIEWS)
+        if self._palettes:
+            self._view.insertSeparator(len(BUILTIN_VIEWS))
+            self._view.addItems(list(self._palettes))
         self._view.blockSignals(False)
-        self._on_view(self._view.currentText())
+        self._set_view(want if want in BUILTIN_VIEWS or want in self._palettes else WEB)
+
+    def _set_view(self, view: str):
+        """Show `view` without remembering it as the user's choice."""
+        self._view.blockSignals(True)
+        self._view.setCurrentText(view)
+        self._view.blockSignals(False)
+        self._on_view(view)
 
     def _on_view(self, text: str):
-        self._palette = text if text in self._palettes else None
-        self._hide_xkcd.setEnabled(self._palette is None)
+        self._view_name = text
+        self._palette = text if text in self._palettes and text not in BUILTIN_VIEWS else None
         self._fill(self._sort.currentText())
+
+    def reveal(self, name: str | None, hexa: str):
+        """Make the colour `name` (or, in a palette, `hexa`) the selected row,
+        switching -- without remembering it -- to the first view that lists
+        it if this one does not: the picker opened on `"xkcd:dark mint"` while
+        Web colors was the view. Leaves the view alone if none lists it."""
+        start = self._view_name
+        for view in dict.fromkeys([start, *BUILTIN_VIEWS, *self._palettes]):
+            if view != self._view_name:
+                self._set_view(view)
+            self.select(name)
+            if self.current_name() is None and self._palette is not None:
+                self.select(hexa)
+            if self.current_name() is not None:
+                return
+        self._set_view(start)
 
     def _edit_palettes(self):
         dlg = PaletteEditor(self._palettes, self._palette, self)
@@ -192,7 +221,14 @@ class ColorTable(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self._quiet = True
-        self._rows = color_rows(sort, self._palettes.get(self._palette) if self._palette else None)
+        if self._palette is not None:
+            self._rows = color_rows(sort, self._palettes[self._palette])
+        else:
+            rows = color_rows(sort)
+            if self._view_name != ALL:
+                xkcd = self._view_name == XKCD
+                rows = [r for r in rows if r[0].startswith("xkcd:") == xkcd]
+            self._rows = rows
         self._table.setRowCount(len(self._rows))
         for r, (name, hexa, rgb, color) in enumerate(self._rows):
             swatch = QTableWidgetItem("      ")
@@ -212,10 +248,8 @@ class ColorTable(QWidget):
         # Row r is self._rows[r]: the table is only ever ordered by _fill,
         # never by clicking a header, so the two cannot drift apart.
         shown = 0
-        hide_xkcd = self._hide_xkcd.isChecked()
         for r, row in enumerate(self._rows):
-            hit = matches(row, needle) and not (
-                hide_xkcd and self._palette is None and row[0].startswith("xkcd:"))
+            hit = matches(row, needle)
             self._table.setRowHidden(r, not hit)
             shown += hit
         total = len(self._rows)
@@ -302,7 +336,7 @@ class PaletteEditor(QDialog):
         name = name.strip()
         if not ok or not name:
             return None
-        if name == NAMED or (name in self.palettes and name != initial):
+        if name in BUILTIN_VIEWS or (name in self.palettes and name != initial):
             QMessageBox.warning(self, title, f"There is already a palette called “{name}”.")
             return None
         return name

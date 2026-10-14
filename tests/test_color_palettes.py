@@ -44,13 +44,17 @@ app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
 from belfryscad.window import color_palettes
-from belfryscad.window.color_list import NAMED, ColorTable
+from belfryscad.window.color_list import WEB, ColorTable
 from belfryscad.window.color_picker import ColorPickerDialog
 color_palettes.save_palettes({"Shelf": [("Sunlu Cyan", "#0074c3"), ("Sunlu Magenta", "#c44188")]})
 out = {}
 t = ColorTable()
 out["views"] = [t._view.itemText(i) for i in range(t._view.count())]
-out["opens_on_named"] = t._view.currentText() == NAMED
+# A literal not in the view last chosen opens on a view that lists it --
+# without making that view the remembered one.
+x = ColorPickerDialog('"xkcd:dark mint"', QColor("#48c072"))
+out["xkcd_literal"] = [x._colors._view.currentText(), x._colors.current_name(), color_palettes.last_view()]
+out["opens_on_web"] = t._view.currentText() == WEB
 out["remembered_on_open"] = color_palettes.last_view()
 t._view.setCurrentText("Shelf")
 out["rows"] = [r[0] for r in t._rows]
@@ -89,8 +93,9 @@ def test_a_palette_is_listed_picked_as_hex_and_remembered(tmp_path):
                           env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=120)
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["views"] == ["Named colors", "Shelf"]
-    assert out["opens_on_named"] and out["remembered_on_open"] is None
+    assert out["views"] == ["Web colors", "XKCD colors", "All named colors", "", "Shelf"]
+    assert out["opens_on_web"] and out["remembered_on_open"] is None
+    assert out["xkcd_literal"] == ["XKCD colors", "xkcd:dark mint", None]
     assert sorted(out["rows"]) == ["Sunlu Cyan", "Sunlu Magenta"]
     assert out["remembered"] == "Shelf"
     assert out["token"] in ("#0074c3", "#c44188")
