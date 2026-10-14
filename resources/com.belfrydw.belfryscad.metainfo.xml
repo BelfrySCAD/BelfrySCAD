@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.72.7" date="2026-10-14">
+      <description>
+        <p>A closing brace, bracket or parenthesis typed on a blank line now lines up with the line that opened it.</p>
+      </description>
+    </release>
     <release version="1.72.6" date="2026-10-13">
       <description>
         <p>With word wrap on, a wrapped line's first character lines up with every other line's instead of sitting a few pixels to the left.</p>
