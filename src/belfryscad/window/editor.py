@@ -125,6 +125,41 @@ _OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}"}
 _CLOSE_TO_OPEN = {v: k for k, v in _OPEN_TO_CLOSE.items()}
 
 
+def _code_brackets(text: str):
+    """Yield `(index, char)` for every bracket in `text` outside strings and
+    comments. An unterminated string or `/*` runs to the end of `text`."""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n:
+            if text[i + 1] == "/":
+                end = text.find("\n", i + 2)
+                if end == -1:
+                    return
+                i = end + 1
+                continue
+            if text[i + 1] == "*":
+                end = text.find("*/", i + 2)
+                if end == -1:
+                    return
+                i = end + 2
+                continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c in _OPEN_TO_CLOSE or c in _CLOSE_TO_OPEN:
+            yield i, c
+        i += 1
+
+
 def unmatched_open_brackets(text: str) -> int:
     """How many `(`, `[` or `{` in `text` are still open at its end.
 
@@ -145,37 +180,37 @@ def unmatched_open_brackets(text: str) -> int:
     needs the highlighter's block state; not worth it until someone hits it.
     """
     stack: list[str] = []
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c == "/" and i + 1 < n:
-            if text[i + 1] == "/":
-                break                      # line comment: nothing after counts
-            if text[i + 1] == "*":
-                end = text.find("*/", i + 2)
-                if end == -1:
-                    break                  # unterminated: rest of line is comment
-                i = end + 2
-                continue
-        if c == '"':
-            i += 1
-            while i < n:
-                if text[i] == "\\":
-                    i += 2
-                    continue
-                if text[i] == '"':
-                    i += 1
-                    break
-                i += 1
-            continue
+    for _, c in _code_brackets(text):
         if c in _OPEN_TO_CLOSE:
             stack.append(c)
-        elif c in _CLOSE_TO_OPEN:
-            if stack and stack[-1] == _CLOSE_TO_OPEN[c]:
-                stack.pop()
-            # else: closes something from an earlier line -- ignore it
-        i += 1
+        elif stack and stack[-1] == _CLOSE_TO_OPEN[c]:
+            stack.pop()
+        # else: closes something from an earlier line -- ignore it
     return len(stack)
+
+
+def opener_indent(text: str, closer: str) -> str | None:
+    """The leading whitespace of the line holding the bracket that `closer`,
+    typed at the end of `text`, would close -- or None when the innermost
+    open bracket is not its partner (nothing open, or `]` under a `(`).
+
+    What a closer typed on a blank line is aligned to (#767): the line that
+    OPENED the block, not one step back from the line above, which lands a
+    level too deep after a chained child such as `rotate(...)` / `cube(...)`.
+    """
+    stack: list[int] = []
+    opens: list[str] = []
+    for i, c in _code_brackets(text):
+        if c in _OPEN_TO_CLOSE:
+            stack.append(i)
+            opens.append(c)
+        elif opens and opens[-1] == _CLOSE_TO_OPEN[c]:
+            stack.pop()
+            opens.pop()
+    if not opens or opens[-1] != _CLOSE_TO_OPEN[closer]:
+        return None
+    line = text[text.rfind("\n", 0, stack[-1]) + 1:]
+    return line[:len(line) - len(line.lstrip(" \t"))]
 
 
 def pair_brackets(brackets):
@@ -2106,17 +2141,19 @@ class CodeEditor(QPlainTextEdit):
         if event.text() in ('}', ']', ')'):
             cursor = self.textCursor()
             block_text = cursor.block().text()
-            # Only unindent if the line is pure whitespace so far, and to the
-            # previous STOP rather than by a fixed amount -- same rule as
-            # Shift+Tab, so a closing brace lands on the grid.
-            if block_text and not block_text.strip():
-                width = len(block_text)
-                n_sp = width - self._prev_indent_stop(width)
-                if n_sp > 0:
-                    cursor.movePosition(cursor.MoveOperation.StartOfBlock)
-                    cursor.movePosition(cursor.MoveOperation.Right,
-                                        cursor.MoveMode.KeepAnchor, n_sp)
-                    cursor.removeSelectedText()
+            # On a line that is pure whitespace so far, line the closer up
+            # with the line holding its partner (#767). With no partner,
+            # step back to the previous STOP, as Shift+Tab does.
+            if not block_text.strip():
+                text = self.toPlainText()
+                before = text[:to_index(text, cursor.block().position())]
+                indent = opener_indent(before, event.text())
+                if indent is None:      # unmatched: one step back, as before
+                    indent = " " * self._prev_indent_stop(len(block_text))
+                cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(cursor.MoveOperation.EndOfBlock,
+                                    cursor.MoveMode.KeepAnchor)
+                cursor.insertText(indent)
         super().keyPressEvent(event)
         text = event.text()
         if text and (text.isalnum() or text == '_'):

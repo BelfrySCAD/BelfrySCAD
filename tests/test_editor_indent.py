@@ -296,3 +296,39 @@ class TestReturnIndentsOneLevel:
 
     def test_a_closing_line_keeps_its_indent(self):
         assert self.indent_after("    });") == 4
+
+
+class TestOpenerIndent:
+    """A closer typed on a blank line lines up with its partner's line (#767).
+
+    Pure function; the key handler only swaps the line's whitespace for this.
+    """
+    from belfryscad.window.editor import opener_indent as _f
+    f = staticmethod(_f)
+
+    def test_the_reported_case_returns_to_the_opening_line(self):
+        src = ('color("red") {\n'
+               '    rotate([1,2,3])\n'
+               '        cube(10)\n'
+               '            echo("test");\n')
+        assert self.f(src, "}") == ""
+
+    def test_a_nested_block_takes_its_own_opener_indent(self):
+        src = 'module m() {\n    if (x) {\n        cube(1);\n'
+        assert self.f(src, "}") == "    "
+
+    def test_brackets_and_parens_too(self):
+        assert self.f("  a = [\n      1,\n", "]") == "  "
+        assert self.f("    foo(\n        1,\n", ")") == "    "
+
+    def test_closed_pairs_are_skipped(self):
+        assert self.f("x {\n  y {\n  }\n", "}") == ""
+
+    def test_strings_and_comments_do_not_count(self):
+        src = 'a {\n  s = "}"; // }\n  /* }\n  } */\n'
+        assert self.f(src, "}") == ""
+
+    def test_no_partner_is_none(self):
+        assert self.f("", "}") is None
+        assert self.f("foo(\n", "}") is None      # wrong kind on top
+        assert self.f("cube(1);\n", ")") is None
