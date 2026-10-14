@@ -6,6 +6,9 @@ see the module's own doc comment."""
 
 import os
 import sys
+from pathlib import Path
+
+import pytest
 
 from belfryscad.scad_deps import scan_dependencies, write_deps_file, run_make_for_missing
 
@@ -195,3 +198,26 @@ class TestLibraryPathSearch:
         main = tmp_path / "main.scad"
         main.write_text("include <nowhere.scad>\n")
         assert scan_dependencies(str(main)) == [str(main)]
+
+    def test_openscadpath_adds_to_the_default_folder(self, tmp_path, monkeypatch):
+        # As the parser's librarySearchDirs: OPENSCADPATH first, then the
+        # user's libraries folder -- not instead of it.
+        import belfryscad.scad_deps as sd
+        default = tmp_path / "default"
+        (default / "Pkg").mkdir(parents=True)
+        (default / "Pkg" / "std.scad").write_text("cube(1);\n")
+        monkeypatch.setattr(sd, "user_library_dir", lambda: default)
+        monkeypatch.setenv("OPENSCADPATH", str(tmp_path / "other"))
+        main = tmp_path / "main.scad"
+        main.write_text("include <Pkg/std.scad>\n")
+        assert str(default / "Pkg" / "std.scad") in scan_dependencies(str(main))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="asks the Windows shell")
+def test_windows_library_dir_is_where_windows_says_documents_is():
+    # OneDrive moves Documents; ~\Documents is then the wrong folder (#770).
+    import ctypes
+    from belfryscad.scad_deps import user_library_dir
+    buf = ctypes.create_unicode_buffer(260)
+    assert ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0
+    assert user_library_dir() == Path(buf.value) / "OpenSCAD" / "libraries"
