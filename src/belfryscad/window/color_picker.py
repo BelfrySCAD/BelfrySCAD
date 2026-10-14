@@ -1,7 +1,8 @@
 """Choose Color… -- edit a colour literal in the editor.
 
 Right-click a literal `color_literals.find_color_literal` recognises and the
-context menu offers **Choose Color…**: a named-colour list, a `#rgb` /
+context menu offers **Choose Color…**: a named-colour list (or one of your own
+palettes, `color_palettes` -- whose colours are written as hex), a `#rgb` /
 `#rrggbb` field, and **Other Colors…** for the platform's native colour
 panel. Save writes the literal back through `replace_span`, as
 **Choose Font…** does.
@@ -90,7 +91,7 @@ class ColorPickerDialog(QDialog):
         layout.addWidget(self._swatch)
 
         form = QFormLayout()
-        # The Color List's table -- filter, Sort by, Hide xkcd colors -- over
+        # The Color List's table -- Colors, filter, Sort by -- over
         # every name color() takes. Selecting a row picks that colour.
         self._colors = ColorTable()
         self._colors.current_changed.connect(self._on_name)
@@ -114,6 +115,10 @@ class ColorPickerDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._show(self._color, from_hex=False)
+        if self._colors.current_name() is None:
+            # Not in the view last chosen: show one that has it.
+            self._colors.reveal(self._orig_name or name_for(self._color),
+                                self._color.name(QColor.NameFormat.HexRgb))
 
     def chosen_literal(self) -> str:
         if self._spelling is None and self._color == self._initial:
@@ -162,6 +167,10 @@ class ColorPickerDialog(QDialog):
             else:
                 name = name_for(c)
             self._colors.select(name)
+            if self._colors.current_name() is None:
+                # A palette lists its colours by hex: that is what color()
+                # takes for a name of your own.
+                self._colors.select(c.name(QColor.NameFormat.HexRgb))
             if not from_hex:
                 self._hex.setText(c.name(QColor.NameFormat.HexRgb))
         finally:
