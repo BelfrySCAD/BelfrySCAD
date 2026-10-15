@@ -85,6 +85,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         if: steps.gate.outputs.skip != 'true'
         with:
+          python-version: "3.12"   # a runner image with Homebrew 3.15 has no manifold3d wheel
           enable-cache: true
 
       - run: uv sync --frozen
