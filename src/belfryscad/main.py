@@ -307,6 +307,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
         # rendered, or the turn's context snapshot would describe an empty
         # window.
         QTimer.singleShot(1500, lambda: _send_ai_prompt(window, ai_prompt))
+    _install_state_dump(app)
     code = app.exec()
     # Skip normal interpreter finalization: its GC pass can crash inside
     # manifold3d's nanobind bindings if a background render thread was
@@ -464,6 +465,58 @@ def _install_crash_log():
         prior(exc_type, exc, tb)
 
     sys.excepthook = hook
+
+
+def _describe_qt_state(app) -> str:
+    """What Qt thinks is in front: the modal, popup, focus and every
+    visible top-level window. Answers "why does the window ignore input"."""
+    def name(w):
+        if w is None:
+            return "None"
+        g = w.geometry()
+        screen = w.screen().name() if w.screen() else "?"
+        return (f"{type(w).__name__} {w.objectName()!r} {w.windowTitle()!r} "
+                f"modality={w.windowModality().name} visible={w.isVisible()} "
+                f"minimized={w.isMinimized()} geom=({g.x()},{g.y()} {g.width()}x{g.height()}) "
+                f"screen={screen}")
+    lines = [f"applicationState={app.applicationState().name}",
+             f"activeModalWidget={name(app.activeModalWidget())}",
+             f"activePopupWidget={name(app.activePopupWidget())}",
+             f"activeWindow={name(app.activeWindow())}",
+             f"focusWidget={name(app.focusWidget())}",
+             "visible top-level windows:"]
+    lines += [f"  {name(w)}" for w in app.topLevelWidgets() if w.isVisible()]
+    return "\n".join(lines) + "\n"
+
+
+def _install_state_dump(app):
+    """`kill -USR1 <pid>` prints Qt's window/modal state and every Python
+    thread's stack to stderr and the crash log -- for a window that stops
+    taking input with nothing in the sample to say why (#703)."""
+    import signal
+    if not hasattr(signal, "SIGUSR1"):
+        return          # Windows
+    import datetime
+    import faulthandler
+    from PySide6.QtCore import QTimer
+
+    def dump(*_):
+        head = f"\n=== SIGUSR1 state dump {datetime.datetime.now().isoformat(timespec='seconds')} ===\n"
+        text = head + _describe_qt_state(app)
+        for stream in (sys.stderr, _crash_stream):
+            if stream is not None:
+                stream.write(text)
+                stream.flush()
+                try:
+                    faulthandler.dump_traceback(stream, all_threads=True)
+                except (OSError, ValueError, AttributeError):
+                    pass    # e.g. stderr is os.devnull's wrapper without a usable fileno
+    signal.signal(signal.SIGUSR1, dump)
+    # A Python signal handler only runs when Python code does; an idle Qt
+    # loop runs none, so tick once a second to let it through.
+    app._state_dump_tick = QTimer(app)
+    app._state_dump_tick.timeout.connect(lambda: None)
+    app._state_dump_tick.start(1000)
 
 
 #: The GUI's process name. Batch modes get their own suffixed name below,
