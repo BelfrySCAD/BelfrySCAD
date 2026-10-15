@@ -63,7 +63,7 @@ def test_filter_is_name_or_hex():
     assert not matches(row, "red")
 
 
-def test_dialog_views_sorts_filters_and_copies_quoted_name(tmp_path):
+def test_pane_views_sorts_filters_and_inserts_a_name(tmp_path):
     driver = tmp_path / "_cl.py"
     driver.write_text("""
 import json
@@ -72,10 +72,11 @@ app = QApplication([])
 import tempfile
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
-from belfryscad.window.color_list import ColorListDialog
-dlg = ColorListDialog(None)
-c = dlg.colors
-out = {"title": dlg.windowTitle(), "count": c._count.text(), "sorts": [c._sort.itemText(i) for i in range(c._sort.count())],
+from belfryscad.window.color_list import ColorListPane
+c = ColorListPane(None)
+inserted = []
+c.insert_requested.connect(inserted.append)
+out = {"count": c._count.text(), "sorts": [c._sort.itemText(i) for i in range(c._sort.count())],
        "views": [c._view.itemText(i) for i in range(c._view.count())], "view": c._view.currentText()}
 c._view.setCurrentText("All named colors")
 out["all"] = c._count.text()
@@ -85,8 +86,8 @@ visible = [r for r in range(c._table.rowCount()) if not c._table.isRowHidden(r)]
 out["visible"] = [c._table.item(r, 1).text() for r in visible]
 out["count_filtered"] = c._count.text()
 c._table.setCurrentCell(visible[0], 1)
-dlg._copy_selected()
-out["clipboard"] = QApplication.clipboard().text()
+c._insert()
+out["inserted"] = inserted
 c._search.setText("")
 c._view.setCurrentText("XKCD colors")       # a view switch keeps the filter
 out["xkcd"] = c._count.text()
@@ -98,14 +99,13 @@ print(json.dumps(out))
                               "HOME": str(tmp_path)})
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
-    assert out["title"] == "Color List"
-    assert out["views"] == ["Web colors", "XKCD colors", "All named colors"]
+    assert out["views"] == ["Web colors", "XKCD colors", "All named colors", "", "Edit palette list…"]
     assert out["view"] == "Web colors" and out["count"] == "148 colors"
     assert out["all"] == "1097 colors"
     assert out["sorts"] == ["Name", "Hue", "Saturation", "Chroma", "Lightness", "Value", "Luminance"]
     assert out["visible"] == ["xkcd:dark mint"]
     assert out["count_filtered"] == "1 of 1097 colors"
-    assert out["clipboard"] == '"xkcd:dark mint"'
+    assert out["inserted"] == ["xkcd:dark mint"]
     assert out["xkcd"] == "949 colors" and out["xkcd_only"]
 
 
@@ -120,10 +120,11 @@ app = QApplication([])
 import tempfile
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
-from belfryscad.window.color_list import ColorTable
-t = ColorTable(); t.resize(500, 400); t.show()
+from belfryscad.window.color_list import ColorListPane
+t = ColorListPane(); t.resize(500, 400); t.show()
 t._search.setText("red")
 t.select("red")
+t._table.setFocus()       # the filter field has focus; an unfocused selection is white on Windows
 app.processEvents()
 table = t._table
 row = table.currentRow()

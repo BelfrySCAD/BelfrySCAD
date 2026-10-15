@@ -41,7 +41,7 @@ from belfryscad.window.about import open_documentation, open_issue_tracker, show
 from belfryscad.window.update_check import check_for_updates
 from belfryscad.window.release_notes import show_release_notes
 from belfryscad.window.export_options import ask_export_options, export_kwargs
-from belfryscad.window.color_list import show_color_list
+from belfryscad.window.color_list import ColorListPane
 from belfryscad.window.font_list import show_font_list
 from belfryscad.memory_relief import release_free_memory
 from belfryscad.window.preferences import (PreferencesDialog, load_preference,
@@ -1356,6 +1356,18 @@ class MainWindow(QMainWindow):
         self._docs_dock.visibilityChanged.connect(
             lambda visible: self._refresh_docs_pane() if visible else None)
 
+        # --- Color List dock (right, bottom — tabbed with the rest) ---
+        # A pane, not a window: a colour copied from it can be pasted into
+        # the editor without closing anything first (#766).
+        self._color_list_dock = QDockWidget("Color List", self)
+        self._color_list_dock.setObjectName("ColorListDock")
+        self._color_list_pane = ColorListPane()
+        self._color_list_pane.insert_requested.connect(self._insert_color)
+        self._color_list_dock.setWidget(self._color_list_pane)
+        self._color_list_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.tabifyDockWidget(self._customizer_dock, self._color_list_dock)
+        self._color_list_dock.hide()
+
         # --- Console dock (bottom) ---
         self._console = ConsoleWidget()
         self._console.setReadOnly(True)
@@ -1846,6 +1858,10 @@ class MainWindow(QMainWindow):
         self._act_show_docs.setText("Show Docs")
         window_menu.addAction(self._act_show_docs)
 
+        self._act_show_color_list = self._color_list_dock.toggleViewAction()
+        self._act_show_color_list.setText("Show Color List")
+        window_menu.addAction(self._act_show_color_list)
+
         self._act_show_status = self._add_checkable(window_menu, "Show Status Bar", True, self._status_bar.setVisible)
         self._act_show_testing = self._testing_dock.toggleViewAction()
         self._act_show_testing.setText("Show Testing")
@@ -1866,7 +1882,7 @@ class MainWindow(QMainWindow):
         # Not Qt's font database: these are the names text() will accept,
         # read from the evaluator's own index (issue #379).
         self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
-        self._add_action(help_menu, "Color List…", lambda: show_color_list(self))
+        self._add_action(help_menu, "Color List", self._show_color_list)
         self._add_action(help_menu, "Welcome Screen…", self.show_welcome)
         self._add_action(help_menu, "Show Library Folder", self._show_library_folder)
 
@@ -1927,6 +1943,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.choose_color_requested.connect(self._choose_color)
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
@@ -2022,6 +2039,42 @@ class MainWindow(QMainWindow):
         """(text, path) of the tab being shown, for the Docs pane."""
         tab = self._current_tab()
         return (tab.editor.toPlainText(), tab.file_path or "") if tab else None
+
+    def _show_color_list(self):
+        self._color_list_dock.show()
+        self._color_list_dock.raise_()
+
+    def _choose_color(self, literal: str):
+        """Editor ▸ Choose Color…: the literal is already selected there;
+        show the Color List with its colour selected."""
+        self._show_color_list()
+        self._color_list_pane.show_literal(literal)
+
+    def _insert_color(self, token: str):
+        """Color List ▸ Insert: `token` in place of the editor's
+        selection, in the selection's own shape if it is a colour vector
+        (`insertion_for`), left selected so another Insert swaps it.
+        Replacing a colour literal is a finished edit, so it renders, as
+        Edit as... does; inserting into other text is still typing."""
+        from belfryscad.window.color_literals import color_for_name, insertion_for, looks_like_color_vector
+        tab = self._current_tab()
+        if tab is None:
+            return
+        editor = tab.editor
+        cur = editor.textCursor()
+        selected = cur.selectedText()
+        new = insertion_for(selected, token)
+        start = cur.selectionStart()
+        editor.replace_span(start, cur.selectionEnd(), new)
+        cur = editor.textCursor()
+        cur.setPosition(start)
+        cur.setPosition(start + len(new), QTextCursor.MoveMode.KeepAnchor)
+        editor.setTextCursor(cur)
+        s = selected.strip()
+        was_color = (s.startswith('"') and color_for_name(s[1:-1]) is not None) or \
+            (s.startswith("[") and looks_like_color_vector(s[1:-1].split(",")) is not None)
+        if was_color:
+            editor.source_edited_externally.emit()
 
     def _refresh_docs_pane(self):
         """Rebuild the Docs preview from the live editor buffer, if the pane
@@ -2302,6 +2355,7 @@ class MainWindow(QMainWindow):
         tab.editor.print_value_to_console.connect(self._on_debug_print_value)
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        tab.editor.choose_color_requested.connect(self._choose_color)
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.value_nudge_status.connect(self._on_value_nudge_status)

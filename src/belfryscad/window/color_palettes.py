@@ -1,8 +1,8 @@
 """Your own colour palettes (#766): named lists of named colours, such as the
-filament on your shelf, offered by the colour picker and the Color List
+filament on your shelf, offered by the Color List
 beside the CSS and xkcd names.
 
-A palette is edited as a table of names and colours (`color_list.PaletteEditor`);
+A palette's colours are edited in the Color List pane;
 pasted text is read one colour per line -- a name, then the colour as
 `#rrggbb` / `#rgb` or as 0-255 `r, g, b` -- so a list can come straight from
 filamentcolors.xyz or a spreadsheet:

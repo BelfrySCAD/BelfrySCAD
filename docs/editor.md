@@ -385,61 +385,55 @@ that the position maps back to the right character — is covered by
 
 ### Choose Color… (editing a colour literal)
 
-**Your own palettes** (#766, `window/color_palettes.py`). Above the table a
-**Colors:** chooser picks **Web colors** (the CSS names, the default), **XKCD colors**,
-**All named colors** (both, so one filter searches everything), or one of
-your palettes, and
-**Palettes…** opens `color_list.PaletteEditor` to make, rename, delete and
-edit them -- the filament on your shelf, say. A palette is a table of
-**Name**, **Hex** and a swatch, with **Add Color** and **Remove**: Hex takes
-`#rrggbb`, `#rgb` or 0-255 `r, g, b` (`color_palettes.parse_color_value`,
-rewritten as hex), a value it cannot read turns red and is left out on Save,
-and double-clicking a swatch opens the system colour panel. Paste with the
-table focused adds a row per clipboard line (a name, then the colour, `//`
-comments allowed -- `parse_palette`), so a list from filamentcolors.xyz or a
-spreadsheet goes in at once; a shortcut on the table alone, so pasting into a
-cell being edited still pastes text. A palette colour's name is the user's own, not one `color()` takes,
-so the table's *token* for its row -- what `current_changed`/`activated`
-emit, what Copy Name copies and what the picker writes -- is its hex. Stored as
-JSON under `colors/palettes`; the palette last chosen is remembered
-(`colors/paletteView`) only when the user picks one, so merely opening the
-picker or the Color List writes nothing. Both windows share it, through
-`ColorTable`. The picker opening on a colour the remembered view does not
-list (`"xkcd:dark mint"` with Web colors chosen) switches to a view that does
-(`ColorTable.reveal`), without remembering that switch.
+There is no colour picker window: the **Color List** dock is the picker
+(#766). Right-clicking any literal the swatch recognises (same finder, same
+one-line rule) offers **Choose Color…**, beside **Choose Font…**. It selects
+the literal in the editor, shows the Color List and selects the literal's
+colour there (`ColorListPane.show_literal` → `reveal`), switching -- without
+remembering it -- to the first view that lists it: `"xkcd:dark mint"` with Web
+colors chosen opens XKCD colors, and a hex or vector literal of a palette
+colour finds it in that palette.
 
-`window/color_picker.py`. Right-clicking any literal the swatch recognises
-(same finder, same one-line rule) offers **Choose Color…**, a top-level item
-beside **Choose Font…**: a swatch, then the Color List's own table
-(`color_list.ColorTable`, shared by both) of every name `color()` takes -- the
-CSS names plus `rebeccapurple` and the 949 `xkcd:<name>`s, each with its
-swatch, hex and rgb -- with its filter, **Sort by** menu (Name, Hue,
-Saturation, Chroma, Lightness, Value, Luminance) and **Colors:** view chooser.
-Selecting a row picks that colour, double-clicking one picks it and saves, and
-the current colour's row stays selected (a hex typed or a native-panel colour
-selects its name if it has one). Then a
-**Hex** field taking `#rgb` or `#rrggbb`, and **Other Colors…** for the
-platform's native colour panel (`QColorDialog.getColor`, with an alpha slider
-only when the literal has an alpha). Save writes back through `replace_span` +
-`source_edited_externally`, which renders; saving an unchanged colour writes
+**Insert** (beside + and −) puts the selected row's colour in place of the
+editor's selection (`MainWindow._insert_color`), and leaves the inserted text
+selected, so another Insert swaps it. Replacing a colour literal is a finished
+edit and renders (`source_edited_externally`, as Edit as... does); inserting
+into other text, or at a bare cursor, is still typing and does not. What is
+inserted is the row's *token*: its name (`"xkcd:dark mint"` for an xkcd one),
+or for a palette colour -- whose name is the user's own, not one `color()`
+takes -- its hex.
+
+**The literal keeps its shape** (`color_literals.insertion_for`, tested in
+`tests/test_color_insertion.py`): a selected colour **vector** stays a vector
+of 0..1 components to three decimals, keeping its alpha if it had four --
+choosing `"red"` does not turn `[1, 0, 0]` into a string, since a
+`thecolor = [...]` may be indexed or `concat()`ed elsewhere. Anything else (a
+string literal, other text, nothing) becomes the quoted token.
+
+**Your own palettes** (`window/color_palettes.py`). The **Palette:** chooser
+picks **Web colors** (the CSS names, the default), **XKCD colors**, **All
+named colors** (both, so one filter searches everything), or one of your
+palettes, and ends with **Edit palette list…** -- an action, not a view, so
+choosing it leaves the view as it was and opens `PaletteListEditor` to make,
+rename and delete palettes. Their colours are edited in the pane: in a
+palette, **+** (beside the count) asks for a colour from the system panel and
+a name (the hex by default), **−** removes the selected row, double-clicking
+**Name** or **Hex** edits it in place (Hex takes `#rrggbb`, `#rgb` or 0-255
+`r, g, b` and puts the old value back for anything else; a blank name becomes
+the hex), double-clicking the swatch opens the system colour panel, and Paste with
+the table focused adds a colour per clipboard line (a name, then `#rrggbb`,
+`#rgb` or 0-255 `r, g, b`, `//` comments allowed -- `parse_palette`), so a
+list from filamentcolors.xyz or a spreadsheet goes in at once. Both are
+disabled outside a palette. Every change is saved at once, as JSON under
+`colors/palettes`; the view last chosen is remembered (`colors/paletteView`)
+only when the user picks one, so opening the pane or Choose Color… writes
 nothing.
 
-**The literal keeps its shape** (`literal_for`, tested in
-`tests/test_color_picker.py`):
-
-- **A string** is written the way the colour was chosen: the name picked, or
-  the hex exactly as typed (`#fff` stays short). A colour from the native
-  panel becomes a name if the literal was a name and the colour has one
-  (`name_for`, first alphabetically where Qt has two), otherwise `#rrggbb`.
-- **A vector** stays a vector of 0..1 components to three decimals, keeping
-  its alpha if it had four. Choosing `"red"` does not turn `[1, 0, 0]` into a
-  string: a `thecolor = [...]` may be indexed or `concat()`ed elsewhere.
-
 `transparent` is left out of the name list: its swatch would be black. A
-name literal shows its own name while the colour is unchanged, so
+name literal finds its own row (`color_list.literal_color`), so
 `"xkcd:dark mint"` and `"cyan"` (which shares `aqua`'s rgb) open as themselves.
 
-Which string literals count as colours at all -- for the swatch, the picker and
+Which string literals count as colours at all -- for the swatch and
 **Choose Color…** -- is `color_names.parse_color`, the GUI's copy of OpenSCAD's
 `parse_color` that openscad_cpp_evaluator >= 1.29.0 follows: CSS names,
 `transparent` (alpha 0), `xkcd:<name>`, and `#rgb` / `#rgba` / `#rrggbb` /
@@ -1390,15 +1384,15 @@ Indentation is `"  " * (depth + 1)` for every depth beyond the root (root itself
 - —
 - Show Edges / Show Axes / Show Scale Markers / Show Crosshairs
 
-**Window**: Minimize / Zoom / — / Move Tab to New Window / Show Next Tab / Show Previous Tab (Qt's NextChild/PreviousChild keys -- Ctrl+Tab / Ctrl+Shift+Tab on Windows and Linux, Cmd+Shift+] / Cmd+Shift+[ on macOS -- plus, on macOS, the physical Ctrl+Tab / Ctrl+Shift+Tab, which Qt's list leaves out and which otherwise reached the editor and indented the line; wraps round) / — / *(open document list)* / Bring All to Front / — / Show Editor Toolbar / Show 3D View Toolbar / Show Tools Toolbar / Show Tab Bar / Show Editor / Show Console / Show Debugger / Show Animate / Show Customizer / Show AI Chat / Show Docs / Show Status Bar / Show Testing (the toolbars' and docks' own `toggleViewAction()`s; at the top of View until moved here)
+**Window**: Minimize / Zoom / — / Move Tab to New Window / Show Next Tab / Show Previous Tab (Qt's NextChild/PreviousChild keys -- Ctrl+Tab / Ctrl+Shift+Tab on Windows and Linux, Cmd+Shift+] / Cmd+Shift+[ on macOS -- plus, on macOS, the physical Ctrl+Tab / Ctrl+Shift+Tab, which Qt's list leaves out and which otherwise reached the editor and indented the line; wraps round) / — / *(open document list)* / Bring All to Front / — / Show Editor Toolbar / Show 3D View Toolbar / Show Tools Toolbar / Show Tab Bar / Show Editor / Show Console / Show Debugger / Show Animate / Show Customizer / Show AI Chat / Show Docs / Show Color List / Show Status Bar / Show Testing (the toolbars' and docks' own `toggleViewAction()`s; at the top of View until moved here)
 
-**Help**: About BelfrySCAD / Documentation / Report an Issue… / Check for Updates… / Show Release Notes… (every published GitHub release's notes, newest first; only releases up to the running version; cached in `~/.cache/BelfrySCAD` for offline use, see `window/release_notes.py`) / Font List… / Color List… / Welcome Screen… / Show Library Folder
+**Help**: About BelfrySCAD / Documentation / Report an Issue… / Check for Updates… / Show Release Notes… (every published GitHub release's notes, newest first; only releases up to the running version; cached in `~/.cache/BelfrySCAD` for offline use, see `window/release_notes.py`) / Font List… / Color List (shows the Color List dock) / Welcome Screen… / Show Library Folder
 
 Show Library Folder (`library_manager.show_library_folder`) opens the libraries folder -- `~/Documents/OpenSCAD/libraries`, or `~/.local/share/OpenSCAD/libraries` on Linux -- in the platform's file manager, creating it first if it is missing, and logs its path to the console. It is the folder the Library Manager installs into, not `OPENSCADPATH`.
 
 `window/about.py` holds About and Documentation, and the version facts behind them as plain data (`about_info()` / `about_html()` / `about_text()`) so they test without a widget. The About action carries `MenuRole.AboutRole`, which moves it into the application menu on macOS where the platform expects it — the same treatment Preferences already gets with `PreferencesRole`; on Windows and Linux it stays under Help.
 
-The dialog leads with the version, because "mainly I want to know what version I'm running" is what issue #379 asked for, and lists **openscad_cpp_evaluator** beside it: geometry comes from there, it moves independently of the app, and a bug report needs both. A **Copy Versions** button puts the plain-text form on the clipboard so a version reaches an issue without being retyped. Documentation opens the wiki. **Font List** (`window/font_list.py`) lists every face `text()` can resolve — family, style, and the exact `font=` spec that selects it — with a live filter over family and style, sortable columns, and double-click (or the button) to copy the spec. Regular shows as the bare family, so what you copy is what you type. Families whose name starts with a dot — macOS's private system faces, which Font Book hides too — are left out of both the list and the picker (`is_private_family`, issue #402); `load_fonts()` is the one place both get their fonts, so the filter lives there and `text()` itself is unaffected. A **Sample** column (issue #388) paints a pangram plus the digits in each face, via a `QStyledItemDelegate` that registers the row's font file with Qt the first time that row is painted — nothing is pre-rendered, so opening the list costs nothing extra and only rows scrolled into view pay. The sentence is chosen per family by crc32, so a face keeps it across sorts, filters and sessions. The Qt-side face resolution (`qt_family_for`/`qt_font_for`, `font_picker.py`) is shared with the picker's live preview. **Color List** (`window/color_list.py`) is the same idea for `color()`: a window, not OpenSCAD's dock, listing all 1,097 names `color()` accepts (as OpenSCAD's `parse_color` and openscad_cpp_evaluator >= 1.29.0 read them) with a swatch, hex and `[r, g, b]`: the 147 CSS names of Qt's list (the colour picker's `_PICKABLE_NAMES`, less `transparent`, whose swatch would be a lie) plus `rebeccapurple`, which Qt never adopted, and the 949 xkcd survey names as `xkcd:<name>` (`window/xkcd_colors.py`, generated from OpenSCAD's `XkcdColors.h`, as the evaluator's table is). **Sort by** Name (on the bare name, so `red` and `xkcd:red` sit together), Hue (the picker's 30° hue bands, dark to light; a hueless grey counts as hue 0 -- Saturation is the sort that gathers the neutrals), Saturation (HSV -- HSL's rates near-whites fully saturated), Chroma (max − min of r, g, b), Lightness (HSL, (max + min) / 2), Value (HSV, max) or Luminance (WCAG relative luminance: how light it looks), low to high; ties fall back to hue. Filter by name or hex, and choose **Web colors**, **XKCD colors**, **All named colors** or one of your palettes in **Colors:**; double-click or Copy Name puts the quoted name -- `"xkcd:dark mint"` for an xkcd one -- on the clipboard.
+The dialog leads with the version, because "mainly I want to know what version I'm running" is what issue #379 asked for, and lists **openscad_cpp_evaluator** beside it: geometry comes from there, it moves independently of the app, and a bug report needs both. A **Copy Versions** button puts the plain-text form on the clipboard so a version reaches an issue without being retyped. Documentation opens the wiki. **Font List** (`window/font_list.py`) lists every face `text()` can resolve — family, style, and the exact `font=` spec that selects it — with a live filter over family and style, sortable columns, and double-click (or the button) to copy the spec. Regular shows as the bare family, so what you copy is what you type. Families whose name starts with a dot — macOS's private system faces, which Font Book hides too — are left out of both the list and the picker (`is_private_family`, issue #402); `load_fonts()` is the one place both get their fonts, so the filter lives there and `text()` itself is unaffected. A **Sample** column (issue #388) paints a pangram plus the digits in each face, via a `QStyledItemDelegate` that registers the row's font file with Qt the first time that row is painted — nothing is pre-rendered, so opening the list costs nothing extra and only rows scrolled into view pay. The sentence is chosen per family by crc32, so a face keeps it across sorts, filters and sessions. The Qt-side face resolution (`qt_family_for`/`qt_font_for`, `font_picker.py`) is shared with the picker's live preview. **Color List** (`window/color_list.py`) is the same idea for `color()`, but a dock like OpenSCAD's (`ColorListPane`, tabbed with the Customizer; a window until #766, which had to be closed before a copied colour could be pasted), listing all 1,097 names `color()` accepts (as OpenSCAD's `parse_color` and openscad_cpp_evaluator >= 1.29.0 read them) with a swatch, hex and `[r, g, b]`: the 147 CSS names of Qt's list (`color_names._PICKABLE_NAMES`, less `transparent`, whose swatch would be a lie) plus `rebeccapurple`, which Qt never adopted, and the 949 xkcd survey names as `xkcd:<name>` (`window/xkcd_colors.py`, generated from OpenSCAD's `XkcdColors.h`, as the evaluator's table is). **Sort by** Name (on the bare name, so `red` and `xkcd:red` sit together), Hue (30° hue bands, dark to light; a hueless grey counts as hue 0 -- Saturation is the sort that gathers the neutrals), Saturation (HSV -- HSL's rates near-whites fully saturated), Chroma (max − min of r, g, b), Lightness (HSL, (max + min) / 2), Value (HSV, max) or Luminance (WCAG relative luminance: how light it looks), low to high; ties fall back to hue. Filter by name or hex, and choose **Web colors**, **XKCD colors**, **All named colors** or one of your palettes in **Palette:**; **Insert** puts the selected colour in the editor (see Choose Color… above).
 
 **Welcome Screen** (`window/welcome.py`, OpenSCAD's LaunchingScreen) opens at startup when no file was named on the command line, **in place of** the main window, which appears only once Welcome is dismissed (any of its buttons, or its close box) or bypassed (a file opened from Finder or handed over by a second launch closes it; Open's file dialog, cancelled, leaves Welcome up; New goes to the main window's existing empty document): laid out like OpenSCAD's: the logo and name (the logo is secretly a live `Viewport`, axes and the perspective button off, Daylight Gem on the dialog's own background, drawing the icon's model from `resources/logo_mesh.npz` -- it looks like the picture until someone drags it; `scripts/make_icons.py` bakes that mesh with the icons, so showing it never runs the parser or evaluator, and falls back to `logo.png` if the file will not load), New / Open / Help (the wiki), the recent files and the bundled examples, each opened by a double-click or by selecting it and pressing Open Recent / Open Example (an example opens as an untitled copy, as File ▸ Examples does). The backdrop's curved sweep is painted in palette colours, so dark mode follows; only the buttons carry a fixed colour, the logo's green. Not modal, so the menu bar's shortcuts keep working. **Don't show again** clears preference `app/showWelcome`, also on the Editor tab; Help ▸ Welcome Screen… opens it either way. Never shown under `--testing`.
 
