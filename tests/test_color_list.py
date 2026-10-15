@@ -124,6 +124,7 @@ from belfryscad.window.color_list import ColorListPane
 t = ColorListPane(); t.resize(500, 400); t.show()
 t._search.setText("red")
 t.select("red")
+t._table.setFocus()       # the filter field has focus; an unfocused selection is white on Windows
 app.processEvents()
 table = t._table
 row = table.currentRow()
