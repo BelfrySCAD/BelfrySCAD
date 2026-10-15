@@ -165,9 +165,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.12"   # PySide6 for manylinux_2_28 stops at 6.9.3, which needs <3.14
 
-      - run: uv sync --frozen --python 3.14
+      - run: uv sync --frozen --python 3.12
 
       # briefcase 0.4.5 cannot build an AppImage at all right now: its
       # template's v0.4.5 branch reads cookiecutter.host_arch without
@@ -190,8 +190,8 @@ jobs:
       # time this step was written without it.
       - name: Build Linux AppImage
         run: |
-          uv run --no-sync --python 3.14 briefcase create linux appimage
-          uv run --no-sync --python 3.14 briefcase build linux appimage
+          uv run --no-sync --python 3.12 briefcase create linux appimage
+          uv run --no-sync --python 3.12 briefcase build linux appimage
 
       # briefcase hands linuxdeploy every folder in the AppDir containing a
       # .so, PySide6's among them, so all of Qt is copied into usr/lib beside
@@ -261,7 +261,7 @@ jobs:
               -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
 
       - name: Package Linux AppImage
-        run: uv run --no-sync --python 3.14 briefcase package linux appimage
+        run: uv run --no-sync --python 3.12 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

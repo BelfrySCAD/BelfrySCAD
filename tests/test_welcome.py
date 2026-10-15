@@ -5,6 +5,7 @@ The window is driven in a subprocess, since it needs a MainWindow and
 MainWindow needs GL.
 """
 import hashlib
+import os
 import json
 import subprocess
 import sys
@@ -62,6 +63,8 @@ print(json.dumps(out))
 ''', encoding="utf-8")  # the … in "Welcome Screen…"; Windows defaults to cp1252
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                              # Windows OpenSSL (Python 3.14) cannot start without it
+                              "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
                               "HOME": str(tmp_path),
                               # Path.home() on Windows reads USERPROFILE, not HOME
                               "USERPROFILE": str(tmp_path)})
@@ -144,6 +147,8 @@ print(json.dumps(out))
 ''', encoding="utf-8")
     res = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                          env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                              # Windows OpenSSL (Python 3.14) cannot start without it
+                              "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
                               "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)})
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout.strip().splitlines()[-1])
