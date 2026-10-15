@@ -220,3 +220,30 @@ def name_for(c: QColor) -> str | None:
 #: name -> packed rgb, for the reverse lookup `describe` does. Built once
 #: from Qt's own list, which is the same list `color_for_name` resolves.
 _NAMES = {n: QColor.fromString(n).rgb() for n in QColor.colorNames()}
+
+
+def insertion_for(selected: str, token: str) -> str:
+    """What double-clicking `token` (a name or `#rrggbb`) in the Color List
+    puts in place of the editor's `selected` text.
+
+    A colour vector stays a vector of 0..1 components, keeping its alpha if
+    it had one: `thecolor = [...]` may be fed to `concat()` or indexed
+    elsewhere, so turning it into a string could break the script.
+    Anything else -- a string literal, other text, nothing -- becomes the
+    quoted token.
+    """
+    old = looks_like_color_vector(selected.strip()[1:-1].split(",")) \
+        if selected.strip().startswith("[") else None
+    c = color_for_name(token)
+    if old is None or c is None:
+        return f'"{token}"'
+    comps = [c.redF(), c.greenF(), c.blueF()]
+    if selected.count(",") >= 3:
+        comps.append(old.alphaF())
+    return "[" + ", ".join(_component(v) for v in comps) + "]"
+
+
+def _component(v: float) -> str:
+    """0..1 to three decimals, without trailing zeros: 0.502, 1, 0."""
+    s = f"{v:.3f}".rstrip("0").rstrip(".")
+    return s or "0"

@@ -39,91 +39,103 @@ def test_format_round_trips():
 DRIVER = r'''
 import json, tempfile
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog
 app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
-from belfryscad.window import color_palettes
-from belfryscad.window.color_list import WEB, ColorTable
-from belfryscad.window.color_picker import ColorPickerDialog
+from belfryscad.window import color_list, color_palettes
+from belfryscad.window.color_list import EDIT_PALETTES, WEB, ColorListPane, PaletteListEditor
 color_palettes.save_palettes({"Shelf": [("Sunlu Cyan", "#0074c3"), ("Sunlu Magenta", "#c44188")]})
 out = {}
-t = ColorTable()
+t = ColorListPane()
 out["views"] = [t._view.itemText(i) for i in range(t._view.count())]
-# A literal not in the view last chosen opens on a view that lists it --
-# without making that view the remembered one.
-x = ColorPickerDialog('"xkcd:dark mint"', QColor("#48c072"))
-out["xkcd_literal"] = [x._colors._view.currentText(), x._colors.current_name(), color_palettes.last_view()]
 out["opens_on_web"] = t._view.currentText() == WEB
-out["remembered_on_open"] = color_palettes.last_view()
+out["buttons_off"] = not t._add_btn.isEnabled() and not t._remove_btn.isEnabled()
+# Choose Color... on a literal the view does not list switches to one that
+# does -- without making that view the remembered one.
+t.show_literal('"xkcd:dark mint"')
+out["xkcd_literal"] = [t._view.currentText(), t.current_name(), color_palettes.last_view()]
 t._view.setCurrentText("Shelf")
 out["rows"] = [r[0] for r in t._rows]
 out["remembered"] = color_palettes.last_view()
-t._table.setCurrentCell(0, 1)
-out["token"] = t.current_name()
-# The picker on a string literal: a palette colour is written as its hex,
-# and an existing literal of that colour selects its row.
-d = ColorPickerDialog('"#0074c3"', QColor("#0074c3"))
-out["picker_view"] = d._colors._view.currentText()
-out["picker_selected"] = d._colors.current_name()
-d._on_name("#c44188")
-out["literal"] = d.chosen_literal()
-v = ColorPickerDialog("[1, 0, 0]", QColor("red"))
-v._on_name("#0074c3")
-out["vector"] = v.chosen_literal()
-# The editor: a new palette, rows added, typed and pasted, a rename, all
-# saved together.
-from belfryscad.window.color_list import PaletteEditor
-e = PaletteEditor(color_palettes.load_palettes(), "Shelf")
-out["columns"] = [e._table.horizontalHeaderItem(i).text() for i in range(3)]
-out["shelf_rows"] = e._rows()
+out["buttons_on"] = t._add_btn.isEnabled() and t._remove_btn.isEnabled()
+# A palette colour's token is its hex; a hex literal finds it, and a vector
+# literal of the same colour does too.
+t._set_view(WEB)
+t.show_literal('"#0074c3"')
+out["hex_literal"] = [t._view.currentText(), t.current_name()]
+t._set_view(WEB)
+t.show_literal("[0, 0.455, 0.765]")
+out["vector_literal"] = t.current_name()
+# "Edit palette list..." is an action: the view stays where it was.
+opened = []
+t._edit_palette_list = lambda: opened.append(True)
+t._view.setCurrentText(EDIT_PALETTES)
+app.processEvents()
+out["edit_entry"] = [t._view.currentText(), opened, color_palettes.last_view()]
+# + asks for a colour and a name; - removes the selected row; Paste adds lines.
+QColorDialog.getColor = staticmethod(lambda *a, **k: QColor("#d4af37"))
+QInputDialog.getText = staticmethod(lambda *a, **k: ("Gold", True))
+t._add_color()
+out["added"] = [t._palettes["Shelf"][-1], t.current_name()]
+t.select("#0074c3")
+t._remove_color()
+t.paste_text("Silver  #c0c0c0\nnothing here\n")
+out["saved"] = color_palettes.load_palettes()["Shelf"]
+# Name and Hex are typed over in place; a hex it cannot read puts the old
+# value back. Only a palette's Name and Hex are editable.
+from PySide6.QtCore import Qt
+def row_of(hexa):
+    return next(r for r, row in enumerate(t._rows) if row[1] == hexa)
+t._table.item(row_of("#d4af37"), 1).setText("Old Gold")
+app.processEvents()
+t._table.item(row_of("#c0c0c0"), 2).setText("1, 2, 3")
+app.processEvents()
+t._table.item(row_of("#c44188"), 2).setText("not a colour")
+app.processEvents()
+QColorDialog.getColor = staticmethod(lambda *a, **k: QColor("#00ff00"))
+t._table.cellDoubleClicked.emit(row_of("#010203"), 0)      # the swatch: system panel
+app.processEvents()
+out["edited_selected"] = t.current_name()
+t._set_view(WEB)
+t._table.cellDoubleClicked.emit(0, 0)                      # not in a named view
+t._set_view("Shelf")
+out["edited"] = color_palettes.load_palettes()["Shelf"]
+editable = lambda r, c: bool(t._table.item(r, c).flags() & Qt.ItemFlag.ItemIsEditable)
+out["palette_editable"] = [editable(0, c) for c in range(4)]
+t._set_view(WEB)
+out["web_editable"] = [editable(0, c) for c in range(4)]
+# The palette list editor: new, rename, delete; colours are not its business.
+e = PaletteListEditor(color_palettes.load_palettes(), "Shelf")
 e._ask_name = lambda *a: "Silk"
 e._new()
-e._add()
-e._table.item(0, e.NAME).setText("Gold")
-e._table.item(0, e.HEX).setText("212, 175, 55")       # rgb, rewritten as hex
-out["normalised"] = e._table.item(0, e.HEX).text()
-out["swatch"] = e._table.item(0, e.SWATCH).background().color().name()
-e._add()
-e._table.item(1, e.NAME).setText("Broken")
-e._table.item(1, e.HEX).setText("#12")
-e.paste_text("Silver  #c0c0c0\nnothing here\n")
-out["paste_status"] = e._status.text()
-e._check()
-out["status"] = e._status.text()
 e._ask_name = lambda *a: "Silk PLA"
 e._rename()
-e._combo.setCurrentText("Shelf")
-out["shelf_kept"] = e._rows()[0]
-e._combo.setCurrentText("Silk PLA")
-out["silk_kept"] = [r[0] for r in e._rows()]
-e._save()
-out["saved"] = {k: v for k, v in e.palettes.items()}
+out["list"] = [e._list.item(i).text() for i in range(e._list.count())]
+out["current"] = e.current
+out["kept"] = e.palettes["Shelf"] == color_palettes.load_palettes()["Shelf"]
 print(json.dumps(out))
 '''
 
 
-def test_a_palette_is_listed_picked_as_hex_and_remembered(tmp_path):
+def test_palettes_are_listed_inserted_as_hex_and_edited_in_the_pane(tmp_path):
     proc = subprocess.run([sys.executable, "-c", DRIVER], capture_output=True, text=True,
                           env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=120)
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["views"] == ["Web colors", "XKCD colors", "All named colors", "", "Shelf"]
-    assert out["opens_on_web"] and out["remembered_on_open"] is None
+    assert out["views"] == ["Web colors", "XKCD colors", "All named colors", "", "Shelf", "",
+                            "Edit palette list…"]
+    assert out["opens_on_web"] and out["buttons_off"]
     assert out["xkcd_literal"] == ["XKCD colors", "xkcd:dark mint", None]
     assert sorted(out["rows"]) == ["Sunlu Cyan", "Sunlu Magenta"]
-    assert out["remembered"] == "Shelf"
-    assert out["token"] in ("#0074c3", "#c44188")
-    assert out["picker_view"] == "Shelf"
-    assert out["picker_selected"] == "#0074c3"
-    assert out["literal"] == '"#c44188"'
-    assert out["vector"] == "[0, 0.455, 0.765]"
-    assert out["columns"] == ["Name", "Hex", ""]
-    assert out["shelf_rows"] == [["Sunlu Cyan", "#0074c3"], ["Sunlu Magenta", "#c44188"]]
-    assert out["normalised"] == "#d4af37" and out["swatch"] == "#d4af37"
-    assert out["paste_status"] == "Pasted 1; no color on line 2 of the clipboard."
-    assert out["status"] == "2 colors; row 2 has no valid color and will be left out"
-    assert out["shelf_kept"] == ["Sunlu Cyan", "#0074c3"]
-    assert out["silk_kept"] == ["Gold", "Broken", "Silver"]
-    assert out["saved"] == {"Shelf": [["Sunlu Cyan", "#0074c3"], ["Sunlu Magenta", "#c44188"]],
-                            "Silk PLA": [["Gold", "#d4af37"], ["Silver", "#c0c0c0"]]}
+    assert out["remembered"] == "Shelf" and out["buttons_on"]
+    assert out["hex_literal"] == ["Shelf", "#0074c3"]
+    assert out["vector_literal"] == "#0074c3"
+    assert out["edit_entry"] == ["Shelf", [True], "Shelf"]
+    assert out["added"] == [["Gold", "#d4af37"], "#d4af37"]
+    assert out["saved"] == [["Sunlu Magenta", "#c44188"], ["Gold", "#d4af37"], ["Silver", "#c0c0c0"]]
+    assert out["edited"] == [["Sunlu Magenta", "#c44188"], ["Old Gold", "#d4af37"], ["Silver", "#00ff00"]]
+    assert out["edited_selected"] == "#00ff00"
+    assert out["palette_editable"] == [False, True, True, False]
+    assert out["web_editable"] == [False, False, False, False]
+    assert out["list"] == ["Shelf", "Silk PLA"] and out["current"] == "Silk PLA" and out["kept"]

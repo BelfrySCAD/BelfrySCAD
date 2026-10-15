@@ -2,7 +2,7 @@
 
 The GUI's copy of OpenSCAD's `parse_color` (ColorUtil.cc), which
 openscad_cpp_evaluator >= 1.29.0 follows too, so the editor's swatches, the
-colour picker and the Color List agree with what a render draws:
+Color List agree with what a render draws:
 
 - the CSS names: Qt's list plus `rebeccapurple`, which Qt never adopted, and
   `transparent` (black at alpha 0); case-insensitive;
@@ -11,7 +11,7 @@ colour picker and the Color List agree with what a render draws:
   and OpenSCAD write it. Qt's own `#aarrggbb` reads alpha first, so hex is
   parsed here rather than by `QColor.fromString`.
 
-`SORT_KEYS` are the orders the picker and the Color List both offer.
+`SORT_KEYS` are the orders the Color List offers.
 """
 from __future__ import annotations
 
