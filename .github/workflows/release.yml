@@ -31,9 +31,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - run: uv sync --frozen --python 3.12
+      - run: uv sync --frozen --python 3.14
 
       # briefcase installs the app's requirements into the EMBEDDED python
       # as wheels only -- it never compiles -- so a dependency with no
@@ -55,16 +55,16 @@ jobs:
       - name: Build the wheels that are not published for ARM64
         if: matrix.arch == 'arm64'
         run: |
-          uv run --python 3.12 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
+          uv run --python 3.14 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
 
       - name: Build Windows installer
         env:
           # Empty on x86_64, where every dependency has a wheel already.
           PIP_FIND_LINKS: ${{ matrix.arch == 'arm64' && format('{0}\wheelhouse', github.workspace) || '' }}
         run: |
-          uv run --python 3.12 briefcase create windows app
-          uv run --python 3.12 briefcase build windows app
-          uv run --python 3.12 briefcase package windows app
+          uv run --python 3.14 briefcase create windows app
+          uv run --python 3.14 briefcase build windows app
+          uv run --python 3.14 briefcase package windows app
 
       # briefcase names the msi without the architecture, so both legs
       # produce BelfrySCAD-<version>.msi. The release job downloads every
@@ -106,26 +106,26 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Show the toolchain
         run: |
           python -c "import platform; print('machine:', platform.machine()); print('compiler:', platform.python_compiler())"
           if (Test-Path "C:\Program Files\Microsoft Visual Studio") { Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Name }
 
-      - run: uv sync --frozen --python 3.12
+      - run: uv sync --frozen --python 3.14
 
       - name: Build the wheels that are not published for ARM64
         run: |
-          uv run --python 3.12 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
+          uv run --python 3.14 python -m pip wheel --no-deps -w wheelhouse moderngl glcontext setproctitle
 
       - name: Build Windows installer
         env:
           PIP_FIND_LINKS: ${{ github.workspace }}\wheelhouse
         run: |
-          uv run --python 3.12 briefcase create windows app
-          uv run --python 3.12 briefcase build windows app
-          uv run --python 3.12 briefcase package windows app
+          uv run --python 3.14 briefcase create windows app
+          uv run --python 3.14 briefcase build windows app
+          uv run --python 3.14 briefcase package windows app
 
       - name: Name the installer for its architecture
         shell: bash
@@ -165,9 +165,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - run: uv sync --frozen --python 3.12
+      - run: uv sync --frozen --python 3.14
 
       # briefcase 0.4.5 cannot build an AppImage at all right now: its
       # template's v0.4.5 branch reads cookiecutter.host_arch without
@@ -190,8 +190,8 @@ jobs:
       # time this step was written without it.
       - name: Build Linux AppImage
         run: |
-          uv run --no-sync --python 3.12 briefcase create linux appimage
-          uv run --no-sync --python 3.12 briefcase build linux appimage
+          uv run --no-sync --python 3.14 briefcase create linux appimage
+          uv run --no-sync --python 3.14 briefcase build linux appimage
 
       # briefcase hands linuxdeploy every folder in the AppDir containing a
       # .so, PySide6's among them, so all of Qt is copied into usr/lib beside
@@ -261,7 +261,7 @@ jobs:
               -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
 
       - name: Package Linux AppImage
-        run: uv run --no-sync --python 3.12 briefcase package linux appimage
+        run: uv run --no-sync --python 3.14 briefcase package linux appimage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -321,14 +321,14 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - run: uv sync --frozen --python 3.12
+      - run: uv sync --frozen --python 3.14
 
       - name: Build the Flatpak
         run: |
           set -euo pipefail
-          uv run --no-sync --python 3.12 briefcase create linux flatpak
+          uv run --no-sync --python 3.14 briefcase create linux flatpak
 
           # briefcase's Flatpak template overrides CC to gcc -- clang is not
           # in the SDK, and python-standalone is configured with it -- but
@@ -344,7 +344,7 @@ jobs:
           sed -i 's|CC="gcc -pthread" /app/bin/python3|CC="gcc -pthread" CXX="g++ -pthread" /app/bin/python3|' "$MANIFEST"
           grep -q 'CXX=' "$MANIFEST" || { echo "CXX patch did not apply"; exit 1; }
 
-          uv run --no-sync --python 3.12 briefcase build linux flatpak
+          uv run --no-sync --python 3.14 briefcase build linux flatpak
 
       # The same lesson the AppImage job learned the hard way in #430: a
       # build that succeeds proves nothing about a binary that starts. Run
@@ -371,7 +371,7 @@ jobs:
               -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
 
       - name: Package the Flatpak
-        run: uv run --no-sync --python 3.12 briefcase package linux flatpak
+        run: uv run --no-sync --python 3.14 briefcase package linux flatpak
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -390,7 +390,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
       - run: uv build
 
