@@ -149,7 +149,8 @@ class _AffineViewport(Viewport):
     shape has no other distinguishing features."""
 
     def __init__(self, matrix: list, parent=None):
-        super().__init__(parent, selectable=False, pan_speed=2.0)
+        super().__init__(parent, selectable=False, pan_speed=2.0,
+                         orientation_cube=len(matrix) != 3)
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.line_width = 2.0

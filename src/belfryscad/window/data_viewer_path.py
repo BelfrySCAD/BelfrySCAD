@@ -748,7 +748,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
     bezier_vertex_added = Signal(int, object)
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False, pan_speed=2.0)
+        super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=not is_2d)
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.line_width = 2.0
