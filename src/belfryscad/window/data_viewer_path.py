@@ -1311,25 +1311,14 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         correctly appends the new point at the end of the list rather
         than inserting before index 0. Right-clicking directly on a vertex
         instead offers "Delete Vertex" for that specific point."""
-        if not self._editable or self._context_menu_suppressed:
+        if self._context_menu_suppressed:
+            return
+        if not self._editable:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         pos = event.pos()
         vi = self._pick_vertex(pos.x(), pos.y())
         if vi >= 0:
-            # On macOS, contextMenuEvent fires on the right-button *press*,
-            # not after release (unlike a plain click) -- so this reset
-            # must happen only once we're sure a menu is actually about to
-            # show, right before QMenu.exec(). Resetting unconditionally at
-            # the top of this method (an earlier version of this fix) reset
-            # _last_mouse/_mouse_button on every right-click including
-            # blank-space ones that show no menu at all, which broke
-            # ordinary right-drag panning outright. Qt still doesn't
-            # reliably deliver this widget's own mouseReleaseEvent for a
-            # click that *does* open a menu (the popup's own event loop can
-            # swallow it), so the reset is still needed here -- just scoped
-            # to only the paths that actually call exec().
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             if self._bezier and vi % 3 == 0:
                 type_menu = menu.addMenu("Bezier Node Type")
@@ -1342,36 +1331,35 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                     action.setChecked(key == current)
                 menu.addSeparator()
             menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         n = len(self._path_pts)
         if n < 2:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         if self._bezier and n >= 4:
             picked = self._pick_bezier_segment_t(pos.x(), pos.y())
             if picked is None:
+                self._exec_menu(QMenu(self), event)   # the image's actions, if on it
                 return
             i0, t = picked
             new_pts = self._decasteljau_split_points(i0, t)
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Add Vertex", lambda: self.bezier_vertex_added.emit(i0, new_pts))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         seg_count = n if self._closed else n - 1
         segments = [(i, (i + 1) % n) for i in range(seg_count)]
         result = self._renderer.pick_nearest_segment(self._path_pts, segments, pos.x(), pos.y(), self.width(), self.height())
         if result is None:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         seg_idx, world_pt = result
         insert_after, _ = segments[seg_idx]
         x, y, z = float(world_pt[0]), float(world_pt[1]), float(world_pt[2])
-        self._last_mouse = None
-        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(insert_after, x, y, z))
-        menu.exec(event.globalPos())
+        self._exec_menu(menu, event)
 
     def _pick_bezier_segment_t(self, px: float, py: float) -> tuple[int, float] | None:
         """Pick against the *tessellated* bezier curve (not the straight

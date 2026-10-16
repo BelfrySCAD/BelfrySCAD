@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
-                               QPushButton, QSlider, QVBoxLayout)
+                               QMessageBox, QPushButton, QSlider, QVBoxLayout)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
 #: fraction of its width (from the left) and height (from the bottom).
@@ -131,6 +131,8 @@ class BackgroundImageViewportMixin:
     and can hand the next plain clicks' model points to a callback."""
 
     background: BackgroundImage | None = None
+    background_key = ""          # its _session key
+    background_listener = None   # called after the image is moved or scaled here
     _bg_prog = None
     _bg_vao = None
     _bg_tex = None
@@ -186,6 +188,93 @@ class BackgroundImageViewportMixin:
         fbo.depth_mask = True
         ctx.disable(mgl.BLEND)
 
+    def background_edited(self):
+        if self.background is not None and self.background_key:
+            _session[self.background_key] = replace(self.background)
+        if self.background_listener is not None:
+            self.background_listener()
+        self.update()
+
+    def _model_point(self, pos) -> tuple[float, float] | None:
+        o, d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        if abs(d[2]) < 1e-9:
+            return None
+        t = -o[2] / d[2]
+        return float(o[0] + t * d[0]), float(o[1] + t * d[1])
+
+    def _image_point(self, pos) -> tuple[float, float] | None:
+        """The model point under `pos` if it is on the shown image."""
+        bg = self.background
+        if bg is None or not bg.visible or not bg.path:
+            return None
+        pt = self._model_point(pos)
+        if pt is None:
+            return None
+        cx, cy = bg.center()
+        c, s = bg._rot()
+        dx, dy = pt[0] - cx, pt[1] - cy
+        if abs(c * dx + s * dy) <= bg.width / 2 and abs(c * dy - s * dx) <= bg.height / 2:
+            return pt
+        return None
+
+    def _exec_menu(self, menu, event):
+        """Show a context menu, with the image's own actions added when the
+        click is on it; nothing at all if that leaves the menu empty."""
+        pt = self._image_point(event.pos())
+        if pt is not None:
+            if not menu.isEmpty():
+                menu.addSeparator()
+            menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
+            menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
+        if menu.isEmpty():
+            return
+        # On macOS, contextMenuEvent fires on the right-button *press*,
+        # not after release (unlike a plain click) -- so this reset
+        # must happen only once we're sure a menu is actually about to
+        # show, right before QMenu.exec(), here. Resetting unconditionally at
+        # the top of contextMenuEvent (an earlier version of this fix) reset
+        # _last_mouse/_mouse_button on every right-click including
+        # blank-space ones that show no menu at all, which broke
+        # ordinary right-drag panning outright. Qt still doesn't
+        # reliably deliver this widget's own mouseReleaseEvent for a
+        # click that *does* open a menu (the popup's own event loop can
+        # swallow it), so the reset is still needed here -- just scoped
+        # to only the paths that actually call exec().
+        self._last_mouse = None
+        self._mouse_button = None
+        menu.exec(event.globalPos())
+
+    def _move_image_point(self, pt):
+        px, py = pt
+        text, ok = QInputDialog.getText(self, "Move Point To",
+                                        f"Point clicked: {px:.4g}, {py:.4g}\nMove it to (x, y):",
+                                        text="0, 0")
+        if not ok:
+            return
+        try:
+            tx, ty = (float(v) for v in text.replace("[", "").replace("]", "").split(","))
+        except ValueError:
+            return
+        self.background.x += tx - px
+        self.background.y += ty - py
+        self.background_edited()
+
+    def _scale_image_from(self, a):
+        self._show_delta("Click a second point on the image (Esc cancels)")
+        self.pick_points(1, lambda pts: self._finish_scale(a, pts[0]))
+
+    def _finish_scale(self, a, b):
+        measured = math.hypot(b[0] - a[0], b[1] - a[1])
+        if measured <= 0:
+            return
+        real, ok = QInputDialog.getDouble(
+            self, "Scale from Two Points",
+            f"The points are {measured:.4g} apart now. Real distance:",
+            measured, 1e-6, 1e6, 4)
+        if ok and real > 0:
+            self.background.scale_about(a[0], a[1], real / measured)
+            self.background_edited()
+
     def shape_bounds(self):
         """(min_x, min_y, max_x, max_y) of the shape, or None if empty."""
         pts = getattr(self, "_path_pts", None)
@@ -205,16 +294,21 @@ class BackgroundImageViewportMixin:
     def cancel_pick(self):
         self._bg_pick = None
         self.unsetCursor()
+        self._delta_label.hide()
+
+    def keyPressEvent(self, event):
+        if self._bg_pick is not None and event.key() == Qt.Key.Key_Escape:
+            self.cancel_pick()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
         if (self._bg_pick is not None and event.button() == Qt.MouseButton.LeftButton
                 and not event.modifiers()):
-            pos = event.position()
-            o, d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
-            if abs(d[2]) > 1e-9:
-                t = -o[2] / d[2]
+            pt = self._model_point(event.position())
+            if pt is not None:
                 n, got, callback = self._bg_pick
-                got.append((float(o[0] + t * d[0]), float(o[1] + t * d[1])))
+                got.append(pt)
                 if len(got) >= n:
                     self.cancel_pick()
                     callback(got)
@@ -232,7 +326,11 @@ class BackgroundImagePanel(QDialog):
         self.setWindowTitle("Background Image")
         self._key = key
         self._vp = viewport
-        self._bg = _session.get(key) or BackgroundImage()
+        # The viewport's own image, so its right-click tools and this
+        # panel edit one object.
+        self._bg = viewport.background or BackgroundImage()
+        viewport.background_key = key
+        viewport.background_listener = self._refresh
         self._updating = False
 
         form = QFormLayout()
@@ -307,20 +405,13 @@ class BackgroundImagePanel(QDialog):
         self._fit = menu.addAction("Fit to Shape", self._fit_to_shape)
         menu.aboutToShow.connect(self._name_shape_action)
         self._align_btn.setMenu(menu)
-        self._scale_btn = QPushButton("Scale from Two Points…")
-        self._scale_btn.setToolTip("Click two points on the image a known distance apart, "
-                                   "then enter that distance")
-        self._scale_btn.clicked.connect(self._start_two_point_scale)
-        self._move_btn = QPushButton("Move Point To…")
-        self._move_btn.setToolTip("Click a point on the image, then enter the "
-                                  "coordinates it should sit at")
-        self._move_btn.clicked.connect(self._start_move_point)
         tools_row.addWidget(self._align_btn)
-        tools_row.addWidget(self._scale_btn)
-        tools_row.addWidget(self._move_btn)
         tools_row.addStretch()
         form.addRow("", tools_row)
-        self._hint = QLabel()
+        self._hint = QLabel("Right-click the image to move a point of it to given "
+                            "coordinates, or to scale it from two points a known "
+                            "distance apart.")
+        self._hint.setWordWrap(True)
         form.addRow("", self._hint)
 
         layout = QVBoxLayout(self)
@@ -354,8 +445,7 @@ class BackgroundImagePanel(QDialog):
         self._height.setValue(bg.height)
         self._rotation.setValue(bg.rotation)
         for w in (self._clear_btn, self._visible, self._opacity, self._h, self._v, self._x,
-                  self._y, self._width, self._height, self._rotation, self._align_btn,
-                  self._scale_btn, self._move_btn):
+                  self._y, self._width, self._height, self._rotation, self._align_btn):
             w.setEnabled(has)
         self._updating = False
 
@@ -377,8 +467,8 @@ class BackgroundImagePanel(QDialog):
         self._apply()
 
     def _apply(self):
-        _session[self._key] = replace(self._bg)
         self._vp.set_background(self._bg)
+        self._vp.background_edited()
 
     # -- actions -----------------------------------------------------------
 
@@ -388,7 +478,7 @@ class BackgroundImagePanel(QDialog):
             return
         img = QImage(path)
         if img.isNull():
-            self._hint.setText("Not an image this build can read.")
+            QMessageBox.warning(self, "Background Image", "Not an image this build can read.")
             return
         first = not self._bg.path
         self._bg.path = path
@@ -398,7 +488,6 @@ class BackgroundImagePanel(QDialog):
             bounds = self._vp.shape_bounds()
             if bounds is not None:
                 self._bg.fit(bounds)
-        self._hint.setText("")
         self._refresh()
         self._apply()
 
@@ -407,7 +496,6 @@ class BackgroundImagePanel(QDialog):
         self._bg = BackgroundImage()
         _session.pop(self._key, None)
         self._vp.set_background(None)
-        self._hint.setText("")
         self._refresh()
 
     def _name_shape_action(self):
@@ -442,55 +530,14 @@ class BackgroundImagePanel(QDialog):
             self._refresh()
             self._apply()
 
-    def _start_two_point_scale(self):
-        self._hint.setText("Click the first point on the image, then the second.")
-        self._vp.pick_points(2, self._finish_two_point_scale)
-
-    def _finish_two_point_scale(self, pts):
-        (ax, ay), (bx, by) = pts
-        measured = math.hypot(bx - ax, by - ay)
-        self._hint.setText("")
-        if measured <= 0:
-            return
-        real, ok = QInputDialog.getDouble(
-            self, "Scale from Two Points",
-            f"The points are {measured:.4g} apart now. Real distance:",
-            measured, 1e-6, 1e6, 4)
-        if ok and real > 0:
-            self._bg.scale_about(ax, ay, real / measured)
-            self._refresh()
-            self._apply()
-
-    def _start_move_point(self):
-        self._hint.setText("Click the point on the image to move.")
-        self._vp.pick_points(1, self._finish_move_point)
-
-    def _finish_move_point(self, pts):
-        (px, py), = pts
-        self._hint.setText("")
-        text, ok = QInputDialog.getText(self, "Move Point To",
-                                        f"Point clicked: {px:.4g}, {py:.4g}\nMove it to (x, y):",
-                                        text="0, 0")
-        if not ok:
-            return
-        try:
-            tx, ty = (float(v) for v in text.replace("[", "").replace("]", "").split(","))
-        except ValueError:
-            self._hint.setText("Enter two numbers, x and y.")
-            return
-        self._bg.x += tx - px
-        self._bg.y += ty - py
-        self._refresh()
-        self._apply()
-
     def closeEvent(self, event):
         self._vp.cancel_pick()
-        self._hint.setText("")
         super().closeEvent(event)
 
 
 def restore_session_background(key: str, viewport):
     """Show the session's image for `key`, if there is one."""
+    viewport.background_key = key
     bg = _session.get(key)
     if bg is not None:
         viewport.set_background(replace(bg))

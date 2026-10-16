@@ -828,10 +828,11 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
           this is the only way to add one, placed wherever the user
           actually clicked rather than duplicating whatever path happens
           to be selected."""
-        if not self._editable or self._context_menu_suppressed:
+        if self._context_menu_suppressed:
             return
         pos = event.pos()
-        if self._pick_vertex(pos.x(), pos.y()) >= 0:
+        if not self._editable or self._pick_vertex(pos.x(), pos.y()) >= 0:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         segments = []
         for p in range(self._num_paths):
@@ -845,30 +846,18 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
             a, _ = segments[seg_idx]
             path_idx, insert_after = _grid_flat_to_rc(a, self._path_offsets)
             x, y = float(world_pt[0]), float(world_pt[1])
-            # See _PathViewport.contextMenuEvent -- must only reset the
-            # base Viewport's orbit/pan tracking once we're sure a menu is
-            # about to show (right before exec()), not unconditionally at
-            # the top of this method (an earlier version of this fix did
-            # that, which broke ordinary right-drag panning since
-            # contextMenuEvent fires on the right-button *press* on
-            # macOS -- before this method even knows whether a menu will
-            # end up showing).
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(path_idx, insert_after, x, y))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
         hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
         if hit is None:
             return
         x, y = float(hit[0]), float(hit[1])
-        self._last_mouse = None
-        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Path", lambda: self.add_path_requested.emit(x, y))
-        menu.exec(event.globalPos())
+        self._exec_menu(menu, event)
 
     def keyPressEvent(self, event):
         """Arrow keys nudge every selected vertex -- always the simple
