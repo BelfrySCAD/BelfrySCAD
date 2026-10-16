@@ -2069,6 +2069,13 @@ class SceneRenderer:
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
+            # A ghost face coplanar with a solid one (`%cube(10); cube(10);`)
+            # ties it in depth, and different triangulations break the tie
+            # differently pixel by pixel: Z-fighting. Pull ghosts towards the
+            # camera so they always win a tie and tint the face evenly, as
+            # they tint everything behind them.
+            self._ctx.polygon_offset = (-1.0, -1.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             for buf in bg_bufs:
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
@@ -2076,6 +2083,8 @@ class SceneRenderer:
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 self._prog["glass"].value = 0.0
                 buf.vao.render()
+            self._ctx.disable_direct(0x8037)
+            self._ctx.polygon_offset = (0.0, 0.0)
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
@@ -2096,6 +2105,10 @@ class SceneRenderer:
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
+            # Same depth tie as the ghost pass: `#` on a body coplanar with
+            # the model's faces.
+            self._ctx.polygon_offset = (-1.0, -1.0)
+            self._ctx.enable_direct(0x8037)  # GL_POLYGON_OFFSET_FILL
             for buf in hi_bufs:
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
@@ -2106,6 +2119,8 @@ class SceneRenderer:
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 self._prog["glass"].value = 0.0
                 buf.vao.render()
+            self._ctx.disable_direct(0x8037)
+            self._ctx.polygon_offset = (0.0, 0.0)
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
