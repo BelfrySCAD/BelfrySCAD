@@ -13,6 +13,9 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
+from belfryscad.window.background_image import (BackgroundImagePanel,
+                                                  BackgroundImageViewportMixin,
+                                                  restore_session_background)
 from belfryscad.window.viewport import Viewport, _key_nudge_delta, _key_nudge_magnitude
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _apply_click_selection,
@@ -165,6 +168,12 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         _size_combo_to_widest_item(self._fill_combo)
         self._fill_combo.currentIndexChanged.connect(self._rebuild)
         btn_row.addWidget(self._fill_combo)
+        # A reference image to trace over (#788), 2D only: it lies in XY.
+        self._bg_panel = None
+        bg_btn = QPushButton("Background…")
+        bg_btn.clicked.connect(self._show_background_panel)
+        btn_row.addWidget(bg_btn)
+        restore_session_background(self.windowTitle(), self._vp)
         btn_row.addSpacing(20)
         if editable:
             self._setup_undo(region_value)
@@ -192,6 +201,13 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
             self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
             self._vp.add_path_requested.connect(self._on_viewport_add_path_requested)
             self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
+
+    def _show_background_panel(self):
+        if self._bg_panel is None:
+            self._bg_panel = BackgroundImagePanel(self.windowTitle(), self._vp, self)
+        self._bg_panel.show()
+        self._bg_panel.raise_()
+        self._bg_panel.activateWindow()
 
     @staticmethod
     def _make_vert_table(path_pts: list, editable: bool = False) -> QTableWidget:
@@ -464,7 +480,7 @@ _REGION_PATH_COLORS = [
 ]
 
 
-class _RegionViewport(Viewport):
+class _RegionViewport(BackgroundImageViewportMixin, Viewport):
     """Viewport for region data -- always 2D/top-down-locked (no 3D mode,
     per BelfrySCAD's region semantics), each path drawn as its own closed
     line loop (cycling `_REGION_PATH_COLORS` so overlapping/nested paths
@@ -669,6 +685,7 @@ class _RegionViewport(Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
+        self._paint_background(mvp)
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
             cam = self._renderer.camera

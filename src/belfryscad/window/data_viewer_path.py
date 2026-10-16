@@ -13,6 +13,9 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad import nurbs
+from belfryscad.window.background_image import (BackgroundImagePanel,
+                                                  BackgroundImageViewportMixin,
+                                                  restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
@@ -383,6 +386,13 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._degree_spin.valueChanged.connect(self._rebuild)
         btn_row.addWidget(self._degree_spin)
         self._sync_degree_spin()
+        if self._is_2d:
+            # A reference image to trace over (#788), 2D only: it lies in XY.
+            self._bg_panel = None
+            bg_btn = QPushButton("Background…")
+            bg_btn.clicked.connect(self._show_background_panel)
+            btn_row.addWidget(bg_btn)
+            restore_session_background(self.windowTitle(), self._vp)
         if editable:
             btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
@@ -400,6 +410,13 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         layout.addLayout(btn_row)
 
         self._vp.schedule_load(self._do_initial_load)
+
+    def _show_background_panel(self):
+        if self._bg_panel is None:
+            self._bg_panel = BackgroundImagePanel(self.windowTitle(), self._vp, self)
+        self._bg_panel.show()
+        self._bg_panel.raise_()
+        self._bg_panel.activateWindow()
 
     @staticmethod
     def _make_vert_table(path_value: list, is_2d: bool, editable: bool = False) -> QTableWidget:
@@ -724,7 +741,7 @@ _NODE_TYPE_SHAPE_FN = {
 }
 
 
-class _PathViewport(Viewport):
+class _PathViewport(BackgroundImageViewportMixin, Viewport):
     """Viewport subclass with selectable vertex markers and hover tooltips."""
     vertex_clicked = Signal(int, str)  # (vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
@@ -1144,6 +1161,7 @@ class _PathViewport(Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
+        self._paint_background(mvp)
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
             cam = self._renderer.camera
