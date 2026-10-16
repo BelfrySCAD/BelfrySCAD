@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.76.1" date="2026-10-16">
+      <description>
+        <p>The orientation cube now appears in every 3D data viewer and editor, not only the main window.</p>
+      </description>
+    </release>
     <release version="1.76.0" date="2026-10-16">
       <description>
         <p>A background image to trace over in the 2D path and region editors, placed, scaled and rotated from the editor's right-click menu or by dragging its handles.</p>
