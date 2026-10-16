@@ -435,8 +435,12 @@ class BackgroundImageViewportMixin:
             return
         self._bg_adjusting = False
         self._bg_drag = None
-        self._bg_overlay.deleteLater()
-        self._bg_overlay = None
+        # Hidden now, not just deleted later: until the deferred delete
+        # runs, a scheduled-for-deletion widget is still drawn.
+        overlay, self._bg_overlay = self._bg_overlay, None
+        for w in (overlay._done, overlay):
+            w.hide()
+            w.deleteLater()
         self.unsetCursor()
         if hasattr(self, "set_show_unselected"):
             self.set_show_unselected(self._bg_markers_were_shown)
@@ -585,7 +589,6 @@ class _AdjustOverlay(QWidget):
         self._done.clicked.connect(vp.end_adjust)
         self._done.adjustSize()
         self._done.show()
-        self.destroyed.connect(self._done.deleteLater)
 
     def paintEvent(self, _event):
         vp = self._vp
