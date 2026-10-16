@@ -12,8 +12,8 @@ from dataclasses import dataclass, replace
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton, QSlider, QVBoxLayout)
+from PySide6.QtWidgets import (QDialog, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton, QVBoxLayout)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
 #: fraction of its width (from the left) and height (from the bottom).
@@ -42,7 +42,7 @@ class BackgroundImage:
     y: float = 0.0
     anchor: tuple[float, float] = (0.5, 0.5)
     rotation: float = 0.0      # degrees, counter-clockwise
-    opacity: float = 0.5
+    opacity: float = 0.5       # ponytail: fixed; a control for it was more UI than it earned
     visible: bool = True
 
     @property
@@ -227,7 +227,7 @@ class BackgroundImageViewportMixin:
         """Show a context menu, with the image's own actions added when the
         click is on it; nothing at all if that leaves the menu empty."""
         bg = self.background
-        if bg is not None and bg.visible and bg.path:
+        if bg is not None and bg.path:
             if not menu.isEmpty():
                 menu.addSeparator()
             pt = self._image_point(event.pos())
@@ -252,6 +252,8 @@ class BackgroundImageViewportMixin:
             for act in (on_shape, fit):
                 act.setEnabled(self.shape_bounds() is not None)
             menu.addSeparator()
+            menu.addAction("Show Background Image" if not bg.visible else "Hide Background Image",
+                           self._toggle_background)
             menu.addAction("Clear Background Image", self.clear_background)
         if menu.isEmpty():
             return
@@ -270,6 +272,10 @@ class BackgroundImageViewportMixin:
         self._last_mouse = None
         self._mouse_button = None
         menu.exec(event.globalPos())
+
+    def _toggle_background(self):
+        self.background.visible = not self.background.visible
+        self.background_edited()
 
     def clear_background(self):
         self.cancel_pick()
@@ -397,18 +403,6 @@ class BackgroundImagePanel(QDialog):
         file_row.addWidget(choose)
         form.addRow("Image:", file_row)
 
-        self._visible = QCheckBox("Show")
-        self._visible.toggled.connect(self._changed)
-        self._opacity = QSlider(Qt.Orientation.Horizontal)
-        self._opacity.setRange(5, 100)
-        self._opacity.valueChanged.connect(self._changed)
-        vis_row = QHBoxLayout()
-        vis_row.addWidget(self._visible)
-        vis_row.addSpacing(12)
-        vis_row.addWidget(QLabel("Opacity"))
-        vis_row.addWidget(self._opacity, 1)
-        form.addRow("", vis_row)
-
         def spin(lo, hi, decimals=3, suffix=""):
             sb = QDoubleSpinBox()
             sb.setRange(lo, hi)
@@ -443,8 +437,8 @@ class BackgroundImagePanel(QDialog):
         form.addRow("Width:", size_row)
 
         self._hint = QLabel("Right-click the image to change its anchor, align it, move "
-                            "a point of it to given coordinates, or scale it from two "
-                            "points a known distance apart.")
+                            "a point of it to given coordinates, scale it from two "
+                            "points a known distance apart, hide it or clear it.")
         self._hint.setWordWrap(True)
         form.addRow("", self._hint)
 
@@ -469,15 +463,13 @@ class BackgroundImagePanel(QDialog):
         has = bool(bg.path)
         self._file_label.setText(bg.path.rsplit("/", 1)[-1] if has else "None")
         self._file_label.setToolTip(bg.path)
-        self._visible.setChecked(bg.visible)
-        self._opacity.setValue(round(bg.opacity * 100))
         self._anchor_label.setText(anchor_name(bg.anchor))
         self._x.setValue(bg.x)
         self._y.setValue(bg.y)
         self._width.setValue(bg.width)
         self._height.setValue(bg.height)
         self._rotation.setValue(bg.rotation)
-        for w in (self._visible, self._opacity, self._x, self._y,
+        for w in (self._x, self._y,
                   self._width, self._height, self._rotation):
             w.setEnabled(has)
         self._updating = False
@@ -486,8 +478,6 @@ class BackgroundImagePanel(QDialog):
         if self._updating:
             return
         bg = self._bg
-        bg.visible = self._visible.isChecked()
-        bg.opacity = self._opacity.value() / 100
         bg.x, bg.y = self._x.value(), self._y.value()
         bg.rotation = self._rotation.value()
         # Width and height are one size: whichever was edited wins.
