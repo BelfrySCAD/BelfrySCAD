@@ -67,3 +67,13 @@ def test_dragging_the_image_moves_it():
     bg = _image()
     drag_image(bg, "move", None, replace(bg), (10, 10), (13, 6))
     assert (bg.x, bg.y, bg.width) == (3, -4, 40)
+
+
+def test_size_dialog_links_width_and_height():
+    from belfryscad.window.background_image import ImageSizeDialog
+    d = ImageSizeDialog(40, 0.5)
+    assert d._h.value() == pytest.approx(20)
+    d._h.setValue(30)
+    assert d.image_width() == pytest.approx(60)
+    d._w.setValue(10)
+    assert d._h.value() == pytest.approx(5)

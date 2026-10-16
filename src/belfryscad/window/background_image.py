@@ -12,8 +12,9 @@ from dataclasses import dataclass, replace
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
 from PySide6.QtGui import QAction, QBrush, QColor, QImage, QPainter, QPen
-from PySide6.QtWidgets import (QWidget, QFileDialog,
-                               QInputDialog, QMessageBox, QPushButton)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QInputDialog, QMessageBox, QPushButton,
+                               QWidget)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
 #: fraction of its width (from the left) and height (from the bottom).
@@ -264,6 +265,7 @@ class BackgroundImageViewportMixin:
             menu.addAction("Move BG Anchor to…", self._move_anchor)
             if pt is not None:
                 menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
+            menu.addAction("Set Image Size…", self._set_image_size)
             menu.addSeparator()
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
@@ -324,6 +326,15 @@ class BackgroundImageViewportMixin:
         bg.visible = True
         self.background = bg
         self.background_edited()
+
+    def _set_image_size(self):
+        """Width and height, linked by the image's proportions; it grows or
+        shrinks about its anchor."""
+        bg = self.background
+        size = ImageSizeDialog(bg.width, bg.aspect, self)
+        if size.exec() == QDialog.DialogCode.Accepted:
+            bg.width = size.image_width()
+            self.background_edited()
 
     def _toggle_background(self):
         self.background.visible = not self.background.visible
@@ -604,6 +615,41 @@ def drag_image(bg: BackgroundImage, mode: str, handle, start: BackgroundImage,
         swept = (math.atan2(m[1] - ay, m[0] - ax) - math.atan2(m0[1] - ay, m0[0] - ax))
         r = start.rotation + math.degrees(swept)
         bg.rotation = (r + 180.0) % 360.0 - 180.0
+
+
+class ImageSizeDialog(QDialog):
+    """Asks for the image's width or height; editing one updates the other."""
+
+    def __init__(self, width: float, aspect: float, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Set Image Size")
+        self._aspect = aspect
+        self._w, self._h = QDoubleSpinBox(), QDoubleSpinBox()
+        for sb in (self._w, self._h):
+            sb.setRange(1e-6, 1e6)
+            sb.setDecimals(3)
+        self._w.setValue(width)
+        self._h.setValue(width * aspect)
+        self._w.valueChanged.connect(lambda v: self._link(self._h, v * aspect))
+        self._h.valueChanged.connect(lambda v: self._link(self._w, v / aspect))
+        form = QFormLayout(self)
+        form.addRow("Width:", self._w)
+        form.addRow("Height:", self._h)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self._w.selectAll()
+
+    @staticmethod
+    def _link(other: QDoubleSpinBox, value: float):
+        other.blockSignals(True)
+        other.setValue(value)
+        other.blockSignals(False)
+
+    def image_width(self) -> float:
+        return self._w.value()
 
 
 class _AdjustOverlay(QWidget):
