@@ -256,8 +256,9 @@ class BackgroundImageViewportMixin:
             pt = self._image_point(event.pos())
             if pt is not None:
                 menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
-                menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
             menu.addAction("Move BG Anchor to…", self._move_anchor)
+            if pt is not None:
+                menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
                 if i and i % 3 == 0:
