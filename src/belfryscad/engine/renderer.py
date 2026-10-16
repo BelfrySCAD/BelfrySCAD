@@ -34,6 +34,8 @@ in vec3 in_normal;
 in vec4 in_vcolor;
 uniform mat4 mvp;
 uniform mat4 model;
+// Pulls a translucent pass towards the camera; see the `%` pass in paint().
+uniform float depth_bias;
 out vec3 v_normal;
 out vec3 v_world_pos;
 out vec4 v_vcolor;
@@ -43,6 +45,7 @@ void main() {
     v_normal = mat3(model) * in_normal;
     v_vcolor = in_vcolor;
     gl_Position = mvp * vec4(in_position, 1.0);
+    gl_Position.z -= depth_bias * gl_Position.w;
 }
 """
 
@@ -2069,6 +2072,13 @@ class SceneRenderer:
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
+            # A ghost face coplanar with a solid one (`%cube(10); cube(10);`)
+            # ties it in depth, and different triangulations break the tie
+            # differently pixel by pixel: Z-fighting. Pull ghosts towards the
+            # camera so they always win a tie and tint the face evenly, as
+            # they tint everything behind them. A shader bias, as the edges
+            # use: glPolygonOffset did nothing on CI's software GL.
+            self._prog["depth_bias"].value = 0.00001
             for buf in bg_bufs:
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
@@ -2076,6 +2086,7 @@ class SceneRenderer:
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 self._prog["glass"].value = 0.0
                 buf.vao.render()
+            self._prog["depth_bias"].value = 0.0
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)
@@ -2096,6 +2107,9 @@ class SceneRenderer:
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
             self._active_fbo.depth_mask = False
             self._ctx.enable(mgl.CULL_FACE)
+            # Same depth tie as the ghost pass: `#` on a body coplanar with
+            # the model's faces.
+            self._prog["depth_bias"].value = 0.00001
             for buf in hi_bufs:
                 self._prog["model"].write(model.T.tobytes())
                 self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
@@ -2106,6 +2120,7 @@ class SceneRenderer:
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 self._prog["glass"].value = 0.0
                 buf.vao.render()
+            self._prog["depth_bias"].value = 0.0
             self._ctx.disable(mgl.CULL_FACE)
             self._active_fbo.depth_mask = True
             self._ctx.disable(mgl.BLEND)

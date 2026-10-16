@@ -369,3 +369,22 @@ def test_no_scales_draws_no_tick_marks(tmp_path):
 
     assert marks("axes") == 0
     assert marks("axes,scales") > 0
+
+
+@needs_gl
+def test_ghost_face_coplanar_with_solid_does_not_z_fight(tmp_path):
+    """A `%` face lying on a solid one tints it evenly. The two are
+    triangulated differently, so without a depth bias each pixel's tie went
+    either way: Z-fighting."""
+    scad = tmp_path / "zf.scad"
+    scad.write_text("%cube(10, center=true);\n"
+                    "difference() { cube(10, center=true);\n"
+                    "  translate([3, 3, 0]) cylinder(r=1, h=12, center=true, $fn=12); }\n")
+    out = tmp_path / "zf.png"
+    assert render_png(str(scad), str(out), imgsize="300,300", camera="0,0,0,40,0,30,40",
+                      projection="ortho", colorscheme="Cornfield", quiet=True) == 0
+    w, h, px = _read_png(str(out))
+    # A patch of the top face clear of the hole. Edge-on to the eye, the tie
+    # broke differently along each row, in visible stripes.
+    greens = [_pixel(w, h, px, x, y)[1] for y in range(50, 120) for x in range(110, 180)]
+    assert max(greens) - min(greens) <= 4, (min(greens), max(greens))
