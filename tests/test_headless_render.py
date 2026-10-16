@@ -371,6 +371,7 @@ def test_no_scales_draws_no_tick_marks(tmp_path):
     assert marks("axes,scales") > 0
 
 
+@needs_gl
 def test_ghost_face_coplanar_with_solid_does_not_z_fight(tmp_path):
     """A `%` face lying on a solid one tints it evenly. The two are
     triangulated differently, so without a depth bias each pixel's tie went
