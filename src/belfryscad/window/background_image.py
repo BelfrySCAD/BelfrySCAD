@@ -236,6 +236,7 @@ class BackgroundImageViewportMixin:
                 menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
             # On every right-click, not only on the image: they are how to
             # get back an image moved out of view.
+            menu.addAction("Move BG Anchor to…", self._move_anchor)
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
                 if i and i % 3 == 0:
@@ -305,20 +306,34 @@ class BackgroundImageViewportMixin:
         self.background.fit(self.shape_bounds())
         self.background_edited()
 
-    def _move_image_point(self, pt):
-        px, py = pt
-        text, ok = QInputDialog.getText(self, "Move Point To",
-                                        f"Point clicked: {px:.4g}, {py:.4g}\nMove it to (x, y):",
-                                        text="0, 0")
+    def _ask_point(self, title: str, label: str, start: str = "0, 0"):
+        """(x, y) typed as `x, y` or `[x, y]`, or None if cancelled or not two numbers."""
+        text, ok = QInputDialog.getText(self, title, label, text=start)
         if not ok:
-            return
+            return None
         try:
             tx, ty = (float(v) for v in text.replace("[", "").replace("]", "").split(","))
         except ValueError:
-            return
-        self.background.x += tx - px
-        self.background.y += ty - py
-        self.background_edited()
+            return None
+        return tx, ty
+
+    def _move_image_point(self, pt):
+        px, py = pt
+        to = self._ask_point("Move Point To",
+                             f"Point clicked: {px:.4g}, {py:.4g}\nMove it to (x, y):")
+        if to is not None:
+            self.background.x += to[0] - px
+            self.background.y += to[1] - py
+            self.background_edited()
+
+    def _move_anchor(self):
+        bg = self.background
+        to = self._ask_point("Move BG Anchor To",
+                             f"Move the image's {anchor_name(bg.anchor).lower()} anchor to (x, y):",
+                             f"{bg.x:g}, {bg.y:g}")
+        if to is not None:
+            bg.x, bg.y = to
+            self.background_edited()
 
     def _scale_image_from(self, a):
         self._show_delta("Click a second point on the image (Esc cancels)")
