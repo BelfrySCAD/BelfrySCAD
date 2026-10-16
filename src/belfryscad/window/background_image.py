@@ -13,16 +13,13 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QPushButton,
-                               QSlider, QVBoxLayout)
+                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
+                               QPushButton, QSlider, QVBoxLayout)
 
-#: Which point of the image sits at (x, y), as fractions of its width and
-#: height measured from its bottom-left corner.
-ANCHORS = {
-    "Top Left": (0.0, 1.0), "Top": (0.5, 1.0), "Top Right": (1.0, 1.0),
-    "Left": (0.0, 0.5), "Center": (0.5, 0.5), "Right": (1.0, 0.5),
-    "Bottom Left": (0.0, 0.0), "Bottom": (0.5, 0.0), "Bottom Right": (1.0, 0.0),
-}
+#: The anchor's choices: which point of the image sits at (x, y), as a
+#: fraction of its width (from the left) and height (from the bottom).
+H_ANCHORS = {"Left": 0.0, "Center": 0.5, "Right": 1.0}
+V_ANCHORS = {"Top": 1.0, "Middle": 0.5, "Bottom": 0.0}
 
 _IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)"
 #: Bigger photos are scaled down to this before upload: past every GL's
@@ -37,7 +34,7 @@ class BackgroundImage:
     width: float = 100.0       # in model units
     x: float = 0.0             # where the anchor point sits
     y: float = 0.0
-    anchor: str = "Center"
+    anchor: tuple[float, float] = (0.5, 0.5)
     rotation: float = 0.0      # degrees, counter-clockwise
     opacity: float = 0.5
     visible: bool = True
@@ -52,7 +49,7 @@ class BackgroundImage:
 
     def center(self) -> tuple[float, float]:
         """The image's centre in model coordinates."""
-        fx, fy = ANCHORS[self.anchor]
+        fx, fy = self.anchor
         lx, ly = (fx - 0.5) * self.width, (fy - 0.5) * self.height
         c, s = self._rot()
         return self.x - (c * lx - s * ly), self.y - (s * lx + c * ly)
@@ -241,14 +238,13 @@ class BackgroundImagePanel(QDialog):
         form = QFormLayout()
         file_row = QHBoxLayout()
         self._file_label = QLabel()
-        self._file_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         choose = QPushButton("Choose…")
         choose.clicked.connect(self._choose)
-        clear = QPushButton("Clear")
-        clear.clicked.connect(self._clear)
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.clicked.connect(self._clear)
         file_row.addWidget(self._file_label, 1)
         file_row.addWidget(choose)
-        file_row.addWidget(clear)
+        file_row.addWidget(self._clear_btn)
         form.addRow("Image:", file_row)
 
         self._visible = QCheckBox("Show")
@@ -258,14 +254,10 @@ class BackgroundImagePanel(QDialog):
         self._opacity.valueChanged.connect(self._changed)
         vis_row = QHBoxLayout()
         vis_row.addWidget(self._visible)
+        vis_row.addSpacing(12)
         vis_row.addWidget(QLabel("Opacity"))
         vis_row.addWidget(self._opacity, 1)
         form.addRow("", vis_row)
-
-        self._anchor = QComboBox()
-        self._anchor.addItems(list(ANCHORS))
-        self._anchor.currentTextChanged.connect(self._anchor_changed)
-        form.addRow("Anchor:", self._anchor)
 
         def spin(lo, hi, decimals=3, suffix=""):
             sb = QDoubleSpinBox()
@@ -275,34 +267,46 @@ class BackgroundImagePanel(QDialog):
             sb.setKeyboardTracking(False)
             sb.valueChanged.connect(self._changed)
             return sb
-        self._x, self._y = spin(-1e6, 1e6), spin(-1e6, 1e6)
-        pos_row = QHBoxLayout()
-        pos_row.addWidget(QLabel("X"))
-        pos_row.addWidget(self._x, 1)
-        pos_row.addWidget(QLabel("Y"))
-        pos_row.addWidget(self._y, 1)
-        form.addRow("Anchor at:", pos_row)
 
-        self._width = spin(1e-6, 1e6)
-        self._height_label = QLabel()
+        # The image's anchor point, and where it sits. Changing either moves
+        # the image: "put its top-left corner at (0, 0)" is two picks.
+        self._h = QComboBox()
+        self._h.addItems(list(H_ANCHORS))
+        self._v = QComboBox()
+        self._v.addItems(list(V_ANCHORS))
+        for combo in (self._h, self._v):
+            combo.currentIndexChanged.connect(self._changed)
+        self._x, self._y = spin(-1e6, 1e6), spin(-1e6, 1e6)
+        anchor_row = QHBoxLayout()
+        anchor_row.addWidget(self._h)
+        anchor_row.addWidget(self._v)
+        anchor_row.addSpacing(12)
+        anchor_row.addWidget(QLabel("at X"))
+        anchor_row.addWidget(self._x, 1)
+        anchor_row.addWidget(QLabel("Y"))
+        anchor_row.addWidget(self._y, 1)
+        form.addRow("Anchor:", anchor_row)
+
+        self._width, self._height = spin(1e-6, 1e6), spin(1e-6, 1e6)
+        self._rotation = spin(-360.0, 360.0, 2, "°")
         size_row = QHBoxLayout()
         size_row.addWidget(self._width, 1)
-        size_row.addWidget(self._height_label)
+        size_row.addWidget(QLabel("Height"))
+        size_row.addWidget(self._height, 1)
+        size_row.addSpacing(12)
+        size_row.addWidget(QLabel("Rotation"))
+        size_row.addWidget(self._rotation, 1)
         form.addRow("Width:", size_row)
 
-        self._rotation = spin(-360.0, 360.0, 2, "°")
-        form.addRow("Rotation:", self._rotation)
-
-        align_row = QHBoxLayout()
-        for label, slot in (("Anchor at Origin", self._anchor_at_origin),
-                            ("Center on Shape", self._center_on_shape),
-                            ("Fit to Shape", self._fit_to_shape)):
-            b = QPushButton(label)
-            b.clicked.connect(slot)
-            align_row.addWidget(b)
-        form.addRow("Align:", align_row)
-
-        scale_row = QHBoxLayout()
+        tools_row = QHBoxLayout()
+        self._align_btn = QPushButton("Align")
+        menu = QMenu(self._align_btn)
+        self._to_origin = menu.addAction("Anchor to Origin", self._anchor_at_origin)
+        self._to_shape = menu.addAction("", self._anchor_on_shape)
+        menu.addSeparator()
+        self._fit = menu.addAction("Fit to Shape", self._fit_to_shape)
+        menu.aboutToShow.connect(self._name_shape_action)
+        self._align_btn.setMenu(menu)
         self._scale_btn = QPushButton("Scale from Two Points…")
         self._scale_btn.setToolTip("Click two points on the image a known distance apart, "
                                    "then enter that distance")
@@ -311,9 +315,11 @@ class BackgroundImagePanel(QDialog):
         self._move_btn.setToolTip("Click a point on the image, then enter the "
                                   "coordinates it should sit at")
         self._move_btn.clicked.connect(self._start_move_point)
-        scale_row.addWidget(self._scale_btn)
-        scale_row.addWidget(self._move_btn)
-        form.addRow("Calibrate:", scale_row)
+        tools_row.addWidget(self._align_btn)
+        tools_row.addWidget(self._scale_btn)
+        tools_row.addWidget(self._move_btn)
+        tools_row.addStretch()
+        form.addRow("", tools_row)
         self._hint = QLabel()
         form.addRow("", self._hint)
 
@@ -340,14 +346,16 @@ class BackgroundImagePanel(QDialog):
         self._file_label.setToolTip(bg.path)
         self._visible.setChecked(bg.visible)
         self._opacity.setValue(round(bg.opacity * 100))
-        self._anchor.setCurrentText(bg.anchor)
+        self._h.setCurrentIndex(list(H_ANCHORS.values()).index(bg.anchor[0]))
+        self._v.setCurrentIndex(list(V_ANCHORS.values()).index(bg.anchor[1]))
         self._x.setValue(bg.x)
         self._y.setValue(bg.y)
         self._width.setValue(bg.width)
+        self._height.setValue(bg.height)
         self._rotation.setValue(bg.rotation)
-        self._height_label.setText(f"Height: {bg.height:.3f}")
-        for w in (self._visible, self._opacity, self._anchor, self._x, self._y, self._width,
-                  self._rotation, self._scale_btn, self._move_btn):
+        for w in (self._clear_btn, self._visible, self._opacity, self._h, self._v, self._x,
+                  self._y, self._width, self._height, self._rotation, self._align_btn,
+                  self._scale_btn, self._move_btn):
             w.setEnabled(has)
         self._updating = False
 
@@ -357,27 +365,20 @@ class BackgroundImagePanel(QDialog):
         bg = self._bg
         bg.visible = self._visible.isChecked()
         bg.opacity = self._opacity.value() / 100
+        bg.anchor = (H_ANCHORS[self._h.currentText()], V_ANCHORS[self._v.currentText()])
         bg.x, bg.y = self._x.value(), self._y.value()
-        bg.width = self._width.value()
         bg.rotation = self._rotation.value()
-        self._height_label.setText(f"Height: {bg.height:.3f}")
+        # Width and height are one size: whichever was edited wins.
+        if self.sender() is self._height:
+            bg.width = self._height.value() / bg.aspect
+        else:
+            bg.width = self._width.value()
+        self._refresh()
         self._apply()
 
     def _apply(self):
         _session[self._key] = replace(self._bg)
         self._vp.set_background(self._bg)
-
-    def _anchor_changed(self, name: str):
-        """Changing the anchor keeps the image where it is: only which of
-        its points (x, y) names moves."""
-        if self._updating:
-            return
-        cx, cy = self._bg.center()
-        self._bg.anchor = name
-        self._bg.x = self._bg.y = 0.0
-        self._bg.place_center(cx, cy)
-        self._refresh()
-        self._apply()
 
     # -- actions -----------------------------------------------------------
 
@@ -409,15 +410,28 @@ class BackgroundImagePanel(QDialog):
         self._hint.setText("")
         self._refresh()
 
+    def _name_shape_action(self):
+        h, v = self._h.currentText(), self._v.currentText()
+        where = "Center" if (h, v) == ("Center", "Middle") else (
+            h if v == "Middle" else v if h == "Center" else f"{v} {h}")
+        self._to_shape.setText(f"Anchor to Shape's {where}")
+        has_shape = self._vp.shape_bounds() is not None
+        self._to_shape.setEnabled(has_shape)
+        self._fit.setEnabled(has_shape)
+
     def _anchor_at_origin(self):
         self._bg.x = self._bg.y = 0.0
         self._refresh()
         self._apply()
 
-    def _center_on_shape(self):
+    def _anchor_on_shape(self):
+        """Put the anchor on the same point of the shape's bounding box:
+        Top Left on its top-left corner, Center on its centre."""
         bounds = self._vp.shape_bounds()
         if bounds is not None:
-            self._bg.place_center((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
+            x0, y0, x1, y1 = bounds
+            fx, fy = self._bg.anchor
+            self._bg.x, self._bg.y = x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
             self._refresh()
             self._apply()
 
