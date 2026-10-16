@@ -11,9 +11,9 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen
-from PySide6.QtWidgets import (QDialog, QWidget, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton, QVBoxLayout)
+from PySide6.QtGui import QAction, QBrush, QColor, QImage, QPainter, QPen
+from PySide6.QtWidgets import (QWidget, QFileDialog,
+                               QInputDialog, QMessageBox, QPushButton)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
 #: fraction of its width (from the left) and height (from the bottom).
@@ -145,8 +145,7 @@ class BackgroundImageViewportMixin:
     and can hand the next plain clicks' model points to a callback."""
 
     background: BackgroundImage | None = None
-    background_key = ""          # its _session key
-    background_listener = None   # called after the image is moved or scaled here
+    background_key = ""          # its _session key; empty where there is no image to offer
     _bg_prog = None
     _bg_vao = None
     _bg_tex = None
@@ -215,8 +214,6 @@ class BackgroundImageViewportMixin:
     def background_edited(self):
         if self.background is not None and self.background_key:
             _session[self.background_key] = replace(self.background)
-        if self.background_listener is not None:
-            self.background_listener()
         self.update()
 
     def _model_point(self, pos) -> tuple[float, float] | None:
@@ -242,8 +239,16 @@ class BackgroundImageViewportMixin:
         return None
 
     def _exec_menu(self, menu, event):
-        """Show a context menu, with the image's own actions added when the
-        click is on it; nothing at all if that leaves the menu empty."""
+        """Show a context menu, with the background image's actions added:
+        Choose first, the rest after the editor's own. Nothing at all if that
+        leaves the menu empty."""
+        if self.background_key:
+            first = menu.actions()[0] if menu.actions() else None
+            choose = QAction("Choose BG Image…", menu)
+            choose.triggered.connect(self.choose_background)
+            menu.insertAction(first, choose)
+            if first is not None:
+                menu.insertSeparator(first)
         bg = self.background
         if bg is not None and bg.path:
             if not menu.isEmpty():
@@ -296,6 +301,29 @@ class BackgroundImageViewportMixin:
         self._last_mouse = None
         self._mouse_button = None
         menu.exec(event.globalPos())
+
+    def choose_background(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Background Image", "", _IMAGE_FILTER)
+        if not path:
+            return
+        img = QImage(path)
+        if img.isNull():
+            QMessageBox.warning(self, "Background Image", "Not an image this build can read.")
+            return
+        bg = self.background
+        if bg is None:
+            # A new image starts fitted to the shape; a replacement keeps
+            # the old one's place, size and rotation.
+            bg = BackgroundImage()
+            bounds = self.shape_bounds()
+            bg.aspect = img.height() / img.width()
+            if bounds is not None:
+                bg.fit(bounds)
+        bg.path = path
+        bg.aspect = img.height() / img.width()
+        bg.visible = True
+        self.background = bg
+        self.background_edited()
 
     def _toggle_background(self):
         self.background.visible = not self.background.visible
@@ -619,152 +647,9 @@ class _AdjustOverlay(QWidget):
         p.end()
 
 
-class BackgroundImagePanel(QDialog):
-    """Choose, place and scale an editor's background image."""
-
-    def __init__(self, key: str, viewport, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Background Image")
-        self._key = key
-        self._vp = viewport
-        # The viewport's own image, so its right-click tools and this
-        # panel edit one object.
-        self._bg = viewport.background or BackgroundImage()
-        viewport.background_key = key
-        viewport.background_listener = self._sync
-        self._updating = False
-
-        form = QFormLayout()
-        file_row = QHBoxLayout()
-        self._file_label = QLabel()
-        choose = QPushButton("Choose…")
-        choose.clicked.connect(self._choose)
-        file_row.addWidget(self._file_label, 1)
-        file_row.addWidget(choose)
-        form.addRow("Image:", file_row)
-
-        def spin(lo, hi, decimals=3, suffix=""):
-            sb = QDoubleSpinBox()
-            sb.setRange(lo, hi)
-            sb.setDecimals(decimals)
-            sb.setSuffix(suffix)
-            sb.setKeyboardTracking(False)
-            sb.valueChanged.connect(self._changed)
-            return sb
-
-        # Which point of the image is the anchor is chosen from the image's
-        # right-click menu; here is where it sits.
-        self._anchor_label = QLabel()
-        self._x, self._y = spin(-1e6, 1e6), spin(-1e6, 1e6)
-        anchor_row = QHBoxLayout()
-        anchor_row.addWidget(self._anchor_label)
-        anchor_row.addSpacing(12)
-        anchor_row.addWidget(QLabel("at X"))
-        anchor_row.addWidget(self._x, 1)
-        anchor_row.addWidget(QLabel("Y"))
-        anchor_row.addWidget(self._y, 1)
-        form.addRow("Anchor:", anchor_row)
-
-        self._width, self._height = spin(1e-6, 1e6), spin(1e-6, 1e6)
-        self._rotation = spin(-360.0, 360.0, 2, "°")
-        size_row = QHBoxLayout()
-        size_row.addWidget(self._width, 1)
-        size_row.addWidget(QLabel("Height"))
-        size_row.addWidget(self._height, 1)
-        size_row.addSpacing(12)
-        size_row.addWidget(QLabel("Rotation"))
-        size_row.addWidget(self._rotation, 1)
-        form.addRow("Width:", size_row)
-
-        self._hint = QLabel("Right-click the image to change its anchor, align it, move "
-                            "a point of it to given coordinates, scale it from two "
-                            "points a known distance apart, hide it or clear it.")
-        self._hint.setWordWrap(True)
-        form.addRow("", self._hint)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        close = QPushButton("Close")
-        close.clicked.connect(self.close)
-        bottom = QHBoxLayout()
-        bottom.addStretch()
-        bottom.addWidget(close)
-        layout.addLayout(bottom)
-
-        self._refresh()
-        if self._bg.path:
-            self._vp.set_background(self._bg)
-
-    # -- state <-> controls ------------------------------------------------
-
-    def _refresh(self):
-        bg = self._bg
-        self._updating = True
-        has = bool(bg.path)
-        self._file_label.setText(bg.path.rsplit("/", 1)[-1] if has else "None")
-        self._file_label.setToolTip(bg.path)
-        self._anchor_label.setText(anchor_name(bg.anchor))
-        self._x.setValue(bg.x)
-        self._y.setValue(bg.y)
-        self._width.setValue(bg.width)
-        self._height.setValue(bg.height)
-        self._rotation.setValue(bg.rotation)
-        for w in (self._x, self._y,
-                  self._width, self._height, self._rotation):
-            w.setEnabled(has)
-        self._updating = False
-
-    def _changed(self, *_):
-        if self._updating:
-            return
-        bg = self._bg
-        bg.x, bg.y = self._x.value(), self._y.value()
-        bg.rotation = self._rotation.value()
-        # Width and height are one size: whichever was edited wins.
-        if self.sender() is self._height:
-            bg.width = self._height.value() / bg.aspect
-        else:
-            bg.width = self._width.value()
-        self._refresh()
-        self._apply()
-
-    def _apply(self):
-        self._vp.set_background(self._bg)
-        self._vp.background_edited()
-
-    # -- actions -----------------------------------------------------------
-
-    def _choose(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Background Image", "", _IMAGE_FILTER)
-        if not path:
-            return
-        img = QImage(path)
-        if img.isNull():
-            QMessageBox.warning(self, "Background Image", "Not an image this build can read.")
-            return
-        first = not self._bg.path
-        self._bg.path = path
-        self._bg.aspect = img.height() / img.width()
-        self._bg.visible = True
-        if first:
-            bounds = self._vp.shape_bounds()
-            if bounds is not None:
-                self._bg.fit(bounds)
-        self._refresh()
-        self._apply()
-
-    def _sync(self):
-        """The viewport changed or cleared the image (its right-click menu)."""
-        self._bg = self._vp.background or BackgroundImage()
-        self._refresh()
-
-    def closeEvent(self, event):
-        self._vp.cancel_pick()
-        super().closeEvent(event)
-
-
 def restore_session_background(key: str, viewport):
-    """Show the session's image for `key`, if there is one."""
+    """Offer a background image in `viewport`'s context menu, filed under
+    `key`, and show the session's image for it, if there is one."""
     viewport.background_key = key
     bg = _session.get(key)
     if bg is not None:

@@ -13,8 +13,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad import nurbs
-from belfryscad.window.background_image import (BackgroundImagePanel,
-                                                  BackgroundImageViewportMixin,
+from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
@@ -388,10 +387,6 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._sync_degree_spin()
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
-            self._bg_panel = None
-            bg_btn = QPushButton("Background…")
-            bg_btn.clicked.connect(self._show_background_panel)
-            btn_row.addWidget(bg_btn)
             restore_session_background(self.windowTitle(), self._vp)
         if editable:
             btn_row.addLayout(self._make_reset_button_row())
@@ -410,13 +405,6 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         layout.addLayout(btn_row)
 
         self._vp.schedule_load(self._do_initial_load)
-
-    def _show_background_panel(self):
-        if self._bg_panel is None:
-            self._bg_panel = BackgroundImagePanel(self.windowTitle(), self._vp, self)
-        self._bg_panel.show()
-        self._bg_panel.raise_()
-        self._bg_panel.activateWindow()
 
     @staticmethod
     def _make_vert_table(path_value: list, is_2d: bool, editable: bool = False) -> QTableWidget:
