@@ -12,14 +12,20 @@ from dataclasses import dataclass, replace
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
-                               QMessageBox, QPushButton, QSlider, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton, QSlider, QVBoxLayout)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
 #: fraction of its width (from the left) and height (from the bottom).
-H_ANCHORS = {"Left": 0.0, "Center": 0.5, "Right": 1.0}
-V_ANCHORS = {"Top": 1.0, "Middle": 0.5, "Bottom": 0.0}
+ANCHORS = {
+    "Top Left": (0.0, 1.0), "Top": (0.5, 1.0), "Top Right": (1.0, 1.0),
+    "Left": (0.0, 0.5), "Center": (0.5, 0.5), "Right": (1.0, 0.5),
+    "Bottom Left": (0.0, 0.0), "Bottom": (0.5, 0.0), "Bottom Right": (1.0, 0.0),
+}
+
+
+def anchor_name(anchor) -> str:
+    return next(n for n, a in ANCHORS.items() if a == tuple(anchor))
 
 _IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)"
 #: Bigger photos are scaled down to this before upload: past every GL's
@@ -220,12 +226,31 @@ class BackgroundImageViewportMixin:
     def _exec_menu(self, menu, event):
         """Show a context menu, with the image's own actions added when the
         click is on it; nothing at all if that leaves the menu empty."""
-        pt = self._image_point(event.pos())
-        if pt is not None:
+        bg = self.background
+        if bg is not None and bg.visible and bg.path:
             if not menu.isEmpty():
                 menu.addSeparator()
-            menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
-            menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
+            pt = self._image_point(event.pos())
+            if pt is not None:
+                menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
+                menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
+            # On every right-click, not only on the image: they are how to
+            # get back an image moved out of view.
+            anchors = menu.addMenu("Image Anchor")
+            for i, (name, a) in enumerate(ANCHORS.items()):
+                if i and i % 3 == 0:
+                    anchors.addSeparator()
+                act = anchors.addAction(name, lambda a=a: self._set_anchor(a))
+                act.setCheckable(True)
+                act.setChecked(a == tuple(bg.anchor))
+            align = menu.addMenu("Align Image")
+            align.addAction("Anchor to Origin", self._anchor_to_origin)
+            on_shape = align.addAction(f"Anchor to Shape's {anchor_name(bg.anchor)}",
+                                       self._anchor_to_shape)
+            align.addSeparator()
+            fit = align.addAction("Fit to Shape", self._fit_to_shape)
+            for act in (on_shape, fit):
+                act.setEnabled(self.shape_bounds() is not None)
         if menu.isEmpty():
             return
         # On macOS, contextMenuEvent fires on the right-button *press*,
@@ -243,6 +268,28 @@ class BackgroundImageViewportMixin:
         self._last_mouse = None
         self._mouse_button = None
         menu.exec(event.globalPos())
+
+    def _set_anchor(self, anchor):
+        """Make another point of the image the anchor; the image moves so
+        that point sits at (x, y)."""
+        self.background.anchor = anchor
+        self.background_edited()
+
+    def _anchor_to_origin(self):
+        self.background.x = self.background.y = 0.0
+        self.background_edited()
+
+    def _anchor_to_shape(self):
+        """Put the anchor on the same point of the shape's bounding box:
+        Top Left on its top-left corner, Center on its centre."""
+        x0, y0, x1, y1 = self.shape_bounds()
+        fx, fy = self.background.anchor
+        self.background.x, self.background.y = x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
+        self.background_edited()
+
+    def _fit_to_shape(self):
+        self.background.fit(self.shape_bounds())
+        self.background_edited()
 
     def _move_image_point(self, pt):
         px, py = pt
@@ -366,18 +413,12 @@ class BackgroundImagePanel(QDialog):
             sb.valueChanged.connect(self._changed)
             return sb
 
-        # The image's anchor point, and where it sits. Changing either moves
-        # the image: "put its top-left corner at (0, 0)" is two picks.
-        self._h = QComboBox()
-        self._h.addItems(list(H_ANCHORS))
-        self._v = QComboBox()
-        self._v.addItems(list(V_ANCHORS))
-        for combo in (self._h, self._v):
-            combo.currentIndexChanged.connect(self._changed)
+        # Which point of the image is the anchor is chosen from the image's
+        # right-click menu; here is where it sits.
+        self._anchor_label = QLabel()
         self._x, self._y = spin(-1e6, 1e6), spin(-1e6, 1e6)
         anchor_row = QHBoxLayout()
-        anchor_row.addWidget(self._h)
-        anchor_row.addWidget(self._v)
+        anchor_row.addWidget(self._anchor_label)
         anchor_row.addSpacing(12)
         anchor_row.addWidget(QLabel("at X"))
         anchor_row.addWidget(self._x, 1)
@@ -396,21 +437,9 @@ class BackgroundImagePanel(QDialog):
         size_row.addWidget(self._rotation, 1)
         form.addRow("Width:", size_row)
 
-        tools_row = QHBoxLayout()
-        self._align_btn = QPushButton("Align")
-        menu = QMenu(self._align_btn)
-        self._to_origin = menu.addAction("Anchor to Origin", self._anchor_at_origin)
-        self._to_shape = menu.addAction("", self._anchor_on_shape)
-        menu.addSeparator()
-        self._fit = menu.addAction("Fit to Shape", self._fit_to_shape)
-        menu.aboutToShow.connect(self._name_shape_action)
-        self._align_btn.setMenu(menu)
-        tools_row.addWidget(self._align_btn)
-        tools_row.addStretch()
-        form.addRow("", tools_row)
-        self._hint = QLabel("Right-click the image to move a point of it to given "
-                            "coordinates, or to scale it from two points a known "
-                            "distance apart.")
+        self._hint = QLabel("Right-click the image to change its anchor, align it, move "
+                            "a point of it to given coordinates, or scale it from two "
+                            "points a known distance apart.")
         self._hint.setWordWrap(True)
         form.addRow("", self._hint)
 
@@ -437,15 +466,14 @@ class BackgroundImagePanel(QDialog):
         self._file_label.setToolTip(bg.path)
         self._visible.setChecked(bg.visible)
         self._opacity.setValue(round(bg.opacity * 100))
-        self._h.setCurrentIndex(list(H_ANCHORS.values()).index(bg.anchor[0]))
-        self._v.setCurrentIndex(list(V_ANCHORS.values()).index(bg.anchor[1]))
+        self._anchor_label.setText(anchor_name(bg.anchor))
         self._x.setValue(bg.x)
         self._y.setValue(bg.y)
         self._width.setValue(bg.width)
         self._height.setValue(bg.height)
         self._rotation.setValue(bg.rotation)
-        for w in (self._clear_btn, self._visible, self._opacity, self._h, self._v, self._x,
-                  self._y, self._width, self._height, self._rotation, self._align_btn):
+        for w in (self._clear_btn, self._visible, self._opacity, self._x, self._y,
+                  self._width, self._height, self._rotation):
             w.setEnabled(has)
         self._updating = False
 
@@ -455,7 +483,6 @@ class BackgroundImagePanel(QDialog):
         bg = self._bg
         bg.visible = self._visible.isChecked()
         bg.opacity = self._opacity.value() / 100
-        bg.anchor = (H_ANCHORS[self._h.currentText()], V_ANCHORS[self._v.currentText()])
         bg.x, bg.y = self._x.value(), self._y.value()
         bg.rotation = self._rotation.value()
         # Width and height are one size: whichever was edited wins.
@@ -497,38 +524,6 @@ class BackgroundImagePanel(QDialog):
         _session.pop(self._key, None)
         self._vp.set_background(None)
         self._refresh()
-
-    def _name_shape_action(self):
-        h, v = self._h.currentText(), self._v.currentText()
-        where = "Center" if (h, v) == ("Center", "Middle") else (
-            h if v == "Middle" else v if h == "Center" else f"{v} {h}")
-        self._to_shape.setText(f"Anchor to Shape's {where}")
-        has_shape = self._vp.shape_bounds() is not None
-        self._to_shape.setEnabled(has_shape)
-        self._fit.setEnabled(has_shape)
-
-    def _anchor_at_origin(self):
-        self._bg.x = self._bg.y = 0.0
-        self._refresh()
-        self._apply()
-
-    def _anchor_on_shape(self):
-        """Put the anchor on the same point of the shape's bounding box:
-        Top Left on its top-left corner, Center on its centre."""
-        bounds = self._vp.shape_bounds()
-        if bounds is not None:
-            x0, y0, x1, y1 = bounds
-            fx, fy = self._bg.anchor
-            self._bg.x, self._bg.y = x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
-            self._refresh()
-            self._apply()
-
-    def _fit_to_shape(self):
-        bounds = self._vp.shape_bounds()
-        if bounds is not None:
-            self._bg.fit(bounds)
-            self._refresh()
-            self._apply()
 
     def closeEvent(self, event):
         self._vp.cancel_pick()
