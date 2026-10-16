@@ -130,7 +130,7 @@ class _VNFViewport(Viewport):
     reverse_face_requested = Signal(int)
 
     def __init__(self, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False, pan_speed=2.0)
+        super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=True)
         self._renderer.camera.fov = 45.0
         self._renderer.depth_test_points = True
         self._editable = editable

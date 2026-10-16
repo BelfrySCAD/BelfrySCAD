@@ -446,8 +446,8 @@ class Viewport(QOpenGLWidget):
         # one being taken. Same treatment as the delta overlay.
         self._measure_labels: list = []
 
-        # Orientation cube (main window only -- the data-viewer subclasses
-        # embed small preview viewports where it would just be in the way).
+        # Orientation cube: the main window and every 3D data viewer; not a
+        # 2D one, whose view is locked top-down and must not be turned.
         # A plain child QWidget, so it never touches the GL context.
         self._orientation_cube = None
         self._view_anim = None      # in-flight orientation-cube view swing

@@ -750,7 +750,7 @@ class _GridViewport(Viewport):
     delete_column_requested = Signal(int)  # (flat index) -- right-click a vertex, editable only
 
     def __init__(self, grid_value: list, is_2d: bool, parent=None, editable: bool = False):
-        super().__init__(parent, selectable=False, pan_speed=2.0)
+        super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=not is_2d)
         #: How each quad splits into triangles -- see `_quad_triangles`.
         self.quad_style = "default"
         #: When set, only these vertex indices get a marker. A heightfield
