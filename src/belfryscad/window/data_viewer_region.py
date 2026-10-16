@@ -685,7 +685,8 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
-        self._paint_background(mvp)
+        if self._paint_background(mvp):
+            return   # adjusting the image: its handles, not the vertex markers
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
             cam = self._renderer.camera

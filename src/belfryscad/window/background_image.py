@@ -10,9 +10,9 @@ import math
 from dataclasses import dataclass, replace
 
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import (QDialog, QDoubleSpinBox, QFileDialog,
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen
+from PySide6.QtWidgets import (QDialog, QWidget, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton, QVBoxLayout)
 
 #: The anchor's choices: which point of the image sits at (x, y), as a
@@ -52,6 +52,14 @@ class BackgroundImage:
     def _rot(self):
         a = math.radians(self.rotation)
         return math.cos(a), math.sin(a)
+
+    def point_at(self, fx: float, fy: float) -> tuple[float, float]:
+        """The model point at fraction (fx, fy) of the image's width and
+        height from its bottom-left corner -- e.g. an anchor's handle."""
+        cx, cy = self.center()
+        lx, ly = (fx - 0.5) * self.width, (fy - 0.5) * self.height
+        c, s = self._rot()
+        return cx + c * lx - s * ly, cy + s * lx + c * ly
 
     def center(self) -> tuple[float, float]:
         """The image's centre in model coordinates."""
@@ -144,15 +152,24 @@ class BackgroundImageViewportMixin:
     _bg_tex = None
     _bg_tex_path = ""
     _bg_pick = None            # (points still wanted, collected, callback)
+    _bg_adjusting = False
+    _bg_overlay = None         # handles and the Done button, while adjusting
+    _bg_drag = None            # (mode, handle anchor, image at press, model point at press)
+    _bg_markers_were_shown = True
 
     def set_background(self, bg: BackgroundImage | None):
         self.background = bg
         self.update()
 
-    def _paint_background(self, mvp: np.ndarray):
+    def _paint_background(self, mvp: np.ndarray) -> bool:
+        """Draw the image. True while it is being adjusted: the caller then
+        leaves out its own vertex markers, which would hide the handles."""
+        if self._bg_overlay is not None:
+            self._bg_overlay.setGeometry(self.rect())
+            self._bg_overlay.update()
         bg = self.background
         if bg is None or not bg.visible or not bg.path:
-            return
+            return False
         import moderngl as mgl
         ctx = self._ctx
         if self._bg_prog is None:
@@ -174,7 +191,7 @@ class BackgroundImageViewportMixin:
                 self._bg_tex.build_mipmaps()
                 self._bg_tex.filter = (mgl.LINEAR_MIPMAP_LINEAR, mgl.LINEAR)
         if self._bg_tex is None:
-            return
+            return self._bg_adjusting
         c, s = bg._rot()
         prog = self._bg_prog
         prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
@@ -193,6 +210,7 @@ class BackgroundImageViewportMixin:
         self._bg_vao.render(mgl.TRIANGLE_STRIP)
         fbo.depth_mask = True
         ctx.disable(mgl.BLEND)
+        return self._bg_adjusting
 
     def background_edited(self):
         if self.background is not None and self.background_key:
@@ -236,6 +254,9 @@ class BackgroundImageViewportMixin:
                 menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
             # On every right-click, not only on the image: they are how to
             # get back an image moved out of view.
+            adjust = menu.addAction("Adjust BG Image…", self._toggle_adjust)
+            adjust.setCheckable(True)
+            adjust.setChecked(self._bg_adjusting)
             menu.addAction("Move BG Anchor to…", self._move_anchor)
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
@@ -280,6 +301,7 @@ class BackgroundImageViewportMixin:
 
     def clear_background(self):
         self.cancel_pick()
+        self.end_adjust()
         self.background = None
         _session.pop(self.background_key, None)
         self.background_edited()
@@ -376,7 +398,133 @@ class BackgroundImageViewportMixin:
         if self._bg_pick is not None and event.key() == Qt.Key.Key_Escape:
             self.cancel_pick()
             return
+        if self._bg_adjusting and event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return,
+                                                  Qt.Key.Key_Enter):
+            self.end_adjust()
+            return
         super().keyPressEvent(event)
+
+    # -- adjusting the image by its handles --------------------------------
+
+    def _toggle_adjust(self):
+        if self._bg_adjusting:
+            self.end_adjust()
+        else:
+            self.begin_adjust()
+
+    def begin_adjust(self):
+        """Show the image's nine handles and hide the vertex markers until
+        Done: drag a handle to resize about the anchor, Option-drag one to
+        rotate about it, drag the image itself to move it."""
+        if self.background is None or self._bg_adjusting:
+            return
+        self.cancel_pick()
+        self.background.visible = True
+        self._bg_adjusting = True
+        self._bg_markers_were_shown = getattr(self, "_show_unselected", True)
+        if hasattr(self, "set_show_unselected"):
+            self.set_show_unselected(False)
+        self._bg_overlay = _AdjustOverlay(self)
+        self._bg_overlay.setGeometry(self.rect())
+        self._bg_overlay.show()
+        self.setFocus()
+        self.background_edited()
+
+    def end_adjust(self):
+        if not self._bg_adjusting:
+            return
+        self._bg_adjusting = False
+        self._bg_drag = None
+        self._bg_overlay.deleteLater()
+        self._bg_overlay = None
+        self.unsetCursor()
+        if hasattr(self, "set_show_unselected"):
+            self.set_show_unselected(self._bg_markers_were_shown)
+        self.update()
+
+    def _screen_mvp(self) -> np.ndarray:
+        cam = self._renderer.camera
+        return cam.projection_matrix(self.width() / max(self.height(), 1)) @ cam.view_matrix()
+
+    def handle_positions(self) -> list[tuple[tuple[float, float], QPointF]]:
+        """(anchor, widget position) of each of the image's nine handles."""
+        from belfryscad.engine.renderer import _project_to_screen
+        bg, mvp = self.background, self._screen_mvp()
+        out = []
+        for a in ANCHORS.values():
+            x, y = bg.point_at(*a)
+            p = _project_to_screen(np.array([x, y, 0.0]), mvp, self.width(), self.height())
+            if p is not None:
+                out.append((a, QPointF(*p)))
+        return out
+
+    def _handle_at(self, pos):
+        best, dist = None, _HANDLE_REACH
+        for a, p in self.handle_positions():
+            d = math.hypot(p.x() - pos.x(), p.y() - pos.y())
+            if d <= dist:
+                best, dist = a, d
+        return best
+
+    def event(self, event):
+        # Ahead of the editor's own mouse handlers, which would otherwise
+        # select or drag the vertices hidden underneath.
+        if self._bg_adjusting and event.type() in (QEvent.Type.MouseButtonPress,
+                                                   QEvent.Type.MouseMove,
+                                                   QEvent.Type.MouseButtonRelease,
+                                                   QEvent.Type.MouseButtonDblClick):
+            if self._adjust_mouse(event):
+                return True
+        return super().event(event)
+
+    def _adjust_mouse(self, event) -> bool:
+        bg = self.background
+        pos = event.position()
+        t = event.type()
+        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            m = self._model_point(pos)
+            handle = self._handle_at(pos)
+            if m is None or (handle is None and self._image_point(pos) is None):
+                return False
+            if handle is None or handle == tuple(bg.anchor):
+                mode = "move"
+            elif event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                mode = "rotate"
+            else:
+                mode = "resize"
+            self._bg_drag = (mode, handle, replace(bg), m)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor if mode == "move"
+                           else Qt.CursorShape.CrossCursor)
+            return True
+        if t == QEvent.Type.MouseButtonDblClick:
+            return self._bg_drag is not None or self._image_point(pos) is not None
+        if self._bg_drag is None:
+            if t == QEvent.Type.MouseMove and not event.buttons():
+                self._hover_cursor(pos, event.modifiers())
+            return False
+        if t == QEvent.Type.MouseMove:
+            m = self._model_point(pos)
+            if m is not None:
+                drag_image(bg, *self._bg_drag, m)
+                self.background_edited()
+            return True
+        if t == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            self._bg_drag = None
+            self._hover_cursor(pos, event.modifiers())
+            self.background_edited()
+            return True
+        return False
+
+    def _hover_cursor(self, pos, modifiers):
+        handle = self._handle_at(pos)
+        if handle is not None and handle != tuple(self.background.anchor):
+            self.setCursor(Qt.CursorShape.PointingHandCursor
+                           if modifiers & Qt.KeyboardModifier.AltModifier
+                           else Qt.CursorShape.CrossCursor)
+        elif handle is not None or self._image_point(pos) is not None:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
 
     def mousePressEvent(self, event):
         if (self._bg_pick is not None and event.button() == Qt.MouseButton.LeftButton
@@ -392,6 +540,78 @@ class BackgroundImageViewportMixin:
             self._press_pos = None
             return
         super().mousePressEvent(event)
+
+
+#: How near, in pixels, a press must be to a handle to take it.
+_HANDLE_REACH = 9
+_HANDLE_SIZE = 9
+_ANCHOR_COLOR = QColor(255, 140, 0)
+
+
+def drag_image(bg: BackgroundImage, mode: str, handle, start: BackgroundImage,
+               m0: tuple[float, float], m: tuple[float, float]):
+    """Apply one step of a handle drag to `bg`, from the image as it was at
+    the press (`start`, `m0`) to the pointer's model point now (`m`).
+
+    move: shift by the pointer's travel. resize: scale about the anchor so
+    the handle follows the pointer along the line from the anchor through
+    it. rotate: turn about the anchor by the angle the pointer swept."""
+    ax, ay = start.x, start.y
+    if mode == "move":
+        bg.x, bg.y = ax + m[0] - m0[0], ay + m[1] - m0[1]
+    elif mode == "resize":
+        hx, hy = start.point_at(*handle)
+        dx, dy = hx - ax, hy - ay
+        d2 = dx * dx + dy * dy
+        if d2 > 0:
+            k = ((m[0] - ax) * dx + (m[1] - ay) * dy) / d2
+            bg.width = max(start.width * k, start.width * 1e-3)
+    elif mode == "rotate":
+        swept = (math.atan2(m[1] - ay, m[0] - ax) - math.atan2(m0[1] - ay, m0[0] - ax))
+        r = start.rotation + math.degrees(swept)
+        bg.rotation = (r + 180.0) % 360.0 - 180.0
+
+
+class _AdjustOverlay(QWidget):
+    """The image's outline and handles, and the Done button, over the
+    viewport. Clicks pass through to it, except on the button."""
+
+    def __init__(self, vp):
+        super().__init__(vp)
+        self._vp = vp
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._done = QPushButton("Done Adjusting", vp)
+        self._done.setToolTip("Stop adjusting the background image (Esc)")
+        self._done.clicked.connect(vp.end_adjust)
+        self._done.adjustSize()
+        self._done.show()
+        self.destroyed.connect(self._done.deleteLater)
+
+    def paintEvent(self, _event):
+        vp = self._vp
+        if vp.background is None:
+            return
+        self._done.move(vp.width() - self._done.width() - 10, 10)
+        self._done.raise_()
+        handles = dict(vp.handle_positions())
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        corners = [handles.get(ANCHORS[n]) for n in ("Top Left", "Top Right",
+                                                      "Bottom Right", "Bottom Left")]
+        if all(corners):
+            p.setPen(QPen(QColor(40, 40, 40), 1, Qt.PenStyle.DashLine))
+            p.drawPolygon(corners)
+        anchor = tuple(vp.background.anchor)
+        h = _HANDLE_SIZE
+        for a, pt in handles.items():
+            p.setPen(QPen(QColor(30, 30, 30), 1.5))
+            p.setBrush(QBrush(_ANCHOR_COLOR if a == anchor else QColor(255, 255, 255)))
+            rect = QRectF(pt.x() - h / 2, pt.y() - h / 2, h, h)
+            if a == anchor:
+                p.drawEllipse(rect.adjusted(-1.5, -1.5, 1.5, 1.5))
+            else:
+                p.drawRect(rect)
+        p.end()
 
 
 class BackgroundImagePanel(QDialog):

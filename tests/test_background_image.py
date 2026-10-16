@@ -32,3 +32,38 @@ def test_two_point_scale_keeps_the_first_point_still():
     bg = BackgroundImage(path="i.png", aspect=1, width=10, x=5, y=5, anchor=(0.5, 0.5))
     bg.scale_about(0, 0, 2)
     assert bg.width == 20 and bg.center() == pytest.approx((10, 10))
+
+
+def _image():
+    return BackgroundImage(path="i.png", aspect=0.5, width=40, x=0, y=0, anchor=(0, 0))
+
+
+def test_dragging_a_handle_resizes_about_the_anchor():
+    from dataclasses import replace
+    from belfryscad.window.background_image import drag_image
+    bg = _image()
+    start = replace(bg)
+    # The top-right handle, at (40, 20), dragged to (80, 40): twice the size.
+    drag_image(bg, "resize", (1, 1), start, (40, 20), (80, 40))
+    assert bg.width == pytest.approx(80) and (bg.x, bg.y) == (0, 0)
+    # The right-middle handle pulled straight up does not change the size.
+    bg = _image()
+    drag_image(bg, "resize", (1, 0.5), replace(bg), (40, 10), (40, 30))
+    assert bg.width == pytest.approx(40 * (40 * 40 + 10 * 30) / (40 * 40 + 10 * 10))
+
+
+def test_option_dragging_a_handle_rotates_about_the_anchor():
+    from dataclasses import replace
+    from belfryscad.window.background_image import drag_image
+    bg = _image()
+    drag_image(bg, "rotate", (1, 0), replace(bg), (40, 0), (0, 40))
+    assert bg.rotation == pytest.approx(90) and (bg.x, bg.y) == (0, 0)
+    assert bg.point_at(1, 0) == pytest.approx((0, 40))
+
+
+def test_dragging_the_image_moves_it():
+    from dataclasses import replace
+    from belfryscad.window.background_image import drag_image
+    bg = _image()
+    drag_image(bg, "move", None, replace(bg), (10, 10), (13, 6))
+    assert (bg.x, bg.y, bg.width) == (3, -4, 40)
