@@ -2230,8 +2230,10 @@ class SceneRenderer:
         minor_len_actual = tick_len * 0.5
         major_steps = max(1, round(major_spacing / minor_spacing))
 
+        # Ticks are scale markers, like the labels: NoScales / View ▸ Show
+        # Scale Markers hides both, leaving the bare axes (#777).
         k = 1
-        while True:
+        while self.show_scale_markers:
             t = k * minor_spacing
             if t > L * (1 + 1e-9):
                 break

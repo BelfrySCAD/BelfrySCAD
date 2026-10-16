@@ -346,6 +346,31 @@ def test_axis_labels_do_not_punch_holes_in_a_see_through_body(tmp_path):
     assert holes == 0, f"{holes} pixels of the see-through body were erased by labels"
 
 
+@needs_gl
+def test_no_scales_draws_no_tick_marks(tmp_path):
+    """Without `scales` (docsgen's NoScales) the axes are bare lines: no
+    tick marks either, not only no numbers (#777)."""
+    scad = tmp_path / "sq.scad"
+    scad.write_text("square(10, center=true);\n")
+    common = dict(imgsize="200,200", camera="0,0,0,0,0,0,60", projection="ortho",
+                  colorscheme="Cornfield", quiet=True)
+
+    def marks(view):
+        out = tmp_path / f"{view}.png"
+        assert render_png(str(scad), str(out), view=view, **common) == 0
+        w, h, px = _read_png(str(out))
+        bg = _pixel(w, h, px, 2, 2)[:3]
+        # Anything off the two axis lines and outside the square that is not
+        # background is a tick or a label.
+        return sum(1 for y in range(h) for x in range(w)
+                   if abs(x - w // 2) > 3 and abs(y - h // 2) > 3
+                   and not (w // 4 <= x <= 3 * w // 4 and h // 4 <= y <= 3 * h // 4)
+                   and any(abs(c - b) > 20 for c, b in zip(_pixel(w, h, px, x, y)[:3], bg)))
+
+    assert marks("axes") == 0
+    assert marks("axes,scales") > 0
+
+
 def test_ghost_face_coplanar_with_solid_does_not_z_fight(tmp_path):
     """A `%` face lying on a solid one tints it evenly. The two are
     triangulated differently, so without a depth bias each pixel's tie went
