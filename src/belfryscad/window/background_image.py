@@ -251,6 +251,8 @@ class BackgroundImageViewportMixin:
             fit = align.addAction("Fit to Shape", self._fit_to_shape)
             for act in (on_shape, fit):
                 act.setEnabled(self.shape_bounds() is not None)
+            menu.addSeparator()
+            menu.addAction("Clear Background Image", self.clear_background)
         if menu.isEmpty():
             return
         # On macOS, contextMenuEvent fires on the right-button *press*,
@@ -268,6 +270,12 @@ class BackgroundImageViewportMixin:
         self._last_mouse = None
         self._mouse_button = None
         menu.exec(event.globalPos())
+
+    def clear_background(self):
+        self.cancel_pick()
+        self.background = None
+        _session.pop(self.background_key, None)
+        self.background_edited()
 
     def _set_anchor(self, anchor):
         """Make another point of the image the anchor; the image moves so
@@ -377,7 +385,7 @@ class BackgroundImagePanel(QDialog):
         # panel edit one object.
         self._bg = viewport.background or BackgroundImage()
         viewport.background_key = key
-        viewport.background_listener = self._refresh
+        viewport.background_listener = self._sync
         self._updating = False
 
         form = QFormLayout()
@@ -385,11 +393,8 @@ class BackgroundImagePanel(QDialog):
         self._file_label = QLabel()
         choose = QPushButton("Choose…")
         choose.clicked.connect(self._choose)
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.clicked.connect(self._clear)
         file_row.addWidget(self._file_label, 1)
         file_row.addWidget(choose)
-        file_row.addWidget(self._clear_btn)
         form.addRow("Image:", file_row)
 
         self._visible = QCheckBox("Show")
@@ -472,7 +477,7 @@ class BackgroundImagePanel(QDialog):
         self._width.setValue(bg.width)
         self._height.setValue(bg.height)
         self._rotation.setValue(bg.rotation)
-        for w in (self._clear_btn, self._visible, self._opacity, self._x, self._y,
+        for w in (self._visible, self._opacity, self._x, self._y,
                   self._width, self._height, self._rotation):
             w.setEnabled(has)
         self._updating = False
@@ -518,11 +523,9 @@ class BackgroundImagePanel(QDialog):
         self._refresh()
         self._apply()
 
-    def _clear(self):
-        self._vp.cancel_pick()
-        self._bg = BackgroundImage()
-        _session.pop(self._key, None)
-        self._vp.set_background(None)
+    def _sync(self):
+        """The viewport changed or cleared the image (its right-click menu)."""
+        self._bg = self._vp.background or BackgroundImage()
         self._refresh()
 
     def closeEvent(self, event):
