@@ -28,3 +28,13 @@ def test_sigusr1_names_the_modal_while_idle():
     assert "SIGUSR1 state dump" in proc.stderr, proc.stderr[-2000:]
     assert "activeModalWidget=QDialog" in proc.stderr
     assert "modality=ApplicationModal" in proc.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no SIGUSR1 on Windows")
+def test_sigusr1_reports_exposure_and_recent_window_events():
+    proc = subprocess.run([sys.executable, "-c", DRIVER], capture_output=True, text=True,
+                          env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=60)
+    assert "exposed=True" in proc.stderr, proc.stderr[-2000:]
+    assert "screens: " in proc.stderr
+    assert "last input event: none" in proc.stderr
+    assert "Expose QWindow" in proc.stderr

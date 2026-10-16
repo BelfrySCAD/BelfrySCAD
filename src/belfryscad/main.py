@@ -475,8 +475,12 @@ def _describe_qt_state(app) -> str:
             return "None"
         g = w.geometry()
         screen = w.screen().name() if w.screen() else "?"
+        handle = w.windowHandle()
+        # A window Qt believes is occluded is never painted again until
+        # macOS says otherwise -- input then lands, but nothing shows it.
+        exposed = handle.isExposed() if handle is not None else "?"
         return (f"{type(w).__name__} {w.objectName()!r} {w.windowTitle()!r} "
-                f"modality={w.windowModality().name} visible={w.isVisible()} "
+                f"modality={w.windowModality().name} visible={w.isVisible()} exposed={exposed} "
                 f"minimized={w.isMinimized()} geom=({g.x()},{g.y()} {g.width()}x{g.height()}) "
                 f"screen={screen}")
     lines = [f"applicationState={app.applicationState().name}",
@@ -486,7 +490,53 @@ def _describe_qt_state(app) -> str:
              f"focusWidget={name(app.focusWidget())}",
              "visible top-level windows:"]
     lines += [f"  {name(w)}" for w in app.topLevelWidgets() if w.isVisible()]
+    lines.append("screens: " + ", ".join(
+        f"{s.name()} ({s.geometry().x()},{s.geometry().y()} "
+        f"{s.geometry().width()}x{s.geometry().height()})" for s in app.screens()))
+    log = getattr(app, "_state_log", None)
+    if log is not None:
+        lines.append(f"last input event: {log.last_input or 'none'}")
+        lines.append("recent window events:")
+        lines += [f"  {e}" for e in log.events]
     return "\n".join(lines) + "\n"
+
+
+class _StateLog:
+    """Times of the last input event and of recent exposure/activation
+    changes, for the SIGUSR1 dump: whether a frozen window is not getting
+    input, or is getting it and no longer drawing it (#703)."""
+    def __init__(self, app):
+        import collections
+        from PySide6.QtCore import QEvent, QObject
+        T = QEvent.Type
+        inputs = {T.MouseButtonPress, T.KeyPress, T.Wheel}
+        changes = {T.Expose, T.ApplicationStateChange, T.WindowActivate,
+                   T.WindowDeactivate, T.Show, T.Hide}
+        self.last_input = None
+        self.events = collections.deque(maxlen=40)
+        log = self
+
+        class Filter(QObject):
+            def eventFilter(self, obj, event):
+                t = event.type()
+                if t in inputs:
+                    log.last_input = f"{_now()} {t.name} on {type(obj).__name__}"
+                elif t in changes and obj.isWindowType():
+                    extra = f" exposed={obj.isExposed()}" if t == T.Expose else ""
+                    log.events.append(f"{_now()} {t.name} {type(obj).__name__} "
+                                      f"{obj.title()!r}{extra}")
+                elif t == T.ApplicationStateChange and obj is app:
+                    log.events.append(f"{_now()} {app.applicationState().name}")
+                return False
+        self._filter = Filter()
+        app.installEventFilter(self._filter)
+        for sig, what in ((app.screenAdded, "screen added"), (app.screenRemoved, "screen removed")):
+            sig.connect(lambda s, what=what: log.events.append(f"{_now()} {what}: {s.name()}"))
+
+
+def _now() -> str:
+    import datetime
+    return datetime.datetime.now().isoformat(timespec="seconds")
 
 
 def _install_state_dump(app):
@@ -511,6 +561,7 @@ def _install_state_dump(app):
                     faulthandler.dump_traceback(stream, all_threads=True)
                 except (OSError, ValueError, AttributeError):
                     pass    # e.g. stderr is os.devnull's wrapper without a usable fileno
+    app._state_log = _StateLog(app)
     signal.signal(signal.SIGUSR1, dump)
     # A Python signal handler only runs when Python code does; an idle Qt
     # loop runs none, so tick once a second to let it through.
