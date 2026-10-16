@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.75.2" date="2026-10-15">
+      <description>
+        <p>The diagnostic report for a window that stops responding now says whether the window is still being drawn and which input last reached it.</p>
+      </description>
+    </release>
     <release version="1.75.1" date="2026-10-15">
       <description>
         <p>Translucent % and # parts no longer flicker where they lie on a solid face, and turning axis scales off hides the tick marks as well as the numbers.</p>
