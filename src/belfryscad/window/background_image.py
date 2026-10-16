@@ -259,6 +259,7 @@ class BackgroundImageViewportMixin:
             menu.addAction("Move BG Anchor to…", self._move_anchor)
             if pt is not None:
                 menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
+            menu.addSeparator()
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
                 if i and i % 3 == 0:
