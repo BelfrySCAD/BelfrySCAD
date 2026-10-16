@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
+from belfryscad.window.background_image import (BackgroundImageViewportMixin,
+                                                  restore_session_background)
 from belfryscad.window.viewport import Viewport, _key_nudge_delta, _key_nudge_magnitude
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _apply_click_selection,
@@ -165,6 +167,8 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         _size_combo_to_widest_item(self._fill_combo)
         self._fill_combo.currentIndexChanged.connect(self._rebuild)
         btn_row.addWidget(self._fill_combo)
+        # A reference image to trace over (#788), 2D only: it lies in XY.
+        restore_session_background(self.windowTitle(), self._vp)
         btn_row.addSpacing(20)
         if editable:
             self._setup_undo(region_value)
@@ -464,7 +468,7 @@ _REGION_PATH_COLORS = [
 ]
 
 
-class _RegionViewport(Viewport):
+class _RegionViewport(BackgroundImageViewportMixin, Viewport):
     """Viewport for region data -- always 2D/top-down-locked (no 3D mode,
     per BelfrySCAD's region semantics), each path drawn as its own closed
     line loop (cycling `_REGION_PATH_COLORS` so overlapping/nested paths
@@ -669,6 +673,8 @@ class _RegionViewport(Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
+        if self._paint_background(mvp):
+            return   # adjusting the image: its handles, not the vertex markers
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
             cam = self._renderer.camera
@@ -811,10 +817,11 @@ class _RegionViewport(Viewport):
           this is the only way to add one, placed wherever the user
           actually clicked rather than duplicating whatever path happens
           to be selected."""
-        if not self._editable or self._context_menu_suppressed:
+        if self._context_menu_suppressed:
             return
         pos = event.pos()
-        if self._pick_vertex(pos.x(), pos.y()) >= 0:
+        if not self._editable or self._pick_vertex(pos.x(), pos.y()) >= 0:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         segments = []
         for p in range(self._num_paths):
@@ -828,30 +835,18 @@ class _RegionViewport(Viewport):
             a, _ = segments[seg_idx]
             path_idx, insert_after = _grid_flat_to_rc(a, self._path_offsets)
             x, y = float(world_pt[0]), float(world_pt[1])
-            # See _PathViewport.contextMenuEvent -- must only reset the
-            # base Viewport's orbit/pan tracking once we're sure a menu is
-            # about to show (right before exec()), not unconditionally at
-            # the top of this method (an earlier version of this fix did
-            # that, which broke ordinary right-drag panning since
-            # contextMenuEvent fires on the right-button *press* on
-            # macOS -- before this method even knows whether a menu will
-            # end up showing).
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(path_idx, insert_after, x, y))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
         hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
         if hit is None:
             return
         x, y = float(hit[0]), float(hit[1])
-        self._last_mouse = None
-        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Path", lambda: self.add_path_requested.emit(x, y))
-        menu.exec(event.globalPos())
+        self._exec_menu(menu, event)
 
     def keyPressEvent(self, event):
         """Arrow keys nudge every selected vertex -- always the simple

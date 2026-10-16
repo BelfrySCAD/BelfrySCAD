@@ -13,6 +13,8 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad import nurbs
+from belfryscad.window.background_image import (BackgroundImageViewportMixin,
+                                                  restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
@@ -383,6 +385,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._degree_spin.valueChanged.connect(self._rebuild)
         btn_row.addWidget(self._degree_spin)
         self._sync_degree_spin()
+        if self._is_2d:
+            # A reference image to trace over (#788), 2D only: it lies in XY.
+            restore_session_background(self.windowTitle(), self._vp)
         if editable:
             btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
@@ -724,7 +729,7 @@ _NODE_TYPE_SHAPE_FN = {
 }
 
 
-class _PathViewport(Viewport):
+class _PathViewport(BackgroundImageViewportMixin, Viewport):
     """Viewport subclass with selectable vertex markers and hover tooltips."""
     vertex_clicked = Signal(int, str)  # (vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode)
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
@@ -1144,6 +1149,8 @@ class _PathViewport(Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
+        if self._paint_background(mvp):
+            return   # adjusting the image: its handles, not the vertex markers
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
             cam = self._renderer.camera
@@ -1293,25 +1300,14 @@ class _PathViewport(Viewport):
         correctly appends the new point at the end of the list rather
         than inserting before index 0. Right-clicking directly on a vertex
         instead offers "Delete Vertex" for that specific point."""
-        if not self._editable or self._context_menu_suppressed:
+        if self._context_menu_suppressed:
+            return
+        if not self._editable:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         pos = event.pos()
         vi = self._pick_vertex(pos.x(), pos.y())
         if vi >= 0:
-            # On macOS, contextMenuEvent fires on the right-button *press*,
-            # not after release (unlike a plain click) -- so this reset
-            # must happen only once we're sure a menu is actually about to
-            # show, right before QMenu.exec(). Resetting unconditionally at
-            # the top of this method (an earlier version of this fix) reset
-            # _last_mouse/_mouse_button on every right-click including
-            # blank-space ones that show no menu at all, which broke
-            # ordinary right-drag panning outright. Qt still doesn't
-            # reliably deliver this widget's own mouseReleaseEvent for a
-            # click that *does* open a menu (the popup's own event loop can
-            # swallow it), so the reset is still needed here -- just scoped
-            # to only the paths that actually call exec().
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             if self._bezier and vi % 3 == 0:
                 type_menu = menu.addMenu("Bezier Node Type")
@@ -1324,36 +1320,35 @@ class _PathViewport(Viewport):
                     action.setChecked(key == current)
                 menu.addSeparator()
             menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         n = len(self._path_pts)
         if n < 2:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         if self._bezier and n >= 4:
             picked = self._pick_bezier_segment_t(pos.x(), pos.y())
             if picked is None:
+                self._exec_menu(QMenu(self), event)   # the image's actions, if on it
                 return
             i0, t = picked
             new_pts = self._decasteljau_split_points(i0, t)
-            self._last_mouse = None
-            self._mouse_button = None
             menu = QMenu(self)
             menu.addAction("Add Vertex", lambda: self.bezier_vertex_added.emit(i0, new_pts))
-            menu.exec(event.globalPos())
+            self._exec_menu(menu, event)
             return
         seg_count = n if self._closed else n - 1
         segments = [(i, (i + 1) % n) for i in range(seg_count)]
         result = self._renderer.pick_nearest_segment(self._path_pts, segments, pos.x(), pos.y(), self.width(), self.height())
         if result is None:
+            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
             return
         seg_idx, world_pt = result
         insert_after, _ = segments[seg_idx]
         x, y, z = float(world_pt[0]), float(world_pt[1]), float(world_pt[2])
-        self._last_mouse = None
-        self._mouse_button = None
         menu = QMenu(self)
         menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(insert_after, x, y, z))
-        menu.exec(event.globalPos())
+        self._exec_menu(menu, event)
 
     def _pick_bezier_segment_t(self, px: float, py: float) -> tuple[int, float] | None:
         """Pick against the *tessellated* bezier curve (not the straight
