@@ -248,15 +248,15 @@ class BackgroundImageViewportMixin:
         if bg is not None and bg.path:
             if not menu.isEmpty():
                 menu.addSeparator()
-            pt = self._image_point(event.pos())
-            if pt is not None:
-                menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
-                menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
-            # On every right-click, not only on the image: they are how to
+            # On every right-click, not only on the image: these are how to
             # get back an image moved out of view.
             adjust = menu.addAction("Adjust BG Image…", self._toggle_adjust)
             adjust.setCheckable(True)
             adjust.setChecked(self._bg_adjusting)
+            pt = self._image_point(event.pos())
+            if pt is not None:
+                menu.addAction("Move This Point To…", lambda: self._move_image_point(pt))
+                menu.addAction("Scale from This Point…", lambda: self._scale_image_from(pt))
             menu.addAction("Move BG Anchor to…", self._move_anchor)
             anchors = menu.addMenu("Image Anchor")
             for i, (name, a) in enumerate(ANCHORS.items()):
