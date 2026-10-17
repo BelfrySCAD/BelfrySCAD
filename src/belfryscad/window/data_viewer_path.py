@@ -23,7 +23,7 @@ from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _is_list, _is_numeric_point,
                                                   _lit_marker_triangles,
                                                   _marker_radius_for_point,
-                                                  _parse_number, _ray_plane_axis_locked,
+                                                  _bounds, _parse_number, _ray_plane_axis_locked,
                                                   _size_combo_to_widest_item,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window,
@@ -299,7 +299,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
     committed = Signal(str)
 
-    def __init__(self, title: str, path_value: list, parent=None, editable: bool = False):
+    def __init__(self, title: str, path_value: list, parent=None, editable: bool = False,
+                 is_2d: bool | None = None):
         super().__init__(parent)
         label = "Path Editor" if editable else "Path Viewer"
         self.setWindowTitle(f"{label}: {title}" if title else label)
@@ -307,7 +308,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
         self._editable = editable
         self._path = path_value
-        self._is_2d = all(len(p) == 2 for p in path_value)
+        # Given for a new, empty path, which has no points to tell from.
+        self._is_2d = all(len(p) == 2 for p in path_value) if is_2d is None else is_2d
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -328,6 +330,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._vp.vertex_drag_finished.connect(lambda: self._end_live_edit("Move Vertex"))
             self._vp.add_vertex_requested.connect(self._on_viewport_add_vertex_requested)
             self._vp.bezier_vertex_added.connect(self._on_viewport_bezier_vertex_added)
+            self._vp.vertices_appended.connect(self._on_viewport_vertices_appended)
             self._vp.delete_vertex_requested.connect(self._delete_vertex)
             self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
@@ -478,7 +481,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             rows = [vertex_idx]
         else:
             rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
-        if not rows or len(self._path) - len(rows) < 2:
+        if not rows:
             return
         if (self._mode() == "bezier" and len(rows) == 1
                 and rows[0] % 3 == 0 and len(self._path) >= 4):
@@ -588,7 +591,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
     def _apply_value(self, value):
         self._path = value
         self._populate_vert_table()
-        self._rebuild()
+        # Not refitted: an edit happens where the user is looking, and a
+        # path built point by point would otherwise jump on every click.
+        self._rebuild(reframe=False)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -646,6 +651,18 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         new_path.insert(insert_after + 1, new_pt)
         self._commit_value(new_path, "Add Vertex")
         self._vert_table.selectRow(insert_after + 1)
+
+    def _on_viewport_vertices_appended(self, new_pts: list):
+        """Right-click "Add Vertex" off the path: one point, or a Bezier
+        segment's three, appended as one undo step."""
+        new_path = copy.deepcopy(self._path)
+        new_path += [p[:2] if self._is_2d else p for p in new_pts]
+        self._commit_value(new_path, "Add Vertex")
+        last = len(new_path) - 1
+        self._vert_table.selectRow(last)
+        if self._mode() == "bezier" and last % 3 == 0:
+            self._vp.classify_single_node(last)
+            self._vp.refresh_markers()
 
     def _on_viewport_bezier_vertex_added(self, i0: int, new_pts: list):
         """Bezier-mode "Add Vertex" (`_PathViewport.contextMenuEvent`'s
@@ -746,6 +763,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
     # in place of its 2 old interior control points (see
     # _decasteljau_split_points/PathViewer._on_viewport_bezier_vertex_added)
     bezier_vertex_added = Signal(int, object)
+    vertices_appended = Signal(object)  # [[x, y, z], ...] -- right-click off the path, editable only
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=not is_2d)
@@ -858,7 +876,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 pts_3d.append([p[0], p[1], 0.0])
             else:
                 pts_3d.append([p[0], p[1], p[2]])
-        pts = np.array(pts_3d, dtype=np.float32)
+        pts = np.array(pts_3d, dtype=np.float32).reshape(-1, 3)
         self._path_pts = pts
         self._closed = closed
         # Auto-(re)classify node types only on the off->on transition --
@@ -871,8 +889,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             self._classify_all_node_types()
         self._bezier = bezier
 
-        bb_min = pts.min(axis=0)
-        bb_max = pts.max(axis=0)
+        bb_min, bb_max = _bounds(pts)
         self.frame_scene(bb_min, bb_max, reframe=reframe)
 
         line_color = np.array([0.0, 0.0, 0.0], dtype=np.float32)
@@ -928,7 +945,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 self._renderer.upload_lines(hdata)
         else:
             n = len(pts)
-            seg_count = n if closed else n - 1
+            seg_count = n if closed else max(n - 1, 0)
             line_data = np.empty((seg_count * 2, 6), dtype=np.float32)
             for i in range(seg_count):
                 j = (i + 1) % n
@@ -1216,7 +1233,6 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._context_menu_suppressed = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
-                and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
                 and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
@@ -1270,10 +1286,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             self._delta_label.hide()
             self.vertex_drag_finished.emit()
             if not moved:
-                # Cmd was held at press time (the only way _drag_vertex_idx
-                # gets armed) but nothing actually moved -- toggle, not a
-                # plain click.
-                self.vertex_clicked.emit(vi, "toggle")
+                # Pressed on a vertex without moving it: a click.
+                self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
@@ -1324,12 +1338,12 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             return
         n = len(self._path_pts)
         if n < 2:
-            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
+            self._exec_menu(self._append_menu(pos), event)
             return
         if self._bezier and n >= 4:
             picked = self._pick_bezier_segment_t(pos.x(), pos.y())
             if picked is None:
-                self._exec_menu(QMenu(self), event)   # the image's actions, if on it
+                self._exec_menu(self._append_menu(pos), event)
                 return
             i0, t = picked
             new_pts = self._decasteljau_split_points(i0, t)
@@ -1341,7 +1355,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         segments = [(i, (i + 1) % n) for i in range(seg_count)]
         result = self._renderer.pick_nearest_segment(self._path_pts, segments, pos.x(), pos.y(), self.width(), self.height())
         if result is None:
-            self._exec_menu(QMenu(self), event)   # the image's actions, if on it
+            self._exec_menu(self._append_menu(pos), event)
             return
         seg_idx, world_pt = result
         insert_after, _ = segments[seg_idx]
@@ -1349,6 +1363,31 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         menu = QMenu(self)
         menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(insert_after, x, y, z))
         self._exec_menu(menu, event)
+
+    def _append_menu(self, pos) -> QMenu:
+        """Off the path: "Add Vertex" appends a point where clicked -- how
+        a new, empty path is built. In 2D it lies in XY; in 3D, on the plane
+        facing the view through the last point (the origin for the first).
+        In Bezier mode a new segment is three points, so the two control
+        points go in a straight line between the last point and the click."""
+        menu = QMenu(self)
+        if self._is_2d:
+            axis, through = 2, np.zeros(3, dtype=np.float32)
+        else:
+            axis = _view_locked_axis(self._renderer.camera)
+            through = (self._path_pts[-1] if len(self._path_pts)
+                       else np.zeros(3, dtype=np.float32))
+        ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        hit = _ray_plane_axis_locked(ray_o, ray_d, through, axis)
+        if hit is not None:
+            hit = np.asarray(hit, dtype=np.float64)
+            new = [hit]
+            if self._bezier and len(self._path_pts):
+                a = self._path_pts[-1].astype(np.float64)
+                new = [a + (hit - a) / 3, a + (hit - a) * 2 / 3, hit]
+            new = [[round(float(c), 3) for c in p] for p in new]
+            menu.addAction("Add Vertex", lambda: self.vertices_appended.emit(new))
+        return menu
 
     def _pick_bezier_segment_t(self, px: float, py: float) -> tuple[int, float] | None:
         """Pick against the *tessellated* bezier curve (not the straight

@@ -3162,6 +3162,10 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
             # the call-site detector does not match.
             assert seed and len(seed[0]) == 2
             continue
+        if shape in ("path", "region"):
+            # Start empty on purpose: the editor builds them point by point.
+            assert not any(seed), f"{label} seed should be empty"
+            continue
         assert predicates[shape](seed), f"{label} seed rejected by _is_{shape}"
 
     # Every editable shape is offered, or a type is silently uncreatable.

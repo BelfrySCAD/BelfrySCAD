@@ -524,8 +524,8 @@ def _lock_parent_editor_while_open(dlg, parent):
     dlg.finished.connect(lambda _result=0: parent.setReadOnly(False))
 
 
-def _open_path_editor(title: str, value: list, on_commit, parent=None):
-    dlg = PathViewer(title, value, parent, editable=True)
+def _open_path_editor(title: str, value: list, on_commit, parent=None, is_2d=None):
+    dlg = PathViewer(title, value, parent, editable=True, is_2d=is_2d)
     dlg.committed.connect(on_commit)
     _lock_parent_editor_while_open(dlg, parent)
     dlg.show()
@@ -657,19 +657,16 @@ _EMPTY_ASSIGNMENT_RE = re.compile(
 #: `(label, shape, opener, seed)` for every editable shape, offered by
 #: `build_new_literal_menu`.
 #:
-#: A literal being *created* has no source text to parse, and every editor is
-#: built to edit an existing value rather than to start from nothing — so each
-#: seed is the smallest value its own `_is_*` predicate already accepts. That
-#: is deliberately the acceptance threshold and not something prettier: it
-#: guarantees what the editor writes back is immediately re-editable through
-#: "Edit as...", which a degenerate seed (an empty path, a 1x1 heightfield, an
-#: `object()` with no entries) is not.
+#: Paths and regions start empty: their editors build them a point at a time,
+#: right-click "Add Vertex" appending where clicked. Every other editor edits
+#: an existing value's structure rather than growing one (a VNF's faces, a
+#: grid's rows), so its seed is the smallest value its own `_is_*` predicate
+#: accepts, which keeps what it writes back re-editable through "Edit as...".
 _NEW_LITERAL_SEEDS = [
     ("Object", "object", lambda *a: _open_object_editor(*a), [("key", 0)]),
-    ("Path", "path", lambda *a: _open_path_editor(*a),
-     [[0, 0], [10, 0], [10, 10]]),
-    ("Region", "region", lambda *a: _open_region_editor(*a),
-     [[[0, 0], [10, 0], [10, 10], [0, 10]]]),
+    ("2D Path", "path", lambda *a: _open_path_editor(*a, is_2d=True), []),
+    ("3D Path", "path", lambda *a: _open_path_editor(*a, is_2d=False), []),
+    ("Region", "region", lambda *a: _open_region_editor(*a), [[]]),
     ("Grid", "grid", lambda *a: _open_grid_editor(*a),
      [[[0, 0, 0], [10, 0, 0]], [[0, 10, 0], [10, 10, 0]]]),
     ("Heightfield", "heightfield", lambda *a: _open_heightfield_editor(*a),

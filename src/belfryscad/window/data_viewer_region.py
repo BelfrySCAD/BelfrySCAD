@@ -25,7 +25,7 @@ from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _lit_marker_triangles,
                                                   _marker_radii_for_points,
                                                   _marker_radius_for_point,
-                                                  _parse_number, _ray_plane_axis_locked,
+                                                  _bounds, _parse_number, _ray_plane_axis_locked,
                                                   _size_combo_to_widest_item,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window,
@@ -63,6 +63,9 @@ def _region_fill_mesh(paths: list) -> tuple[np.ndarray, np.ndarray] | None:
     in the main viewport), and read the resulting `Manifold`'s mesh back
     as flat (Z=0) triangles. Returns `None` if the paths enclose no area
     (e.g. degenerate/self-cancelling input)."""
+    paths = [p for p in paths if len(p) >= 3]   # a path still being built has no area
+    if not paths:
+        return None
     section = m3d.CrossSection([np.array(p, dtype=np.float64) for p in paths], m3d.FillRule.EvenOdd)
     manifold = m3d.Manifold.extrude(section, 1e-3)
     mesh = manifold.to_mesh()
@@ -292,7 +295,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         position, so the natural place to add one is wherever the user
         right-clicked in the viewport (see `_RegionViewport.
         contextMenuEvent`), not a table-context-menu action."""
-        half = _marker_radius_for_point(self._vp, np.array([x, y, 0.0])) * 8
+        half = _marker_radius_for_point(self._vp, np.array([x, y, 0.0])) * 11
         new_path = [[x - half, y - half], [x + half, y - half],
                     [x + half, y + half], [x - half, y + half]]
         new_region = copy.deepcopy(self._region)
@@ -367,7 +370,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         `_delete_path`."""
         path_idx = self._path_combo.currentIndex()
         path = self._region[path_idx]
-        if len(path) - 1 < 3:
+        if not path:
             return
         new_region = copy.deepcopy(self._region)
         del new_region[path_idx][vertex_idx]
@@ -442,7 +445,8 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         self._path_combo.setCurrentIndex(path_idx)
         self._path_combo.blockSignals(False)
         self._on_path_changed(path_idx)
-        self._rebuild()
+        # Not refitted: see PathViewer._apply_value.
+        self._rebuild(reframe=False)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         path_idx = self._path_combo.currentIndex()
@@ -535,12 +539,11 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
         self._release_sel_markers()
 
         pts_3d = [[p[0], p[1], 0.0] for path in region_value for p in path]
-        pts = np.array(pts_3d, dtype=np.float32)
+        pts = np.array(pts_3d, dtype=np.float32).reshape(-1, 3)
         self._all_pts = pts
         self.sync_path_bookkeeping(region_value)
 
-        bb_min = pts.min(axis=0)
-        bb_max = pts.max(axis=0)
+        bb_min, bb_max = _bounds(pts)
         self.frame_scene(bb_min, bb_max, reframe=reframe)
 
         line_verts = []
@@ -739,7 +742,6 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
         self._context_menu_suppressed = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
-                and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
                 and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
@@ -783,10 +785,8 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
             self._drag_started = False
             self.vertex_drag_finished.emit()
             if not moved:
-                # Cmd was held at press time (the only way _drag_vertex_idx
-                # gets armed) but nothing actually moved -- toggle, not a
-                # plain click.
-                self.vertex_clicked.emit(vi, "toggle")
+                # Pressed on a vertex without moving it: a click.
+                self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started
@@ -843,8 +843,13 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
         hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
         if hit is None:
             return
-        x, y = float(hit[0]), float(hit[1])
+        x, y = round(float(hit[0]), 3), round(float(hit[1]), 3)
         menu = QMenu(self)
+        # Appends to the selected path: how a new, empty region is built.
+        cur = self._selected_path
+        if 0 <= cur < self._num_paths:
+            last = self._path_offsets[cur + 1] - self._path_offsets[cur] - 1
+            menu.addAction("Add Vertex", lambda: self.add_vertex_requested.emit(cur, last, x, y))
         menu.addAction("Add Path", lambda: self.add_path_requested.emit(x, y))
         self._exec_menu(menu, event)
 

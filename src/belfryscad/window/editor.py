@@ -3318,7 +3318,7 @@ class CodeEditor(QPlainTextEdit):
         # value instead of editing one.
         new_assign = find_empty_assignment(text, offset) if not self.isReadOnly() else None
 
-        if view_literals or edit_literals or new_assign:
+        if view_literals or edit_literals or not self.isReadOnly():
             last = menu.actions()[-1] if menu.actions() else None
             if last is not None and not last.isSeparator():
                 menu.addSeparator()
@@ -3402,10 +3402,16 @@ class CodeEditor(QPlainTextEdit):
                               start=start, end=end):
                 self.replace_text(start, end, f"{indent}{name} = {literal_text};")
                 self.source_edited_externally.emit()
-
-            add_sub = QMenu("Add data literal...", self)
+        elif not self.isReadOnly():
+            name = ""
+            # Anywhere else, the literal goes in where clicked (the editor
+            # is read-only while the dialog is open, so the offset holds).
+            def on_new_commit(literal_text, at=offset):
+                self.replace_text(at, at, literal_text)
+                self.source_edited_externally.emit()
+        if not self.isReadOnly():
+            add_sub = QMenu("New", self)
             build_new_literal_menu(add_sub, name, on_new_commit, self)
-            if not add_sub.isEmpty():
-                menu.addMenu(add_sub)
+            menu.addMenu(add_sub)
 
         menu.exec(event.globalPos())
