@@ -46,10 +46,12 @@ client.wait(timeout=10)
 out["handoff_with_server"] = client.stdout.read().strip() == "True"
 out["received"] = got
 out["first_is_absolute"] = os.path.isabs(got[0]) if got else None
-# A stale socket from a crashed run must not block a fresh listener.
-del server
-server2 = InstanceServer(name=name, backend=backend)
-out["relisten_after_stale"] = server2.is_listening()
+# A stale socket from a crashed run must not block a fresh listener. D-Bus
+# has no such state: the bus drops a dead process's name itself.
+if backend == "local":
+    del server
+    server2 = InstanceServer(name=name, backend=backend)
+    out["relisten_after_stale"] = server2.is_listening()
 print(json.dumps(out)); sys.stdout.flush()
 os._exit(0)
 '''
@@ -69,7 +71,10 @@ def test_hand_off_reaches_a_listener_and_fails_cleanly_without_one(backend, tmp_
         config.write_text(
             "<busconfig><type>session</type>"
             "<listen>unix:tmpdir=/tmp</listen>"   # tmp_path is too long for a socket on macOS
-            "<policy context='default'><allow send_destination='*'/><allow own='*'/></policy>"
+            # The stock session policy: without the bare allow, the bus
+            # rejects even its own replies to the client.
+            "<policy context='default'><allow send_destination='*' eavesdrop='true'/>"
+            "<allow eavesdrop='true'/><allow own='*'/></policy>"
             "</busconfig>")
         cmd = [runner, f"--config-file={config}", "--"] + cmd
     proc = subprocess.run(cmd, capture_output=True, text=True,
@@ -88,4 +93,5 @@ def test_hand_off_reaches_a_listener_and_fails_cleanly_without_one(backend, tmp_
     assert out["first_is_absolute"] is True
     assert out["received"][0].endswith("rel.scad")
     assert out["received"][1].endswith("two.scad")   # abspath differs per OS (drive letter on Windows)
-    assert out["relisten_after_stale"] is True
+    if backend == "local":
+        assert out["relisten_after_stale"] is True
