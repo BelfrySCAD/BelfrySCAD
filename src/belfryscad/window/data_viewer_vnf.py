@@ -572,8 +572,11 @@ class _VNFViewport(Viewport):
         self._drag_started = False
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
-                and event.modifiers() & Qt.KeyboardModifier.ControlModifier   # Cmd on macOS
-                and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
+                and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)
+                # A plain drag grabs only a vertex whose marker is showing;
+                # with them hidden it orbits, and Cmd+drag still grabs.
+                and (self._show_unselected
+                     or event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
                 self._drag_vertex_idx = vi
@@ -624,10 +627,8 @@ class _VNFViewport(Viewport):
             self._delta_label.hide()
             self.vertex_drag_finished.emit()
             if not moved:
-                # Cmd was held at press time (the only way _drag_vertex_idx
-                # gets armed) but nothing actually moved -- toggle, not a
-                # plain click.
-                self.vertex_clicked.emit(vi, "toggle")
+                # Pressed on a vertex without moving it: a click.
+                self.vertex_clicked.emit(vi, _vertex_click_mode(event.modifiers()))
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started

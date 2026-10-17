@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QLabel, QPushButton
 from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
-                             QEasingCurve)
+                             QEasingCurve, QEvent)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
-                            QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent)
+                            QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent,
+                            QContextMenuEvent, QGuiApplication)
 
 from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
@@ -1576,6 +1577,23 @@ class Viewport(QOpenGLWidget):
         Mouse one (wheelEvent)."""
         if isinstance(event, QNativeGestureEvent) and self._handle_native_gesture(event):
             return True
+        # macOS and X11 send the context menu on the right-button PRESS, so
+        # a menu would open before a right-drag could pan. Hold it until the
+        # release, and drop it if the pointer moved (a pan) in between.
+        t = event.type()
+        if (t == QEvent.Type.ContextMenu and event.reason() == QContextMenuEvent.Reason.Mouse
+                and QGuiApplication.mouseButtons() & Qt.MouseButton.RightButton):
+            self._held_menu = (event.pos(), event.globalPos(), event.modifiers())
+            return True
+        if (t == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.RightButton
+                and getattr(self, "_held_menu", None)):
+            pos, gpos, mods = self._held_menu
+            self._held_menu = None
+            done = super().event(event)
+            if (event.globalPosition().toPoint() - gpos).manhattanLength() <= 3:
+                QGuiApplication.sendEvent(
+                    self, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, pos, gpos, mods))
+            return done
         if (isinstance(event, QTouchEvent)
                 and event.pointingDevice().type() == QInputDevice.DeviceType.TouchPad):
             self._last_trackpad_touch = time.monotonic()

@@ -24,6 +24,14 @@ def _fmt_short(v) -> str:
     return _fmt(v)
 
 
+def _bounds(pts: np.ndarray):
+    """Bounding box of `pts`, or a 20-unit square at the origin for an
+    empty (new) shape, which has none."""
+    if len(pts) == 0:
+        return np.array([-10.0, -10.0, 0.0]), np.array([10.0, 10.0, 0.0])
+    return pts.min(axis=0), pts.max(axis=0)
+
+
 def _parse_number(text: str):
     """Parse a table-cell edit as int or float, or None if not numeric —
     shared by the editable Matrix/Affine/Path/Grid viewers' itemChanged
@@ -206,9 +214,13 @@ def _dodecahedron_faces(r: float, is_2d: bool) -> list:
     return tris
 
 
+#: Vertex marker radius in screen pixels.
+_MARKER_RADIUS_PX = 4.5
+
+
 def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
     """Screen-space-constant marker radius (in world units) for a marker
-    positioned AT `world_point`, so it stays ~12px on screen regardless of
+    positioned AT `world_point`, so it stays ~9px on screen regardless of
     zoom -- in *both* projection modes and regardless of which vertex is
     being sized. Shared by every viewport that rebuilds marker geometry
     on zoom (`_GridViewport`, `_PathViewport`, `_AffineViewport`,
@@ -239,7 +251,7 @@ def _marker_radius_for_point(vp: "Viewport", world_point) -> float:
         world_per_px = 2.0 * depth * math.tan(math.radians(cam.fov / 2)) / vh
     else:
         world_per_px = depth * 0.003
-    return world_per_px * 6
+    return world_per_px * _MARKER_RADIUS_PX
 
 
 def _lit_marker_triangles(pt, r: float, unit_faces: list, color: np.ndarray) -> list:
@@ -283,7 +295,7 @@ def _marker_radii_for_points(vp: "Viewport", points) -> np.ndarray:
         world_per_px = 2.0 * depth * math.tan(math.radians(cam.fov / 2)) / vh
     else:
         world_per_px = depth * 0.003
-    return (world_per_px * 6).astype(np.float32)
+    return (world_per_px * _MARKER_RADIUS_PX).astype(np.float32)
 
 
 def _lit_marker_field(points, radii, unit_faces: list, colors) -> np.ndarray:
