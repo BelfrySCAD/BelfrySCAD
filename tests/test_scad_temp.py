@@ -33,6 +33,18 @@ def test_temp_is_written_beside_the_script(script, tmp_path):
         scad_temp.remove(path)
 
 
+def test_line_endings_are_written_as_given(script):
+    # The evaluator's spans are byte offsets into this file and the editor's
+    # text ends lines in "\n"; Windows text mode wrote "\r\n" and shifted
+    # every span right by one per line (#798). Only fails on Windows.
+    path = scad_temp.write_temp_scad("a = 1;\ncube(a);\n", near=script)
+    try:
+        with open(path, "rb") as f:
+            assert f.read() == b"a = 1;\ncube(a);\n"
+    finally:
+        scad_temp.remove(path)
+
+
 def test_temp_without_a_script_goes_to_the_platform_temp_dir(tmp_path):
     path = scad_temp.write_temp_scad("cube(2);\n")
     try:

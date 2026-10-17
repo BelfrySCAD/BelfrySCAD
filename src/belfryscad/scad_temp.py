@@ -89,8 +89,13 @@ def write_temp_scad(text: str, near=None) -> str:
     # the file can go -- and it must NOT be closed on the other path, where
     # the `with` already closed it and the number may since have been reused
     # by another thread (_RenderWorker renders on one).
+    #
+    # newline="": the text is the editor's, whose lines end in "\n", and the
+    # evaluator's spans are byte offsets into this file. Text mode on
+    # Windows writes "\r\n", which put every span one byte further right per
+    # line above it -- a gizmo drag wrapped `translate()` mid-argument (#798).
     try:
-        handle = os.fdopen(fd, "w", encoding="utf-8")
+        handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
     except BaseException:
         try:
             os.close(fd)
