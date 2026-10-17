@@ -161,15 +161,15 @@ class BackgroundImageViewportMixin:
         self.background = bg
         self.update()
 
-    def _paint_background(self, mvp: np.ndarray) -> bool:
-        """Draw the image. True while it is being adjusted: the caller then
-        leaves out its own vertex markers, which would hide the handles."""
+    def _paint_under(self, mvp: np.ndarray):
+        """Draw the image, before the shape: from `extra_paint` it covered
+        the path's lines and markers (#802)."""
         if self._bg_overlay is not None:
             self._bg_overlay.setGeometry(self.rect())
             self._bg_overlay.update()
         bg = self.background
         if bg is None or not bg.visible or not bg.path:
-            return False
+            return
         import moderngl as mgl
         ctx = self._ctx
         if self._bg_prog is None:
@@ -191,7 +191,7 @@ class BackgroundImageViewportMixin:
                 self._bg_tex.build_mipmaps()
                 self._bg_tex.filter = (mgl.LINEAR_MIPMAP_LINEAR, mgl.LINEAR)
         if self._bg_tex is None:
-            return self._bg_adjusting
+            return
         c, s = bg._rot()
         prog = self._bg_prog
         prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
@@ -210,7 +210,6 @@ class BackgroundImageViewportMixin:
         self._bg_vao.render(mgl.TRIANGLE_STRIP)
         fbo.depth_mask = True
         ctx.disable(mgl.BLEND)
-        return self._bg_adjusting
 
     def background_edited(self):
         if self.background is not None and self.background_key:

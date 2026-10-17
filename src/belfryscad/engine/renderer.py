@@ -1024,6 +1024,10 @@ class PointBuffer:
 
 
 class SceneRenderer:
+    #: Called with each eye's mvp before anything else is drawn: a data
+    #: viewer's background image, which then lies under the whole shape (#802).
+    under_paint = None
+
     def __init__(self):
         self._ctx: Optional[mgl.Context] = None
         self._active_fbo: Optional[mgl.Framebuffer] = None
@@ -1752,6 +1756,8 @@ class SceneRenderer:
     def _paint_scene(self, view: np.ndarray, proj: np.ndarray, L_world: np.ndarray, extra_paint=None):
         """Render one eye's worth of scene: geometry, edges, axes, labels, gizmo."""
         mvp = proj @ view
+        if self.under_paint is not None:
+            self.under_paint(mvp)
         model = np.eye(4, dtype=np.float32)
         eye_pos = -(view[:3, :3].T @ view[:3, 3]).astype(np.float32)
 
@@ -1809,9 +1815,23 @@ class SceneRenderer:
                 self._mesh_prog["mvp"].write((proj @ view).T.astype(np.float32).tobytes())
                 self._mesh_prog["light_dir"].value = tuple(L_world)
                 self._mesh_prog["eye_pos"].value = tuple(eye_pos)
-                self._mesh_prog["object_color"].value = buf.color if buf.color is not None else self._default_color
+                color = buf.color if buf.color is not None else self._default_color
+                self._mesh_prog["object_color"].value = color
                 self._mesh_prog["backface_color"].value = buf.backface_color or (1.0, 0.0, 1.0, 1.0)
+                # See-through when asked: a region's fill over its
+                # background image.
+                see_through = len(color) > 3 and color[3] < 1.0
+                if see_through:
+                    # Destination alpha untouched: Qt composites the widget
+                    # by it, and blending it turned the fill blue.
+                    self._ctx.enable(mgl.BLEND)
+                    self._ctx.blend_func = (mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA,
+                                            mgl.ZERO, mgl.ONE)
+                    self._active_fbo.depth_mask = False
                 buf.vao.render()
+                if see_through:
+                    self._active_fbo.depth_mask = True
+                    self._ctx.disable(mgl.BLEND)
                 buf_models.append(model)
                 continue
 

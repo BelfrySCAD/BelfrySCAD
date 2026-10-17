@@ -1166,7 +1166,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
-        if self._paint_background(mvp):
+        if self._bg_adjusting:
             return   # adjusting the image: its handles, not the vertex markers
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
