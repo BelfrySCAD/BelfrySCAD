@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.77.2" date="2026-10-17">
+      <description>
+        <p>The x86_64 Flatpak starts again, opening a file from the desktop reaches the running window over D-Bus on Linux, and a path editor's background image now lies under the shape.</p>
+      </description>
+    </release>
     <release version="1.77.1" date="2026-10-17">
       <description>
         <p>3MF files written by OpenSCAD and most slicers now import, and gizmo drags on Windows edit the right place in the code.</p>
