@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.77.0" date="2026-10-16">
+      <description>
+        <p>Create paths, regions and other shapes from the editor's right-click menu, build them point by point, drag vertices without Cmd, and right-drag panning works again in the editors.</p>
+      </description>
+    </release>
     <release version="1.76.1" date="2026-10-16">
       <description>
         <p>The orientation cube now appears in every 3D data viewer and editor, not only the main window.</p>
