@@ -597,6 +597,7 @@ class Viewport(QOpenGLWidget):
     def paintGL(self):
         try:
             fbo_id = self.defaultFramebufferObject()
+            self._renderer.under_paint = getattr(self, "_paint_under", None)
             self._renderer.paint(qt_fbo_id=fbo_id, extra_paint=self._paint_extra)
             self._frame_count += 1
         except Exception as e:

@@ -535,6 +535,7 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
     def load_region(self, region_value: list, draw_fill: bool = True, reframe: bool = True):
         self.makeCurrent()
         self._renderer._clear_buffers()
+        self._fill_buf = None
         self._renderer.clear_simple_buffers()
         self._release_sel_markers()
 
@@ -563,13 +564,24 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
             fill = _region_fill_mesh(region_value)
             if fill is not None:
                 tris_pos, tris_norm = fill
-                self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
+                self._fill_buf = self._renderer.upload_mesh(
+                    tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
 
         self._build_point_markers()
         if self._selected_indices:
             self._build_sel_markers()
         self.doneCurrent()
         self.update()
+
+    _fill_buf = None
+
+    def _paint_under(self, mvp):
+        """The image, and the fill made see-through while it shows (#802)."""
+        super()._paint_under(mvp)
+        if self._fill_buf is not None:
+            bg = self.background
+            shown = bg is not None and bg.visible and bg.path
+            self._fill_buf.color = (*self._renderer._default_color[:3], 0.5) if shown else None
 
     def _marker_faces(self, r):
         return _dodecahedron_faces(r, True)
@@ -676,7 +688,7 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
 
     def _paint_extra(self, mvp: np.ndarray):
         import moderngl as mgl
-        if self._paint_background(mvp):
+        if self._bg_adjusting:
             return   # adjusting the image: its handles, not the vertex markers
         vao = self._sel_vao_r if self._blink_red else self._sel_vao_w
         if vao is not None:
