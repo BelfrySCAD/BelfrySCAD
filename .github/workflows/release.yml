@@ -258,7 +258,7 @@ jobs:
           cd squashfs-root
           xvfb-run -a env PYTHONPATH=usr/app:usr/app_packages \
               usr/python/bin/python3 -u -s -X utf8 \
-              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); import belfryscad.window.main_window; print('qt ok')"
 
       - name: Package Linux AppImage
         run: uv run --no-sync --python 3.12 briefcase package linux appimage
@@ -368,7 +368,7 @@ jobs:
               --env=QT_QPA_PLATFORM=offscreen \
               --env=PYTHONPATH=/app/briefcase/app:/app/briefcase/app_packages \
               com.belfrydw.belfryscad \
-              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); print('qt ok')"
+              -c "import PySide6.QtWidgets as w, sys; a=w.QApplication(sys.argv); import belfryscad.window.main_window; print('qt ok')"
 
       - name: Package the Flatpak
         run: uv run --no-sync --python 3.14 briefcase package linux flatpak

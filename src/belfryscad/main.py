@@ -267,8 +267,14 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # new window (#393). Never under --testing: a test launch must not
     # reach into the developer's real session.
     from belfryscad.settings import app_settings
-    from belfryscad.single_instance import InstanceServer, hand_off
     single = app_settings().value("app/openInRunningInstance", True, type=bool) and not testing
+    try:
+        from belfryscad.single_instance import InstanceServer, hand_off
+    except ImportError as e:
+        # QtNetwork links libgssapi_krb5, which the Flatpak runtime does not
+        # ship (#805). Lose the hand-off, not the app.
+        print(f"Opening in the running instance is unavailable: {e}", file=sys.stderr)
+        single = False
     if single and files_to_open and hand_off(files_to_open):
         return 0
     window = MainWindow()
