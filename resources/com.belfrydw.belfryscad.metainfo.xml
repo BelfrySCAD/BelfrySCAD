@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.78.1" date="2026-10-18">
+      <description>
+        <p>A variable reassigned after an include now reaches every value the library derives from it, as in OpenSCAD, and no longer warns. Cmd-click or right-click an include or use statement to open the file.</p>
+      </description>
+    </release>
     <release version="1.78.0" date="2026-10-17">
       <description>
         <p>A turtle path editor for BOSL2 turtle() command lists: a command table beside a live preview, and click-to-draw lines, tangent arcs and jumps. Path lines in the editors are wider, and the default theme's axes are dark gray.</p>
