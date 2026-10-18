@@ -268,6 +268,8 @@ The dialog opens on `guide_width()` — the rightmost column guide, or
 reflowing a run of blocks is one keystroke each after the first. Cancelling
 changes nothing.
 
+**Open an included file** (#809): **Cmd-click** (Ctrl-click off macOS, Qt's `ControlModifier` either way) on an `include <...>`/`use <...>` statement opens that file, as OpenSCAD's Ctrl-click does, and right-clicking one puts **Open "path"** first in the menu. `CodeEditor.include_target_at` finds the statement under the pointer with `scad_deps._USE_INCLUDE_RE`; `MainWindow._open_include` resolves it with `scad_deps._resolve` -- beside the file first, then the library folders, as the renderer searches -- and opens it through `_find_or_open_tab` (so an installed library opens read-only). Not found says so in the status bar.
+
 **Go to Definition** (for any identifier, always shown):
 
 Right-click an identifier shows "Go to Definition of 'name'", only for words matching `\$?[A-Za-z_][A-Za-z0-9_]*` (plain identifiers and `$`-prefixed specials).

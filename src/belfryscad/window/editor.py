@@ -1423,6 +1423,8 @@ class CodeEditor(QPlainTextEdit):
 
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
+    # The <path> of an include/use statement, as written (#809).
+    open_include_requested = Signal(str)
     edit_parameter_requested = Signal(str)     # emits a Customizer parameter's name
     print_to_console = Signal(str)             # emits formatted assignment string
     print_value_to_console = Signal(str, object)  # emits (name, value) for viewer-aware logging
@@ -1889,9 +1891,28 @@ class CodeEditor(QPlainTextEdit):
         self._coverage_selections = []
         self._refresh_extra_selections()
 
+    def include_target_at(self, pos) -> str | None:
+        """The <path> of the include/use statement under widget point `pos`."""
+        from belfryscad.scad_deps import _USE_INCLUDE_RE
+        cursor = self.cursorForPosition(pos)
+        col = cursor.positionInBlock()
+        for m in _USE_INCLUDE_RE.finditer(cursor.block().text()):
+            if m.start() <= col <= m.end():
+                return m.group(1).strip()
+        return None
+
     def mousePressEvent(self, event):
         # Clicking elsewhere ends the nudge, as it ends any other selection.
         self.disarm_value_nudge()
+        # Cmd-click (Ctrl off macOS) on an include/use opens the file, as
+        # OpenSCAD's Ctrl-click does (#809).
+        if (event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            target = self.include_target_at(event.position().toPoint())
+            if target:
+                self.open_include_requested.emit(target)
+                event.accept()
+                return
         super().mousePressEvent(event)
 
     def focusOutEvent(self, event):
@@ -3166,6 +3187,17 @@ class CodeEditor(QPlainTextEdit):
                 word = '$' + word
 
         menu = self.createStandardContextMenu()
+
+        # First, where it is easiest to hit: what the user most likely
+        # right-clicked an include for.
+        target = self.include_target_at(event.pos())
+        if target:
+            first = menu.actions()[0] if menu.actions() else None
+            open_act = QAction(f"Open \u201c{target}\u201d", menu)
+            open_act.triggered.connect(lambda checked=False, t=target: self.open_include_requested.emit(t))
+            menu.insertAction(first, open_act)
+            if first is not None:
+                menu.insertSeparator(first)
 
         # A read-only buffer silently loses half this menu -- Use Library,
         # Reflow Comment, Reformat Selection, Edit as... -- and nothing says
