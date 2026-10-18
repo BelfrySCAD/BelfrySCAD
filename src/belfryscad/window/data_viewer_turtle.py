@@ -13,7 +13,7 @@ import ast
 import copy
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QMouseEvent
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayout,
                                QLabel, QMenu, QPushButton, QSplitter, QStyledItemDelegate,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -70,6 +70,24 @@ class _CommandDelegate(QStyledItemDelegate):
         model.setData(index, editor.currentText())
 
 
+class _TurtleViewport(_PathViewport):
+    """The path viewport, plus a click on the path naming the segment hit:
+    `segment_clicked(i)` for the segment from point i to i+1, -1 for none."""
+
+    segment_clicked = Signal(int)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._drag_started and self._press_pos is not None):
+            pos = event.position().toPoint()
+            n = len(self._path_pts)
+            hit = self._renderer.pick_nearest_segment(
+                self._path_pts, [(i, i + 1) for i in range(n - 1)],
+                pos.x(), pos.y(), self.width(), self.height()) if n > 1 else None
+            self.segment_clicked.emit(hit[0] if hit is not None else -1)
+        super().mouseReleaseEvent(event)
+
+
 class TurtleViewer(QDialog, _UndoableViewerMixin):
     """Command table + live path preview. Read-only by default; pass
     `editable=True` for Save/Cancel editing, as the other literal editors."""
@@ -87,7 +105,8 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._vp = _PathViewport([], True, self, editable=False)
+        self._vp = _TurtleViewport([], True, self, editable=False)
+        self._vp.segment_clicked.connect(self._on_segment_clicked)
         _sync_viewport_to_main_window(self._vp)
         # Every arc is many points; the markers would bury the path. The
         # selected command's points still show.
@@ -207,6 +226,14 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             return
         first, last = self._spans[rows[0].row()]
         self._vp.set_selected(list(range(first, last + 1)))
+
+    def _on_segment_clicked(self, seg: int):
+        """Select the command that drew segment `seg` (points seg..seg+1)."""
+        for k, (first, last) in enumerate(self._spans):
+            if first <= seg < last:
+                self._table.selectRow(k)
+                return
+        self._table.clearSelection()
 
     # -- editing ----------------------------------------------------------
 
