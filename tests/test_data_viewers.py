@@ -21,6 +21,7 @@ rest of the test suite (no existing tests instantiate Qt widgets).
 import numpy as np
 from PySide6.QtCore import Qt
 
+from belfryscad.turtle import is_turtle
 from belfryscad.engine.renderer import Camera
 from belfryscad.window.data_viewer_grid import (
     _is_grid,
@@ -3151,7 +3152,7 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
     predicates = {
         "path": _is_path, "grid": _is_grid, "heightfield": _is_heightfield,
         "matrix": _is_matrix, "affine": _is_affine_matrix, "vnf": _is_vnf,
-        "vnf_tile": _is_vnf_tile, "region": _is_region,
+        "vnf_tile": _is_vnf_tile, "region": _is_region, "turtle": is_turtle,
     }
     seen = set()
     for label, shape, _opener, seed in _NEW_LITERAL_SEEDS:
