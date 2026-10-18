@@ -95,9 +95,22 @@ def test_tangent_arc_ends_at_the_point():
     assert turtle.tangent_arc([0, 0], [1, 0], [-4, 0]) == []
 
 
+def test_snapped_line_angle_and_length():
+    # 31 degrees snaps to 30; the distance along 30 degrees is rounded to 1.
+    cmds = turtle.line_to([0, 0], [1, 0], [8.57, 5.15], snap_angle=15, snap_len=1)
+    assert cmds == ["left", 30.0, "move", 10.0]
+    jump = turtle.line_to([0, 0], [1, 0], [0.2, 3.4], jump=True, snap_angle=15, snap_len=1)
+    assert jump == ["left", 90.0, "jump", [0.0, 3.0]]
+
+
 def test_snapped_arc_angle():
     # 2 * atan2(5, 9.5) = 55.5 degrees; snapped to 15 it is 60.
-    cmds = turtle.tangent_arc([0, 0], [1, 0], [9.5, 5], snap=15)
+    cmds = turtle.tangent_arc([0, 0], [1, 0], [9.5, 5], snap_angle=15)
     assert cmds[0] == "arcleft" and cmds[2] == 60.0
     path, _, heading = turtle.run(cmds)
     assert math.isclose(math.degrees(math.atan2(heading[1], heading[0])), 60, abs_tol=1e-9)
+
+
+def test_snapped_arc_radius():
+    cmds = turtle.tangent_arc([0, 0], [1, 0], [9.5, 5], snap_angle=15, snap_len=1)
+    assert cmds[0] == "arcleft" and cmds[2] == 60.0 and cmds[1] == round(cmds[1])

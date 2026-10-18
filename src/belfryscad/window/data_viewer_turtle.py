@@ -349,22 +349,22 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
 
     def _draw_commands(self, x: float, y: float) -> list:
         """What a click at (x, y) appends, by the modifiers held now:
-        Option, a tangent arc (Shift: its angle snapped to 15 degrees);
-        none, a turn and a move; Cmd (Ctrl off macOS), a turn and an exact
-        jump. Shift snaps a line's end to the smallest scale ticks shown."""
+        Option, a tangent arc; none, a turn and a move; Cmd (Ctrl off
+        macOS), a turn and an exact jump. Shift snaps angles to 15 degrees
+        and distances (a move, a jump's length, an arc's radius) to the
+        smallest scale ticks shown."""
         try:
             path, _, heading = turtle.run(self._commands)
         except turtle.TurtleError:
             return []
         mods = QGuiApplication.queryKeyboardModifiers()
-        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        snap = {}
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            snap = {"snap_angle": 15, "snap_len": self._vp.minor_step()}
         if mods & Qt.KeyboardModifier.AltModifier:
-            return turtle.tangent_arc(path[-1], heading, (x, y), snap=15 if shift else None)
-        if shift:
-            step = self._vp.minor_step()
-            x, y = round(x / step) * step, round(y / step) * step
+            return turtle.tangent_arc(path[-1], heading, (x, y), **snap)
         return turtle.line_to(path[-1], heading, (x, y),
-                              jump=bool(mods & Qt.KeyboardModifier.ControlModifier))
+                              jump=bool(mods & Qt.KeyboardModifier.ControlModifier), **snap)
 
     def _update_preview(self):
         vp = self._vp

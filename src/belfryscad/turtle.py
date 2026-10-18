@@ -243,27 +243,40 @@ def _turn(angle) -> list:
     return ["left", angle] if angle > 0 else ["right", -angle] if angle < 0 else []
 
 
-def line_to(p0, heading, p1, jump: bool = False) -> list:
+def _snap(v, step):
+    return round(v / step) * step if step else v
+
+
+def line_to(p0, heading, p1, jump: bool = False,
+            snap_angle: float | None = None, snap_len: float | None = None) -> list:
     """Commands turning the turtle to face `p1` from `p0` and going there:
     `left`/`right` then `move` (scaled by the step length, as `move` is), or
-    with `jump` the exact point, so no rounding drift. [] when `p1` is `p0`."""
+    with `jump` the exact point, so no rounding drift. `snap_angle` snaps the
+    turn, the distance then measured along the snapped direction to the
+    point nearest `p1`; `snap_len` snaps that distance. [] when nothing moves."""
     d = [p1[0] - p0[0], p1[1] - p0[1]]
-    dist = math.hypot(*d)
     step = math.hypot(heading[0], heading[1])
+    t = [heading[0] / step, heading[1] / step] if step else [1.0, 0.0]
+    if math.hypot(*d) < 1e-9:
+        return []
+    angle = _snap(_signed_angle(t, d), snap_angle)
+    u = _rot(t, angle)
+    dist = _snap(d[0] * u[0] + d[1] * u[1], snap_len)
     if dist < 1e-9:
         return []
-    cmds = _turn(_signed_angle(heading if step else [1, 0], d))
+    cmds = _turn(angle)
     if jump:
-        return cmds + ["jump", [_round_len(p1[0]), _round_len(p1[1])]]
+        return cmds + ["jump", [_round_len(p0[0] + u[0] * dist), _round_len(p0[1] + u[1] * dist)]]
     return cmds + ["move", _round_len(dist / (step or 1))]
 
 
-def tangent_arc(p0, heading, p1, snap: float | None = None) -> list:
+def tangent_arc(p0, heading, p1, snap_angle: float | None = None,
+                snap_len: float | None = None) -> list:
     """The arc leaving `p0` tangent to `heading` and ending at `p1`:
-    `arcleft`/`arcright` with its radius and angle. With `snap` (degrees),
-    the arc's angle is snapped and the arc ends at the point of its new end
-    ray nearest `p1`. A `move` when the arc would be straight; [] for a point
-    no arc reaches (on the tangent line behind the turtle)."""
+    `arcleft`/`arcright` with its radius and angle. With `snap_angle`, the
+    arc's angle is snapped and the arc ends on its new end ray, nearest `p1`;
+    `snap_len` snaps the radius. A `move` when the arc would be straight; []
+    for a point no arc reaches (on the tangent line behind the turtle)."""
     step = math.hypot(heading[0], heading[1])
     t = [heading[0] / step, heading[1] / step] if step else [1.0, 0.0]
     d = [p1[0] - p0[0], p1[1] - p0[1]]
@@ -271,10 +284,10 @@ def tangent_arc(p0, heading, p1, snap: float | None = None) -> list:
     if dist < 1e-9:
         return []
     half = _signed_angle(t, d)
-    if snap:
-        sweep = round(2 * half / snap) * snap
+    if snap_angle:
+        sweep = _snap(2 * half, snap_angle)
         if abs(sweep) >= 360:
-            sweep = math.copysign(360 - snap, sweep)
+            sweep = math.copysign(360 - snap_angle, sweep)
         ray = _rot(t, sweep / 2)
         chord = d[0] * ray[0] + d[1] * ray[1]
         if chord <= 0:
@@ -283,10 +296,12 @@ def tangent_arc(p0, heading, p1, snap: float | None = None) -> list:
     else:
         chord = dist
     if abs(half) < 0.05:   # straight ahead: no arc, just a move
-        ahead = d[0] * t[0] + d[1] * t[1]
+        ahead = _snap(d[0] * t[0] + d[1] * t[1], snap_len)
         return ["move", _round_len(ahead / (step or 1))] if ahead > 0 else []
     s = math.sin(math.radians(abs(half)))
     if s < 1e-6:
         return []
-    radius = _round_len(chord / (2 * s))
+    radius = _round_len(_snap(chord / (2 * s), snap_len))
+    if radius <= 0:
+        return []
     return ["arcleft" if half > 0 else "arcright", radius, _round_ang(abs(2 * half))]
