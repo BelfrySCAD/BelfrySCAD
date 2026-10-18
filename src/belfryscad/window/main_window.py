@@ -40,7 +40,7 @@ from belfryscad.window.docs_pane import DocsPane
 from belfryscad.window.about import open_documentation, open_issue_tracker, show_about_dialog
 from belfryscad.window.update_check import check_for_updates
 from belfryscad.window.release_notes import show_release_notes
-from belfryscad.window.export_options import ask_export_options, export_kwargs
+from belfryscad.window.export_options import ask_export_options, export_kwargs, saved_values
 from belfryscad.window.color_list import ColorListPane
 from belfryscad.window.font_list import show_font_list
 from belfryscad.memory_relief import release_free_memory
@@ -1528,8 +1528,8 @@ class MainWindow(QMainWindow):
 
         self._act_animate_tb = QAction("Animate", self)
         self._set_toolbar_icon(self._act_animate_tb, "animate")
-        self._act_animate_tb.setToolTip("Animate (F7)")
-        self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F7))
+        self._act_animate_tb.setToolTip("Animate (F9)")
+        self._act_animate_tb.setShortcut(QKeySequence(Qt.Key.Key_F9))
         self._act_animate_tb.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_animate_tb.triggered.connect(self._show_animate)
 
@@ -1586,6 +1586,9 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Reload", self._reload_current, QKeySequence("Ctrl+R"))
         file_menu.addSeparator()
         self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
+        # OpenSCAD's F7 is Export as STL; this is the same reflex for
+        # whatever format was exported last (#791).
+        self._add_action(file_menu, "Quick Export…", self._quick_export, QKeySequence("F7"))
         self._add_action(file_menu, "Export as Image…", self._export_image)
         file_menu.addSeparator()
         self._add_action(file_menu, "Quit", self.close, QKeySequence.StandardKey.Quit)
@@ -3010,7 +3013,17 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Export as Image", f"Could not write {path}.")
 
-    def _export(self):
+    def _quick_export(self):
+        """File > Quick Export: ask only for the name, in the format exported
+        last and with that format's saved options. The first export of all
+        has no format to reuse, so it is a full Export."""
+        last = load_preference("export/lastFormat", str)
+        if last not in dict((e, f) for f, e in _EXPORT_FORMATS):
+            self._export()
+            return
+        self._export(quick_ext=last)
+
+    def _export(self, quick_ext: str | None = None):
         if not self._bodies:
             self._render()
         bodies = self._bodies
@@ -3025,8 +3038,9 @@ class MainWindow(QMainWindow):
         # now that it is written directly rather than through lib3mf, which
         # had no wheels for ARM platforms.)
         filters = ";;".join(f for f, _e in _EXPORT_FORMATS)
+        selected = next((f for f, e in _EXPORT_FORMATS if e == quick_ext), "")
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Export", self._default_export_path(), filters
+            self, "Quick Export" if quick_ext else "Export", self._default_export_path(), filters, selected
         )
         if not path:
             return
@@ -3041,7 +3055,12 @@ class MainWindow(QMainWindow):
         # well not exist. Nothing is shown for a format with no options.
         # Cancel here cancels the export -- writing a file with settings the
         # user just backed out of would be worse than writing none.
-        options = ask_export_options(ext, self, os.path.basename(path))
+        # Quick Export asks nothing more: the saved options are this
+        # format's answers from last time, the defaults the dialog opens on.
+        if quick_ext:
+            options = saved_values(ext)
+        else:
+            options = ask_export_options(ext, self, os.path.basename(path))
         if options is None:
             return
         try:
@@ -3062,6 +3081,7 @@ class MainWindow(QMainWindow):
             for problem in exporters.export_model(path, self._geometry, **kwargs):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
+            save_preferences({"export/lastFormat": ext})
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
         except Exception as e:
@@ -3117,7 +3137,6 @@ class MainWindow(QMainWindow):
         multi-material -- to a temporary file, and open it in the chosen
         slicer. Asks which slicer the first time."""
         from belfryscad import slicers
-        from belfryscad.window.export_options import saved_values
         if not self._bodies:
             self._render()
         if not self._bodies or self._geometry is None:

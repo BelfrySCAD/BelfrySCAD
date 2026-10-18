@@ -639,13 +639,14 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Cmd+F | Find |
 | Shift+Cmd+F | Find & Replace (Ctrl+H also, off macOS) |
 | Cmd+E | Export… |
+| F7 | Quick Export… |
 | F5 | Debug: Continue / Pause |
 | Shift+F5 | Debug: Stop |
 | Shift+Cmd+F5 | Debug: Restart |
 | F4 | Reload and Render |
 | F6 | Render |
 | Shift+F6 | Debug |
-| F7 | Animate |
+| F9 | Animate |
 | F10 | Debug: Step Over |
 | F11 | Debug: Step Into |
 | Shift+F11 | Debug: Step Out |
@@ -876,7 +877,7 @@ When the user quits the app and there are modified editors open, a Save/Discard/
 - **3D Viewport** (central widget): single 3D viewport shared across all editor tabs; always shows the last render result; contains a cube gizmo for view angle control
 - **Editor dock** (left, full height): holds only the editor *pages* (no visible tab bar of its own — see below); toggle via Window ▸ Show Editor
 - **Debugger** (right dock, top): visible by default; right dock owns all four corner pixels so it spans the full window height
-- **Animate / Customizer** (right dock, bottom — tabbed together): both hidden by default; Animate opens via toolbar (F7) or Window ▸ Show Animate; Customizer opens via Window ▸ Show Customizer
+- **Animate / Customizer** (right dock, bottom — tabbed together): both hidden by default; Animate opens via toolbar (F9) or Window ▸ Show Animate; Customizer opens via Window ▸ Show Customizer
 - **Console** (bottom dock): single running log per window; not per-tab
 - **Status bar**: bottom strip; four camera labels displayed as `Viewport: translate=[…]  rotate=[…]  dist=…  FoV=…` (translate at 2 dp, others at 1 dp), each with a tooltip ("Viewport Translate ($vpt)", "Viewport Rotation ($vpr)", "Viewport Distance ($vpd)", "Viewport FOV ($vpf)") and a right-click context menu with **Copy $vp\*** (copies the single variable, e.g. `$vpt = [0.00, 0.00, 0.00]`) and **Copy all $vp\* values** (copies all four as semicolon-terminated OpenSCAD assignments, one per line); a viewport size label `(W × H)` in logical pixels (updated via `size_changed` signal from `resizeGL`); and an FPS counter. All four `$vp*` values are passed to the evaluator as OpenSCAD special variables via `_viewport_params()`. Default FOV is 22.5°. If the script assigns any `$vp*` variable, `_apply_vp_params()` updates the camera after render and skips the normal auto-fit; the same update fires on every debugger pause so the viewport tracks the script's camera state while stepping.
 
@@ -1342,7 +1343,7 @@ A `VNFViewer` subclass for a BOSL2 **VNF tile texture**: a VNF whose X and Y lie
 
 ## Menu Structure
 
-**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / Save All (Ctrl+Alt+S: every modified tab in the window, in tab order; an untitled one asks for a name, and cancelling stops the rest) / Reload (Ctrl+R, as OpenSCAD: the current tab's text from disk via `_reload_one(force=True)`, the path Automatic Reload uses; asks before discarding unsaved edits, which stay one Undo away since the swap goes through the undo stack; no render -- Design ▸ Reload and Render does both) / — / Export… / Export as Image… (the 3D view as shown, as a PNG at the viewport's device-pixel size, offered as `$export_name.png` beside the source like Export…; the CLI's `-o out.png` renders headlessly with its own camera instead) / — / Quit
+**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / Save All (Ctrl+Alt+S: every modified tab in the window, in tab order; an untitled one asks for a name, and cancelling stops the rest) / Reload (Ctrl+R, as OpenSCAD: the current tab's text from disk via `_reload_one(force=True)`, the path Automatic Reload uses; asks before discarding unsaved edits, which stay one Undo away since the swap goes through the undo stack; no render -- Design ▸ Reload and Render does both) / — / Export… / Quick Export… (F7, as OpenSCAD's Export as STL: asks only for the name, in the format exported last and with that format's saved options, never the options dialog; before any export it is a full Export…; #791) / Export as Image… (the 3D view as shown, as a PNG at the viewport's device-pixel size, offered as `$export_name.png` beside the source like Export…; the CLI's `-o out.png` renders headlessly with its own camera instead) / — / Quit
 
 **Examples** covers one feature per file, named for it, so the menu is a lookup: Basics holds the shapes and moves (`csg`, `transforms`, `mirror`, `resize`, `color`, `polygon`, `text`, `linear_extrude`, `rotate_extrude`, `modules`), Advanced the rest (`hull`, `minkowski`, `offset`, `projection`, `polyhedron`, `multmatrix`, `intersection_for`, `import`, `surface`, `children`). `import` and `surface` ship their data alongside in `Advanced/data/`, which works because both resolve a relative path against the file naming it.
 
