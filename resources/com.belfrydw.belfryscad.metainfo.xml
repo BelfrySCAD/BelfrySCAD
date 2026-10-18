@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.78.0" date="2026-10-17">
+      <description>
+        <p>A turtle path editor for BOSL2 turtle() command lists: a command table beside a live preview, and click-to-draw lines, tangent arcs and jumps. Path lines in the editors are wider, and the default theme's axes are dark gray.</p>
+      </description>
+    </release>
     <release version="1.77.2" date="2026-10-17">
       <description>
         <p>The x86_64 Flatpak starts again, opening a file from the desktop reaches the running window over D-Bus on Linux, and a path editor's background image now lies under the shape.</p>
