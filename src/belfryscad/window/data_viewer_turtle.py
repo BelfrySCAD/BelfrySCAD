@@ -350,7 +350,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
     def _draw_commands(self, x: float, y: float) -> list:
         """What a click at (x, y) appends, by the modifiers held now:
         Option, a tangent arc; none, a turn and a move; Cmd (Ctrl off
-        macOS), a turn and an exact jump. Shift snaps angles to 15 degrees
+        macOS), a turn and an exact jump. Shift snaps angles to 30 degrees
         and distances (a move's length, an arc's radius) to the smallest
         scale ticks shown -- except with Cmd, where it snaps the jump's
         point to the grid of those ticks."""
@@ -366,7 +366,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             # A jump goes to coordinates, so its snap is to the grid.
             return turtle.line_to(path[-1], heading,
                                   (round(x / step) * step, round(y / step) * step), jump=True)
-        snap = {"snap_angle": 15, "snap_len": step} if shift else {}
+        snap = {"snap_angle": 30, "snap_len": step} if shift else {}
         if mods & Qt.KeyboardModifier.AltModifier:
             return turtle.tangent_arc(path[-1], heading, (x, y), **snap)
         return turtle.line_to(path[-1], heading, (x, y), jump=jump, **snap)
