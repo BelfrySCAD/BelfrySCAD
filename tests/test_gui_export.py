@@ -29,13 +29,31 @@ errors = []
 mw.QMessageBox.critical = staticmethod(lambda parent, title, text: errors.append(text))
 mw.QMessageBox.warning = staticmethod(lambda parent, title, text: errors.append(text))
 from belfryscad.window.export_options import saved_values
-mw.ask_export_options = lambda ext, *a, **k: saved_values(ext)   # the dialog's own defaults, OK pressed
+asked = []
+def fake_ask(ext, *a, **k):
+    asked.append(ext)
+    return saved_values(ext)   # the dialog's own defaults, OK pressed
+mw.ask_export_options = fake_ask
 out = {}
+# Quick Export before any export has no format to reuse: a full Export.
+first = os.path.join(d, "first.3mf")
+mw.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (first, "3MF Files (*.3mf)"))
+w._quick_export()
+out["first_asked"] = asked == [".3mf"]
 for ext, filt in ((".3mf", "3MF Files (*.3mf)"), (".stl", "STL Files (*.stl)")):
     path = os.path.join(d, "out" + ext)
     mw.QFileDialog.getSaveFileName = staticmethod(lambda *a, _p=path, _f=filt, **k: (_p, _f))
     w._export()
     out[ext] = os.path.exists(path) and os.path.getsize(path) > 0
+# STL went last, so Quick Export offers STL and asks nothing more (#791).
+asked.clear()
+quick = os.path.join(d, "quick")
+seen = []
+mw.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (seen.append(a), (quick, a[4]))[1])
+w._quick_export()
+out["quick_filter"] = seen[0][4] if seen else None
+out["quick_written"] = os.path.exists(quick + ".stl")
+out["quick_asked"] = asked
 out["errors"] = errors
 print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
 '''
@@ -48,3 +66,6 @@ def test_gui_export_writes_the_file():
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["errors"] == []
     assert out[".3mf"] and out[".stl"]
+    assert out["first_asked"]
+    assert out["quick_filter"] == "STL Files (*.stl)"
+    assert out["quick_written"] and out["quick_asked"] == []
