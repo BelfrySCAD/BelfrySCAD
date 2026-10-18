@@ -67,3 +67,37 @@ def test_is_turtle():
     assert not turtle.is_turtle([])
     assert not turtle.is_turtle([[0, 0], [1, 1]])
     assert not turtle.is_turtle(["fly", 10])
+
+
+def test_line_to_turns_then_moves_to_the_point():
+    cmds = turtle.line_to([0, 0], [1, 0], [3, 3])
+    assert cmds == ["left", 45.0, "move", 4.24]
+    path, _, _ = turtle.run(cmds)
+    assert math.dist(path[-1], [3, 3]) < 0.01   # rounded, so within 0.01
+    assert turtle.line_to([0, 0], [1, 0], [5, 0]) == ["move", 5.0]
+    # `move` is scaled by the step length, so the distance is divided by it.
+    assert turtle.line_to([0, 0], [2, 0], [5, 0]) == ["move", 2.5]
+
+
+def test_jump_faces_along_the_line_and_lands_exactly():
+    cmds = turtle.line_to([1, 1], [1, 0], [1, 4.567], jump=True)
+    assert cmds == ["left", 90.0, "jump", [1.0, 4.57]]
+
+
+def test_tangent_arc_ends_at_the_point():
+    cmds = turtle.tangent_arc([0, 0], [1, 0], [5, 5])
+    assert cmds == ["arcleft", 5.0, 90.0]
+    path, _, _ = turtle.run(cmds)
+    assert close([path[-1]], [[5, 5]])
+    assert turtle.tangent_arc([0, 0], [1, 0], [5, -5]) == ["arcright", 5.0, 90.0]
+    # Straight ahead is a move; straight behind no arc reaches.
+    assert turtle.tangent_arc([0, 0], [1, 0], [4, 0]) == ["move", 4.0]
+    assert turtle.tangent_arc([0, 0], [1, 0], [-4, 0]) == []
+
+
+def test_snapped_arc_angle():
+    # 2 * atan2(5, 9.5) = 55.5 degrees; snapped to 15 it is 60.
+    cmds = turtle.tangent_arc([0, 0], [1, 0], [9.5, 5], snap=15)
+    assert cmds[0] == "arcleft" and cmds[2] == 60.0
+    path, _, heading = turtle.run(cmds)
+    assert math.isclose(math.degrees(math.atan2(heading[1], heading[0])), 60, abs_tol=1e-9)

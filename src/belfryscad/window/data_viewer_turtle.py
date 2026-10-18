@@ -15,13 +15,14 @@ import math
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayout,
                                QLabel, QMenu, QPushButton, QSplitter, QStyledItemDelegate,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from belfryscad import turtle
+from belfryscad.engine.renderer import _axis_extent, _drawn_spacings
 from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _marker_radius_for_point,
@@ -81,7 +82,82 @@ class _TurtleViewport(_PathViewport):
     the segment from point i to i+1, -1 for none."""
 
     segment_clicked = Signal(int)
+    #: A plain click off the path: (x, y) in the model's plane.
+    draw_clicked = Signal(float, float)
+    #: The pointer moved, or a modifier changed: redraw the drawing preview.
+    hover_changed = Signal()
     heading = None
+    hover: QPoint | None = None
+    _preview_lb = None
+
+    _PREVIEW_COLOR = (0.15, 0.4, 0.95)
+
+    def segment_at(self, pos) -> int:
+        """The path segment under widget point `pos`, or -1."""
+        n = len(self._path_pts)
+        if n < 2:
+            return -1
+        hit = self._renderer.pick_nearest_segment(
+            self._path_pts, [(i, i + 1) for i in range(n - 1)],
+            pos.x(), pos.y(), self.width(), self.height())
+        return hit[0] if hit is not None else -1
+
+    def minor_step(self) -> float:
+        """The spacing of the smallest scale ticks now shown: Shift's snap."""
+        return _drawn_spacings(_axis_extent(self._renderer.camera))[2]
+
+    def set_preview(self, points):
+        """Show `points` (a polyline, [x, y] each) as a dashed line, or
+        clear it with None. Dashes are a fixed size on screen."""
+        if self._ctx is None:
+            return
+        self.makeCurrent()
+        lb, self._preview_lb = self._preview_lb, None
+        lines = self._renderer._line_buffers
+        if lb is not None and lb in lines:   # a reload has already freed it otherwise
+            lines.remove(lb)
+            lb.vao.release()
+            lb.wide_vao.release()
+            lb.vbo.release()
+        if points is not None and len(points) >= 2:
+            pts = [np.array([p[0], p[1], 0.0]) for p in points]
+            dash = 2.0 * _marker_radius_for_point(self, pts[0])
+            rows, on, left = [], True, dash
+            for a, b in zip(pts, pts[1:]):
+                seg = float(np.linalg.norm(b - a))
+                if seg == 0:
+                    continue
+                u, pos, rest = (b - a) / seg, a, seg
+                while rest > 1e-12:
+                    step = min(left, rest)
+                    q = pos + u * step
+                    if on:
+                        rows += [[*pos, *self._PREVIEW_COLOR], [*q, *self._PREVIEW_COLOR]]
+                    pos, rest, left = q, rest - step, left - step
+                    if left <= 1e-12:
+                        on, left = not on, dash
+            if rows:
+                self._preview_lb = self._renderer.upload_lines(np.array(rows, dtype=np.float32))
+        self.doneCurrent()
+        self.update()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        self.hover = event.position().toPoint() if not event.buttons() else None
+        self.hover_changed.emit()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self.hover = None
+        self.hover_changed.emit()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event):
+        self.hover_changed.emit()
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        self.hover_changed.emit()
+        super().keyReleaseEvent(event)
 
     def _build_point_markers(self):
         # Built with the markers, so it is rebuilt with them on every zoom and
@@ -104,13 +180,16 @@ class _TurtleViewport(_PathViewport):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if (event.button() == Qt.MouseButton.LeftButton
-                and not self._drag_started and self._press_pos is not None):
+                and not self._drag_started and self._press_pos is not None
+                and not self._bg_adjusting):
             pos = event.position().toPoint()
-            n = len(self._path_pts)
-            hit = self._renderer.pick_nearest_segment(
-                self._path_pts, [(i, i + 1) for i in range(n - 1)],
-                pos.x(), pos.y(), self.width(), self.height()) if n > 1 else None
-            self.segment_clicked.emit(hit[0] if hit is not None else -1)
+            seg = self.segment_at(pos)
+            pt = self._model_point(pos)
+            # On the path, a click selects; anywhere else it draws.
+            if seg >= 0 or pt is None:
+                self.segment_clicked.emit(seg)
+            else:
+                self.draw_clicked.emit(*pt)
         super().mouseReleaseEvent(event)
 
 
@@ -133,6 +212,9 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _TurtleViewport([], True, self, editable=False)
         self._vp.segment_clicked.connect(self._on_segment_clicked)
+        if editable:
+            self._vp.draw_clicked.connect(self._on_draw_clicked)
+            self._vp.hover_changed.connect(self._update_preview)
         _sync_viewport_to_main_window(self._vp)
         # Every arc is many points; the markers would bury the path. The
         # selected command's points still show.
@@ -244,6 +326,8 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         if self._vp._ctx is not None:
             self._vp.load_path(path, False, reframe=reframe)
             self._highlight_selection()
+            if self._editable:
+                self._update_preview()
 
     def _highlight_selection(self):
         rows = self._table.selectionModel().selectedRows()
@@ -260,6 +344,54 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
                 self._table.selectRow(k)
                 return
         self._table.clearSelection()
+
+    # -- drawing ----------------------------------------------------------
+
+    def _draw_commands(self, x: float, y: float) -> list:
+        """What a click at (x, y) appends, by the modifiers held now:
+        Option, a tangent arc (Shift: its angle snapped to 15 degrees);
+        none, a turn and a move; Cmd (Ctrl off macOS), a turn and an exact
+        jump. Shift snaps a line's end to the smallest scale ticks shown."""
+        try:
+            path, _, heading = turtle.run(self._commands)
+        except turtle.TurtleError:
+            return []
+        mods = QGuiApplication.queryKeyboardModifiers()
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        if mods & Qt.KeyboardModifier.AltModifier:
+            return turtle.tangent_arc(path[-1], heading, (x, y), snap=15 if shift else None)
+        if shift:
+            step = self._vp.minor_step()
+            x, y = round(x / step) * step, round(y / step) * step
+        return turtle.line_to(path[-1], heading, (x, y),
+                              jump=bool(mods & Qt.KeyboardModifier.ControlModifier))
+
+    def _update_preview(self):
+        vp = self._vp
+        pos = vp.hover
+        pt = vp._model_point(pos) if pos is not None else None
+        extra = []
+        if pt is not None and not vp._bg_adjusting and vp.segment_at(pos) < 0:
+            extra = self._draw_commands(*pt)
+        if not extra:
+            vp.set_preview(None)
+            return
+        n = len(self._rows())
+        path, spans, _ = turtle.run(self._commands + extra)
+        vp.set_preview(path[spans[n][0]:])
+
+    def _on_draw_clicked(self, x: float, y: float):
+        extra = self._draw_commands(x, y)
+        if extra:
+            self._commit_value(self._commands + extra, "Draw")
+
+    def keyPressEvent(self, event):
+        self._update_preview()
+        self._delete_on_key(event) or super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        self._update_preview()
+        super().keyReleaseEvent(event)
 
     # -- editing ----------------------------------------------------------
 
@@ -321,15 +453,15 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             menu.addAction("Delete Command", lambda: self._delete(at))
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
-    def keyPressEvent(self, event):
+    def _delete_on_key(self, event) -> bool:
         if self._editable and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) \
                 and self._table.state() != QAbstractItemView.State.EditingState:
             rows = self._table.selectionModel().selectedRows()
             if rows:
                 self._delete(rows[0].row())
                 event.accept()
-                return
-        super().keyPressEvent(event)
+                return True
+        return False
 
     def _on_save(self):
         self.committed.emit(format_turtle(self._commands))

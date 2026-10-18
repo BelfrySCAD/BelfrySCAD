@@ -218,3 +218,75 @@ def run(commands: list, start=(0.0, 0.0)):
         _command(c, args, st, f"at command {k}")
         spans.append((first, len(st["path"]) - 1))
     return st["path"], spans, st["step"]
+
+
+# -- Drawing: commands that take the turtle to a clicked point ---------------
+#
+# Rounded as the editor writes them (lengths to 0.01, angles to 0.1 degree),
+# so a preview drawn from these commands is exactly what a click appends.
+
+def _round_len(v):
+    return round(float(v), 2)
+
+
+def _round_ang(v):
+    return round(float(v), 1)
+
+
+def _signed_angle(a, b) -> float:
+    """Degrees from direction `a` to direction `b`, in (-180, 180]."""
+    return math.degrees(math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]))
+
+
+def _turn(angle) -> list:
+    angle = _round_ang(angle)
+    return ["left", angle] if angle > 0 else ["right", -angle] if angle < 0 else []
+
+
+def line_to(p0, heading, p1, jump: bool = False) -> list:
+    """Commands turning the turtle to face `p1` from `p0` and going there:
+    `left`/`right` then `move` (scaled by the step length, as `move` is), or
+    with `jump` the exact point, so no rounding drift. [] when `p1` is `p0`."""
+    d = [p1[0] - p0[0], p1[1] - p0[1]]
+    dist = math.hypot(*d)
+    step = math.hypot(heading[0], heading[1])
+    if dist < 1e-9:
+        return []
+    cmds = _turn(_signed_angle(heading if step else [1, 0], d))
+    if jump:
+        return cmds + ["jump", [_round_len(p1[0]), _round_len(p1[1])]]
+    return cmds + ["move", _round_len(dist / (step or 1))]
+
+
+def tangent_arc(p0, heading, p1, snap: float | None = None) -> list:
+    """The arc leaving `p0` tangent to `heading` and ending at `p1`:
+    `arcleft`/`arcright` with its radius and angle. With `snap` (degrees),
+    the arc's angle is snapped and the arc ends at the point of its new end
+    ray nearest `p1`. A `move` when the arc would be straight; [] for a point
+    no arc reaches (on the tangent line behind the turtle)."""
+    step = math.hypot(heading[0], heading[1])
+    t = [heading[0] / step, heading[1] / step] if step else [1.0, 0.0]
+    d = [p1[0] - p0[0], p1[1] - p0[1]]
+    dist = math.hypot(*d)
+    if dist < 1e-9:
+        return []
+    half = _signed_angle(t, d)
+    if snap:
+        sweep = round(2 * half / snap) * snap
+        if abs(sweep) >= 360:
+            sweep = math.copysign(360 - snap, sweep)
+        ray = _rot(t, sweep / 2)
+        chord = d[0] * ray[0] + d[1] * ray[1]
+        if chord <= 0:
+            return []
+        half = sweep / 2
+    else:
+        chord = dist
+    if abs(half) < 0.05:   # straight ahead: no arc, just a move
+        ahead = d[0] * t[0] + d[1] * t[1]
+        return ["move", _round_len(ahead / (step or 1))] if ahead > 0 else []
+    s = math.sin(math.radians(abs(half)))
+    if s < 1e-6:
+        return []
+    radius = _round_len(chord / (2 * s))
+    return ["arcleft" if half > 0 else "arcright", radius, _round_ang(abs(2 * half))]
