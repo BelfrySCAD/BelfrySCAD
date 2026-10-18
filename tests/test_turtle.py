@@ -114,3 +114,11 @@ def test_snapped_arc_angle():
 def test_snapped_arc_radius():
     cmds = turtle.tangent_arc([0, 0], [1, 0], [9.5, 5], snap_angle=15, snap_len=1)
     assert cmds[0] == "arcleft" and cmds[2] == 60.0 and cmds[1] == round(cmds[1])
+
+
+def test_no_turn_when_it_rounds_to_zero():
+    # 0.03 degrees rounds to 0.0 (or -0.0): no left/right, just the move.
+    assert turtle.line_to([0, 0], [1, 0], [10, 0.005]) == ["move", 10.0]
+    assert turtle.line_to([0, 0], [1, 0], [10, -0.005]) == ["move", 10.0]
+    assert turtle.line_to([0, 0], [1, 0], [10, -0.005], jump=True) == ["jump", [10.0, 0.0]]
+    assert turtle.line_to([0, 0], [1, 0], [10, 0.4], snap_angle=15, snap_len=1) == ["move", 10.0]
