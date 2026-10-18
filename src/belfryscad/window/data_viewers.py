@@ -12,6 +12,8 @@ import re
 
 from PySide6.QtWidgets import QMenu
 
+from belfryscad.turtle import is_turtle as _is_turtle
+
 from belfryscad.window.data_viewer_affine import AffineMatrixViewer, _is_affine_matrix
 from belfryscad.window.data_viewer_common import (_is_list, _is_numeric_point,
                                                   _is_oscobject,
@@ -23,6 +25,7 @@ from belfryscad.window.data_viewer_matrix import MatrixViewer, _is_matrix
 from belfryscad.window.data_viewer_object import ObjectViewer
 from belfryscad.window.data_viewer_path import PathViewer, _is_path
 from belfryscad.window.data_viewer_region import RegionViewer, _is_region
+from belfryscad.window.data_viewer_turtle import TurtleViewer
 from belfryscad.window.data_viewer_vnf import VNFViewer, _is_vnf
 from belfryscad.window.data_viewer_vnf_tile import VNFTileViewer, _is_vnf_tile
 
@@ -306,6 +309,8 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["vnf_tile"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
+        if "turtle" not in found and _is_turtle(value):
+            found["turtle"] = (start, end, value)
     # An object is a CALL, not a bracket literal, so it has its own
     # finder. entries is None when the call references variables, which
     # cannot be round-tripped through text -- view-only, never editable.
@@ -344,6 +349,8 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["heightfield"] = (start, end, value)
         if "region" not in found and _is_region(value):
             found["region"] = (start, end, value)
+        if "turtle" not in found and _is_turtle(value):
+            found["turtle"] = (start, end, value)
     # Only when the call is all-literal. `object(other, [["k"]])` depends on
     # `other`, whose contents are not knowable from source text, so there is
     # nothing truthful to display -- offering it produced an EMPTY viewer.
@@ -392,6 +399,10 @@ def _open_heightfield_viewer(title: str, value, parent=None):
 def _open_region_viewer(title: str, value, parent=None):
     dlg = RegionViewer(title, value, parent)
     dlg.show()
+
+
+def _open_turtle_viewer(title: str, value, parent=None):
+    TurtleViewer(title, value, parent).show()
 
 
 def _open_object_viewer(title: str, value, parent=None, entries=None):
@@ -455,6 +466,8 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))
     if _is_region(value):
         menu.addAction("View as Region...", lambda: _open_region_viewer(name, value, parent))
+    if _is_turtle(value):
+        menu.addAction("View as Turtle Path...", lambda: _open_turtle_viewer(name, value, parent))
     if _is_matrix(value):
         menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(name, value, parent))
     if _is_affine_matrix(value):
@@ -505,6 +518,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
         start, end, value = literals["region"]
         menu.addAction("View as Region...", lambda start=start, end=end, value=value:
                        _open_region_viewer(_preview(start, end), value, parent))
+    if "turtle" in literals:
+        start, end, value = literals["turtle"]
+        menu.addAction("View as Turtle Path...", lambda start=start, end=end, value=value:
+                       _open_turtle_viewer(_preview(start, end), value, parent))
 
 
 def _lock_parent_editor_while_open(dlg, parent):
@@ -580,6 +597,13 @@ def _open_region_editor(title: str, value: list, on_commit, parent=None):
     dlg.show()
 
 
+def _open_turtle_editor(title: str, value: list, on_commit, parent=None):
+    dlg = TurtleViewer(title, value, parent, editable=True)
+    dlg.committed.connect(on_commit)
+    _lock_parent_editor_while_open(dlg, parent)
+    dlg.show()
+
+
 def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=None):
     """Add editable-viewer actions to a QMenu for the per-shape results of
     `find_editable_literals` — each shape (Path/Grid/Matrix/Affine/VNF/
@@ -639,6 +663,11 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as Region...", lambda start=start, end=end, value=value:
                        _open_region_editor(_preview(start, end), value,
                                             lambda t, s=start, e=end: on_commit(t, s, e), parent))
+    if "turtle" in literals:
+        start, end, value = literals["turtle"]
+        menu.addAction("Edit as Turtle Path...", lambda start=start, end=end, value=value:
+                       _open_turtle_editor(_preview(start, end), value,
+                                           lambda t, s=start, e=end: on_commit(t, s, e), parent))
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +696,7 @@ _NEW_LITERAL_SEEDS = [
     ("2D Path", "path", lambda *a: _open_path_editor(*a, is_2d=True), []),
     ("3D Path", "path", lambda *a: _open_path_editor(*a, is_2d=False), []),
     ("Region", "region", lambda *a: _open_region_editor(*a), [[]]),
+    ("Turtle Path", "turtle", lambda *a: _open_turtle_editor(*a), ["move", 10]),
     ("Grid", "grid", lambda *a: _open_grid_editor(*a),
      [[[0, 0, 0], [10, 0, 0]], [[0, 10, 0], [10, 10, 0]]]),
     ("Heightfield", "heightfield", lambda *a: _open_heightfield_editor(*a),

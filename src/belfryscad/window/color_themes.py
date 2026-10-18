@@ -25,7 +25,7 @@ COLOR_THEMES = {
     'Cornfield': {
         "background": (0.9686, 0.9529, 0.8902, 1.0),  # #f7f3e3
         "object": (0.8627, 0.698, 0.3059, 1.0),  # #dcb24e
-        "axes": (0.0, 0.0, 0.0, 1.0),  # #000000
+        "axes": (0.251, 0.251, 0.251, 1.0),  # #404040 -- not black: a path drawn on an axis disappeared into it
         "unselected_vertex": (0.0, 0.9, 0.9, 1.0)
     },
     'Daylight Gem': {

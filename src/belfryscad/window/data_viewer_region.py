@@ -497,7 +497,7 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
         cam.elevation = 89.9999   # see _PathViewport's matching comment re: gimbal lock
         cam.orthographic = True
         self._orbit_enabled = False   # a region has no "other side" to orbit to -- always top-down
-        self._renderer.line_width = 2.0
+        self._renderer.line_width = 2.0   # device px; drawn wide by the renderer, not GL
         self._renderer.show_edges = True   # polygon-offsets the fill mesh back so outlines win the depth tie
         self._editable = editable
         # Vertex markers start on here, unlike _VNFViewport where they are
