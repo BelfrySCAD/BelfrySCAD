@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import ast
 import copy
+import math
+
+import numpy as np
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QMouseEvent
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayou
 from belfryscad import turtle
 from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+                                                  _marker_radius_for_point,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window)
 from belfryscad.window.data_viewer_path import _PathViewport
@@ -71,10 +75,32 @@ class _CommandDelegate(QStyledItemDelegate):
 
 
 class _TurtleViewport(_PathViewport):
-    """The path viewport, plus a click on the path naming the segment hit:
-    `segment_clicked(i)` for the segment from point i to i+1, -1 for none."""
+    """The path viewport, plus an arrowhead at the end of the path showing
+    which way the turtle ends up facing (`heading`, set before each load),
+    and a click on the path naming the segment hit: `segment_clicked(i)` for
+    the segment from point i to i+1, -1 for none."""
 
     segment_clicked = Signal(int)
+    heading = None
+
+    def _build_point_markers(self):
+        # Built with the markers, so it is rebuilt with them on every zoom and
+        # stays the same size on screen.
+        super()._build_point_markers()
+        if self.heading is None or len(self._path_pts) == 0 or self._ctx is None:
+            return
+        hx, hy = self.heading[0], self.heading[1]
+        n = math.hypot(hx, hy)
+        if n == 0:
+            return
+        d = np.array([hx / n, hy / n, 0.0], dtype=np.float32)
+        side = np.array([-d[1], d[0], 0.0], dtype=np.float32)
+        end = self._path_pts[-1]
+        size = 3.0 * _marker_radius_for_point(self, end)
+        tip, left, right = end + d * size, end + side * size * 0.45, end - side * size * 0.45
+        up, color = [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]
+        rows = [[*p, *up, *color] for p in (tip, left, right)]
+        self._renderer.upload_points(np.array(rows, dtype=np.float32))
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if (event.button() == Qt.MouseButton.LeftButton
@@ -206,11 +232,11 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
 
     def _rebuild(self, reframe: bool = False):
         try:
-            path, self._spans = turtle.run(self._commands)
+            path, self._spans, self._vp.heading = turtle.run(self._commands)
             self._error_label.clear()
             ok = True
         except turtle.TurtleError as e:
-            path, self._spans = [[0.0, 0.0]], []
+            path, self._spans, self._vp.heading = [[0.0, 0.0]], [], None
             self._error_label.setText(str(e))
             ok = False
         if self._editable:

@@ -205,10 +205,11 @@ def _command(c, args, st, where):
         st["step"] = _rot(step, delta)
 
 
-def run(commands: list, start=(0.0, 0.0)) -> tuple[list[list[float]], list[tuple[int, int]]]:
-    """`(path, spans)`: the points `turtle(commands)` draws, and for each
-    top-level command `(first, last)`, the inclusive range of path indices
-    from where it started to where it ended (equal when it drew nothing).
+def run(commands: list, start=(0.0, 0.0)):
+    """`(path, spans, heading)`: the points `turtle(commands)` draws; for
+    each top-level command `(first, last)`, the inclusive range of path
+    indices from where it started to where it ended (equal when it drew
+    nothing); and the turtle's final step vector, the way it ends up facing.
     Raises `TurtleError` where BOSL2 would assert."""
     st = {"path": [list(start)], "step": [1.0, 0.0], "angle": 90, "arcsteps": 0}
     spans = []
@@ -216,4 +217,4 @@ def run(commands: list, start=(0.0, 0.0)) -> tuple[list[list[float]], list[tuple
         first = len(st["path"]) - 1
         _command(c, args, st, f"at command {k}")
         spans.append((first, len(st["path"]) - 1))
-    return st["path"], spans
+    return st["path"], spans, st["step"]

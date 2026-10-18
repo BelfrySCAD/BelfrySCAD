@@ -27,35 +27,36 @@ def test_split_follows_bosl2_argument_grouping():
 
 
 def test_moves_and_turns():
-    path, spans = turtle.run(["move", 10, "turn", "move", 5, "right", 90, "move"])
+    path, spans, _ = turtle.run(["move", 10, "turn", "move", 5, "right", 90, "move"])
     assert close(path, [[0, 0], [10, 0], [10, 5], [11, 5]])
     assert spans == [(0, 1), (1, 1), (1, 2), (2, 2), (2, 3)]
 
 
 def test_quarter_arcs_end_where_they_should():
-    left, _ = turtle.run(["arcleft", 5, 90])
-    right, _ = turtle.run(["arcright", 5, 90])
+    left, _, _ = turtle.run(["arcleft", 5, 90])
+    right, _, _ = turtle.run(["arcright", 5, 90])
     assert close([left[-1]], [[5, 5]])
     assert close([right[-1]], [[5, -5]])
     # segs(5) at the default $fa/$fs is 16 -- for any arc angle, as BOSL2 has it.
     assert len(left) == 17
-    stepped, spans = turtle.run(["arcsteps", 4, "arcleft", 5, 90])
+    stepped, spans, _ = turtle.run(["arcsteps", 4, "arcleft", 5, 90])
     assert len(stepped) == 5 and spans[1] == (0, 4)
 
 
 def test_arc_leaves_the_turtle_turned():
-    path, _ = turtle.run(["arcleft", 5, 90, "move", 2])
+    path, _, heading = turtle.run(["arcleft", 5, 90, "move", 2])
     assert close([path[-1]], [[5, 7]])
+    assert close([heading], [[0, 1]])
 
 
 def test_repeat_and_default_angle():
-    path, spans = turtle.run(["angle", 120, "repeat", 3, ["move", 2, "turn"]])
+    path, spans, _ = turtle.run(["angle", 120, "repeat", 3, ["move", 2, "turn"]])
     assert close([path[-1]], [[0, 0]])
     assert len(path) == 4 and spans[1] == (0, 3)
 
 
 def test_untilx_and_unreachable_goal():
-    path, _ = turtle.run(["setdir", [1, 1], "untilx", 4])
+    path, _, _ = turtle.run(["setdir", [1, 1], "untilx", 4])
     assert close([path[-1]], [[4, 4]])
     with pytest.raises(turtle.TurtleError, match="never reaches"):
         turtle.run(["untilx", -1])
