@@ -1936,6 +1936,9 @@ class MainWindow(QMainWindow):
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
         )
+        tab.editor.open_include_requested.connect(
+            lambda target, t=tab: self._open_include(t, target)
+        )
         tab.editor.edit_parameter_requested.connect(
             lambda word, t=tab: self._edit_customizer_parameter(t, word)
         )
@@ -2347,6 +2350,9 @@ class MainWindow(QMainWindow):
         )
         tab.editor.go_to_definition_requested.connect(
             lambda word, t=tab: self._go_to_definition(t, word)
+        )
+        tab.editor.open_include_requested.connect(
+            lambda target, t=tab: self._open_include(t, target)
         )
         tab.editor.edit_parameter_requested.connect(
             lambda word, t=tab: self._edit_customizer_parameter(t, word)
@@ -5265,6 +5271,19 @@ class MainWindow(QMainWindow):
                                 self._viewport_params(),
                                 current_file=current_file,
                                 cleanup_path=cleanup_path)
+
+    def _open_include(self, tab, target: str):
+        """Open the file an include/use statement names, found the way the
+        renderer finds it: beside the file first, then the libraries (#809)."""
+        from belfryscad.scad_deps import _resolve
+        base = Path(tab.file_path).parent if tab.file_path else Path.cwd()
+        found = _resolve(target, base)
+        if found is None:
+            self.statusBar().showMessage(f"Can't find \u201c{target}\u201d beside this file or in the libraries.", 5000)
+            return
+        t, idx = self._find_or_open_tab(str(found))
+        if t is not None:
+            self._tabs.setCurrentIndex(idx)
 
     def _find_or_open_tab(self, file_path: str):
         """Return the tab for *file_path*, opening it in a new tab if needed."""
