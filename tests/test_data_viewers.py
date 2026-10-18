@@ -589,6 +589,13 @@ class TestFindEditableLiterals:
         result = find_editable_literals(text, offset)
         assert result["path"] == (7, 26, [[0, 0], [1, 0], [2, 1]])
 
+    def test_comments_inside_the_literal_are_ignored(self):
+        # #818: a commented-out command hid the Edit menu.
+        text = ('t = [\n"move", 2, // first\n"arcleft", 3, 90,\n'
+                '/* [ */ //"setdir",[ 1.0 , 0.0 ],\n]; s = "a//b";')
+        result = find_editable_literals(text, text.index("arcleft"))
+        assert result["turtle"] == (4, text.index("];") + 1, ["move", 2, "arcleft", 3, 90])
+
     def test_walks_outward_past_inner_point_to_outer_path(self):
         text = "path = [[0,0],[1,0]];"
         offset = text.index("0,0") + 1  # cursor on the inner point

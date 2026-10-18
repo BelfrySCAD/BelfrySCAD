@@ -120,13 +120,25 @@ def _literal_display_name(text: str, start: int) -> str:
     return m.group(1) if m else ""
 
 
+_COMMENT_OR_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+
+
+def _blank_comments(text: str) -> str:
+    """`text` with every comment turned to spaces, newlines kept, so offsets
+    still line up. Strings are skipped, so a "//" in one stays (#818)."""
+    return _COMMENT_OR_STRING_RE.sub(
+        lambda m: m.group() if m.group().startswith('"') else re.sub(r'[^\n]', ' ', m.group()), text)
+
+
 def _iter_enclosing_literals(text: str, offset: int, max_levels: int = 8):
     """Yield `(start, end, value)` innermost-to-outermost for each enclosing
     `[...]` literal around `offset` that `ast.literal_eval`s to a list
     (`end` is exclusive). Levels that fail to parse — identifiers, calls,
     OpenSCAD-only syntax like ranges or `true`/`false`/`undef` — are skipped
     but the walk continues outward past them. Stops after `max_levels` or
-    once there's no further enclosing `[`."""
+    once there's no further enclosing `[`. Comments are ignored, both in
+    the bracket count and in the value."""
+    text = _blank_comments(text)
     pos = offset
     for _ in range(max_levels):
         depth = 0
