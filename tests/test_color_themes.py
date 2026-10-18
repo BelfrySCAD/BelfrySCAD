@@ -48,8 +48,9 @@ def test_every_theme_has_all_four_color_keys_as_valid_rgba():
             assert all(0.0 <= c <= 1.0 for c in (r, g, b, a)), f"{name}.{key} out of range"
 
 
-def test_cornfield_axes_color_is_black():
-    assert COLOR_THEMES["Cornfield"]["axes"] == (0.0, 0.0, 0.0, 1.0)
+def test_cornfield_axes_color_is_dark_gray():
+    # Not black: an editor's path line drawn along an axis vanished into it.
+    assert COLOR_THEMES["Cornfield"]["axes"] == (0.251, 0.251, 0.251, 1.0)
 
 
 class TestIsBuiltin:

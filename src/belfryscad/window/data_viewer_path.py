@@ -769,7 +769,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=not is_2d)
         cam = self._renderer.camera
         cam.fov = 45.0
-        self._renderer.line_width = 2.0
+        self._renderer.line_width = 2.0   # device px; drawn wide by the renderer, not GL
         self._editable = editable
         # Vertex markers start on here, unlike _VNFViewport where they are
         # opt-in: a path/grid/region carries few enough points to draw them

@@ -224,6 +224,40 @@ void main() {
 }
 """
 
+# Lines wider than 1 px, which core-profile GL on macOS does not draw at all
+# (GL_ALIASED_LINE_WIDTH_RANGE is 1..1 there): each segment becomes a quad
+# `width` device pixels across, built in screen space.
+_WIDE_LINE_GEOM = """
+#version 330 core
+layout(lines) in;
+layout(triangle_strip, max_vertices = 4) out;
+in vec3 v_color[];
+out vec3 g_color;
+uniform vec2 viewport;
+uniform float width;
+void main() {
+    vec4 p0 = gl_in[0].gl_Position;
+    vec4 p1 = gl_in[1].gl_Position;
+    vec2 d = (p1.xy / p1.w - p0.xy / p0.w) * viewport;
+    vec2 n = length(d) > 0.0 ? normalize(vec2(-d.y, d.x)) : vec2(0.0, 1.0);
+    vec2 off = n * width / viewport;
+    g_color = v_color[0]; gl_Position = p0 + vec4(off * p0.w, 0.0, 0.0); EmitVertex();
+    g_color = v_color[0]; gl_Position = p0 - vec4(off * p0.w, 0.0, 0.0); EmitVertex();
+    g_color = v_color[1]; gl_Position = p1 + vec4(off * p1.w, 0.0, 0.0); EmitVertex();
+    g_color = v_color[1]; gl_Position = p1 - vec4(off * p1.w, 0.0, 0.0); EmitVertex();
+    EndPrimitive();
+}
+"""
+
+_WIDE_LINE_FRAG = """
+#version 330 core
+in vec3 g_color;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(g_color, 1.0);
+}
+"""
+
 _EDGE_VERT = """
 #version 330 core
 in vec3 in_position;
@@ -1009,10 +1043,12 @@ class MeshBuffer:
 
 
 class LineBuffer:
-    """A raw line-segment VBO/VAO uploaded via `SceneRenderer.upload_lines`."""
-    def __init__(self, vbo: mgl.Buffer, vao: mgl.VertexArray):
+    """A raw line-segment VBO/VAO uploaded via `SceneRenderer.upload_lines`;
+    `wide_vao` draws the same data through the wide-line program."""
+    def __init__(self, vbo: mgl.Buffer, vao: mgl.VertexArray, wide_vao=None):
         self.vbo = vbo
         self.vao = vao
+        self.wide_vao = wide_vao
 
 
 class PointBuffer:
@@ -1156,6 +1192,8 @@ class SceneRenderer:
         self._marker_prog = ctx.program(vertex_shader=_MARKER_VERT, fragment_shader=_MARKER_FRAG)
         self._gizmo_prog = ctx.program(vertex_shader=_GIZMO_VERT, fragment_shader=_GIZMO_FRAG)
         self._edge_prog = ctx.program(vertex_shader=_EDGE_VERT, fragment_shader=_GIZMO_FRAG)
+        self._wide_line_prog = ctx.program(vertex_shader=_GIZMO_VERT, geometry_shader=_WIDE_LINE_GEOM,
+                                           fragment_shader=_WIDE_LINE_FRAG)
         self._label_prog = ctx.program(vertex_shader=_LABEL_VERT, fragment_shader=_LABEL_FRAG)
         self._anaglyph_prog = ctx.program(vertex_shader=_ANAGLYPH_VERT, fragment_shader=_ANAGLYPH_FRAG)
         self._anaglyph_prog["left_eye"].value = 0
@@ -1528,7 +1566,10 @@ class SceneRenderer:
         vao = self._ctx.vertex_array(
             self._gizmo_prog, [(vbo, "3f 3f", "in_position", "in_color")],
         )
-        lb = LineBuffer(vbo, vao)
+        wide_vao = self._ctx.vertex_array(
+            self._wide_line_prog, [(vbo, "3f 3f", "in_position", "in_color")],
+        )
+        lb = LineBuffer(vbo, vao, wide_vao)
         self._line_buffers.append(lb)
         return lb
 
@@ -1550,6 +1591,7 @@ class SceneRenderer:
         """Release only `upload_lines` buffers."""
         for lb in self._line_buffers:
             lb.vao.release()
+            lb.wide_vao.release()
             lb.vbo.release()
         self._line_buffers.clear()
 
@@ -1592,12 +1634,18 @@ class SceneRenderer:
     def _render_simple_lines(self, mvp: np.ndarray):
         if not self._line_buffers or self._gizmo_prog is None:
             return
-        old_lw = self._ctx.line_width
-        self._ctx.line_width = self.line_width
+        if self.line_width > 1:
+            # Device pixels, like GL's own line width.
+            prog = self._wide_line_prog
+            prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
+            prog["viewport"].value = tuple(float(v) for v in self._ctx.viewport[2:])
+            prog["width"].value = float(self.line_width)
+            for lb in self._line_buffers:
+                lb.wide_vao.render(mgl.LINES)
+            return
         self._gizmo_prog["mvp"].write(mvp.T.astype(np.float32).tobytes())
         for lb in self._line_buffers:
             lb.vao.render(mgl.LINES)
-        self._ctx.line_width = old_lw
 
     def _render_simple_points(self, mvp: np.ndarray, eye_pos: np.ndarray, L_world: np.ndarray):
         if not self._point_buffers or self._marker_prog is None:
