@@ -137,3 +137,47 @@ def test_start_heading_reads_and_writes_a_leading_setdir():
 def test_run_from_a_start():
     path, _, _ = turtle.run(["setdir", 90, "move", 2], start=(3, 4))
     assert close(path, [[3, 4], [3, 6]])
+
+
+def test_joints_are_the_drawing_commands():
+    assert turtle.joints(["setdir", 90, "move", 5, "left", 30, "arcleft", 5, 90, "jump", [1, 2]]) == [1, 3, 4]
+    assert turtle.joints(["move", "repeat", 2, ["move"]]) is None
+    assert turtle.joints(["move", "setdir", 90]) is None
+
+
+def _ends(cmds, start=(0, 0)):
+    path, spans, heading = turtle.run(cmds, start=start)
+    draws = turtle.joints(cmds)
+    return [path[spans[d][1]] for d in draws], heading
+
+
+def test_dragging_a_joint_keeps_the_later_joints_and_stays_tangent():
+    cmds = ["move", 10, "arcleft", 10, 90, "arcright", 5, 90]
+    before, _ = _ends(cmds)
+    new = turtle.drag_joint(cmds, (0, 0), 1, [18, 12])
+    after, _ = _ends(new)
+    assert math.dist(after[1], [18, 12]) < 0.02
+    assert math.dist(after[0], before[0]) < 1e-9          # joints before: untouched
+    assert math.dist(after[2], before[2]) < 0.02          # joints after: where they were
+    # Arcs refit as arcs with no turn between: tangent where they meet.
+    assert [c for c, _ in turtle.split(new)] == ["move", "arcleft", "arcright"]
+
+
+def test_dragging_a_move_turns_toward_the_point():
+    new = turtle.drag_joint(["move", 10], (0, 0), 0, [10, 10])
+    assert new == ["left", 45.0, "move", 14.14]
+
+
+def test_a_long_flat_arc_lands_on_its_joint():
+    # Rounding the angle to 0.1 degree would miss by ~0.4 at this radius.
+    cmds = ["arcleft", 422.08, 0.9, "arcleft", 84.08, 8]
+    before, _ = _ends(cmds)
+    new = turtle.drag_joint(cmds, (0, 0), 0, [before[0][0], before[0][1] + 0.3])
+    after, _ = _ends(new)
+    assert math.dist(after[0], [before[0][0], before[0][1] + 0.3]) < 0.02
+    assert math.dist(after[1], before[1]) < 0.02
+
+
+def test_an_unreachable_joint_is_refused():
+    # Straight behind the start, no tangent arc gets there.
+    assert turtle.drag_joint(["arcleft", 5, 90], (0, 0), 0, [-5, 0]) is None

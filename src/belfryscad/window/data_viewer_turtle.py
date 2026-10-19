@@ -25,6 +25,7 @@ from belfryscad import turtle
 from belfryscad.engine.renderer import _axis_extent, _drawn_spacings
 from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+                                                  _lit_marker_triangles,
                                                   _marker_radius_for_point,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window)
@@ -105,6 +106,12 @@ class _TurtleViewport(_PathViewport):
     start_drag_started = Signal()
     start_dragged = Signal(float, float, str)
     start_drag_finished = Signal()
+    #: A joint (the end of a drawing command): pressed, dragged to (x, y),
+    #: released -- with whether it moved, since a press without a drag is a
+    #: click that selects that command.
+    joint_drag_started = Signal(int)
+    joint_dragged = Signal(int, float, float)
+    joint_drag_finished = Signal(int, bool)
     #: A plain click off the path: (x, y) in the model's plane.
     draw_clicked = Signal(float, float)
     #: The pointer moved, or a modifier changed: redraw the drawing preview.
@@ -118,6 +125,11 @@ class _TurtleViewport(_PathViewport):
     #: Called with (menu, model point or None) to add the start's actions.
     start_menu = None
     _start_drag = None
+    #: The joints' points, set before each load; [] when the list has a
+    #: command a drag could not refit around (`turtle.joints`).
+    joints: list = []
+    _joint_drag = None
+    _joint_moved = False
     hover: QPoint | None = None
     _preview_lb = None
 
@@ -153,6 +165,16 @@ class _TurtleViewport(_PathViewport):
         hit = self._renderer.pick_nearest_point(np.array(arrow[:2]), pos.x(), pos.y(),
                                                 self.width(), self.height())
         return ("move", "turn")[hit] if hit >= 0 else None
+
+    _JOINT_COLOR = np.array([0.1, 0.3, 0.85], dtype=np.float32)
+
+    def joint_at(self, pos) -> int:
+        """The joint under widget point `pos`, or -1."""
+        if not self.joints:
+            return -1
+        return self._renderer.pick_nearest_point(
+            np.array([[x, y, 0.0] for x, y in self.joints], dtype=np.float32),
+            pos.x(), pos.y(), self.width(), self.height())
 
     def minor_step(self) -> float:
         """The spacing of the smallest scale ticks now shown: Shift's snap."""
@@ -194,12 +216,18 @@ class _TurtleViewport(_PathViewport):
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent):
-        kind = self.start_handle_at(event.position().toPoint()) \
-            if event.button() == Qt.MouseButton.LeftButton else None
+        pos = event.position().toPoint()
+        left = event.button() == Qt.MouseButton.LeftButton
+        kind = self.start_handle_at(pos) if left else None
         if kind is not None:
             self._start_drag = kind
             self.start_drag_started.emit()
             return   # a drag of the handle, not of the view
+        j = self.joint_at(pos) if left else -1
+        if j >= 0:
+            self._joint_drag, self._joint_moved = j, False
+            self.joint_drag_started.emit(j)
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -208,9 +236,16 @@ class _TurtleViewport(_PathViewport):
             if pt is not None:
                 self.start_dragged.emit(pt[0], pt[1], self._start_drag)
             return
+        if self._joint_drag is not None:
+            pt = self._model_point(event.position().toPoint())
+            if pt is not None:
+                self._joint_moved = True
+                self.joint_dragged.emit(self._joint_drag, pt[0], pt[1])
+            return
         pos = event.position().toPoint()
-        self.setCursor(Qt.CursorShape.SizeAllCursor if self.start_handle_at(pos) == "move"
-                       else Qt.CursorShape.CrossCursor if self.start_handle_at(pos) == "turn"
+        handle = self.start_handle_at(pos)
+        self.setCursor(Qt.CursorShape.SizeAllCursor if handle == "move" or self.joint_at(pos) >= 0
+                       else Qt.CursorShape.CrossCursor if handle == "turn"
                        else Qt.CursorShape.ArrowCursor)
         self.hover = event.position().toPoint() if not event.buttons() else None
         self.hover_changed.emit()
@@ -239,6 +274,13 @@ class _TurtleViewport(_PathViewport):
             up = [0.0, 0.0, 1.0]
             rows = [[*p, *up, *self._START_COLOR] for p in (tip, base + side, base - side)]
             self._renderer.upload_points(np.array(rows, dtype=np.float32))
+        if self.joints and self._ctx is not None:
+            tris = []
+            for x, y in self.joints:
+                pt = np.array([x, y, 0.0], dtype=np.float32)
+                tris += _lit_marker_triangles(pt, _marker_radius_for_point(self, pt),
+                                              self._marker_faces(1.0), self._JOINT_COLOR)
+            self._renderer.upload_points(np.array(tris, dtype=np.float32))
         if self.heading is None or len(self._path_pts) == 0 or self._ctx is None:
             return
         hx, hy = self.heading[0], self.heading[1]
@@ -266,6 +308,10 @@ class _TurtleViewport(_PathViewport):
         if self._start_drag is not None:
             self._start_drag = None
             self.start_drag_finished.emit()
+            return
+        if self._joint_drag is not None:
+            j, self._joint_drag = self._joint_drag, None
+            self.joint_drag_finished.emit(j, self._joint_moved)
             return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started and self._press_pos is not None
@@ -312,6 +358,9 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             self._vp.start_drag_started.connect(self._begin_live_edit)
             self._vp.start_dragged.connect(self._on_start_dragged)
             self._vp.start_drag_finished.connect(lambda: self._end_live_edit("Move Start"))
+            self._vp.joint_drag_started.connect(self._on_joint_drag_started)
+            self._vp.joint_dragged.connect(self._on_joint_dragged)
+            self._vp.joint_drag_finished.connect(self._on_joint_drag_finished)
         _sync_viewport_to_main_window(self._vp)
         # Every arc is many points; the markers would bury the path. The
         # selected command's points still show.
@@ -437,6 +486,8 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             ok = False
         if self._editable:
             self._save.setEnabled(ok)
+            draws = turtle.joints(self._commands) if ok else None
+            self._vp.joints = [path[self._spans[d][1]] for d in draws] if draws else []
         if self._vp._ctx is not None:
             self._vp.load_path(path, False, reframe=reframe)
             self._highlight_selection()
@@ -491,7 +542,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         pt = vp._model_point(pos) if pos is not None else None
         extra = []
         if pt is not None and not vp._bg_adjusting and vp.segment_at(pos) < 0 \
-                and vp.start_handle_at(pos) is None:
+                and vp.start_handle_at(pos) is None and vp.joint_at(pos) < 0:
             extra = self._draw_commands(*pt)
         if not extra:
             vp.set_preview(None)
@@ -603,6 +654,32 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             self._commands = turtle.with_start_heading(self._commands, angle)
             self._populate_table()
         self._rebuild(reframe=False)
+
+    # -- joints -----------------------------------------------------------
+
+    def _on_joint_drag_started(self, j: int):
+        # Every frame refits from the list as it was when the drag began,
+        # so rounding never accumulates over a long drag.
+        self._joint_base = self._commands
+        self._begin_live_edit()
+
+    def _on_joint_dragged(self, j: int, x: float, y: float):
+        """Shift snaps the joint to the smallest grid ticks shown. A point
+        no refit reaches leaves the path as it last was."""
+        if QGuiApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+            step = self._vp.minor_step()
+            x, y = round(x / step) * step, round(y / step) * step
+        new = turtle.drag_joint(self._joint_base, self._start, j, (x, y))
+        if new is not None:
+            self._commands = new
+            self._populate_table()
+            self._rebuild(reframe=False)
+
+    def _on_joint_drag_finished(self, j: int, moved: bool):
+        self._end_live_edit("Move Joint")
+        draws = turtle.joints(self._commands)
+        if not moved and draws and j < len(draws):
+            self._table.selectRow(draws[j])   # a click: select what drew it
 
     def _add_start_actions(self, menu: QMenu, pt):
         if not self._vp.start_movable:

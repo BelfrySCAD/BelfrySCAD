@@ -335,3 +335,71 @@ def with_start_heading(commands: list, angle: float) -> list:
     elif angle != 0:
         rows.insert(0, ("setdir", [angle]))
     return join(rows)
+
+
+# -- Dragging a joint: the point where a drawing command ends ---------------
+
+_DRAW = ("move", "arcleft", "arcright", "jump")
+_TURNS = ("left", "right", "turn")
+
+
+def joints(commands: list) -> list[int] | None:
+    """The rows of the drawing commands (`move`, `arcleft`/`arcright`,
+    `jump`), whose end points are the joints a drag can move -- or None
+    when the list uses anything else, whose effect a refit could not keep
+    (`repeat`, `untilx`, a changed step length, `setdir` after the start)."""
+    rows = split(commands)
+    for i, (c, a) in enumerate(rows):
+        ok = (c == "setdir" and i == 0 and len(a) == 1
+              or c in _TURNS and (not a or (len(a) == 1 and _is_num(a[0])))
+              or c == "move" and (not a or (len(a) == 1 and _is_num(a[0])))
+              or c in ("arcleft", "arcright") and len(a) == 2 and all(_is_num(x) for x in a)
+              or c == "jump" and len(a) == 1 and _is_vec2(a[0]))
+        if not ok:
+            return None
+    return [i for i, (c, _) in enumerate(rows) if c in _DRAW]
+
+
+def drag_joint(commands: list, start, j: int, target) -> list | None:
+    """`commands` with joint `j` (the end of the j-th drawing command) moved
+    to `target` and every later joint where it was. From joint j on, each
+    drawing command is refitted to reach its joint from wherever the turtle
+    now is and the way it now faces: an arc as the tangent arc there, so the
+    path stays smooth; a move as a turn and a move; a jump as itself. Turns
+    before an arc or jump are kept: they are corners the author made.
+    None when some command cannot reach its joint (a point on the line
+    behind an arc's start, say), or the list is not one `joints` accepts.
+
+    Angles are snapped to 0.1 degree and the arc or move then ends on that
+    direction, nearest its joint -- rather than rounding the angle and
+    missing by the radius times the rounding, which on a long flat arc
+    would be a visible miss."""
+    draws = joints(commands)
+    if draws is None or not 0 <= j < len(draws):
+        return None
+    rows = split(commands)
+    path, spans, _ = run(commands, start)
+    ends = [path[spans[d][1]] for d in draws]
+    ends[j] = [float(target[0]), float(target[1])]
+    first = draws[j - 1] + 1 if j else 0
+    out = rows[:first]
+    for s in range(j, len(draws)):
+        d = draws[s]
+        group = rows[(draws[s - 1] + 1 if s else 0):d]
+        kind = rows[d][0]
+        pre = [r for r in group if r[0] == "setdir"] if kind == "move" else group
+        path, _, heading = run(join(out + pre), start)
+        if kind == "jump":
+            new = ["jump", [_round_len(ends[s][0]), _round_len(ends[s][1])]]
+        elif kind == "move":
+            new = line_to(path[-1], heading, ends[s], snap_angle=0.1)
+        else:
+            new = tangent_arc(path[-1], heading, ends[s], snap_angle=0.1)
+            # tangent_arc's stand-in for "behind the turtle" when snapping:
+            # a whole turn less one snap, on a huge radius. Not a refit.
+            if new and new[0] != "move" and abs(new[2]) >= 359.9:
+                return None
+        if not new or not any(c in _DRAW for c, _ in split(new)):
+            return None
+        out += pre + split(new)
+    return join(out)
