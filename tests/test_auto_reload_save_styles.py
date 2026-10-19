@@ -33,14 +33,25 @@ def spin(seconds):
     while time.monotonic() < end:
         app.processEvents(); time.sleep(0.02)
 
+def retrying(op):
+    # Windows refuses a rename or delete while anything has the file open --
+    # BelfrySCAD reading it on the last change, or a virus scanner on the new
+    # temp file -- and editors that save this way retry. So does this.
+    for _ in range(100):
+        try:
+            return op()
+        except PermissionError:
+            spin(0.05)
+    return op()
+
 def in_place(text):
     with open(path, "w") as f: f.write(text)
 def by_rename(text):
     tmp = os.path.join(d, "t.scad.tmp")
     with open(tmp, "w") as f: f.write(text)
-    os.replace(tmp, path)
+    retrying(lambda: os.replace(tmp, path))
 def recreate(text):
-    os.remove(path); spin(0.5)
+    retrying(lambda: os.remove(path)); spin(0.5)
     with open(path, "w") as f: f.write(text)
 
 out = {}
