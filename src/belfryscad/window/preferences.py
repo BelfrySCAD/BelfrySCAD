@@ -121,6 +121,9 @@ _DEFAULTS = {
     # covered ones green, so "ran" and "no data" are told apart. A display
     # taste, so persisted -- unlike the coverage toggles themselves.
     "coverage/tintCovered": True,
+    # The format of the last export, which File > Quick Export reuses.
+    # Empty until something has been exported.
+    "export/lastFormat": "",
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,

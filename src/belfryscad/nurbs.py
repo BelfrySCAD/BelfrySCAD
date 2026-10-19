@@ -172,6 +172,41 @@ def interp(points, degree, closed=False):
     return np.linalg.solve(_periodic_matrix(params, p, U, n), rpts), bar
 
 
+def interp_curve(points, degree, closed=False, corners=(), splinesteps=16):
+    """The sampled curve of `nurbs_curve(nurbs_interp(points, degree,
+    closed=closed, corners=corners), splinesteps=splinesteps)`.
+
+    BOSL2 makes a corner by splitting there: each run of points from one
+    corner to the next is interpolated on its own as a clamped curve, at
+    the degree asked for or, for a run too short for it, one less than its
+    point count. A closed curve with corners starts at its first corner
+    and runs back round to it. Checked against BOSL2's own output, open
+    and closed, degree 2 and 3, one to three corners (tests/test_nurbs.py).
+    """
+    pts = [list(p) for p in points]
+    n = len(pts)
+    cs = sorted(set(int(c) for c in corners))
+    if not cs:
+        control, knots = interp(pts, degree, closed)
+        return curve(control, degree, closed, splinesteps, knots=knots)
+    if closed:
+        pts = pts[cs[0]:] + pts[:cs[0]] + [pts[cs[0]]]
+        cuts = [(c - cs[0]) % n for c in cs] + [n]
+    else:
+        cuts = [0] + cs + [n - 1]
+    pieces = []
+    for a, b in zip(cuts, cuts[1:]):
+        run = pts[a:b + 1]
+        p = min(degree, len(run) - 1)
+        if p < 2:
+            piece = curve(run, 1, splinesteps=splinesteps)
+        else:
+            control, knots = interp(run, p)
+            piece = curve(control, p, splinesteps=splinesteps, knots=knots)
+        pieces.append(piece if not pieces else piece[1:])
+    return np.vstack(pieces)
+
+
 def _clamped_system(params, p):
     """Collocation matrix and short-form knots for a clamped fit through
     points at `params` (BOSL2 `_build_clamped_system`, extra_pts=0)."""
