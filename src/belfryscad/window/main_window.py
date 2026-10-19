@@ -1380,6 +1380,9 @@ class MainWindow(QMainWindow):
         self._console_dock.setWidget(self._console)
         self._console_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
+        for dock in self.findChildren(QDockWidget):
+            dock.topLevelChanged.connect(
+                lambda floating, d=dock: floating and QTimer.singleShot(0, lambda: self._give_window_buttons(d)))
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -1821,6 +1824,7 @@ class MainWindow(QMainWindow):
             act.setShortcuts(QKeySequence.keyBindings(std) + ([QKeySequence(extra)] if mac else []))
         window_menu.addSeparator()
         self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
+        self._add_action(window_menu, "Dock All Panes", self._dock_all_panes)
         # Toolbars, panes and the status bar, moved here from the top of View.
         window_menu.addSeparator()
         # toggleViewAction, not a checkable of our own: it follows the
@@ -3012,6 +3016,32 @@ class MainWindow(QMainWindow):
             self.log(f"Exported image to {path}")
         else:
             QMessageBox.warning(self, "Export as Image", f"Could not write {path}.")
+
+    _PANE_WINDOW_FLAGS = (Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint
+                          | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+
+    def _give_window_buttons(self, dock):
+        """A floating pane is a Qt tool window, which Windows gives only a
+        close button. Make it an ordinary window, with minimize and
+        maximize/restore too (#814). Waits for the mouse to come up: the
+        pane floats mid-drag, and changing its flags then would end the drag.
+        Re-docking resets the flags, and the next float sets them again.
+        Not on macOS, where a floating pane is a native utility panel."""
+        if sys.platform == "darwin" or not dock.isFloating() or dock.windowFlags() & Qt.WindowType.WindowMinMaxButtonsHint:
+            return
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+            QTimer.singleShot(100, lambda: self._give_window_buttons(dock))
+            return
+        hidden = dock.isHidden()
+        dock.setWindowFlags(self._PANE_WINDOW_FLAGS)
+        if not hidden:
+            dock.show()   # setWindowFlags hides a window
+
+    def _dock_all_panes(self):
+        """Window > Dock All Panes: every floating pane back where it was docked."""
+        for dock in self.findChildren(QDockWidget):
+            if dock.isFloating():
+                dock.setFloating(False)
 
     def _quick_export(self):
         """File > Quick Export: ask only for the name, in the format exported
