@@ -208,7 +208,69 @@ def _split_top_level(src: str, sep: str = ",") -> list[str]:
     return parts
 
 
-_STATE_ARG_RE = re.compile(r"\s*state\s*=\s*")
+def _enclosing_call(text: str, start: int, end: int) -> dict | None:
+    """The call `text[start:end]` is a direct argument of, or None.
+
+    `name` is the function's; `args` lists each argument as a dict with its
+    span (`a`, `b`, whitespace trimmed), its `name` (None if positional),
+    its value's span (`value`) and, if positional, its `pos`ition among the
+    positional ones; `index` is which of them holds `text[start:end]`.
+    Lexical, with comments ignored, like `find_editable_literals`."""
+    blank = _blank_comments(text)
+    depth, i = 0, start - 1
+    while i >= 0:
+        c = blank[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    m = re.search(r"\b([A-Za-z_]\w*)\s*$", blank[:max(i, 0)])
+    if i < 0 or blank[i] != "(" or not m:
+        return None
+    depth, j = 0, i
+    while j < len(blank):
+        if blank[j] in "([":
+            depth += 1
+        elif blank[j] in ")]":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    call = {"name": m.group(1), "open": i, "close": j, "args": [], "index": None}
+    pos, positional = i + 1, 0
+    for part in _split_top_level(blank[i + 1:j]):
+        if part.strip():
+            a = pos + len(part) - len(part.lstrip())
+            b = pos + len(part.rstrip())
+            named = re.match(r"\s*([A-Za-z_$]\w*)\s*=(?!=)\s*", part)
+            arg = {"a": a, "b": b, "name": named.group(1) if named else None,
+                   "value": (pos + named.end(), b) if named else (a, b),
+                   "pos": None if named else positional}
+            if not named:
+                positional += 1
+            if arg["value"][0] <= start and end <= arg["value"][1]:
+                call["index"] = len(call["args"])
+            call["args"].append(arg)
+        pos += len(part) + 1
+    return call if call["index"] is not None else None
+
+
+def _call_arg(call: dict, name: str, position: int | None = None) -> dict | None:
+    """The argument given as `name=`, or at positional `position`."""
+    for arg in call["args"]:
+        if arg["name"] == name or (position is not None and arg["pos"] == position):
+            return arg
+    return None
+
+
+def _literal(text: str, span):
+    try:
+        return ast.literal_eval(_blank_comments(text)[span[0]:span[1]])
+    except (ValueError, SyntaxError):
+        return None
 
 
 def turtle_call_context(text: str, start: int, end: int) -> dict | None:
@@ -222,54 +284,79 @@ def turtle_call_context(text: str, start: int, end: int) -> dict | None:
     a literal `[x, y]`, else None: a state worked out by the script (a
     variable, an earlier turtle's full state) can be read by nothing short
     of running it."""
-    blank = _blank_comments(text)
-    depth, i = 0, start - 1
-    while i >= 0:
-        c = blank[i]
-        if c in ")]":
-            depth += 1
-        elif c in "([":
-            if depth == 0:
-                break
-            depth -= 1
-        i -= 1
-    if i < 0 or blank[i] != "(" or not re.search(r"\bturtle\s*$", blank[:i]):
+    call = _enclosing_call(text, start, end)
+    if call is None or call["name"] != "turtle":
         return None
-    depth, j = 0, i
-    while j < len(blank):
-        if blank[j] in "([":
-            depth += 1
-        elif blank[j] in ")]":
-            depth -= 1
-            if depth == 0:
-                break
-        j += 1
-    ctx = {"arg_start": start, "state": None, "start": None}
-    pos, positional, list_positional = i + 1, 0, None
-    for part in _split_top_level(blank[i + 1:j]):
-        a, b = pos, pos + len(part)
-        pos = b + 1
-        lead = len(part) - len(part.lstrip())
-        m = _STATE_ARG_RE.match(part)
-        named = re.match(r"\s*\w+\s*=", part)
-        if a <= start and end <= b:
-            ctx["arg_start"] = a + lead
-            list_positional = None if named else positional
-        if m:
-            ctx["state"] = (a + m.end(), b - (len(part) - len(part.rstrip())))
-        elif not named and part.strip():
-            if positional == 1 and list_positional == 0 and ctx["state"] is None:
-                ctx["state"] = (a + lead, b - (len(part) - len(part.rstrip())))
-            positional += 1
-    if ctx["state"] is not None:
-        try:
-            v = ast.literal_eval(blank[ctx["state"][0]:ctx["state"][1]])
-        except (ValueError, SyntaxError):
-            v = None
+    mine = call["args"][call["index"]]
+    state = _call_arg(call, "state", 1 if mine["pos"] == 0 else None)
+    ctx = {"arg_start": mine["a"], "state": state["value"] if state else None, "start": None}
+    if state is not None:
+        v = _literal(text, state["value"])
         if isinstance(v, list) and len(v) == 2 and all(
                 isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
             ctx["start"] = [float(v[0]), float(v[1])]
     return ctx
+
+
+def nurbs_interp_context(text: str, start: int, end: int) -> dict | None:
+    """When the points at `text[start:end]` are `nurbs_interp()`'s (its
+    first argument, or `points=`), what the call says, for the path editor
+    to open on: `degree`, `closed` and `corners` where each is a literal
+    (else None), and the call itself, for `nurbs_write_back`. None when the
+    list is anything else."""
+    call = _enclosing_call(text, start, end)
+    if call is None or call["name"] != "nurbs_interp":
+        return None
+    mine = call["args"][call["index"]]
+    if not (mine["pos"] == 0 or mine["name"] == "points"):
+        return None
+    ctx = {"call": call, "degree": None, "closed": None, "corners": None}
+    deg = _call_arg(call, "degree", 1)
+    if deg is not None:
+        v = _literal(text, deg["value"])
+        ctx["degree"] = v if isinstance(v, int) and not isinstance(v, bool) else None
+    closed = _call_arg(call, "closed")
+    if closed is not None:
+        word = text[closed["value"][0]:closed["value"][1]].strip()
+        ctx["closed"] = {"true": True, "false": False}.get(word)
+    corners = _call_arg(call, "corners")
+    if corners is not None:
+        v = _literal(text, corners["value"])
+        if isinstance(v, list) and all(isinstance(c, int) and not isinstance(c, bool) for c in v):
+            ctx["corners"] = v
+    return ctx
+
+
+def nurbs_write_back(text: str, start: int, end: int, list_text: str,
+                     ctx: dict | None, corners: list) -> tuple[str, int, int]:
+    """`(replacement, s, e)` writing the path editor's points and corners
+    back into a `nurbs_interp()` call in one edit: `corners=` replaced,
+    added after the last argument, or removed when there are none. A
+    `corners=` the script computes is left alone -- the editor opened with
+    no corners it could read, so it has none to write."""
+    if ctx is None:
+        return list_text, start, end
+    call = ctx["call"]
+    arg = _call_arg(call, "corners")
+    value = "[" + ", ".join(str(c) for c in sorted(corners)) + "]"
+    if arg is not None and ctx["corners"] is None:
+        return list_text, start, end
+    if arg is None:
+        if not corners:
+            return list_text, start, end
+        last = call["args"][-1]["b"]
+        return list_text + text[end:last] + f", corners={value}", start, last
+    if corners:
+        a, b = arg["value"]
+        return list_text + text[end:a] + value, start, b
+    # Removed with its comma: the one before it, or, written ahead of the
+    # points, the one after.
+    k = call["args"].index(arg)
+    if arg["a"] > start:
+        prev_b = call["args"][k - 1]["b"]
+        return list_text + text[end:prev_b], start, arg["b"]
+    next_a = call["args"][k + 1]["a"]
+    return text[next_a:start] + list_text, arg["a"], end
 
 
 def turtle_write_back(text: str, start: int, end: int, list_text: str,
@@ -640,9 +727,21 @@ def _lock_parent_editor_while_open(dlg, parent):
     dlg.finished.connect(lambda _result=0: parent.setReadOnly(False))
 
 
-def _open_path_editor(title: str, value: list, on_commit, parent=None, is_2d=None):
-    dlg = PathViewer(title, value, parent, editable=True, is_2d=is_2d)
-    dlg.committed.connect(on_commit)
+def _open_path_editor(title: str, value: list, on_commit, parent=None, is_2d=None,
+                      text: str | None = None, start: int = 0, end: int = 0):
+    """With `text`, the points are `text[start:end]` and `on_commit` takes
+    `(new_text, s, e)`. Points that are `nurbs_interp()`'s open as that call
+    draws them -- NURBS Interpolated, its degree and closed= -- with its
+    corners=, and Save writes the corners back there too (#803)."""
+    ctx = nurbs_interp_context(text, start, end) if text is not None else None
+    preset = {"mode": "nurbs_interp", "degree": ctx["degree"], "closed": ctx["closed"]} if ctx else None
+    dlg = PathViewer(title, value, parent, editable=True, is_2d=is_2d,
+                     corners=(ctx or {}).get("corners"), preset=preset)
+    if text is None:
+        dlg.committed.connect(on_commit)
+    else:
+        dlg.committed.connect(lambda t: on_commit(
+            *nurbs_write_back(text, start, end, t, ctx, dlg.corners_list())))
     _lock_parent_editor_while_open(dlg, parent)
     dlg.show()
 
@@ -755,8 +854,8 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
     if "path" in literals:
         start, end, value = literals["path"]
         menu.addAction("Edit as Path...", lambda start=start, end=end, value=value:
-                       _open_path_editor(_preview(start, end), value,
-                                         lambda t, s=start, e=end: on_commit(t, s, e), parent))
+                       _open_path_editor(_preview(start, end), value, on_commit, parent,
+                                         text=text, start=start, end=end))
     if "grid" in literals:
         start, end, value = literals["grid"]
         menu.addAction("Edit as Grid...", lambda start=start, end=end, value=value:
