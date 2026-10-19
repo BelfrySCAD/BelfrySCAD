@@ -3235,3 +3235,39 @@ def test_turtle_writes_one_command_per_line():
     assert format_turtle_lines(["setdir", 90, "move", 2.5, "arcleft", 5, 90, "turn"], "  ") == (
         '[\n      "setdir", 90,\n      "move", 2.5,\n      "arcleft", 5, 90,\n      "turn"\n  ]')
     assert format_turtle_lines([]) == "[]"
+
+
+class TestNurbsCorners:
+    """#803 (b): a path editor opened on nurbs_interp()'s points reads and writes corners=."""
+
+    def _ctx(self, text):
+        from belfryscad.window.data_viewers import nurbs_interp_context
+        start = text.index("[[")
+        end = text.index("]]", start) + 2
+        return start, end, nurbs_interp_context(text, start, end)
+
+    def _write(self, text, corners):
+        from belfryscad.window.data_viewers import nurbs_write_back
+        start, end, ctx = self._ctx(text)
+        new, s, e = nurbs_write_back(text, start, end, "PTS", ctx, corners)
+        return text[:s] + new + text[e:]
+
+    def test_reads_the_call_inside_nurbs_curve(self):
+        text = "p = nurbs_curve(nurbs_interp([[0,0],[5,5],[9,0],[9,9]], 3, closed=true, corners=[1, 2]), splinesteps=16);"
+        _, _, ctx = self._ctx(text)
+        assert (ctx["degree"], ctx["closed"], ctx["corners"]) == (3, True, [1, 2])
+
+    def test_not_nurbs_interps_points(self):
+        assert self._ctx("p = nurbs_curve([[0,0],[1,1]], 3);")[2] is None
+        assert self._ctx("p = [[0,0],[1,1]];")[2] is None
+
+    def test_corners_replaced_added_and_removed(self):
+        base = "nurbs_interp([[0,0],[1,1]], 3"
+        assert self._write(base + ", corners=[1]);", [2, 1]) == "nurbs_interp(PTS, 3, corners=[1, 2]);"
+        assert self._write(base + ");", [1]) == "nurbs_interp(PTS, 3, corners=[1]);"
+        assert self._write(base + ", corners=[1], closed=true);", []) == "nurbs_interp(PTS, 3, closed=true);"
+        assert self._write("nurbs_interp(corners=[1], points=[[0,0],[1,1]]);", []) == "nurbs_interp(points=PTS);"
+        assert self._write(base + ");", []) == "nurbs_interp(PTS, 3);"
+
+    def test_a_computed_corners_is_left_alone(self):
+        assert self._write("nurbs_interp([[0,0],[1,1]], 3, corners=cs);", [1]) == "nurbs_interp(PTS, 3, corners=cs);"

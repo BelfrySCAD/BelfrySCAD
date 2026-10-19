@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QMenu, QLabel, QPushButton, QSplitter, QWidget,
                                QComboBox)
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 
 from belfryscad import nurbs
 from belfryscad.window.background_image import (BackgroundImageViewportMixin,
@@ -300,7 +300,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
     committed = Signal(str)
 
     def __init__(self, title: str, path_value: list, parent=None, editable: bool = False,
-                 is_2d: bool | None = None):
+                 is_2d: bool | None = None, corners=None, preset: dict | None = None):
         super().__init__(parent)
         label = "Path Editor" if editable else "Path Viewer"
         self.setWindowTitle(f"{label}: {title}" if title else label)
@@ -316,6 +316,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._vp = _PathViewport(path_value, self._is_2d, self, editable=editable)
+        self._corners = set(corners or ())
+        self._vp.corners = self._corners
         _sync_viewport_to_main_window(self._vp)
         splitter.addWidget(self._vp)
 
@@ -332,6 +334,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._vp.bezier_vertex_added.connect(self._on_viewport_bezier_vertex_added)
             self._vp.vertices_appended.connect(self._on_viewport_vertices_appended)
             self._vp.delete_vertex_requested.connect(self._delete_vertex)
+            self._vp.corner_toggled.connect(self._toggle_corner)
             self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
         table_container = QWidget()
@@ -387,7 +390,25 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._degree_spin.setValue(3)
         self._degree_spin.valueChanged.connect(self._rebuild)
         btn_row.addWidget(self._degree_spin)
+        # NURBS Interpolated: the corners, as nurbs_interp() takes them, to
+        # copy into a call the editor was not opened on (#803).
+        self._corners_label = QLabel()
+        self._corners_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._corners_label.setStyleSheet("QLabel { padding-left: 12px; }")
+        btn_row.addWidget(self._corners_label)
+        self._corners_copy = QPushButton("Copy")
+        self._corners_copy.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(self._corners_label.text()))
+        btn_row.addWidget(self._corners_copy)
+        # Opened on nurbs_interp()'s points: show them as that call does.
+        preset = preset or {}
+        if preset.get("mode"):
+            self._mode_combo.setCurrentIndex(self._mode_combo.findData(preset["mode"]))
+        if preset.get("closed") is not None:
+            self._closed_cb.setChecked(preset["closed"])
         self._sync_degree_spin()
+        if preset.get("degree"):
+            self._degree_spin.setValue(preset["degree"])
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
             restore_session_background(self.windowTitle(), self._vp)
@@ -589,11 +610,28 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         return self._path
 
     def _apply_value(self, value):
+        self._shift_corners(self._path, value)
         self._path = value
         self._populate_vert_table()
         # Not refitted: an edit happens where the user is looking, and a
         # path built point by point would otherwise jump on every click.
         self._rebuild(reframe=False)
+
+    def _shift_corners(self, old: list, new: list):
+        """Keep each corner on its point when one point is inserted or
+        deleted (and so when that is undone), by finding where the two
+        lists first differ."""
+        # ponytail: a single insert/delete is all the editor makes; any
+        # other length change leaves the indices as they are.
+        if not self._corners or abs(len(new) - len(old)) != 1:
+            return
+        at = next((i for i, (a, b) in enumerate(zip(old, new)) if a != b), min(len(old), len(new)))
+        if len(new) > len(old):
+            moved = {c + 1 if c >= at else c for c in self._corners}
+        else:
+            moved = {c - 1 if c > at else c for c in self._corners if c != at}
+        self._corners.clear()
+        self._corners.update(moved)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -693,6 +731,25 @@ class PathViewer(QDialog, _UndoableViewerMixin):
     def _mode(self) -> str:
         return self._mode_combo.currentData()
 
+    def corners_list(self) -> list:
+        """The corners as Save writes them: only those valid for the points
+        and the Close Path setting now."""
+        n = len(self._path)
+        closed = self._closed_cb.isChecked()
+        lo, hi = (0, n - 1) if closed else (1, n - 2)
+        return sorted(c for c in self._corners if lo <= c <= hi)
+
+    def _toggle_corner(self, vi: int):
+        self._corners ^= {vi}
+        self._rebuild(reframe=False)
+
+    def _sync_corners_label(self):
+        corners = self.corners_list()
+        show = self._mode() == "nurbs_interp" and bool(corners)
+        self._corners_label.setText(f"corners={corners}")
+        self._corners_label.setVisible(show)
+        self._corners_copy.setVisible(show)
+
     def _sync_degree_spin(self):
         """Show the degree only in the NURBS modes, and cap it at what the
         point count supports (BOSL2 asserts degree+1 points; interpolation
@@ -713,6 +770,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
     def _rebuild(self, _=None, reframe: bool = True):
         self._sync_degree_spin()
+        self._sync_corners_label()
         if self._vp._ctx is not None:
             self._vp.load_path(self._path, self._closed_cb.isChecked(),
                                self._mode(), self._degree_spin.value(), reframe=reframe)
@@ -758,6 +816,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
     vertex_drag_finished = Signal()
     add_vertex_requested = Signal(int, float, float, float)  # (insert_after_idx, x, y, z) -- right-click on a line, editable only
     delete_vertex_requested = Signal(int)  # (vertex_idx) -- right-click directly on a vertex, editable only
+    corner_toggled = Signal(int)  # (vertex_idx) -- right-click > Corner, NURBS Interpolated only (#803)
     # (v0_idx, [a, d, f, e, c]) -- bezier-mode "Add Vertex": De Casteljau
     # split of the cubic segment starting at v0_idx, splicing 5 new points
     # in place of its 2 old interior control points (see
@@ -785,6 +844,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._path_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
         self._closed = False
         self._bezier = False
+        # NURBS Interpolated: the points the curve has a corner at, shared
+        # with (and owned by) PathViewer; and the mode last loaded.
+        self.corners: set = set()
+        self._mode_now = "path"
         # v0 index -> "disjointed"/"same_angle"/"symmetric" (see
         # _classify_node_type) -- transient, viewer-only state, never
         # serialized. Auto-(re)classified from scratch whenever bezier mode
@@ -884,6 +947,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # ordinary drag/nudge-triggered rebuild (bezier already on) must
         # NOT reclassify, or it would clobber explicit context-menu
         # overrides (and the type the user is actively dragging toward).
+        self._mode_now = mode
         bezier = mode == "bezier"
         if bezier and not self._bezier:
             self._classify_all_node_types()
@@ -927,7 +991,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 for i, pt in enumerate(handle_pairs):
                     hdata[i] = np.concatenate([pt, handle_color])
                 self._renderer.upload_lines(hdata)
-        elif mode in ("nurbs", "nurbs_interp") and (curve := self._nurbs_curve(pts, closed, mode, degree)) is not None:
+        elif mode in ("nurbs", "nurbs_interp") and (curve := self._nurbs_curve(pts, closed, mode, degree,
+                                                                                self.valid_corners())) is not None:
             if closed:
                 curve = np.vstack([curve, curve[:1]])
             line_data = np.empty((2 * (len(curve) - 1), 6), dtype=np.float32)
@@ -958,8 +1023,15 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self.doneCurrent()
         self.update()
 
+    def valid_corners(self) -> list:
+        """The corners BOSL2 accepts for these points: interior ones on an
+        open curve (a curve's ends are corners already), any on a closed one."""
+        n = len(self._path_pts)
+        lo, hi = (0, n - 1) if self._closed else (1, n - 2)
+        return sorted(c for c in self.corners if lo <= c <= hi)
+
     @staticmethod
-    def _nurbs_curve(pts: np.ndarray, closed: bool, mode: str, degree: int):
+    def _nurbs_curve(pts: np.ndarray, closed: bool, mode: str, degree: int, corners=()):
         """Sampled NURBS curve for the NURBS modes, or None when BOSL2
         would refuse these points (too few for the degree, duplicate
         neighbours, a singular fit) -- the caller then draws the plain
@@ -967,8 +1039,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         dim = 3 if np.any(pts[:, 2]) else 2
         try:
             if mode == "nurbs_interp":
-                control, knots = nurbs.interp(pts[:, :dim], degree, closed)
-                curve = nurbs.curve(control, degree, closed, knots=knots)
+                curve = nurbs.interp_curve(pts[:, :dim], degree, closed, corners)
             else:
                 curve = nurbs.curve(pts[:, :dim], degree, closed)
         except ValueError:
@@ -1061,6 +1132,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         return _dodecahedron_faces(r, self._is_2d)
 
     def _unit_faces_for_point(self, idx: int) -> list:
+        if self._mode_now == "nurbs_interp" and idx in self.valid_corners():
+            return _diamond_faces(1.0, self._is_2d)
         if self._bezier and idx % 3 == 0:
             shape_fn = _NODE_TYPE_SHAPE_FN.get(
                 self._node_types.get(idx, "disjointed"), _dodecahedron_faces)
@@ -1332,6 +1405,15 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                     action = type_menu.addAction(label, lambda k=key: self._set_node_type(vi, k))
                     action.setCheckable(True)
                     action.setChecked(key == current)
+                menu.addSeparator()
+            if self._mode_now == "nurbs_interp":
+                corner = menu.addAction("Corner", lambda: self.corner_toggled.emit(vi))
+                corner.setCheckable(True)
+                corner.setChecked(vi in self.valid_corners())
+                n = len(self._path_pts)
+                corner.setEnabled(self._closed or 0 < vi < n - 1)
+                if not corner.isEnabled():
+                    corner.setToolTip("An open curve's ends are corners already")
                 menu.addSeparator()
             menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
             self._exec_menu(menu, event)

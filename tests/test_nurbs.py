@@ -105,3 +105,24 @@ def test_interp_surface_passes_through_every_point():
 def test_interp_surface_needs_degree_plus_one_rows_and_columns():
     with pytest.raises(ValueError):
         nurbs.interp_surface(SHEET, (5, 3))       # only 5 rows
+
+
+# nurbs_curve(nurbs_interp(D9, deg, [closed=true,] corners=cs), splinesteps=8),
+# BOSL2 @ 7d54bc1e. A corner splits the interpolation; all 14 shapes tried
+# (open and closed, degree 2 and 3, one to three corners) matched.
+D9 = [[0, 0], [0, 10], [-5, 20], [5, 30], [15, 20], [10, 10], [10, 0], [20, -5], [25, 5]]
+
+
+@pytest.mark.parametrize("closed, corners, degree, n, golden", [
+    (False, [2, 5], 2, 41, [[0.439077, 2.62209], [15.2226, 17.676]]),
+    (True, [2, 6], 3, 41, [[-4.04396, 25.6066], [20.9785, -4.21208]]),
+])
+def test_interp_corners_match_bosl2(closed, corners, degree, n, golden):
+    got = nurbs.interp_curve(D9, degree, closed, corners, splinesteps=8)
+    assert len(got) == n
+    np.testing.assert_allclose(got[[1, n // 2]], golden, atol=1e-4)
+
+
+def test_a_corner_passes_through_its_point():
+    got = nurbs.interp_curve(D9, 3, False, [4], splinesteps=8)
+    assert min(np.linalg.norm(got - D9[4], axis=1)) < 1e-9
