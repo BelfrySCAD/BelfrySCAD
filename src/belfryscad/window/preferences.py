@@ -124,6 +124,9 @@ _DEFAULTS = {
     # The format of the last export, which File > Quick Export reuses.
     # Empty until something has been exported.
     "export/lastFormat": "",
+    # Keyboard shortcuts changed in Preferences > Keyboard, as JSON
+    # {command id: key, or "" for none}; see window/shortcuts.py.
+    "shortcuts/overrides": "{}",
     "export/stlAscii": False,
     "export/svgFill": False,
     "export/svgStrokeWidth": 0.35,
@@ -553,6 +556,12 @@ class PreferencesDialog(QDialog):
         ai_scroll.setFrameShape(QFrame.Shape.NoFrame)
         ai_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         tabs.addTab(ai_scroll, "AI")
+
+        # --- Keyboard tab (#821): the commands of the window it was opened from ---
+        bindings = getattr(parent, "_shortcut_bindings", None)
+        if bindings is not None:
+            from belfryscad.window.keyboard_pane import KeyboardPane
+            tabs.addTab(KeyboardPane(bindings, self), "Keyboard")
 
         # --- Close button ---
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
