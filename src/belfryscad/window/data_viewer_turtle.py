@@ -25,6 +25,7 @@ from belfryscad import turtle
 from belfryscad.engine.renderer import _axis_extent, _drawn_spacings
 from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+                                                  _lit_marker_triangles,
                                                   _marker_radius_for_point,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window)
@@ -42,6 +43,24 @@ def format_turtle(value) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return f"{value:.10g}" if isinstance(value, float) else str(value)
+
+
+def format_turtle_lines(commands: list, indent: str = "") -> str:
+    """A turtle list as the editor writes it back: one command and its
+    arguments per line, indented a step past `indent` (the line the list
+    starts on), the closing bracket back at `indent`."""
+    rows = turtle.split(commands)
+    if not rows:
+        return "[]"
+    lines = [", ".join(format_turtle(x) for x in [cmd, *args]) for cmd, args in rows]
+    inner = indent + "    "
+    return "[\n" + ",\n".join(inner + line for line in lines) + "\n" + indent + "]"
+
+
+#: Start positions moved in an editor opened on a list outside any turtle()
+#: call, which has no state= to keep them: per editor title, for the session,
+#: as the background image is.
+_session_starts: dict = {}
 
 
 def _parse_arg(text: str):
@@ -82,11 +101,35 @@ class _TurtleViewport(_PathViewport):
     the segment from point i to i+1, -1 for none."""
 
     segment_clicked = Signal(int)
+    #: The start handle: pressed, dragged to (x, y) -- "move" from the dot,
+    #: "turn" from the arrow's tip -- and released.
+    start_drag_started = Signal()
+    start_dragged = Signal(float, float, str)
+    start_drag_finished = Signal()
+    #: A joint (the end of a drawing command): pressed, dragged to (x, y),
+    #: released -- with whether it moved, since a press without a drag is a
+    #: click that selects that command.
+    joint_drag_started = Signal(int)
+    joint_dragged = Signal(int, float, float)
+    joint_drag_finished = Signal(int, bool)
     #: A plain click off the path: (x, y) in the model's plane.
     draw_clicked = Signal(float, float)
     #: The pointer moved, or a modifier changed: redraw the drawing preview.
     hover_changed = Signal()
     heading = None
+    #: Where the turtle starts, and the way it faces there (degrees), set
+    #: before each load; `start_movable` offers the handle for dragging.
+    start = None
+    start_angle = 0.0
+    start_movable = False
+    #: Called with (menu, model point or None) to add the start's actions.
+    start_menu = None
+    _start_drag = None
+    #: The joints' points, set before each load; [] when the list has a
+    #: command a drag could not refit around (`turtle.joints`).
+    joints: list = []
+    _joint_drag = None
+    _joint_moved = False
     hover: QPoint | None = None
     _preview_lb = None
 
@@ -101,6 +144,37 @@ class _TurtleViewport(_PathViewport):
             self._path_pts, [(i, i + 1) for i in range(n - 1)],
             pos.x(), pos.y(), self.width(), self.height())
         return hit[0] if hit is not None else -1
+
+    _START_COLOR = [0.1, 0.6, 0.2]
+
+    def _start_arrow(self):
+        """(base, tip, side) of the start handle's arrow, or None."""
+        if self.start is None:
+            return None
+        base = np.array([self.start[0], self.start[1], 0.0], dtype=np.float32)
+        a = math.radians(self.start_angle)
+        d = np.array([math.cos(a), math.sin(a), 0.0], dtype=np.float32)
+        size = 4.0 * _marker_radius_for_point(self, base)
+        return base, base + d * size, np.array([-d[1], d[0], 0.0], dtype=np.float32) * size * 0.3
+
+    def start_handle_at(self, pos) -> str | None:
+        """"move" over the start dot, "turn" over its arrow's tip, else None."""
+        arrow = self._start_arrow() if self.start_movable else None
+        if arrow is None:
+            return None
+        hit = self._renderer.pick_nearest_point(np.array(arrow[:2]), pos.x(), pos.y(),
+                                                self.width(), self.height())
+        return ("move", "turn")[hit] if hit >= 0 else None
+
+    _JOINT_COLOR = np.array([0.1, 0.3, 0.85], dtype=np.float32)
+
+    def joint_at(self, pos) -> int:
+        """The joint under widget point `pos`, or -1."""
+        if not self.joints:
+            return -1
+        return self._renderer.pick_nearest_point(
+            np.array([[x, y, 0.0] for x, y in self.joints], dtype=np.float32),
+            pos.x(), pos.y(), self.width(), self.height())
 
     def minor_step(self) -> float:
         """The spacing of the smallest scale ticks now shown: Shift's snap."""
@@ -141,7 +215,38 @@ class _TurtleViewport(_PathViewport):
         self.doneCurrent()
         self.update()
 
+    def mousePressEvent(self, event: QMouseEvent):
+        pos = event.position().toPoint()
+        left = event.button() == Qt.MouseButton.LeftButton
+        kind = self.start_handle_at(pos) if left else None
+        if kind is not None:
+            self._start_drag = kind
+            self.start_drag_started.emit()
+            return   # a drag of the handle, not of the view
+        j = self.joint_at(pos) if left else -1
+        if j >= 0:
+            self._joint_drag, self._joint_moved = j, False
+            self.joint_drag_started.emit(j)
+            return
+        super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event: QMouseEvent):
+        if self._start_drag is not None:
+            pt = self._model_point(event.position().toPoint())
+            if pt is not None:
+                self.start_dragged.emit(pt[0], pt[1], self._start_drag)
+            return
+        if self._joint_drag is not None:
+            pt = self._model_point(event.position().toPoint())
+            if pt is not None:
+                self._joint_moved = True
+                self.joint_dragged.emit(self._joint_drag, pt[0], pt[1])
+            return
+        pos = event.position().toPoint()
+        handle = self.start_handle_at(pos)
+        self.setCursor(Qt.CursorShape.SizeAllCursor if handle == "move" or self.joint_at(pos) >= 0
+                       else Qt.CursorShape.CrossCursor if handle == "turn"
+                       else Qt.CursorShape.ArrowCursor)
         self.hover = event.position().toPoint() if not event.buttons() else None
         self.hover_changed.emit()
         super().mouseMoveEvent(event)
@@ -163,6 +268,19 @@ class _TurtleViewport(_PathViewport):
         # Built with the markers, so it is rebuilt with them on every zoom and
         # stays the same size on screen.
         super()._build_point_markers()
+        arrow = self._start_arrow() if self._ctx is not None else None
+        if arrow is not None:
+            base, tip, side = arrow
+            up = [0.0, 0.0, 1.0]
+            rows = [[*p, *up, *self._START_COLOR] for p in (tip, base + side, base - side)]
+            self._renderer.upload_points(np.array(rows, dtype=np.float32))
+        if self.joints and self._ctx is not None:
+            tris = []
+            for x, y in self.joints:
+                pt = np.array([x, y, 0.0], dtype=np.float32)
+                tris += _lit_marker_triangles(pt, _marker_radius_for_point(self, pt),
+                                              self._marker_faces(1.0), self._JOINT_COLOR)
+            self._renderer.upload_points(np.array(tris, dtype=np.float32))
         if self.heading is None or len(self._path_pts) == 0 or self._ctx is None:
             return
         hx, hy = self.heading[0], self.heading[1]
@@ -178,7 +296,23 @@ class _TurtleViewport(_PathViewport):
         rows = [[*p, *up, *color] for p in (tip, left, right)]
         self._renderer.upload_points(np.array(rows, dtype=np.float32))
 
+    def contextMenuEvent(self, event):
+        if self._context_menu_suppressed:
+            return
+        menu = QMenu(self)
+        if self.start_menu is not None:
+            self.start_menu(menu, self._model_point(event.pos()))
+        self._exec_menu(menu, event)
+
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self._start_drag is not None:
+            self._start_drag = None
+            self.start_drag_finished.emit()
+            return
+        if self._joint_drag is not None:
+            j, self._joint_drag = self._joint_drag, None
+            self.joint_drag_finished.emit(j, self._joint_moved)
+            return
         if (event.button() == Qt.MouseButton.LeftButton
                 and not self._drag_started and self._press_pos is not None
                 and not self._bg_adjusting):
@@ -199,13 +333,17 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
 
     committed = Signal(str)
 
-    def __init__(self, title: str, commands: list, parent=None, editable: bool = False):
+    def __init__(self, title: str, commands: list, parent=None, editable: bool = False,
+                 start=None, start_movable: bool = True, start_note: str = "",
+                 indent: str = ""):
         super().__init__(parent)
         label = "Turtle Editor" if editable else "Turtle Viewer"
         self.setWindowTitle(f"{label}: {title}" if title else label)
         self.resize(900, 520)
         self._editable = editable
         self._commands = commands
+        self._start = [float(v) for v in (start or (0.0, 0.0))]
+        self._indent = indent
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -215,6 +353,14 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         if editable:
             self._vp.draw_clicked.connect(self._on_draw_clicked)
             self._vp.hover_changed.connect(self._update_preview)
+            self._vp.start_movable = start_movable
+            self._vp.start_menu = self._add_start_actions
+            self._vp.start_drag_started.connect(self._begin_live_edit)
+            self._vp.start_dragged.connect(self._on_start_dragged)
+            self._vp.start_drag_finished.connect(lambda: self._end_live_edit("Move Start"))
+            self._vp.joint_drag_started.connect(self._on_joint_drag_started)
+            self._vp.joint_dragged.connect(self._on_joint_dragged)
+            self._vp.joint_drag_finished.connect(self._on_joint_drag_finished)
         _sync_viewport_to_main_window(self._vp)
         # Every arc is many points; the markers would bury the path. The
         # selected command's points still show.
@@ -252,6 +398,11 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         self._error_label.setWordWrap(True)
         self._error_label.setStyleSheet("QLabel { color: #d33; }")
         side_layout.addWidget(self._error_label)
+        if start_note:
+            note = QLabel(start_note)
+            note.setWordWrap(True)
+            note.setStyleSheet("QLabel { color: gray; }")
+            side_layout.addWidget(note)
         splitter.addWidget(side)
         splitter.setSizes([560, 340])
         splitter.setStretchFactor(0, 1)
@@ -261,7 +412,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         btn_row.setContentsMargins(20, 0, 20, 0)
         restore_session_background(self.windowTitle(), self._vp)
         if editable:
-            self._setup_undo(commands)
+            self._setup_undo(self._get_value())
             add = QPushButton("Add Command")
             add.clicked.connect(lambda: self._insert(len(self._rows())))
             btn_row.addWidget(add)
@@ -290,10 +441,10 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         return turtle.split(self._commands)
 
     def _get_value(self):
-        return self._commands
+        return {"commands": self._commands, "start": self._start}
 
     def _apply_value(self, value):
-        self._commands = value
+        self._commands, self._start = value["commands"], value["start"]
         self._populate_table()
         self._rebuild(reframe=False)
 
@@ -312,17 +463,31 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         self._table.blockSignals(False)
         self._count_label.setText(f"Commands ({len(rows)})")
 
+    def start_point(self) -> list:
+        return list(self._start)
+
+    def _run(self, commands=None):
+        return turtle.run(self._commands if commands is None else commands, start=self._start)
+
+    def _commit(self, commands=None, start=None, label="Edit"):
+        self._commit_value({"commands": self._commands if commands is None else commands,
+                            "start": self._start if start is None else list(start)}, label)
+
     def _rebuild(self, reframe: bool = False):
+        self._vp.start = self._start
+        self._vp.start_angle = turtle.start_heading(self._commands)
         try:
-            path, self._spans, self._vp.heading = turtle.run(self._commands)
+            path, self._spans, self._vp.heading = self._run()
             self._error_label.clear()
             ok = True
         except turtle.TurtleError as e:
-            path, self._spans, self._vp.heading = [[0.0, 0.0]], [], None
+            path, self._spans, self._vp.heading = [list(self._start)], [], None
             self._error_label.setText(str(e))
             ok = False
         if self._editable:
             self._save.setEnabled(ok)
+            draws = turtle.joints(self._commands) if ok else None
+            self._vp.joints = [path[self._spans[d][1]] for d in draws] if draws else []
         if self._vp._ctx is not None:
             self._vp.load_path(path, False, reframe=reframe)
             self._highlight_selection()
@@ -355,7 +520,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         scale ticks shown -- except with Cmd, where it snaps the jump's
         point to the grid of those ticks."""
         try:
-            path, _, heading = turtle.run(self._commands)
+            path, _, heading = self._run()
         except turtle.TurtleError:
             return []
         mods = QGuiApplication.queryKeyboardModifiers()
@@ -376,19 +541,20 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         pos = vp.hover
         pt = vp._model_point(pos) if pos is not None else None
         extra = []
-        if pt is not None and not vp._bg_adjusting and vp.segment_at(pos) < 0:
+        if pt is not None and not vp._bg_adjusting and vp.segment_at(pos) < 0 \
+                and vp.start_handle_at(pos) is None and vp.joint_at(pos) < 0:
             extra = self._draw_commands(*pt)
         if not extra:
             vp.set_preview(None)
             return
         n = len(self._rows())
-        path, spans, _ = turtle.run(self._commands + extra)
+        path, spans, _ = self._run(self._commands + extra)
         vp.set_preview(path[spans[n][0]:])
 
     def _on_draw_clicked(self, x: float, y: float):
         extra = self._draw_commands(x, y)
         if extra:
-            self._commit_value(self._commands + extra, "Draw")
+            self._commit(self._commands + extra, label="Draw")
 
     def keyPressEvent(self, event):
         self._update_preview()
@@ -421,23 +587,23 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             self._error_label.setText(str(e))
             self._populate_table()
             return
-        self._commit_value(new, "Edit Command")
+        self._commit(new, label="Edit Command")
 
     def _insert(self, at: int, row=("move", [10])):
         rows = self._rows()
         rows.insert(at, (row[0], list(row[1])))
-        self._commit_value(turtle.join(rows), "Add Command")
+        self._commit(turtle.join(rows), label="Add Command")
         self._table.selectRow(at)
 
     def _delete(self, at: int):
         rows = self._rows()
         del rows[at]
-        self._commit_value(turtle.join(rows), "Delete Command")
+        self._commit(turtle.join(rows), label="Delete Command")
 
     def _move(self, at: int, by: int):
         rows = self._rows()
         rows[at], rows[at + by] = rows[at + by], rows[at]
-        self._commit_value(turtle.join(rows), "Move Command")
+        self._commit(turtle.join(rows), label="Move Command")
         self._table.selectRow(at + by)
 
     def _show_table_menu(self, pos):
@@ -468,6 +634,86 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
                 return True
         return False
 
+    # -- the start --------------------------------------------------------
+
+    def _on_start_dragged(self, x: float, y: float, kind: str):
+        """Live, between _begin_live_edit and _end_live_edit: one undo step
+        for the whole drag. Shift snaps the position to the smallest grid
+        ticks shown, and the direction to 30 degrees, as drawing does."""
+        shift = bool(QGuiApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if kind == "move":
+            step = self._vp.minor_step() if shift else 0.01
+            self._start = [round(round(x / step) * step, 2), round(round(y / step) * step, 2)]
+        else:
+            dx, dy = x - self._start[0], y - self._start[1]
+            if math.hypot(dx, dy) < 1e-9:
+                return
+            angle = math.degrees(math.atan2(dy, dx))
+            if shift:
+                angle = round(angle / 30) * 30
+            self._commands = turtle.with_start_heading(self._commands, angle)
+            self._populate_table()
+        self._rebuild(reframe=False)
+
+    # -- joints -----------------------------------------------------------
+
+    def _on_joint_drag_started(self, j: int):
+        # Every frame refits from the list as it was when the drag began,
+        # so rounding never accumulates over a long drag.
+        self._joint_base = self._commands
+        self._begin_live_edit()
+
+    def _on_joint_dragged(self, j: int, x: float, y: float):
+        """Shift snaps the joint to the smallest grid ticks shown. A point
+        no refit reaches leaves the path as it last was."""
+        if QGuiApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+            step = self._vp.minor_step()
+            x, y = round(x / step) * step, round(y / step) * step
+        new = turtle.drag_joint(self._joint_base, self._start, j, (x, y))
+        if new is not None:
+            self._commands = new
+            self._populate_table()
+            self._rebuild(reframe=False)
+
+    def _on_joint_drag_finished(self, j: int, moved: bool):
+        self._end_live_edit("Move Joint")
+        draws = turtle.joints(self._commands)
+        if not moved and draws and j < len(draws):
+            self._table.selectRow(draws[j])   # a click: select what drew it
+
+    def _add_start_actions(self, menu: QMenu, pt):
+        if not self._vp.start_movable:
+            return
+        if pt is not None:
+            menu.addAction("Start Here", lambda: self._commit(
+                start=[round(pt[0], 2), round(pt[1], 2)], label="Start Here"))
+        menu.addAction("Start From…", self._start_from_dialog)
+
+    def _start_from_dialog(self):
+        from PySide6.QtWidgets import QDialogButtonBox, QDoubleSpinBox, QFormLayout
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Start From")
+        form = QFormLayout(dlg)
+        boxes = []
+        for label, value, lo, hi, dec in (("X:", self._start[0], -1e6, 1e6, 2),
+                                         ("Y:", self._start[1], -1e6, 1e6, 2),
+                                         ("Direction (°):", turtle.start_heading(self._commands),
+                                          -360, 360, 1)):
+            box = QDoubleSpinBox(dlg)
+            box.setRange(lo, hi)
+            box.setDecimals(dec)
+            box.setValue(value)
+            form.addRow(label, box)
+            boxes.append(box)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel, parent=dlg)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        if dlg.exec():
+            x, y, angle = (b.value() for b in boxes)
+            self._commit(turtle.with_start_heading(self._commands, angle), [x, y], "Start From")
+
     def _on_save(self):
-        self.committed.emit(format_turtle(self._commands))
+        self.committed.emit(format_turtle_lines(self._commands, self._indent))
         self.accept()

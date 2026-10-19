@@ -3178,3 +3178,60 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
 
     # Every editable shape is offered, or a type is silently uncreatable.
     assert seen == set(predicates) | {"object"}
+
+
+class TestTurtleStart:
+    """#816: the turtle editor's start, read from and written to turtle()'s state=."""
+
+    def _ctx(self, text):
+        from belfryscad.window.data_viewers import turtle_call_context
+        start = text.index('["move"')
+        end = text.index("]", start) + 1
+        return start, end, turtle_call_context(text, start, end)
+
+    def test_finds_a_named_state(self):
+        text = 'p = turtle(state = [0, 18.5], // start\n ["move", 2]);'
+        start, end, ctx = self._ctx(text)
+        assert ctx["start"] == [0.0, 18.5]
+        assert text[slice(*ctx["state"])] == "[0, 18.5]"
+
+    def test_finds_a_positional_state(self):
+        _, _, ctx = self._ctx('p = turtle(["move", 2], [3, 4]);')
+        assert ctx["start"] == [3.0, 4.0]
+
+    def test_a_computed_state_has_no_start(self):
+        _, _, ctx = self._ctx('p = turtle(["move", 2], state=s0);')
+        assert ctx["state"] is not None and ctx["start"] is None
+
+    def test_not_in_a_turtle_call(self):
+        assert self._ctx('p = ["move", 2];')[2] is None
+        assert self._ctx('p = stroke(["move", 2]);')[2] is None
+
+    def test_write_back_replaces_the_state_and_the_list_in_one_edit(self):
+        from belfryscad.window.data_viewers import turtle_write_back
+        text = 'p = turtle(state=[0, 1], ["move", 2]);'
+        start, end, ctx = self._ctx(text)
+        new, s, e = turtle_write_back(text, start, end, "LIST", ctx, [5, 6.25])
+        assert text[:s] + new + text[e:] == 'p = turtle(state=[5, 6.25], LIST);'
+
+    def test_write_back_inserts_a_state_only_when_moved(self):
+        from belfryscad.window.data_viewers import turtle_write_back
+        text = 'p = turtle(commands=["move", 2]);'
+        start, end, ctx = self._ctx(text)
+        new, s, e = turtle_write_back(text, start, end, "LIST", ctx, [1, 2])
+        assert text[:s] + new + text[e:] == 'p = turtle(state=[1, 2], commands=LIST);'
+        assert turtle_write_back(text, start, end, "LIST", ctx, [0, 0]) == ("LIST", start, end)
+
+    def test_write_back_leaves_a_state_after_the_list_in_place(self):
+        from belfryscad.window.data_viewers import turtle_write_back
+        text = 'p = turtle(["move", 2], [3, 4]);'
+        start, end, ctx = self._ctx(text)
+        new, s, e = turtle_write_back(text, start, end, "LIST", ctx, [7, 8])
+        assert text[:s] + new + text[e:] == 'p = turtle(LIST, [7, 8]);'
+
+
+def test_turtle_writes_one_command_per_line():
+    from belfryscad.window.data_viewer_turtle import format_turtle_lines
+    assert format_turtle_lines(["setdir", 90, "move", 2.5, "arcleft", 5, 90, "turn"], "  ") == (
+        '[\n      "setdir", 90,\n      "move", 2.5,\n      "arcleft", 5, 90,\n      "turn"\n  ]')
+    assert format_turtle_lines([]) == "[]"

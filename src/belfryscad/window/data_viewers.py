@@ -25,7 +25,7 @@ from belfryscad.window.data_viewer_matrix import MatrixViewer, _is_matrix
 from belfryscad.window.data_viewer_object import ObjectViewer
 from belfryscad.window.data_viewer_path import PathViewer, _is_path
 from belfryscad.window.data_viewer_region import RegionViewer, _is_region
-from belfryscad.window.data_viewer_turtle import TurtleViewer
+from belfryscad.window.data_viewer_turtle import TurtleViewer, _session_starts
 from belfryscad.window.data_viewer_vnf import VNFViewer, _is_vnf
 from belfryscad.window.data_viewer_vnf_tile import VNFTileViewer, _is_vnf_tile
 
@@ -206,6 +206,93 @@ def _split_top_level(src: str, sep: str = ",") -> list[str]:
         i += 1
     parts.append(src[start:])
     return parts
+
+
+_STATE_ARG_RE = re.compile(r"\s*state\s*=\s*")
+
+
+def turtle_call_context(text: str, start: int, end: int) -> dict | None:
+    """Where the turtle list at `text[start:end]` sits in a `turtle(...)`
+    call, or None when it is not one of that call's arguments.
+
+    `arg_start` is where the list's argument begins (before a `commands=`),
+    which is where a new `state=` goes. `state` is the `(start, end)` span
+    of the state argument's value -- `state=` or turtle()'s second
+    positional argument -- or None, and `start` is its value when that is
+    a literal `[x, y]`, else None: a state worked out by the script (a
+    variable, an earlier turtle's full state) can be read by nothing short
+    of running it."""
+    blank = _blank_comments(text)
+    depth, i = 0, start - 1
+    while i >= 0:
+        c = blank[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    if i < 0 or blank[i] != "(" or not re.search(r"\bturtle\s*$", blank[:i]):
+        return None
+    depth, j = 0, i
+    while j < len(blank):
+        if blank[j] in "([":
+            depth += 1
+        elif blank[j] in ")]":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    ctx = {"arg_start": start, "state": None, "start": None}
+    pos, positional, list_positional = i + 1, 0, None
+    for part in _split_top_level(blank[i + 1:j]):
+        a, b = pos, pos + len(part)
+        pos = b + 1
+        lead = len(part) - len(part.lstrip())
+        m = _STATE_ARG_RE.match(part)
+        named = re.match(r"\s*\w+\s*=", part)
+        if a <= start and end <= b:
+            ctx["arg_start"] = a + lead
+            list_positional = None if named else positional
+        if m:
+            ctx["state"] = (a + m.end(), b - (len(part) - len(part.rstrip())))
+        elif not named and part.strip():
+            if positional == 1 and list_positional == 0 and ctx["state"] is None:
+                ctx["state"] = (a + lead, b - (len(part) - len(part.rstrip())))
+            positional += 1
+    if ctx["state"] is not None:
+        try:
+            v = ast.literal_eval(blank[ctx["state"][0]:ctx["state"][1]])
+        except (ValueError, SyntaxError):
+            v = None
+        if isinstance(v, list) and len(v) == 2 and all(
+                isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
+            ctx["start"] = [float(v[0]), float(v[1])]
+    return ctx
+
+
+def turtle_write_back(text: str, start: int, end: int, list_text: str,
+                      ctx: dict | None, new_start) -> tuple[str, int, int]:
+    """`(replacement, s, e)` writing a turtle editor's result back: the list
+    at `text[start:end]` becomes `list_text`, and when the start was moved,
+    the call's `state=` becomes `new_start` -- inserted before the list when
+    the call has none. One edit, so it is one undo."""
+    pt = "[" + ", ".join(f"{round(v, 2):g}" for v in new_start) + "]" if new_start else None
+    if ctx is None or pt is None:
+        return list_text, start, end
+    old = ctx["start"] or [0.0, 0.0]
+    if ctx["state"] is None:
+        if list(new_start) == [0.0, 0.0]:
+            return list_text, start, end
+        a = ctx["arg_start"]
+        return f"state={pt}, " + text[a:start] + list_text, a, end
+    s, e = ctx["state"]
+    if ctx["start"] is None or [round(v, 2) for v in new_start] == [round(v, 2) for v in old]:
+        return list_text, start, end
+    if s < start:
+        return pt + text[e:start] + list_text, s, end
+    return list_text + text[end:s] + pt, start, e
 
 
 def _parse_object_call_args(argtext: str):
@@ -609,9 +696,39 @@ def _open_region_editor(title: str, value: list, on_commit, parent=None):
     dlg.show()
 
 
-def _open_turtle_editor(title: str, value: list, on_commit, parent=None):
-    dlg = TurtleViewer(title, value, parent, editable=True)
-    dlg.committed.connect(on_commit)
+def _open_turtle_editor(title: str, value: list, on_commit, parent=None,
+                        text: str | None = None, start: int = 0, end: int = 0):
+    """With `text`, the list is `text[start:end]` and `on_commit` takes
+    `(new_text, s, e)`: the start point is read from the enclosing
+    turtle() call's state= and written back there. Without it (a new
+    literal) `on_commit` takes the list alone."""
+    ctx = turtle_call_context(text, start, end) if text is not None else None
+    key = f"Turtle Editor: {title}" if title else "Turtle Editor"
+    movable = True
+    if ctx is not None:
+        note = ""
+        first = ctx["start"] or [0.0, 0.0]
+        if ctx["state"] is not None and ctx["start"] is None:
+            movable = False
+            note = "The start position is worked out by the script (state=), so it can't be moved here."
+    else:
+        first = _session_starts.get(key, [0.0, 0.0])
+        note = ("Not in a turtle() call, so a moved start position is kept for this "
+                "session only. The start direction is saved.") if text is not None else ""
+    line_start = text.rfind("\n", 0, start) + 1 if text is not None else 0
+    indent = re.match(r"[ \t]*", text[line_start:]).group() if text is not None else ""
+    dlg = TurtleViewer(title, value, parent, editable=True, start=first,
+                       start_movable=movable,
+                       start_note=note, indent=indent)
+
+    def commit(list_text):
+        if text is None:
+            on_commit(list_text)
+            return
+        if ctx is None:
+            _session_starts[key] = list(dlg.start_point())
+        on_commit(*turtle_write_back(text, start, end, list_text, ctx, dlg.start_point()))
+    dlg.committed.connect(commit)
     _lock_parent_editor_while_open(dlg, parent)
     dlg.show()
 
@@ -678,8 +795,8 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
     if "turtle" in literals:
         start, end, value = literals["turtle"]
         menu.addAction("Edit as Turtle Path...", lambda start=start, end=end, value=value:
-                       _open_turtle_editor(_preview(start, end), value,
-                                           lambda t, s=start, e=end: on_commit(t, s, e), parent))
+                       _open_turtle_editor(_preview(start, end), value, on_commit, parent,
+                                           text, start, end))
 
 
 # ---------------------------------------------------------------------------
