@@ -1251,6 +1251,7 @@ class MainWindow(QMainWindow):
         # DEBUG_SHORTCUTS, not a second list: the buttons' tooltips are
         # written from the same dict, and when this was spelled out here too
         # the two drifted apart (#448).
+        self._debug_shortcuts = []
         for name, btn in (
             ("continue", self._debugger_pane._btn_continue),
             ("step_over", self._debugger_pane._btn_step_over),
@@ -1263,6 +1264,7 @@ class MainWindow(QMainWindow):
             sc = QShortcut(QKeySequence(DEBUG_SHORTCUTS[name]), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(btn.click)
+            self._debug_shortcuts.append((name, sc))
 
         # --- Customizer dock (right, bottom — tabbed with Animate) ---
         self._customizer_pane = CustomizerPane()
@@ -1526,6 +1528,7 @@ class MainWindow(QMainWindow):
         self._act_debug_tb = QAction("Debug", self)
         self._set_toolbar_icon(self._act_debug_tb, "debug")
         self._act_debug_tb.setToolTip("Debug (Shift+F6)")
+        self._act_debug_tb.setShortcut(QKeySequence("Shift+F6"))
         self._act_debug_tb.triggered.connect(self._start_debug)
         tb.addAction(self._act_debug_tb)
 
@@ -1915,16 +1918,21 @@ class MainWindow(QMainWindow):
     # Keyboard shortcuts
     # ------------------------------------------------------------------
 
+    _DEBUG_SHORTCUT_LABELS = {
+        "continue": "Continue / Pause", "step_over": "Step Over", "step_into": "Step Into",
+        "step_to_child": "Step to Child", "step_out": "Step Out", "restart": "Restart",
+        "stop": "Stop",
+    }
+
     def _setup_shortcuts(self):
-        from PySide6.QtGui import QShortcut
+        from belfryscad.window import shortcuts
 
-        def shortcut(key, slot, app_wide=False):
-            s = QShortcut(QKeySequence(key), self)
-            if app_wide:
-                s.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            s.activated.connect(slot)
-
-        shortcut("Shift+F6", self._start_debug)
+        # Every command's keys, configurable in Preferences > Keyboard (#821).
+        self._shortcut_bindings = shortcuts.collect(
+            self.menuBar(), (self._toolbar, self._view_toolbar, self._tools_toolbar),
+            [(f"Debugger > {self._DEBUG_SHORTCUT_LABELS[n]}", sc) for n, sc in self._debug_shortcuts],
+            skip_menus=(self._recent_menu, self._examples_menu))
+        shortcuts.apply(self._shortcut_bindings, shortcuts.load_overrides(app_settings()))
 
     # ------------------------------------------------------------------
     # Tab management
@@ -5648,6 +5656,9 @@ class MainWindow(QMainWindow):
         self._preferences_dialog.activateWindow()
 
     def _apply_preferences(self):
+        from belfryscad.window import shortcuts
+        if hasattr(self, "_shortcut_bindings"):
+            shortcuts.apply(self._shortcut_bindings, shortcuts.load_overrides(app_settings()))
         # The cut-face rule is baked into the geometry at render time, so a
         # change re-renders the current design; the first call (startup)
         # only records it.
