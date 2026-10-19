@@ -122,3 +122,18 @@ def test_no_turn_when_it_rounds_to_zero():
     assert turtle.line_to([0, 0], [1, 0], [10, -0.005]) == ["move", 10.0]
     assert turtle.line_to([0, 0], [1, 0], [10, -0.005], jump=True) == ["jump", [10.0, 0.0]]
     assert turtle.line_to([0, 0], [1, 0], [10, 0.4], snap_angle=15, snap_len=1) == ["move", 10.0]
+
+
+def test_start_heading_reads_and_writes_a_leading_setdir():
+    assert turtle.start_heading(["move", 10]) == 0
+    assert turtle.start_heading(["setdir", 90, "move"]) == 90
+    assert math.isclose(turtle.start_heading(["setdir", [0, -1]]), -90)
+    assert turtle.with_start_heading(["move", 10], 45.04) == ["setdir", 45.0, "move", 10]
+    assert turtle.with_start_heading(["setdir", 90, "move"], 270) == ["setdir", -90.0, "move"]
+    assert turtle.with_start_heading(["move", 10], 360) == ["move", 10]
+    assert turtle.with_start_heading(["setdir", 90, "move"], 0) == ["setdir", 0.0, "move"]
+
+
+def test_run_from_a_start():
+    path, _, _ = turtle.run(["setdir", 90, "move", 2], start=(3, 4))
+    assert close(path, [[3, 4], [3, 6]])

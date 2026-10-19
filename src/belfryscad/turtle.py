@@ -305,3 +305,33 @@ def tangent_arc(p0, heading, p1, snap_angle: float | None = None,
     if radius <= 0:
         return []
     return ["arcleft" if half > 0 else "arcright", radius, _round_ang(abs(2 * half))]
+
+
+# -- The start: position from turtle()'s state=, heading from a leading setdir
+
+def start_heading(commands: list) -> float:
+    """The direction, in degrees, a leading `setdir` points the turtle; 0
+    (BOSL2's +X) without one."""
+    rows = split(commands)
+    if rows and rows[0][0] == "setdir" and rows[0][1]:
+        p = rows[0][1][0]
+        if _is_num(p):
+            return float(p)
+        if isinstance(p, list) and len(p) >= 2 and all(_is_num(x) for x in p[:2]) and any(p[:2]):
+            return math.degrees(math.atan2(p[1], p[0]))
+    return 0.0
+
+
+def with_start_heading(commands: list, angle: float) -> list:
+    """`commands` with the turtle starting at `angle` degrees: the leading
+    `setdir` changed, or one added. Turning back to 0 keeps an existing one
+    (written as 0) rather than deleting a command the author wrote."""
+    angle = _round_ang((angle + 180) % 360 - 180)
+    if angle == 0:
+        angle = 0.0   # not -0.0
+    rows = split(commands)
+    if rows and rows[0][0] == "setdir":
+        rows[0] = ("setdir", [angle])
+    elif angle != 0:
+        rows.insert(0, ("setdir", [angle]))
+    return join(rows)
