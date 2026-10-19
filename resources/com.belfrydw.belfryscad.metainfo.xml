@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.80.0" date="2026-10-19">
+      <description>
+        <p>Preferences has a Keyboard pane for changing any command's shortcut; the standard shortcuts such as Cut, Copy, Paste and Save stay fixed.</p>
+      </description>
+    </release>
     <release version="1.79.0" date="2026-10-18">
       <description>
         <p>Quick Export on F7 reuses the last export's format and options (Animate moves to F9). The turtle editor gets a movable start, read from and written to turtle()'s state=, and joints that can be dragged while the arcs stay tangent; it saves one command per line. The path editor's NURBS Interpolated mode gets corners, read from and written to nurbs_interp(). Undocked panes on Windows and Linux get minimize and maximize, and Window > Dock All Panes re-docks them.</p>
