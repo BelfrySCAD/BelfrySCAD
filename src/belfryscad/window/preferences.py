@@ -114,6 +114,8 @@ _DEFAULTS = {
     # Typing (, [, { or " adds its closer, as VS Code does. Off: as many
     # people dislike it as rely on it (#830).
     "editor/autoCloseBrackets": False,
+    # Indent with tab characters rather than spaces (#840).
+    "editor/indentWithTabs": False,
     # A file opened from the desktop (double-click, "open with") goes to
     # the running BelfrySCAD as a new tab, instead of starting another one.
     # Read once at launch, in main.py, before any window exists.
@@ -255,6 +257,14 @@ class PreferencesDialog(QDialog):
         self._indent_size.setValue(s.value("editor/indentSize", _DEFAULTS["editor/indentSize"], type=int))
         self._indent_size.valueChanged.connect(lambda v: self._emit("editor/indentSize", v))
         form.addRow("Indent size:", self._indent_size)
+        self._indent_tabs = QCheckBox("Indent with tabs")
+        self._indent_tabs.setChecked(
+            s.value("editor/indentWithTabs", _DEFAULTS["editor/indentWithTabs"], type=bool))
+        self._indent_tabs.setToolTip(
+            "Tab, Indent and new lines write tab characters, one per level.\n"
+            "A tab is shown as wide as the indent size. Existing indents are kept as written.")
+        self._indent_tabs.toggled.connect(lambda v: self._emit("editor/indentWithTabs", bool(v)))
+        form.addRow("", self._indent_tabs)
 
         # Down arrow past the last line
         self._append_line_down = QCheckBox("Down arrow at the last line adds a new line")

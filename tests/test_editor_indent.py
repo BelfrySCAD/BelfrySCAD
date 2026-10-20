@@ -21,8 +21,11 @@ from belfryscad.window.editor import CodeEditor
 
 class _Fake:
     """Just enough of a CodeEditor for the stop math."""
-    def __init__(self, size):
+    _leading = staticmethod(CodeEditor._leading)
+
+    def __init__(self, size, tabs=False):
         self._indent_size = size
+        self._indent_with_tabs = tabs
 
 
 def nxt(width, size=4):
@@ -35,10 +38,21 @@ def prv(width, size=4):
 
 class TestIndentStops:
     def test_leading_width(self):
-        assert CodeEditor._leading_width("    cube(1);") == 4
-        assert CodeEditor._leading_width("cube(1);") == 0
-        assert CodeEditor._leading_width("      ") == 6
-        assert CodeEditor._leading_width("") == 0
+        w = lambda t: CodeEditor._leading_width(_Fake(4), t)
+        assert w("    cube(1);") == 4
+        assert w("cube(1);") == 0
+        assert w("      ") == 6
+        assert w("") == 0
+
+    def test_leading_width_counts_a_tab_to_its_stop(self):
+        # #840: a tab was one column, so Indent padded "\tx" with 3 spaces.
+        w = lambda t: CodeEditor._leading_width(_Fake(4), t)
+        assert w("\tx") == 4 and w("\t\tx") == 8 and w("  \tx") == 4 and w("\t  x") == 6
+
+    def test_indent_text_in_each_mode(self):
+        assert CodeEditor._indent_text(_Fake(4), 6) == "      "
+        assert CodeEditor._indent_text(_Fake(4, tabs=True), 6) == "\t  "
+        assert CodeEditor._indent_text(_Fake(4, tabs=True), 8) == "\t\t"
 
     # -- Tab ---------------------------------------------------------------
 

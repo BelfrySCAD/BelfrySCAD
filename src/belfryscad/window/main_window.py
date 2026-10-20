@@ -5735,6 +5735,7 @@ class MainWindow(QMainWindow):
         tab.editor.set_highlight_current_line(
             load_preference("editor/highlightCurrentLine", type_=bool))
         tab.editor.set_auto_close(load_preference("editor/autoCloseBrackets", type_=bool))
+        tab.editor.set_indent_with_tabs(load_preference("editor/indentWithTabs", type_=bool))
 
     def _park_idle_dock_tabbars(self):
         """Move dock tab bars that have nothing to show out of the way.
