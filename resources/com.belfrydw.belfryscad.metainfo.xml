@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.81.0" date="2026-10-19">
+      <description>
+        <p>Ctrl+/ toggles line comments the way VS Code does, Comment and Uncomment add or remove exactly one //, and Preferences has VS Code's two comment options.</p>
+      </description>
+    </release>
     <release version="1.80.1" date="2026-10-19">
       <description>
         <p>A polyhedron whose duplicate vertices fall on a rounding boundary is no longer reported as open, and projection(cut=true) fills a slice where a shape overlaps itself, as OpenSCAD does.</p>
