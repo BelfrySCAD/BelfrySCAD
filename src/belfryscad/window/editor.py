@@ -299,7 +299,8 @@ class _IndentGuides(QWidget):
 
             if bot >= r_top and block.isVisible():
                 text = block.text()
-                n = len(text) - len(text.lstrip(' '))  # leading spaces
+                # Leading whitespace in columns: a tab reaches the next stop.
+                n = len(text[:len(text) - len(text.lstrip(' \t'))].expandtabs(indent_size))
                 # Only draw on non-empty indented lines; guides at each indent
                 # column strictly inside the indentation (not at the first
                 # non-whitespace column itself).
@@ -1424,6 +1425,8 @@ class CodeEditor(QPlainTextEdit):
     _append_line_on_down = False
     #: See set_auto_close().
     _auto_close = False
+    #: See set_indent_with_tabs().
+    _indent_with_tabs = False
 
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
@@ -1761,6 +1764,22 @@ class CodeEditor(QPlainTextEdit):
         self._update_line_number_area_width()
         self._line_number_area.update()
 
+    def set_indent_with_tabs(self, enabled: bool):
+        """Whether indenting writes tabs (#840). Off by default, and either
+        way a line's existing indent is kept as written: Enter copies it,
+        and only a line Indent or Undent changes is rewritten, in this
+        mode's characters -- a whole level per tab, spaces for any part of
+        one. On, Tab typed mid-line is a real tab, so text after it stays
+        on its stop as the text before it grows."""
+        self._indent_with_tabs = enabled
+
+    def _indent_text(self, width: int) -> str:
+        """Leading whitespace `width` columns wide, in this mode's characters."""
+        if self._indent_with_tabs:
+            n = self._indent_size
+            return "\t" * (width // n) + " " * (width % n)
+        return " " * width
+
     def set_auto_close(self, enabled: bool):
         """Whether typing an opening bracket or quote adds its closer (#830).
 
@@ -1828,9 +1847,9 @@ class CodeEditor(QPlainTextEdit):
             if prev not in _OPENERS or _AUTO_PAIRS[prev] != nxt:
                 return False
             line = cursor.block().text()
-            indent = " " * (len(line) - len(line.lstrip()))
+            indent = line[:len(line) - len(line.lstrip())]
             cursor.beginEditBlock()
-            cursor.insertText("\n" + indent + " " * self._indent_size)
+            cursor.insertText("\n" + indent + self._indent_text(self._indent_size))
             mid = cursor.position()
             cursor.insertText("\n" + indent)
             cursor.endEditBlock()
@@ -2228,7 +2247,9 @@ class CodeEditor(QPlainTextEdit):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor = self.textCursor()
             block_text = cursor.block().text()
-            indent = len(block_text) - len(block_text.lstrip())
+            # Copied as written: counted and re-typed as spaces, a line
+            # indented with tabs began a line indented by one space per tab.
+            indent = block_text[:len(block_text) - len(block_text.lstrip())]
             # ONE level if the line leaves any bracket open -- not one per
             # bracket. `foo({` indents the same as `foo(`, which keeps a
             # line that opens several at once from marching off to the
@@ -2243,9 +2264,9 @@ class CodeEditor(QPlainTextEdit):
             # where the new line sits.
             before = block_text[:to_index(block_text, cursor.positionInBlock())]
             if unmatched_open_brackets(before):
-                indent += self._indent_size
+                indent += self._indent_text(self._indent_size)
             super().keyPressEvent(event)
-            self.insertPlainText(" " * indent)
+            self.insertPlainText(indent)
             return
         if event.key() == Qt.Key.Key_Backspace:
             cursor = self.textCursor()
@@ -2260,7 +2281,7 @@ class CodeEditor(QPlainTextEdit):
                 # backspacing on one of those should remove just that space
                 # -- previously it swallowed a full level, so a 6-space
                 # indent jumped to 2 rather than stepping back to 5.
-                if (before_cursor and not before_cursor.strip()
+                if (before_cursor and not before_cursor.strip(" ")
                         and len(before_cursor) >= n and len(before_cursor) % n == 0):
                     for _ in range(n):
                         cursor.deletePreviousChar()
@@ -2315,7 +2336,7 @@ class CodeEditor(QPlainTextEdit):
                 before = text[:to_index(text, cursor.block().position())]
                 indent = opener_indent(before, event.text())
                 if indent is None:      # unmatched: one step back, as before
-                    indent = " " * self._prev_indent_stop(len(block_text))
+                    indent = self._indent_text(self._prev_indent_stop(self._leading_width(block_text)))
                 cursor.movePosition(cursor.MoveOperation.StartOfBlock)
                 cursor.movePosition(cursor.MoveOperation.EndOfBlock,
                                     cursor.MoveMode.KeepAnchor)
@@ -2563,9 +2584,29 @@ class CodeEditor(QPlainTextEdit):
                 last -= 1
         return first, last
 
+    def _leading_width(self, text: str) -> int:
+        """The line's indent in columns: a tab reaches the next stop."""
+        return len(self._leading(text).expandtabs(self._indent_size))
+
     @staticmethod
-    def _leading_width(text: str) -> int:
-        return len(text) - len(text.lstrip())
+    def _leading(text: str) -> str:
+        return text[:len(text) - len(text.lstrip())]
+
+    def _set_leading(self, block, width: int):
+        """Make `block`'s indent `width` columns, in this mode's characters.
+        When the new indent extends or trims the old one, only the difference
+        is inserted or removed at the line start, so a selection beginning
+        there keeps its place as it always has."""
+        old, new = self._leading(block.text()), self._indent_text(width)
+        c = QTextCursor(block)
+        if new.startswith(old):
+            c.insertText(new[len(old):])
+        elif old.startswith(new):
+            c.movePosition(c.MoveOperation.Right, c.MoveMode.KeepAnchor, len(old) - len(new))
+            c.removeSelectedText()
+        else:
+            c.movePosition(c.MoveOperation.Right, c.MoveMode.KeepAnchor, len(old))
+            c.insertText(new)
 
     def _next_indent_stop(self, width: int) -> int:
         """The indent column at or after `width`, exclusive of `width` itself."""
@@ -2589,16 +2630,7 @@ class CodeEditor(QPlainTextEdit):
         # column 6 with size 4 goes to 8, not 10. Otherwise a line that is
         # off-grid stays off-grid forever, which is what made the extra
         # spaces hard to get rid of in the first place.
-        cursor = self.textCursor()
-        doc = self.document()
-        first, last = self._selected_block_range(cursor)
-        cursor.beginEditBlock()
-        for bn in range(first, last + 1):
-            block = doc.findBlockByNumber(bn)
-            width = self._leading_width(block.text())
-            pad = self._next_indent_stop(width) - width
-            QTextCursor(block).insertText(" " * pad)
-        cursor.endEditBlock()
+        self._reindent_lines(self._next_indent_stop)
 
     def _insert_indent_at_cursor(self):
         """Spaces up to the next stop, measured from the CURSOR's column --
@@ -2606,8 +2638,13 @@ class CodeEditor(QPlainTextEdit):
         always adding a full level and leaving the line off-grid."""
         cursor = self.textCursor()
         # From where the spaces land: a selection they replace starts there.
+        if self._indent_with_tabs:
+            cursor.insertText("\t")
+            self.setTextCursor(cursor)
+            return
         block = self.document().findBlock(cursor.selectionStart())
-        col = to_index(block.text(), cursor.selectionStart() - block.position())
+        before = block.text()[:to_index(block.text(), cursor.selectionStart() - block.position())]
+        col = len(before.expandtabs(self._indent_size))
         cursor.insertText(" " * (self._next_indent_stop(col) - col))
         self.setTextCursor(cursor)
 
@@ -2619,7 +2656,7 @@ class CodeEditor(QPlainTextEdit):
         cursor = self.textCursor()
         start = cursor.selectionStart()
         line = self.document().findBlock(start).text()
-        text, at = expand_template(content, " " * self._indent_size,
+        text, at = expand_template(content, self._indent_text(self._indent_size),
                                    line[:len(line) - len(line.lstrip(" \t"))])
         cursor.insertText(text)
         # Qt positions count UTF-16 units, Python's len counts code points.
@@ -2648,19 +2685,31 @@ class CodeEditor(QPlainTextEdit):
     def _unindent_lines(self):
         # Mirror of _indent_lines: back to the previous stop, so an off-grid
         # line snaps onto the grid rather than staying off it.
+        self._reindent_lines(lambda w: self._prev_indent_stop(w) if w else 0)
+
+    def _reindent_lines(self, stop):
+        """Give every line the selection touches the indent `stop(width)`.
+
+        An end of the selection at the start of a line stays there. Text
+        inserted at a position carries the cursor past it, so a selection of
+        whole lines used to lose their indent from its start at every Indent."""
         cursor = self.textCursor()
         doc = self.document()
         first, last = self._selected_block_range(cursor)
+        pinned = {end: doc.findBlock(p).blockNumber()
+                  for end, p in (("anchor", cursor.anchor()), ("pos", cursor.position()))
+                  if p == doc.findBlock(p).position()}
         cursor.beginEditBlock()
         for bn in range(first, last + 1):
             block = doc.findBlockByNumber(bn)
-            width = self._leading_width(block.text())
-            n_sp = width - self._prev_indent_stop(width)
-            if n_sp > 0:
-                bc = QTextCursor(block)
-                bc.movePosition(bc.MoveOperation.Right, bc.MoveMode.KeepAnchor, n_sp)
-                bc.removeSelectedText()
+            self._set_leading(block, stop(self._leading_width(block.text())))
         cursor.endEditBlock()
+        anchor = (doc.findBlockByNumber(pinned["anchor"]).position()
+                  if "anchor" in pinned else cursor.anchor())
+        pos = doc.findBlockByNumber(pinned["pos"]).position() if "pos" in pinned else cursor.position()
+        cursor.setPosition(anchor)
+        cursor.setPosition(pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
 
     def _move_lines(self, delta):
         """Move the current line, or every line the selection touches, one
