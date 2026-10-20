@@ -381,3 +381,44 @@ def test_the_editor_offers_reflow_inside_a_block_comment():
     lines = out["lines"]
     assert lines[0] == "x = 1;" and lines[1] == "/*" and lines[-2] == "*/" and lines[-1] == "cube(1);"
     assert all(len(l) <= 50 for l in lines)
+
+
+# -- Edit > Toggle Comment / Comment / Uncomment (#830), VS Code's rules ------
+
+from belfryscad.window.scad_format import comment_lines
+
+
+def test_add_goes_at_the_smallest_indent_rounded_to_a_step():
+    assert comment_lines(["    a;", "        b;", "  c;"], "add") == ["//     a;", "//         b;", "//   c;"]
+    assert comment_lines(["    a;", "        b;"], "add") == ["    // a;", "    //     b;"]
+
+
+def test_toggle_removes_only_when_every_line_is_commented():
+    assert comment_lines(["// a;", "b;"], "toggle") == ["// // a;", "// b;"]
+    assert comment_lines(["    // a;", "    //b;"], "toggle") == ["    a;", "    b;"]
+
+
+def test_remove_takes_one_marker_and_one_space():
+    assert comment_lines(["////", "  ////", "//// x", "//  x", "plain"], "remove") == \
+        ["//", "  //", "// x", " x", "plain"]
+
+
+def test_blank_lines_are_skipped_unless_all_are_blank():
+    assert comment_lines(["a;", "", "b;"], "toggle") == ["// a;", "", "// b;"]
+    assert comment_lines(["// a;", "  ", "// b;"], "toggle") == ["a;", "  ", "b;"]
+    assert comment_lines(["", ""], "toggle") == ["// ", "// "]
+    assert comment_lines(["a;", "", "b;"], "add", ignore_empty=False) == ["// a;", "// ", "// b;"]
+
+
+def test_without_insert_space():
+    assert comment_lines(["a;"], "add", insert_space=False) == ["//a;"]
+    assert comment_lines(["// a;"], "remove", insert_space=False) == [" a;"]
+
+
+def test_tabs_count_by_visual_column():
+    assert comment_lines(["\ta;", "\t\tb;"], "add") == ["\t// a;", "\t// \tb;"]
+
+
+def test_toggle_twice_round_trips():
+    lines = ["module m() {", "    cube(1); // why", "", "}"]
+    assert comment_lines(comment_lines(lines), "toggle") == lines
