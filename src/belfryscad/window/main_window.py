@@ -1612,8 +1612,9 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "E&xpand Selection", self._selection_expand)
         self._add_action(edit_menu, "Co&ntract Selection", self._selection_contract)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "&Indent", self._indent, QKeySequence("Tab"))
-        self._add_action(edit_menu, "U&ndent", self._undent, QKeySequence("Shift+Tab"))
+        # Tagged so the editor knows whether Tab and Shift+Tab are still theirs (#830).
+        self._add_action(edit_menu, "&Indent", self._indent, QKeySequence("Tab")).setProperty("editorKey", "indent")
+        self._add_action(edit_menu, "U&ndent", self._undent, QKeySequence("Shift+Tab")).setProperty("editorKey", "undent")
         # VS Code's three (#830): Ctrl+/ toggles; Comment only ever adds and
         # Uncomment only ever removes.
         self._add_action(edit_menu, "Toggle Comm&ent", self._toggle_comment, QKeySequence("Ctrl+/"))

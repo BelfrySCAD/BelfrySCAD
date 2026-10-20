@@ -1,17 +1,20 @@
 """Preferences > Keyboard: every command and its shortcut, changeable (#821).
 
 The commands are a main window's `_shortcut_bindings` (see `shortcuts`).
+A shortcut is changed where it is shown, as in other Mac apps: double-click
+its row and press the new key.
 A change is saved and applied to every open window at once, like the rest
 of Preferences. A key already in use is offered back from the command that
 has it; a standard shortcut (Cut, Save, ...) cannot be changed or taken.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
                                QKeySequenceEdit, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from belfryscad.settings import app_settings
 from belfryscad.window import shortcuts
@@ -32,6 +35,67 @@ def apply_everywhere(overrides: dict):
             shortcuts.apply(bindings, overrides)
 
 
+_PLAIN = Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.KeypadModifier
+
+
+class _KeyEdit(QKeySequenceEdit):
+    """The Shortcut cell's editor. Takes Tab and Shift+Tab as keys (#830):
+    Qt's lets Tab move the focus instead, so Indent could not be given Tab
+    back, and records Shift+Tab as "Shift+Backtab", which is not the
+    "Shift+Tab" every binding is stored as. Delete or Backspace on its own
+    removes the shortcut, as in other Mac apps; nothing binds those bare."""
+
+    def event(self, e):
+        if e.type() == QEvent.Type.KeyPress and not e.modifiers() & ~_PLAIN:
+            if e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                shift = e.key() == Qt.Key.Key_Backtab or e.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                self.setKeySequence(QKeySequence("Shift+Tab" if shift else "Tab"))
+                self.editingFinished.emit()
+                return True
+            if e.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete) and not e.modifiers():
+                self.setKeySequence(QKeySequence())
+                self.editingFinished.emit()
+                return True
+        return super().event(e)
+
+
+class _KeyDelegate(QStyledItemDelegate):
+    """Edits the Shortcut column in place: the first key pressed is the new
+    shortcut and ends the edit; Escape or a click elsewhere leaves it alone."""
+
+    def __init__(self, pane):
+        super().__init__(pane)
+        self._pane = pane
+
+    def createEditor(self, parent, option, index):
+        ed = _KeyEdit(parent)
+        ed.setMaximumSequenceLength(1)
+        ed._binding = self._pane._bindings[index.row()]
+        ed.editingFinished.connect(lambda: self._finish(ed))
+        return ed
+
+    def setEditorData(self, editor, index):
+        editor.setKeySequence(QKeySequence())   # empty: "press the new key"
+
+    def _finish(self, ed):
+        if getattr(ed, "_done", False):
+            return
+        ed._done = True
+        b, seq = ed._binding, ed.keySequence()
+        self.closeEditor.emit(ed)
+        # After the editor is gone: the change refills the table, and may ask.
+        QTimer.singleShot(0, lambda: self._pane._set_key(b, seq))
+
+    def setModelData(self, editor, model, index):
+        pass    # a click away without a key is not a change; _finish does the rest
+
+    def eventFilter(self, obj, e):
+        # The item view would take Tab, Shift+Tab and Return to move or commit.
+        if e.type() == QEvent.Type.KeyPress and e.key() != Qt.Key.Key_Escape:
+            return False
+        return super().eventFilter(obj, e)
+
+
 class KeyboardPane(QWidget):
     def __init__(self, bindings: list, parent=None):
         super().__init__(parent)
@@ -48,7 +112,12 @@ class KeyboardPane(QWidget):
         self._table = QTableWidget(len(bindings), 2)
         self._table.setHorizontalHeaderLabels(["Command", "Shortcut"])
         self._table.verticalHeader().hide()
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                                    | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self._table.setItemDelegateForColumn(1, _KeyDelegate(self))
+        # A double-click anywhere on the row edits its shortcut.
+        self._table.doubleClicked.connect(
+            lambda ix: ix.column() == 0 and self._table.edit(ix.siblingAtColumn(1)))
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -56,24 +125,13 @@ class KeyboardPane(QWidget):
         self._table.itemSelectionChanged.connect(self._on_select)
         layout.addWidget(self._table, 1)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Shortcut:"))
-        self._edit = QKeySequenceEdit()
-        self._edit.setMaximumSequenceLength(1)
-        self._edit.setClearButtonEnabled(True)
-        self._edit.editingFinished.connect(self._on_key_entered)
-        # The clear button: no editingFinished for that.
-        self._edit.keySequenceChanged.connect(lambda k: k.isEmpty() and self._on_key_entered())
-        row.addWidget(self._edit, 1)
-        self._default_btn = QPushButton("Restore Default")
-        self._default_btn.clicked.connect(self._restore_one)
-        row.addWidget(self._default_btn)
-        layout.addLayout(row)
-
         bottom = QHBoxLayout()
         self._note = QLabel()
         self._note.setStyleSheet("QLabel { color: gray; }")
         bottom.addWidget(self._note, 1)
+        self._default_btn = QPushButton("Restore Default")
+        self._default_btn.clicked.connect(self._restore_one)
+        bottom.addWidget(self._default_btn)
         all_btn = QPushButton("Restore All Defaults")
         all_btn.clicked.connect(self._restore_all)
         bottom.addWidget(all_btn)
@@ -90,6 +148,9 @@ class KeyboardPane(QWidget):
             keys = QTableWidgetItem(_shown(shortcuts.effective(b, self._overrides)))
             keys.setData(Qt.ItemDataRole.UserRole,
                          " ".join(shortcuts.effective(b, self._overrides)))
+            name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if b.locked:
+                keys.setFlags(keys.flags() & ~Qt.ItemFlag.ItemIsEditable)
             for item in (name, keys):
                 if b.locked:
                     item.setForeground(Qt.GlobalColor.gray)
@@ -116,15 +177,10 @@ class KeyboardPane(QWidget):
 
     def _on_select(self):
         b = self._current()
-        editable = b is not None and not b.locked
-        self._edit.setEnabled(editable)
-        self._default_btn.setEnabled(editable and b.id in self._overrides)
-        self._edit.blockSignals(True)
-        keys = shortcuts.effective(b, self._overrides) if b else []
-        self._edit.setKeySequence(QKeySequence(keys[0]) if keys else QKeySequence())
-        self._edit.blockSignals(False)
+        self._default_btn.setEnabled(b is not None and not b.locked and b.id in self._overrides)
         self._note.setText("A standard shortcut: it can't be changed." if b is not None and b.locked
-                           else "Select a command, then press its new shortcut." if b is None else "")
+                           else "Double-click a shortcut, then press the new key. "
+                                "Delete removes it, Escape keeps it.")
 
     # -- changing -----------------------------------------------------------
 
@@ -143,11 +199,11 @@ class KeyboardPane(QWidget):
         else:
             overrides[b.id] = key
 
-    def _on_key_entered(self):
-        b = self._current()
+    def _set_key(self, b, seq: QKeySequence):
+        """Give `b` the key `seq` (empty for none), asking first for a key
+        another command has."""
         if b is None or b.locked:
             return
-        seq = self._edit.keySequence()
         key = seq.toString(QKeySequence.SequenceFormat.PortableText)
         if key == ",".join(shortcuts.effective(b, self._overrides)[:1]):
             return
