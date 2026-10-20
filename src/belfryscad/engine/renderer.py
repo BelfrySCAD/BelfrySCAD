@@ -744,7 +744,13 @@ class Camera:
         right_vec = view[0, :3].astype(np.float32)
         half = self.distance * stereo_eye_sep * 0.5
         eye = self.eye_position()
-        up = self._rolled_up(self.target - eye)
+        # The VIEW's up, not world-up: each eye's look-at took world-up
+        # against its own toed-in direction, and near a pole (Top, Bottom)
+        # the toe-in is most of that direction's horizontal part, so each
+        # eye rolled up to 90 degrees off the view. The view's up is square
+        # to its direction and so never close to either eye's, and sharing
+        # it leaves the two images no vertical offset anywhere.
+        up = view[1, :3].astype(np.float32)
         focus = self.target
         if behind_screen:
             front = self._front_depth()
