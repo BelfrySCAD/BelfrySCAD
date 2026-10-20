@@ -1112,10 +1112,10 @@ class MainWindow(QMainWindow):
             return act
 
         self._act_measure_distance = make(
-            "Distance Between Two Points", "toolbar-measure-linear.svg",
+            "&Distance Between Two Points", "toolbar-measure-linear.svg",
             "Measure distance between two points")
         self._act_measure_angle = make(
-            "Angle Between Three Points", "toolbar-measure-angle.svg",
+            "&Angle Between Three Points", "toolbar-measure-angle.svg",
             "Measure angle between three points")
 
         self._measure_group = QActionGroup(self)
@@ -1501,7 +1501,7 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        self._act_undo = self._undo_group.createUndoAction(self, "Undo")
+        self._act_undo = self._undo_group.createUndoAction(self, "&Undo")
         self._set_toolbar_icon(self._act_undo, "undo")
         # setShortcutS, plural: the standard key is a LIST of bindings per
         # platform and setShortcut() takes only the first one. That is why
@@ -1511,7 +1511,7 @@ class MainWindow(QMainWindow):
         self._act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         tb.addAction(self._act_undo)
 
-        self._act_redo = self._undo_group.createRedoAction(self, "Redo")
+        self._act_redo = self._undo_group.createRedoAction(self, "&Redo")
         self._set_toolbar_icon(self._act_redo, "redo")
         self._act_redo.setShortcuts(redo_shortcuts())
         self._act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -1577,67 +1577,67 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
 
         # File
-        file_menu = mb.addMenu("File")
-        self._add_action(file_menu, "New", self._new_document, QKeySequence.StandardKey.New)
-        self._add_action(file_menu, "Open…", self._open_file, QKeySequence.StandardKey.Open)
-        self._recent_menu = file_menu.addMenu("Open Recent")
-        self._examples_menu = file_menu.addMenu("Examples")
+        file_menu = mb.addMenu("&File")
+        self._add_action(file_menu, "&New", self._new_document, QKeySequence.StandardKey.New)
+        self._add_action(file_menu, "&Open…", self._open_file, QKeySequence.StandardKey.Open)
+        self._recent_menu = file_menu.addMenu("Open Recen&t")
+        self._examples_menu = file_menu.addMenu("&Examples")
         self._examples_menu.aboutToShow.connect(self._populate_examples_menu)
         self._rebuild_recent_menu()
         file_menu.addSeparator()
-        self._add_action(file_menu, "Close", self._close_current_tab, QKeySequence.StandardKey.Close)
-        self._add_action(file_menu, "Save", self._save_file, QKeySequence.StandardKey.Save)
-        self._add_action(file_menu, "Save As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
-        self._add_action(file_menu, "Save All", self._save_all, QKeySequence("Ctrl+Alt+S"))
-        self._add_action(file_menu, "Reload", self._reload_current, QKeySequence("Ctrl+R"))
+        self._add_action(file_menu, "&Close", self._close_current_tab, QKeySequence.StandardKey.Close)
+        self._add_action(file_menu, "&Save", self._save_file, QKeySequence.StandardKey.Save)
+        self._add_action(file_menu, "Save &As…", self._save_file_as, QKeySequence.StandardKey.SaveAs)
+        self._add_action(file_menu, "Save A&ll", self._save_all, QKeySequence("Ctrl+Alt+S"))
+        self._add_action(file_menu, "&Reload", self._reload_current, QKeySequence("Ctrl+R"))
         file_menu.addSeparator()
-        self._add_action(file_menu, "Export…", self._export, QKeySequence("Ctrl+E"))
+        self._add_action(file_menu, "E&xport…", self._export, QKeySequence("Ctrl+E"))
         # OpenSCAD's F7 is Export as STL; this is the same reflex for
         # whatever format was exported last (#791).
-        self._add_action(file_menu, "Quick Export…", self._quick_export, QKeySequence("F7"))
-        self._add_action(file_menu, "Export as Image…", self._export_image)
+        self._add_action(file_menu, "Quic&k Export…", self._quick_export, QKeySequence("F7"))
+        self._add_action(file_menu, "Export as &Image…", self._export_image)
         file_menu.addSeparator()
-        self._add_action(file_menu, "Quit", self.close, QKeySequence.StandardKey.Quit)
+        self._add_action(file_menu, "&Quit", self.close, QKeySequence.StandardKey.Quit)
 
         # Edit
-        edit_menu = mb.addMenu("Edit")
+        edit_menu = mb.addMenu("&Edit")
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Cut", self._edit_cut, QKeySequence.StandardKey.Cut)
-        self._add_action(edit_menu, "Copy", self._edit_copy, QKeySequence.StandardKey.Copy)
-        self._add_action(edit_menu, "Paste", self._edit_paste, QKeySequence.StandardKey.Paste)
-        self._add_action(edit_menu, "Select All", self._edit_select_all, QKeySequence.StandardKey.SelectAll)
+        self._add_action(edit_menu, "Cu&t", self._edit_cut, QKeySequence.StandardKey.Cut)
+        self._add_action(edit_menu, "&Copy", self._edit_copy, QKeySequence.StandardKey.Copy)
+        self._add_action(edit_menu, "&Paste", self._edit_paste, QKeySequence.StandardKey.Paste)
+        self._add_action(edit_menu, "Select &All", self._edit_select_all, QKeySequence.StandardKey.SelectAll)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Expand Selection", self._selection_expand)
-        self._add_action(edit_menu, "Contract Selection", self._selection_contract)
+        self._add_action(edit_menu, "E&xpand Selection", self._selection_expand)
+        self._add_action(edit_menu, "Co&ntract Selection", self._selection_contract)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Indent", self._indent, QKeySequence("Tab"))
-        self._add_action(edit_menu, "Undent", self._undent, QKeySequence("Shift+Tab"))
+        self._add_action(edit_menu, "&Indent", self._indent, QKeySequence("Tab"))
+        self._add_action(edit_menu, "U&ndent", self._undent, QKeySequence("Shift+Tab"))
         # VS Code's three (#830): Ctrl+/ toggles; Comment only ever adds and
         # Uncomment only ever removes.
-        self._add_action(edit_menu, "Toggle Comment", self._toggle_comment, QKeySequence("Ctrl+/"))
-        self._add_action(edit_menu, "Comment", self._comment)
-        self._add_action(edit_menu, "Uncomment", self._uncomment, QKeySequence("Ctrl+Shift+/"))
+        self._add_action(edit_menu, "Toggle Comm&ent", self._toggle_comment, QKeySequence("Ctrl+/"))
+        self._add_action(edit_menu, "C&omment", self._comment)
+        self._add_action(edit_menu, "Unco&mment", self._uncomment, QKeySequence("Ctrl+Shift+/"))
         # The editor's own Option+Up/Down, made findable. Alt is Option on
         # macOS, so the menu shows the same keys the editor already takes.
-        self._add_action(edit_menu, "Move Line Up", lambda: self._move_lines(-1), QKeySequence("Alt+Up"))
-        self._add_action(edit_menu, "Move Line Down", lambda: self._move_lines(1), QKeySequence("Alt+Down"))
-        self._add_action(edit_menu, "Convert Tabs to Spaces", self._convert_tabs_to_spaces)
+        self._add_action(edit_menu, "Mo&ve Line Up", lambda: self._move_lines(-1), QKeySequence("Alt+Up"))
+        self._add_action(edit_menu, "Move Line Do&wn", lambda: self._move_lines(1), QKeySequence("Alt+Down"))
+        self._add_action(edit_menu, "Convert Ta&bs to Spaces", self._convert_tabs_to_spaces)
         edit_menu.addSeparator()
         # OpenSCAD's Alt+Ins. Macs have no Insert key; the menu and the
         # editor's right-click menu reach it there.
-        self._add_action(edit_menu, "Insert Template…", self._insert_template, QKeySequence("Alt+Ins"))
-        self._add_action(edit_menu, "Manage Templates…", self._manage_templates)
+        self._add_action(edit_menu, "Insert Temp&late…", self._insert_template, QKeySequence("Alt+Ins"))
+        self._add_action(edit_menu, "Mana&ge Templates…", self._manage_templates)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Increase Font Size", self._font_size_increase, QKeySequence("Ctrl++"))
-        self._add_action(edit_menu, "Decrease Font Size", self._font_size_decrease, QKeySequence("Ctrl+-"))
+        self._add_action(edit_menu, "Increase Font &Size", self._font_size_increase, QKeySequence("Ctrl++"))
+        self._add_action(edit_menu, "Decrease Font Si&ze", self._font_size_decrease, QKeySequence("Ctrl+-"))
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Copy Viewport Image", self._copy_viewport_image,
+        self._add_action(edit_menu, "Cop&y Viewport Image", self._copy_viewport_image,
                          QKeySequence("Ctrl+Shift+C"))
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Find…", self._find, QKeySequence.StandardKey.Find)
-        act_replace = self._add_action(edit_menu, "Find & Replace…", self._find_replace)
+        self._add_action(edit_menu, "&Find…", self._find, QKeySequence.StandardKey.Find)
+        act_replace = self._add_action(edit_menu, "Fin&d && Replace…", self._find_replace)
         # StandardKey.Replace alone leaves this unbound on macOS -- Qt has no
         # default there, so the menu item had no shortcut at all. Ctrl+Shift+F
         # renders as ⇧⌘F on macOS and rides alongside the standard binding
@@ -1658,83 +1658,83 @@ class MainWindow(QMainWindow):
         # Ctrl+Alt+E: Ctrl+Alt is AltGr on Windows, where Ctrl+Alt+E types a
         # euro sign on many layouts. On macOS ⌥E is a dead accent key, which
         # may or may not reach the menu bar; untested.
-        self._add_action(edit_menu, "Jump to Next Error", self._jump_to_next_error, QKeySequence("Ctrl+'"))
+        self._add_action(edit_menu, "&Jump to Next Error", self._jump_to_next_error, QKeySequence("Ctrl+'"))
         edit_menu.addSeparator()
         # OpenSCAD's keys. Set from here only, never by clicking the gutter,
         # whose left column toggles breakpoints.
-        self._add_action(edit_menu, "Toggle Bookmark", self._toggle_bookmark, QKeySequence("Ctrl+F2"))
-        self._add_action(edit_menu, "Next Bookmark", lambda: self._jump_to_bookmark(True), QKeySequence("F2"))
-        self._add_action(edit_menu, "Previous Bookmark", lambda: self._jump_to_bookmark(False), QKeySequence("Shift+F2"))
+        self._add_action(edit_menu, "Toggle Boo&kmark", self._toggle_bookmark, QKeySequence("Ctrl+F2"))
+        self._add_action(edit_menu, "Ne&xt Bookmark", lambda: self._jump_to_bookmark(True), QKeySequence("F2"))
+        self._add_action(edit_menu, "Pre&vious Bookmark", lambda: self._jump_to_bookmark(False), QKeySequence("Shift+F2"))
         edit_menu.addSeparator()
-        self._act_word_wrap = QAction("Word Wrap", self, checkable=True)
+        self._act_word_wrap = QAction("&Word Wrap", self, checkable=True)
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
         edit_menu.addAction(self._act_word_wrap)
         edit_menu.addSeparator()
-        self._act_read_only = QAction("Read Only", self, checkable=True)
+        self._act_read_only = QAction("Read &Only", self, checkable=True)
         self._act_read_only.triggered.connect(self._toggle_read_only)
         edit_menu.addAction(self._act_read_only)
         edit_menu.addSeparator()
-        prefs_act = self._add_action(edit_menu, "Preferences…", self._open_preferences, QKeySequence("Ctrl+,"))
+        prefs_act = self._add_action(edit_menu, "Preference&s…", self._open_preferences, QKeySequence("Ctrl+,"))
         prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
 
         # Design
-        design_menu = mb.addMenu("Design")
+        design_menu = mb.addMenu("&Design")
         self._act_auto_reload = self._add_checkable(
-            design_menu, "Automatic Reload and Render",
+            design_menu, "&Automatic Reload and Render",
             app_settings().value(
                 "autoReload", False, type=bool),
             self._set_auto_reload)
         design_menu.addSeparator()
         # OpenSCAD's Reload and Preview, and its key.
-        self._add_action(design_menu, "Reload and Render", self._reload_and_render, QKeySequence("F4"))
-        self._act_render_menu = self._add_action(design_menu, "Render", self._render, QKeySequence("F6"))
-        self._add_action(design_menu, "Render with Profiling", lambda: self._render(profile=True))
-        self._add_action(design_menu, "Show Profile Report…", self._show_profile_report)
+        self._add_action(design_menu, "&Reload and Render", self._reload_and_render, QKeySequence("F4"))
+        self._act_render_menu = self._add_action(design_menu, "R&ender", self._render, QKeySequence("F6"))
+        self._add_action(design_menu, "Render with &Profiling", lambda: self._render(profile=True))
+        self._add_action(design_menu, "S&how Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
         # OpenSCAD's Design > 3D Print, and its key. A slicer is the one
         # hand-off that reaches every printer -- see belfryscad/slicers.py.
-        self._add_action(design_menu, "Send to Slicer", self._send_to_slicer, QKeySequence("F8"))
-        self._add_action(design_menu, "Choose Slicer…", self._choose_slicer)
+        self._add_action(design_menu, "&Send to Slicer", self._send_to_slicer, QKeySequence("F8"))
+        self._add_action(design_menu, "Ch&oose Slicer…", self._choose_slicer)
         design_menu.addSeparator()
         # Tests are project-wide, not per-file, so this asks for a directory
         # rather than acting on the current tab. Coverage comes from a test
         # run or not at all -- see window/testing.py.
-        self._add_action(design_menu, "Run Tests…", self._open_testing_pane)
+        self._add_action(design_menu, "Run &Tests…", self._open_testing_pane)
         design_menu.addSeparator()
-        measure_menu = design_menu.addMenu("Measure")
+        measure_menu = design_menu.addMenu("&Measure")
         measure_menu.addAction(self._act_measure_distance)
         measure_menu.addAction(self._act_measure_angle)
         measure_menu.addSeparator()
-        self._add_action(measure_menu, "Clear Measurements",
+        self._add_action(measure_menu, "&Clear Measurements",
                           self._clear_measurements)
         design_menu.addSeparator()
-        self._add_action(design_menu, "Check Validity", self._check_validity)
-        self._add_action(design_menu, "Dump CSG Tree to Console", self._dump_csg_tree)
+        self._add_action(design_menu, "&Check Validity", self._check_validity)
+        self._add_action(design_menu, "D&ump CSG Tree to Console", self._dump_csg_tree)
         design_menu.addSeparator()
-        self._add_action(design_menu, "Flush Caches", self._flush_caches)
+        self._add_action(design_menu, "&Flush Caches", self._flush_caches)
         design_menu.addSeparator()
-        insert_menu = design_menu.addMenu("Insert Primitive")
-        for prim in ("Cube", "Sphere", "Cylinder", "Cone"):
+        insert_menu = design_menu.addMenu("&Insert Primitive")
+        for prim in ("&Cube", "&Sphere", "C&ylinder", "C&one"):
             insert_menu.addAction(prim)
-        bool_menu = design_menu.addMenu("Boolean Operation")
-        for op in ("Union", "Difference", "Intersection"):
+        bool_menu = design_menu.addMenu("&Boolean Operation")
+        for op in ("&Union", "&Difference", "&Intersection"):
             bool_menu.addAction(op)
         design_menu.addSeparator()
-        self._add_action(design_menu, "Use Library…", self._open_use_library)
-        self._add_action(design_menu, "Manage Libraries…", self._open_library_manager)
+        self._add_action(design_menu, "Use &Library…", self._open_use_library)
+        self._add_action(design_menu, "Mana&ge Libraries…", self._open_library_manager)
 
         # View
-        view_menu = mb.addMenu("View")
+        view_menu = mb.addMenu("&View")
         for label, preset, key in (
-            ("Top",       "top",    "Ctrl+4"),
-            ("Bottom",    "bottom", "Ctrl+5"),
-            ("Left",      "left",   "Ctrl+6"),
-            ("Right",     "right",  "Ctrl+7"),
-            ("Front",     "front",  "Ctrl+8"),
-            ("Back",      "back",   "Ctrl+9"),
-            ("Isometric", "iso",    "Ctrl+0"),
-            ("View All",  "all",    "Shift+Ctrl+V"),
-            ("Center",    "center", "Shift+Ctrl+0"),
+            ("&Top",       "top",    "Ctrl+4"),
+            ("&Bottom",    "bottom", "Ctrl+5"),
+            ("&Left",      "left",   "Ctrl+6"),
+            ("&Right",     "right",  "Ctrl+7"),
+            ("&Front",     "front",  "Ctrl+8"),
+            ("Bac&k",      "back",   "Ctrl+9"),
+            ("Is&ometric", "iso",    "Ctrl+0"),
+            ("View &All",  "all",    "Shift+Ctrl+V"),
+            ("Ce&nter",    "center", "Shift+Ctrl+0"),
         ):
             act = self._add_action(view_menu, label,
                              lambda p=preset: self._set_view(p),
@@ -1748,15 +1748,15 @@ class MainWindow(QMainWindow):
             # WindowModal.
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
-        self._add_action(view_menu, "Reset Panel Layout",
+        self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
         view_menu.addSeparator()
-        self._act_zoom_in = self._add_action(view_menu, "Zoom In", lambda: self._zoom_viewport(1), QKeySequence("Ctrl+]"))
+        self._act_zoom_in = self._add_action(view_menu, "Zoom &In", lambda: self._zoom_viewport(1), QKeySequence("Ctrl+]"))
         self._act_zoom_in.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_zoom_out = self._add_action(view_menu, "Zoom Out", lambda: self._zoom_viewport(-1), QKeySequence("Ctrl+["))
+        self._act_zoom_out = self._add_action(view_menu, "&Zoom Out", lambda: self._zoom_viewport(-1), QKeySequence("Ctrl+["))
         self._act_zoom_out.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
-        self._act_spin = self._add_checkable(view_menu, "Spin", False, self._toggle_spin)
+        self._act_spin = self._add_checkable(view_menu, "&Spin", False, self._toggle_spin)
         self._act_spin.setShortcut(QKeySequence("Ctrl+Meta+1"))
         self._act_spin.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         # The same checkable action on the Tools toolbar, beside Animate
@@ -1766,7 +1766,7 @@ class MainWindow(QMainWindow):
         self._act_spin.setToolTip("Spin (" + self._act_spin.shortcut().toString(
             QKeySequence.SequenceFormat.NativeText) + ")")
         self._tools_toolbar.insertAction(self._act_animate_tb, self._act_spin)
-        self._act_perspective = self._add_checkable(view_menu, "Perspective", True, self._toggle_perspective)
+        self._act_perspective = self._add_checkable(view_menu, "&Perspective", True, self._toggle_perspective)
         self._act_perspective.setShortcut(QKeySequence("Ctrl+Meta+2"))
         self._act_perspective.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         # On the Tools toolbar before Spin, with the viewport's own
@@ -1778,7 +1778,7 @@ class MainWindow(QMainWindow):
         # Stereo is on or off here; WHICH stereo (cross-eyed, wall-eyed or one
         # of three anaglyphs) is Preferences > Viewport > Stereo mode.
         self._stereo_on = False
-        self._act_stereo = QAction("Stereo", self)
+        self._act_stereo = QAction("Ster&eo", self)
         self._act_stereo.setCheckable(True)
         self._act_stereo.setShortcut(QKeySequence("Ctrl+Meta+3"))
         self._act_stereo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -1787,36 +1787,36 @@ class MainWindow(QMainWindow):
         self._tools_toolbar.insertAction(self._act_animate_tb, self._act_stereo)
         self._set_stereo(False)
         view_menu.addSeparator()
-        self._act_show_edges = self._add_checkable(view_menu, "Show Edges", False, self._toggle_edges)
+        self._act_show_edges = self._add_checkable(view_menu, "Show E&dges", False, self._toggle_edges)
         self._act_show_edges.setShortcut(QKeySequence("Ctrl+1"))
         self._act_show_edges.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._act_torch = self._add_checkable(
-            view_menu, "X-ray Flashlight", False, self._toggle_torch)
+            view_menu, "&X-ray Flashlight", False, self._toggle_torch)
         self._act_torch.setShortcut(QKeySequence("Ctrl+Shift+X"))
         self._act_torch.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_show_axes = self._add_checkable(view_menu, "Show Axes", True, self._toggle_axes)
+        self._act_show_axes = self._add_checkable(view_menu, "Sho&w Axes", True, self._toggle_axes)
         self._act_show_axes.setShortcut(QKeySequence("Ctrl+2"))
         self._act_show_axes.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         # Off by default, matching SceneRenderer.show_grid -- see the note
         # there: _add_checkable sets the checkbox before connecting the
         # slot, so this initial value never reaches the renderer.
-        self._act_show_grid = self._add_checkable(view_menu, "Show Grid", False, self._toggle_grid)
+        self._act_show_grid = self._add_checkable(view_menu, "Show &Grid", False, self._toggle_grid)
         self._act_show_grid.setShortcut(QKeySequence("Ctrl+G"))
         self._act_show_grid.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._act_show_scale = self._add_checkable(view_menu, "Show Scale Markers", True, self._toggle_scale_markers)
-        self._act_show_cross = self._add_checkable(view_menu, "Show Crosshairs", False, self._toggle_crosshairs)
+        self._act_show_scale = self._add_checkable(view_menu, "Show Scale &Markers", True, self._toggle_scale_markers)
+        self._act_show_cross = self._add_checkable(view_menu, "Show &Crosshairs", False, self._toggle_crosshairs)
         self._act_show_cross.setShortcut(QKeySequence("Ctrl+3"))
         self._act_show_cross.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()  # isolates macOS-injected "Enter Full Screen" (which has an icon) in its own section
 
         # Window
-        window_menu = mb.addMenu("Window")
-        self._add_action(window_menu, "Minimize", self.showMinimized, QKeySequence("Ctrl+M"))
-        self._add_action(window_menu, "Zoom", self.showMaximized)
+        window_menu = mb.addMenu("&Window")
+        self._add_action(window_menu, "&Minimize", self.showMinimized, QKeySequence("Ctrl+M"))
+        self._add_action(window_menu, "&Zoom", self.showMaximized)
         window_menu.addSeparator()
-        self._add_action(window_menu, "New Window", self._new_window, QKeySequence("Ctrl+Shift+N"))
-        self._add_action(window_menu, "Open in New Window…", self._open_in_new_window)
-        self._add_action(window_menu, "Move Tab to New Window", self._tear_off_tab)
+        self._add_action(window_menu, "New &Window", self._new_window, QKeySequence("Ctrl+Shift+N"))
+        self._add_action(window_menu, "O&pen in New Window…", self._open_in_new_window)
+        self._add_action(window_menu, "Mo&ve Tab to New Window", self._tear_off_tab)
         # Qt's standard "next child" keys (Ctrl+Tab on Windows and Linux,
         # Cmd+Shift+] on macOS) plus, on macOS, the physical Ctrl+Tab -- Qt
         # calls it Meta+Tab there, and its own list offers Cmd+Tab instead,
@@ -1824,80 +1824,80 @@ class MainWindow(QMainWindow):
         # reached the editor and indented the line.
         mac = sys.platform == "darwin"
         for label, step, std, extra in (
-                ("Show Next Tab", 1, QKeySequence.StandardKey.NextChild, "Meta+Tab"),
-                ("Show Previous Tab", -1, QKeySequence.StandardKey.PreviousChild, "Meta+Shift+Tab")):
+                ("Show &Next Tab", 1, QKeySequence.StandardKey.NextChild, "Meta+Tab"),
+                ("Show P&revious Tab", -1, QKeySequence.StandardKey.PreviousChild, "Meta+Shift+Tab")):
             act = self._add_action(window_menu, label, lambda _=False, st=step: self._cycle_tab(st))
             act.setShortcuts(QKeySequence.keyBindings(std) + ([QKeySequence(extra)] if mac else []))
         window_menu.addSeparator()
-        self._add_action(window_menu, "Bring All to Front", self._bring_all_to_front)
-        self._add_action(window_menu, "Dock All Panes", self._dock_all_panes)
+        self._add_action(window_menu, "Bring All to &Front", self._bring_all_to_front)
+        self._add_action(window_menu, "Doc&k All Panes", self._dock_all_panes)
         # Toolbars, panes and the status bar, moved here from the top of View.
         window_menu.addSeparator()
         # toggleViewAction, not a checkable of our own: it follows the
         # toolbar, so a layout restored with a toolbar hidden shows unticked.
-        for bar, label in ((self._toolbar, "Show Editor Toolbar"),
-                           (self._view_toolbar, "Show 3D View Toolbar"),
-                           (self._tools_toolbar, "Show Tools Toolbar")):
+        for bar, label in ((self._toolbar, "Show Editor &Toolbar"),
+                           (self._view_toolbar, "Show &3D View Toolbar"),
+                           (self._tools_toolbar, "Show Too&ls Toolbar")):
             act = bar.toggleViewAction()
             act.setText(label)
             window_menu.addAction(act)
-        self._act_show_tabs = self._add_checkable(window_menu, "Show Tab Bar", True, self._tab_bar_toolbar.setVisible)
+        self._act_show_tabs = self._add_checkable(window_menu, "Show T&ab Bar", True, self._tab_bar_toolbar.setVisible)
 
         self._act_show_editor = self._editor_dock.toggleViewAction()
-        self._act_show_editor.setText("Show Editor")
+        self._act_show_editor.setText("Show &Editor")
         window_menu.addAction(self._act_show_editor)
 
         self._act_show_console = self._console_dock.toggleViewAction()
-        self._act_show_console.setText("Show Console")
+        self._act_show_console.setText("Show &Console")
         window_menu.addAction(self._act_show_console)
 
         self._act_show_debugger = self._debugger_dock.toggleViewAction()
-        self._act_show_debugger.setText("Show Debugger")
+        self._act_show_debugger.setText("Show Debu&gger")
         window_menu.addAction(self._act_show_debugger)
 
         self._act_show_animate = self._animate_dock.toggleViewAction()
-        self._act_show_animate.setText("Show Animate")
+        self._act_show_animate.setText("Show An&imate")
         window_menu.addAction(self._act_show_animate)
 
         self._act_show_customizer = self._customizer_dock.toggleViewAction()
-        self._act_show_customizer.setText("Show Customizer")
+        self._act_show_customizer.setText("Show C&ustomizer")
         window_menu.addAction(self._act_show_customizer)
 
         self._act_show_ai_chat = self._ai_chat_dock.toggleViewAction()
-        self._act_show_ai_chat.setText("Show AI Chat")
+        self._act_show_ai_chat.setText("Show AI C&hat")
         window_menu.addAction(self._act_show_ai_chat)
 
         self._act_show_docs = self._docs_dock.toggleViewAction()
-        self._act_show_docs.setText("Show Docs")
+        self._act_show_docs.setText("Show &Docs")
         window_menu.addAction(self._act_show_docs)
 
         self._act_show_color_list = self._color_list_dock.toggleViewAction()
-        self._act_show_color_list.setText("Show Color List")
+        self._act_show_color_list.setText("Show Color Li&st")
         window_menu.addAction(self._act_show_color_list)
 
-        self._act_show_status = self._add_checkable(window_menu, "Show Status Bar", True, self._status_bar.setVisible)
+        self._act_show_status = self._add_checkable(window_menu, "Show Status &Bar", True, self._status_bar.setVisible)
         self._act_show_testing = self._testing_dock.toggleViewAction()
-        self._act_show_testing.setText("Show Testing")
+        self._act_show_testing.setText("Sh&ow Testing")
         window_menu.addAction(self._act_show_testing)
 
-        help_menu = mb.addMenu("Help")
+        help_menu = mb.addMenu("&Help")
         # AboutRole moves this into the application menu on macOS, where
         # the platform expects it -- the same reason Preferences carries
         # PreferencesRole above. On Windows and Linux it stays in Help.
-        about_act = self._add_action(help_menu, "About BelfrySCAD", lambda: show_about_dialog(self))
+        about_act = self._add_action(help_menu, "&About BelfrySCAD", lambda: show_about_dialog(self))
         about_act.setMenuRole(QAction.MenuRole.AboutRole)
-        self._add_action(help_menu, "Documentation", open_documentation)
+        self._add_action(help_menu, "&Documentation", open_documentation)
         from belfryscad.window.ai_setup import open_guide
-        self._add_action(help_menu, "AI Chat Setup Guide", open_guide)
-        self._add_action(help_menu, "Report an Issue…", open_issue_tracker)
-        self._add_action(help_menu, "Check for Updates…", lambda: check_for_updates(self))
-        self._add_action(help_menu, "Show Release Notes…", lambda: show_release_notes(self))
+        self._add_action(help_menu, "A&I Chat Setup Guide", open_guide)
+        self._add_action(help_menu, "&Report an Issue…", open_issue_tracker)
+        self._add_action(help_menu, "Check for &Updates…", lambda: check_for_updates(self))
+        self._add_action(help_menu, "Show Release &Notes…", lambda: show_release_notes(self))
         # Not Qt's font database: these are the names text() will accept,
         # read from the evaluator's own index (issue #379).
-        self._add_action(help_menu, "Font List…", lambda: show_font_list(self))
-        self._add_action(help_menu, "Color List", self._show_color_list)
-        self._add_action(help_menu, "Welcome Screen…", self.show_welcome)
-        self._add_action(help_menu, "Show Library Folder", self._show_library_folder)
+        self._add_action(help_menu, "&Font List…", lambda: show_font_list(self))
+        self._add_action(help_menu, "&Color List", self._show_color_list)
+        self._add_action(help_menu, "&Welcome Screen…", self.show_welcome)
+        self._add_action(help_menu, "Show &Library Folder", self._show_library_folder)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)
