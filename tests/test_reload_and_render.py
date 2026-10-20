@@ -26,7 +26,7 @@ w.open_file_by_path(main, render=False)
 tab = w._current_tab()
 renders = []
 w._render = lambda *a, **k: renders.append(tab.editor.toPlainText())
-out["in_menu"] = any(a.text() == "Reload and Render" and a.shortcut().toString() == "F4"
+out["in_menu"] = any(a.text().replace("&", "") == "Reload and Render" and a.shortcut().toString() == "F4"
                      for m in w.menuBar().findChildren(QMenu)
                      for a in m.actions())
 open(main, "w").write("cube(2);\\n")

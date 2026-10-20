@@ -94,7 +94,7 @@ from belfryscad.window.main_window import MainWindow
 w = MainWindow(); w.skip_unsaved_prompts = True
 edit_menu = next(m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))
                  if m.title().replace("&", "") == "Edit")
-out["menu"] = [a.text() for a in edit_menu.actions() if "Template" in a.text()]
+out["menu"] = [t for t in (a.text().replace("&", "") for a in edit_menu.actions()) if "Template" in t]
 
 # Insertion: indented to the line, tabs as the editor's indent, caret at ^~^.
 ed = w._current_editor()

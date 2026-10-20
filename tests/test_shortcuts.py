@@ -10,7 +10,7 @@ DRIVER = r'''
 import json, os, sys, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QAction, QKeySequence
 app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
@@ -23,6 +23,14 @@ def act(w, ident):
 def keys(w, ident):
     return [k.toString(QKeySequence.SequenceFormat.PortableText) for k in act(w, ident).shortcuts()]
 out = {"ids": len(w1._shortcut_bindings)}
+# Alt+letter opens each top-level menu on Windows and Linux (#839). Read from
+# the titles: QKeySequence.mnemonic() is always empty on macOS, which has none.
+out["mnemonics"] = [a.text() for a in w1.menuBar().actions()]
+# And every command in them has one; the dynamic lists (Open Recent, Examples,
+# the Window menu's documents) have none and are not bindings.
+out["no_mnemonic"] = [b.id for b in w1._shortcut_bindings
+                      if isinstance(b.target, QAction) and not b.id.startswith("Toolbar")
+                      and "&" not in b.target.text().replace("&&", "")]
 pane = keyboard_pane.KeyboardPane(w1._shortcut_bindings)
 row = {b.id: i for i, b in enumerate(w1._shortcut_bindings)}
 answers = []
@@ -56,6 +64,8 @@ def test_keyboard_preferences():
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["ids"] > 100
+    assert out["no_mnemonic"] == []
+    assert out["mnemonics"] == ["&File", "&Edit", "&Design", "&View", "&Window", "&Help"]
     assert out["free"] == [["Ctrl+Shift+K"], ["Ctrl+Shift+K"]]
     assert out["taken"] == [["Ctrl+E"], [], 1]
     assert out["standard"][0] == ["Ctrl+Shift+K"] and out["standard"][2]

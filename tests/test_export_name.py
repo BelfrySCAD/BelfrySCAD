@@ -183,7 +183,7 @@ class TestGridDefaultsOff:
     def _menu_default(self):
         import re
         text = (self.ROOT / "window" / "main_window.py").read_text()
-        m = re.search(r'_add_checkable\(view_menu,\s*"Show Grid",\s*(True|False)', text)
+        m = re.search(r'_add_checkable\(view_menu,\s*"Show &Grid",\s*(True|False)', text)
         assert m, '"Show Grid" menu default not found'
         return m.group(1) == "True"
 

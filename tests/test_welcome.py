@@ -34,7 +34,7 @@ from belfryscad.window.main_window import MainWindow
 w = MainWindow(); w.skip_unsaved_prompts = True
 help_menu = next(m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))
                  if m.title().replace("&", "") == "Help")
-out = {{"in_help": "Welcome Screen…" in [a.text() for a in help_menu.actions()]}}
+out = {{"in_help": "Welcome Screen…" in [a.text().replace("&", "") for a in help_menu.actions()]}}
 
 dlg = w.show_welcome()
 out["recents"] = [dlg.recent_list.item(i).text() for i in range(dlg.recent_list.count())]
