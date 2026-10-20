@@ -2014,7 +2014,39 @@ class CodeEditor(QPlainTextEdit):
                     or event.matches(QKeySequence.StandardKey.Redo)):
                 event.ignore()
                 return True
+            # Tab given to some other command is that command's key here too.
+            role = self._tab_role(event)
+            if role is not None and role not in ("indent", "undent", "free"):
+                event.ignore()
+                return True
         return super().event(event)
+
+    def _tab_role(self, event):
+        """What Tab or Shift+Tab does here, or None for any other key (#830).
+
+        The editor handles both itself rather than through Edit > Indent and
+        Undent, because Tab with nothing selected types. But they are only
+        Indent's and Undent's keys by default: "indent"/"undent" while that
+        command still has the key, "free" when no command does (Tab then
+        types, Shift+Tab does nothing), and "command" when another command
+        has it, whose shortcut it then is. In a window without those menus,
+        a dialog's editor, they keep their default meaning."""
+        if event.key() not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            return None
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if mods & ~Qt.KeyboardModifier.ShiftModifier:
+            return None
+        shift = event.key() == Qt.Key.Key_Backtab or bool(mods)
+        name = "Shift+Tab" if shift else "Tab"
+        actions = self.window().findChildren(QAction)
+        if not any(a.property("editorKey") for a in actions):
+            return "undent" if shift else "indent"
+        for a in actions:
+            if a.isEnabled() and any(
+                    k.toString(QKeySequence.SequenceFormat.PortableText) == name
+                    for k in a.shortcuts()):
+                return a.property("editorKey") or "command"
+        return "free"
 
     def viewportEvent(self, event):
         """Hover a colour literal, get a swatch of it.
@@ -2146,19 +2178,22 @@ class CodeEditor(QPlainTextEdit):
                 cursor.insertText("\n")
                 self.setTextCursor(cursor)
                 return
-        if event.key() == Qt.Key.Key_Tab and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        role = self._tab_role(event)
+        if role == "indent" or (role == "free" and event.key() == Qt.Key.Key_Tab):
             # Tab indents LINES only when lines are selected. With nothing
             # selected it types, like it does in every other editor -- it
             # used to indent the line the cursor happened to be on, so
             # pressing it after `x=0;` moved the statement instead of
-            # inserting anything (#433).
-            if self.textCursor().hasSelection():
+            # inserting anything (#433). No longer Indent's key, it only types.
+            if role == "indent" and self.textCursor().hasSelection():
                 self._indent_lines()
             else:
                 self._insert_indent_at_cursor()
             return
-        if event.key() == Qt.Key.Key_Backtab:
+        if role == "undent":
             self._unindent_lines()
+            return
+        if role is not None:
             return
         if event.text() in ('}', ']', ')'):
             cursor = self.textCursor()
@@ -2461,7 +2496,9 @@ class CodeEditor(QPlainTextEdit):
         so Tab at column 5 with size 4 adds 3, landing on 8, rather than
         always adding a full level and leaving the line off-grid."""
         cursor = self.textCursor()
-        col = to_index(cursor.block().text(), cursor.positionInBlock())
+        # From where the spaces land: a selection they replace starts there.
+        block = self.document().findBlock(cursor.selectionStart())
+        col = to_index(block.text(), cursor.selectionStart() - block.position())
         cursor.insertText(" " * (self._next_indent_stop(col) - col))
         self.setTextCursor(cursor)
 
