@@ -478,6 +478,8 @@ class _LineMarks:
 
 _OPENERS = "([{"
 _CLOSERS = ")]}"
+#: What auto-closing pairs (Preferences ▸ Editor, off by default; #830).
+_AUTO_PAIRS = {"(": ")", "[": "]", "{": "}", '"': '"'}
 
 
 def _scan_string(text, i):
@@ -1420,6 +1422,8 @@ class CodeEditor(QPlainTextEdit):
     #: See set_append_line_on_down(). Off unless a preference turns it on,
     #: so an editor built without one behaves the way the platform does.
     _append_line_on_down = False
+    #: See set_auto_close().
+    _auto_close = False
 
     breakpoints_changed = Signal(object)       # emits set[int] of 0-indexed block numbers
     go_to_definition_requested = Signal(str)   # emits the identifier word
@@ -1443,6 +1447,10 @@ class CodeEditor(QPlainTextEdit):
         self.setUndoRedoEnabled(False)
 
         self._indent_size: int = 4
+        # Closers auto-close typed, each a cursor sitting just before it, so
+        # it follows edits. Only these are typed over or deleted with their
+        # opener; a closer the user typed is always left alone.
+        self._auto_closed: list[QTextCursor] = []
 
         font = QFont("Menlo", 13)
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -1752,6 +1760,105 @@ class CodeEditor(QPlainTextEdit):
         self._fold_busy = False
         self._update_line_number_area_width()
         self._line_number_area.update()
+
+    def set_auto_close(self, enabled: bool):
+        """Whether typing an opening bracket or quote adds its closer (#830).
+
+        Off by default: some people rely on it and some cannot stand it, so
+        it is a preference rather than a decision. On, it follows VS Code:
+        the pair is added only before whitespace, the end of the line or
+        another closer, never in a comment or string; typing the closer it
+        added steps over it; Backspace between the two deletes both; Enter
+        between brackets puts the closer on a line of its own; and an opener
+        typed over a selection wraps it."""
+        self._auto_close = enabled
+        self._auto_closed.clear()
+
+    def _auto_closed_at(self, pos: int):
+        """The auto-closed closer at `pos`, if there is one still there."""
+        doc = self.document()
+        self._auto_closed = [c for c in self._auto_closed
+                             if doc.characterAt(c.position()) in _AUTO_PAIRS.values()]
+        return next((c for c in self._auto_closed if c.position() == pos), None)
+
+    def _in_comment_or_string(self, pos: int) -> bool:
+        block = self.document().findBlock(pos)
+        before = block.text()[:to_index(block.text(), pos - block.position())]
+        prev = block.previous().userState() if block.previous().isValid() else -1
+        spans, _strings, _brackets, in_comment, in_string = _scan_line(
+            before, prev >= 0 and bool(prev & 1), prev >= 0 and bool(prev & 2))
+        line_comment = bool(spans) and before[spans[-1][0]:spans[-1][0] + 2] == "//"
+        return in_comment or in_string or line_comment
+
+    def _handle_auto_close(self, event) -> bool:
+        """Auto-closing pairs, when the preference is on; True if handled."""
+        if not self._auto_close or self.isReadOnly():
+            return False
+        if event.modifiers() & ~(Qt.KeyboardModifier.ShiftModifier
+                                 | Qt.KeyboardModifier.KeypadModifier):
+            return False
+        doc, cursor = self.document(), self.textCursor()
+        pos, text = cursor.position(), event.text()
+        prev = doc.characterAt(pos - 1) if pos > 0 else ""
+        nxt = doc.characterAt(pos)
+        if cursor.hasSelection():
+            if text not in _AUTO_PAIRS or self._in_comment_or_string(cursor.selectionStart()):
+                return False
+            start, end = cursor.selectionStart(), cursor.selectionEnd()
+            cursor.beginEditBlock()
+            cursor.setPosition(end)
+            cursor.insertText(_AUTO_PAIRS[text])
+            cursor.setPosition(start)
+            cursor.insertText(text)
+            cursor.endEditBlock()
+            cursor.setPosition(start + 1)
+            cursor.setPosition(end + 1, QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(cursor)
+            return True
+        tracked = self._auto_closed_at(pos)
+        if event.key() == Qt.Key.Key_Backspace:
+            if tracked is None or _AUTO_PAIRS.get(prev) != nxt:
+                return False
+            cursor.beginEditBlock()
+            cursor.deletePreviousChar()
+            cursor.deleteChar()
+            cursor.endEditBlock()
+            return True
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if prev not in _OPENERS or _AUTO_PAIRS[prev] != nxt:
+                return False
+            line = cursor.block().text()
+            indent = " " * (len(line) - len(line.lstrip()))
+            cursor.beginEditBlock()
+            cursor.insertText("\n" + indent + " " * self._indent_size)
+            mid = cursor.position()
+            cursor.insertText("\n" + indent)
+            cursor.endEditBlock()
+            cursor.setPosition(mid)
+            self.setTextCursor(cursor)
+            return True
+        if tracked is not None and text == nxt:     # step over the closer it added
+            self._auto_closed.remove(tracked)
+            cursor.movePosition(QTextCursor.MoveOperation.Right)
+            self.setTextCursor(cursor)
+            if text == ")":
+                QToolTip.hideText()
+            return True
+        if text not in _AUTO_PAIRS or self._in_comment_or_string(pos):
+            return False
+        if nxt and not (nxt.isspace() or nxt in "\0)]};,"):
+            return False
+        if text == '"' and (prev.isalnum() or prev in '_"'):
+            return False
+        cursor.insertText(text + _AUTO_PAIRS[text])
+        cursor.movePosition(QTextCursor.MoveOperation.Left)
+        self.setTextCursor(cursor)
+        mark = QTextCursor(doc)
+        mark.setPosition(pos + 1)
+        self._auto_closed.append(mark)
+        if text == "(":
+            self.show_argument_hint()
+        return True
 
     def set_append_line_on_down(self, enabled: bool):
         """Whether a plain Down arrow on the last line appends one.
@@ -2103,6 +2210,8 @@ class CodeEditor(QPlainTextEdit):
         if (event.matches(QKeySequence.StandardKey.Undo)
                 or event.matches(QKeySequence.StandardKey.Redo)):
             event.ignore()
+            return
+        if self._handle_auto_close(event):
             return
         # Before the Key_Down handling below, which appends a line at the
         # end of the document -- Option-Down on the last line must not do
