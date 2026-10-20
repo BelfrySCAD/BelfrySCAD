@@ -239,6 +239,19 @@ class TestCameraRoll:
         assert np.allclose(right_eye[1, :3], mono_up, atol=1e-4)
         assert np.allclose(left_eye[1, :3], mono_up, atol=1e-4)
 
+    @pytest.mark.parametrize("elevation", [90.0, -90.0, 89.9, 89.0, 45.0])
+    def test_stereo_eyes_stay_level_with_the_view_at_the_poles(self, elevation):
+        """Looking straight down or up, each eye's own look-at with world-up
+        took its sideways toe-in for its heading: the two images came out
+        rolled as much as 90 degrees against each other and the view. Both
+        eyes share the view's own up, so they differ only by the toe-in."""
+        cam = Camera()
+        cam.azimuth, cam.elevation, cam.distance = 30.0, elevation, 50.0
+        mono = cam.view_matrix()
+        for eye in cam.stereo_view_matrices(800, 600):
+            assert np.allclose(eye[1, :3], mono[1, :3], atol=1e-5)    # same up
+            assert float(np.dot(eye[0, :3], mono[0, :3])) > 0.99      # right: toe-in only
+
 
     def test_anaglyph_eyes_give_the_right_depth_sign(self):
         """The anaglyph puts stereo_view_matrices()'s SECOND matrix behind
