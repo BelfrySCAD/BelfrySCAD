@@ -25,7 +25,7 @@ from belfryscad.export_name import default_export_name, resolve_export_name, see
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.scad_format import (extrude_edit, extrude_is_centered,
+from belfryscad.window.scad_format import (comment_lines, extrude_edit, extrude_is_centered,
                                            find_extrude_call,
                                            find_transform_chain,
                                            nudge_component, transform_at,
@@ -1614,7 +1614,10 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Indent", self._indent, QKeySequence("Tab"))
         self._add_action(edit_menu, "Undent", self._undent, QKeySequence("Shift+Tab"))
-        self._add_action(edit_menu, "Comment", self._comment, QKeySequence("Ctrl+/"))
+        # VS Code's three (#830): Ctrl+/ toggles; Comment only ever adds and
+        # Uncomment only ever removes.
+        self._add_action(edit_menu, "Toggle Comment", self._toggle_comment, QKeySequence("Ctrl+/"))
+        self._add_action(edit_menu, "Comment", self._comment)
         self._add_action(edit_menu, "Uncomment", self._uncomment, QKeySequence("Ctrl+Shift+/"))
         # The editor's own Option+Up/Down, made findable. Alt is Option on
         # macOS, so the menu shows the same keys the editor already takes.
@@ -4047,29 +4050,45 @@ class MainWindow(QMainWindow):
         if e := self._current_editor():
             e._unindent_lines()
 
+    def _toggle_comment(self):
+        if e := self._current_editor():
+            self._toggle_line_comment(e, "toggle")
+
     def _comment(self):
         if e := self._current_editor():
-            self._toggle_line_comment(e, add=True)
+            self._toggle_line_comment(e, "add")
 
     def _uncomment(self):
         if e := self._current_editor():
-            self._toggle_line_comment(e, add=False)
+            self._toggle_line_comment(e, "remove")
 
-    def _toggle_line_comment(self, editor, add):
+    def _toggle_line_comment(self, editor, mode):
+        """The selected lines, commented by `scad_format.comment_lines`; the
+        whole lines stay selected, so it can be pressed again."""
         cursor = editor.textCursor()
+        doc = editor.document()
+        first = doc.findBlock(cursor.selectionStart())
+        last = doc.findBlock(cursor.selectionEnd())
+        # A selection ending at the very start of a line does not take that line.
+        if cursor.hasSelection() and last != first and cursor.selectionEnd() == last.position():
+            last = last.previous()
+        cursor.setPosition(first.position())
+        cursor.setPosition(last.position() + last.length() - 1, cursor.MoveMode.KeepAnchor)
+        # Written as an escape: a literal U+2029 here was once normalised to a
+        # space, which split lines at every space instead (#830).
+        lines = cursor.selectedText().split("\u2029")  # Qt paragraph separator
+        new = "\u2029".join(comment_lines(
+            lines, mode,
+            insert_space=load_preference("editor/commentInsertSpace", bool),
+            ignore_empty=load_preference("editor/commentIgnoreEmptyLines", bool),
+            indent_size=load_preference("editor/indentSize", int)))
+        if new == cursor.selectedText():
+            return
         start = cursor.selectionStart()
-        end = cursor.selectionEnd()
+        cursor.insertText(new)
         cursor.setPosition(start)
-        cursor.movePosition(cursor.MoveOperation.StartOfLine)
-        cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
-        cursor.movePosition(cursor.MoveOperation.EndOfLine, cursor.MoveMode.KeepAnchor)
-        text = cursor.selectedText()
-        lines = text.split(" ")  # Qt paragraph separator
-        if add:
-            lines = ["// " + l for l in lines]
-        else:
-            lines = [l[3:] if l.startswith("// ") else l for l in lines]
-        cursor.insertText(" ".join(lines))
+        cursor.setPosition(start + len(new.encode("utf-16-le")) // 2, cursor.MoveMode.KeepAnchor)  # Qt counts UTF-16
+        editor.setTextCursor(cursor)
 
     def _find(self):
         tab = self._current_tab()

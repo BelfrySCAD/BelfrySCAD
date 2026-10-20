@@ -107,6 +107,10 @@ _DEFAULTS = {
     # user into filing issue #378.
     "editor/appendLineOnDownArrow": False,
     "editor/highlightCurrentLine": True,
+    # Comment / Uncomment / Toggle Comment, as VS Code's
+    # editor.comments.insertSpace and editor.comments.ignoreEmptyLines (#830).
+    "editor/commentInsertSpace": True,
+    "editor/commentIgnoreEmptyLines": True,
     # A file opened from the desktop (double-click, "open with") goes to
     # the running BelfrySCAD as a new tab, instead of starting another one.
     # Read once at launch, in main.py, before any window exists.
@@ -268,6 +272,22 @@ class PreferencesDialog(QDialog):
         self._highlight_line.toggled.connect(
             lambda v: self._emit("editor/highlightCurrentLine", bool(v)))
         form.addRow("", self._highlight_line)
+
+        self._comment_space = QCheckBox("Comment adds a space after //")
+        self._comment_space.setChecked(
+            s.value("editor/commentInsertSpace", _DEFAULTS["editor/commentInsertSpace"], type=bool))
+        self._comment_space.setToolTip("Uncomment then takes that one space off too, when it is there.")
+        self._comment_space.toggled.connect(
+            lambda v: self._emit("editor/commentInsertSpace", bool(v)))
+        form.addRow("Comments:", self._comment_space)
+
+        self._comment_skip_empty = QCheckBox("Comment leaves blank lines alone")
+        self._comment_skip_empty.setChecked(
+            s.value("editor/commentIgnoreEmptyLines",
+                    _DEFAULTS["editor/commentIgnoreEmptyLines"], type=bool))
+        self._comment_skip_empty.toggled.connect(
+            lambda v: self._emit("editor/commentIgnoreEmptyLines", bool(v)))
+        form.addRow("", self._comment_skip_empty)
 
         # Second launch with a file: hand it to the running instance
         self._single_instance = QCheckBox("A file opened from the desktop goes to the running BelfrySCAD as a new tab")

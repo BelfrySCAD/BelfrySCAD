@@ -1258,6 +1258,63 @@ def is_angle_value(text: str, offset: int) -> bool:
 _COMMENT_PREFIX = re.compile(r"^([ \t]*//+[ \t]*)(.*)$")
 
 
+def _visual(line: str, upto: int, tab: int) -> int:
+    """The visual column of `line[upto]`, tabs stopping every `tab`."""
+    col = 0
+    for ch in line[:upto]:
+        col = (col // tab + 1) * tab if ch == "\t" else col + 1
+    return col
+
+
+def comment_lines(lines: list[str], mode: str = "toggle", *, insert_space: bool = True,
+                  ignore_empty: bool = True, indent_size: int = 4) -> list[str]:
+    """Edit > Toggle Comment / Comment / Uncomment (#830), by VS Code's rules
+    (its lineCommentCommand.ts), `mode` "toggle", "add" or "remove":
+
+    - Toggle removes only when every line it considers already starts with
+      `//` after its indentation; one that doesn't makes it add to them all.
+    - Adding puts `//` at the selection's smallest indentation, rounded down
+      to a whole indent step, so the block stays lined up.
+    - Removing takes one `//` off each line, after its own indentation, and
+      with `insert_space` the one space after it if there is one: `//// x`
+      gives `// x`.
+    - With `ignore_empty`, blank lines are left alone and do not count --
+      unless every line is blank, when they are commented after all.
+    """
+    tab = max(1, indent_size)
+    indent = [len(line) - len(line.lstrip(" \t")) for line in lines]
+    blank = [not line.strip() for line in lines]
+    has = [line[i:].startswith("//") for line, i in zip(lines, indent)]
+    skip = [ignore_empty and b for b in blank]
+    if all(blank):
+        skip = [False] * len(lines)
+    considered = [k for k in range(len(lines)) if not skip[k]]
+    if mode == "toggle":
+        mode = "remove" if considered and all(has[k] for k in considered) else "add"
+
+    out = list(lines)
+    if mode == "remove":
+        for k in considered:
+            if has[k]:
+                line, i = lines[k], indent[k]
+                n = 3 if insert_space and line[i + 2:i + 3] == " " else 2
+                out[k] = line[:i] + line[i + n:]
+        return out
+
+    if not considered:
+        return out
+    target = min(_visual(lines[k], indent[k], tab) for k in considered) // tab * tab
+    token = "// " if insert_space else "//"
+    for k in considered:
+        line, j = lines[k], 0
+        # The first character at or past the target column; a tab that
+        # would carry past it puts the token before the tab instead.
+        while j < indent[k] and _visual(line, j + 1, tab) <= target:
+            j += 1
+        out[k] = line[:j] + token + line[j:]
+    return out
+
+
 def comment_prefix(line: str) -> str | None:
     """The `//`-and-spacing a comment line begins with, or None if the line
     is not a whole-line comment. `"//   Makes a widget."` gives `"//   "`.
