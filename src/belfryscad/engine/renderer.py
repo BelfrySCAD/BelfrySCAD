@@ -1115,6 +1115,10 @@ class SceneRenderer:
         self.drag_scale_axis: int = -1
         self.drag_scale_factor: float = 1.0
         self.drag_scale_uniform: bool = False
+        # A released translate/rotate/scale drag, still drawn on the
+        # selection until the render its edit started lands (#817). See
+        # hold_drag().
+        self.held_model: Optional[np.ndarray] = None
         # Light backfaces with the object colour instead of painting them
         # the hardcoded magenta inverted-normal cue. OFF in the GUI, where
         # that cue is the point: on a closed manifold you never see a
@@ -1236,6 +1240,7 @@ class SceneRenderer:
         self.drag_scale_axis = -1
         self.drag_scale_factor = 1.0
         self.drag_scale_uniform = False
+        self.held_model = None
         if not bodies or self._ctx is None:
             return
 
@@ -1906,6 +1911,8 @@ class SceneRenderer:
                                          self.drag_scale_factor, self.drag_scale_uniform)
             else:
                 buf_model = model
+            if is_selected and self.held_model is not None:
+                buf_model = buf_model @ self.held_model
 
             buf_models.append(buf_model)
             if color[3] < 1.0:
@@ -2585,6 +2592,25 @@ class SceneRenderer:
         self._active_fbo.depth_mask = True
         self._ctx.disable(mgl.BLEND)
 
+    def hold_drag(self):
+        """Keep drawing the selection where the current drag put it.
+
+        Called as a translate/rotate/scale drag is released. Its edit
+        starts a render, and until that lands the viewport would otherwise
+        show the part back where it started -- for seconds, on a model that
+        takes seconds to render (#817). The next `load_geometry` drops it.
+        """
+        m = np.eye(4, dtype=np.float32)
+        bbox = self._selected_buffer_bbox()
+        if np.any(self.drag_offset != 0):
+            m[:3, 3] = self.drag_offset
+        elif self.drag_rotation_axis >= 0 and bbox is not None:
+            m = _rotation_model(bbox[0], self.drag_rotation_axis, self.drag_rotation_angle)
+        elif self.drag_scale_axis >= 0 and bbox is not None:
+            m = _scale_model(bbox[0], self.drag_scale_axis,
+                             self.drag_scale_factor, self.drag_scale_uniform)
+        self.held_model = m if self.held_model is None else m @ self.held_model
+
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
         if self.selected_id is None:
             return None
@@ -2596,6 +2622,10 @@ class SceneRenderer:
         if not matches:
             return None
         all_v = np.vstack([v for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
+        if self.held_model is not None:
+            # Where the part is drawn, so the gizmo, the next drag's pivot
+            # and its commit all follow a held drag (#817).
+            all_v = all_v @ self.held_model[:3, :3].T + self.held_model[:3, 3]
         bb_min = all_v.min(axis=0)
         bb_max = all_v.max(axis=0)
         center = ((bb_min + bb_max) / 2).astype(np.float32)
