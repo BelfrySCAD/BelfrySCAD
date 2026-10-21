@@ -512,8 +512,10 @@ class BackgroundImageViewportMixin:
 
     def event(self, event):
         # Ahead of the editor's own mouse handlers, which would otherwise
-        # select or drag the vertices hidden underneath.
-        if self._bg_adjusting and event.type() in (QEvent.Type.MouseButtonPress,
+        # select or drag the vertices hidden underneath. Not while a point
+        # is being picked: "Scale from This Point" and the like wait for a
+        # click, which adjusting took as a drag of the image (#861).
+        if self._bg_adjusting and self._bg_pick is None and event.type() in (QEvent.Type.MouseButtonPress,
                                                    QEvent.Type.MouseMove,
                                                    QEvent.Type.MouseButtonRelease,
                                                    QEvent.Type.MouseButtonDblClick):
