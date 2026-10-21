@@ -129,7 +129,8 @@ class _TurtleViewport(_PathViewport):
     start = None
     start_angle = 0.0
     start_movable = False
-    #: Called with (menu, model point or None) to add the start's actions.
+    #: Called with (menu, model point or None, segment under the pointer or
+    #: -1) to add the editor's actions to the right-click menu.
     start_menu = None
     _start_drag = None
     #: The joints' points, set before each load; [] when the list has a
@@ -366,7 +367,7 @@ class _TurtleViewport(_PathViewport):
             return
         menu = QMenu(self)
         if self.start_menu is not None:
-            self.start_menu(menu, self.click_point(event.pos()))
+            self.start_menu(menu, self.click_point(event.pos()), self.segment_at(event.pos()))
         self._exec_menu(menu, event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -455,7 +456,8 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         self._table.setHorizontalHeaderLabels(["Command", "Arg 1", "Arg 2"])
         _style_table_headers(self._table)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # A run of rows, for Replace with Straight Line.
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ContiguousSelection)
         fm = self._table.fontMetrics()
         self._table.setColumnWidth(0, fm.horizontalAdvance("arcrightto") + 40)
         self._table.setColumnWidth(1, fm.horizontalAdvance("-0000.00") + 16)
@@ -598,12 +600,17 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         except (turtle.TurtleError, KeyError, TypeError):
             return None
 
+    def _selected_range(self):
+        """(first, last) of the selected rows, or None."""
+        rows = sorted(i.row() for i in self._table.selectionModel().selectedRows())
+        return (rows[0], rows[-1]) if rows else None
+
     def _highlight_selection(self):
-        rows = self._table.selectionModel().selectedRows()
-        if not rows or rows[0].row() >= len(self._spans):
+        sel = self._selected_range()
+        if sel is None or sel[1] >= len(self._spans):
             self._vp.set_selected([])
             return
-        first, last = self._spans[rows[0].row()]
+        first, last = self._spans[sel[0]][0], self._spans[sel[1]][1]
         self._vp.set_selected(list(range(first, last + 1)))
 
     def _on_segment_clicked(self, seg: int):
@@ -717,9 +724,9 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         self._commit(self._T.join(rows), label="Add Command")
         self._table.selectRow(at)
 
-    def _delete(self, at: int):
+    def _delete(self, at: int, last: int | None = None):
         rows = self._rows()
-        del rows[at]
+        del rows[at:(at if last is None else last) + 1]
         self._commit(self._T.join(rows), label="Delete Command")
 
     def _move(self, at: int, by: int):
@@ -743,15 +750,48 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             down = menu.addAction("Move Down", lambda: self._move(at, 1))
             down.setEnabled(at < n - 1)
             menu.addSeparator()
+            self._add_reshape_actions(menu, at)
             menu.addAction("Delete Command", lambda: self._delete(at))
         menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    # -- reshaping a section (#837) -----------------------------------------
+
+    def _add_reshape_actions(self, menu: QMenu, row: int, pt=None):
+        """Split `row` (at `pt`, or in half) and straighten the selected
+        rows, or `row` when it is not among them: each leaves everything
+        after it where it was. 2D only."""
+        if self._T is not turtle or not 0 <= row < len(self._spans):
+            return
+        label = "Split Here" if pt is not None else "Split in Half"
+        if pt is None:
+            first, last = self._spans[row]
+            path = self._vp._path_pts
+            if last > first and last < len(path):
+                # Halfway along: the middle point, or the middle of the middle segment.
+                k = (first + last) / 2
+                lo, hi = path[int(math.floor(k))], path[int(math.ceil(k))]
+                pt = ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2)
+        split = turtle.split_at(self._commands, self._start, row, pt) if pt is not None else None
+        act = menu.addAction(label, lambda: self._commit(split, label="Split Command"))
+        act.setEnabled(split is not None)
+        sel = self._selected_range()
+        first, last = sel if sel and sel[0] <= row <= sel[1] else (row, row)
+        straight = turtle.straighten(self._commands, self._start, first, last)
+        act = menu.addAction("Replace with Straight Line",
+                             lambda: self._straighten(straight, first))
+        act.setEnabled(straight is not None and straight != self._commands)
+        menu.addSeparator()
+
+    def _straighten(self, commands, first: int):
+        self._commit(commands, label="Replace with Straight Line")
+        self._table.clearSelection()
 
     def _delete_on_key(self, event) -> bool:
         if self._editable and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) \
                 and self._table.state() != QAbstractItemView.State.EditingState:
-            rows = self._table.selectionModel().selectedRows()
-            if rows:
-                self._delete(rows[0].row())
+            sel = self._selected_range()
+            if sel:
+                self._delete(*sel)
                 event.accept()
                 return True
         return False
@@ -803,7 +843,10 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         if not moved and draws and j < len(draws):
             self._table.selectRow(draws[j])   # a click: select what drew it
 
-    def _add_start_actions(self, menu: QMenu, pt):
+    def _add_start_actions(self, menu: QMenu, pt, seg: int = -1):
+        row = next((k for k, (a, b) in enumerate(self._spans) if a <= seg < b), -1)
+        if row >= 0:
+            self._add_reshape_actions(menu, row, pt)
         if not self._vp.start_movable:
             return
         if pt is not None:
@@ -961,7 +1004,7 @@ class Turtle3DViewer(TurtleViewer):
         jump = closing or bool(mods & Qt.KeyboardModifier.ControlModifier)
         return turtle3d.line_to(frame, step, pt, jump=jump)
 
-    def _add_start_actions(self, menu: QMenu, pt):
+    def _add_start_actions(self, menu: QMenu, pt, seg: int = -1):
         if pt is not None and self._movable:
             menu.addAction("Start Here", lambda: self._commit(
                 start=[round(v, 2) for v in pt], label="Start Here"))

@@ -181,3 +181,55 @@ def test_a_long_flat_arc_lands_on_its_joint():
 def test_an_unreachable_joint_is_refused():
     # Straight behind the start, no tangent arc gets there.
     assert turtle.drag_joint(["arcleft", 5, 90], (0, 0), 0, [-5, 0]) is None
+
+
+# -- Split and straighten (#837) ---------------------------------------------
+
+
+_SHAPE = ["setdir", 30, "move", 10, "arcleft", 5, 90, "move", 4, "arcright", 3, 45,
+          "jump", [2, 20], "move", 2]
+
+
+def _end(c, start=(1, 2)):
+    path, _, heading = turtle.run(c, start)
+    return path[-1], heading
+
+
+@pytest.mark.parametrize("row, near", [(1, 0.3), (2, 0.5), (3, 0.9), (4, 0.2), (5, 0.6)])
+def test_a_split_draws_the_same_path(row, near):
+    path, spans, _ = turtle.run(_SHAPE, (1, 2))
+    a, b = spans[row]
+    pick = path[a + round(near * (b - a))] if b - a > 1 else [
+        path[a][k] + near * (path[b][k] - path[a][k]) for k in (0, 1)]
+    new = turtle.split_at(_SHAPE, (1, 2), row, pick)
+    assert new and len(turtle.split(new)) == len(turtle.split(_SHAPE)) + 1
+    (p, h), (q, g) = _end(_SHAPE), _end(new)
+    assert math.dist(p, q) < 1e-9 and math.dist(h, g) < 1e-9
+    # the cut lands where it was asked, within drawing's rounding
+    cut = turtle.run(new, (1, 2))[0][turtle.run(new, (1, 2))[1][row][1]]
+    assert math.dist(cut, pick) < 0.05
+
+
+def test_a_split_refuses_an_end_or_a_turn():
+    path = turtle.run(_SHAPE, (1, 2))[0]
+    assert turtle.split_at(_SHAPE, (1, 2), 0, path[0]) is None      # setdir
+    assert turtle.split_at(_SHAPE, (1, 2), 1, path[0]) is None      # the move's start
+
+
+@pytest.mark.parametrize("first, last", [(1, 1), (2, 2), (1, 4), (2, 6), (0, 6)])
+def test_straightening_leaves_the_rest_in_place(first, last):
+    new = turtle.straighten(_SHAPE, (1, 2), first, last)
+    rows = turtle.split(new)
+    assert all(c in ("left", "right", "move", "setdir", "arcleft", "arcright", "jump")
+               for c, _ in rows)
+    (p, h), (q, g) = _end(_SHAPE), _end(new)
+    assert math.dist(p, q) < 0.01 and math.dist(h, g) < 1e-4
+    # the replaced rows are one straight segment
+    n = len(rows) - (len(turtle.split(_SHAPE)) - (last + 1))
+    assert [c for c, _ in rows[first:n]].count("move") == 1
+
+
+def test_straightening_refuses_what_a_line_cannot_stand_in_for():
+    c = ["move", 5, "length", 2, "move", 3]
+    assert turtle.straighten(c, (0, 0), 0, 1) is None
+    assert turtle.straighten(c, (0, 0), 2, 2) is not None

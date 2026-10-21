@@ -403,3 +403,90 @@ def drag_joint(commands: list, start, j: int, target) -> list | None:
             return None
         out += pre + split(new)
     return join(out)
+
+
+# -- Reshaping a section: split a command, or flatten a run of them (#837) ----
+
+def _fine(v, places=3):
+    v = round(float(v), places)
+    return int(v) if v.is_integer() else v
+
+
+def split_at(commands: list, start, row: int, point) -> list | None:
+    """`commands` with row `row` cut in two where its drawing passes nearest
+    `point`, each piece drawing its part of the same line or arc, so the
+    path is unchanged and nothing after it moves. A `move` (with a numeric
+    or no argument), an `arcleft`/`arcright` with a radius and an angle, or
+    a `jump`; None for anything else, or a point at either end."""
+    rows = split(commands)
+    if not 0 <= row < len(rows):
+        return None
+    c, a = rows[row]
+    if not (c == "move" and (not a or (len(a) == 1 and _is_num(a[0])))
+            or c in ("arcleft", "arcright") and len(a) == 2 and all(_is_num(x) for x in a)
+            or c == "jump" and len(a) == 1 and _is_vec2(a[0])):
+        return None
+    path, spans, _ = run(commands, start)
+    pts = path[spans[row][0]:spans[row][1] + 1]
+    # The nearest point on the drawn polyline, as a fraction of its length:
+    # an arc's points are evenly spaced, so that is also its angle's fraction.
+    lens = [math.dist(p, q) for p, q in zip(pts, pts[1:])]
+    total = sum(lens)
+    if total < 1e-9:
+        return None
+    best, along = None, 0.0
+    for p, q, n in zip(pts, pts[1:], lens):
+        if n:
+            u = max(0.0, min(1.0, ((point[0] - p[0]) * (q[0] - p[0])
+                                   + (point[1] - p[1]) * (q[1] - p[1])) / n ** 2))
+            d = math.dist(point, (p[0] + u * (q[0] - p[0]), p[1] + u * (q[1] - p[1])))
+            if best is None or d < best[0]:
+                best = (d, (along + u * n) / total)
+        along += n
+    t = best[1]
+    if c == "jump":
+        p0, p1 = pts[0], pts[-1]
+        mid = [_round_len(p0[0] + t * (p1[0] - p0[0])), _round_len(p0[1] + t * (p1[1] - p0[1]))]
+        if mid in (p0, p1):
+            return None
+        new = [("jump", [mid]), ("jump", a)]
+    else:
+        whole = a[-1] if a else 1
+        first = (_round_len if c == "move" else _round_ang)(whole * t)
+        if not 0 < abs(first) < abs(whole):
+            return None
+        rest = _fine(whole - first, 6)
+        new = [(c, [first]), (c, [rest])] if c == "move" else [(c, [a[0], first]), (c, [a[0], rest])]
+    return join(rows[:row] + new + rows[row + 1:])
+
+
+#: Commands that change state a later command reads, other than the turtle's
+#: position and heading -- which a straight line could not stand in for.
+_STATEFUL = ("angle", "arcsteps", "length", "scale", "addlength", "repeat")
+
+
+def straighten(commands: list, start, first: int, last: int) -> list | None:
+    """`commands` with rows `first`..`last` replaced by a straight line
+    between where they start and end: a turn to face along it, a `move`,
+    and a turn back to the way those rows left the turtle facing -- so
+    nothing after them moves. Written to 0.001, finer than drawing's
+    rounding, since the rest of the path hangs off it. None when the rows
+    change anything else a later command reads (the step length, the
+    default angle, `arcsteps`, a `repeat`)."""
+    rows = split(commands)
+    if not 0 <= first <= last < len(rows) or any(c in _STATEFUL for c, _ in rows[first:last + 1]):
+        return None
+    before = join(rows[:first])
+    p0, h0 = run(before, start)[0][-1], run(before, start)[2]
+    path, _, h1 = run(join(rows[:last + 1]), start)
+    p1, step = path[-1], math.hypot(*h0)
+    d = [p1[0] - p0[0], p1[1] - p0[1]]
+    new, facing = [], h0
+    if math.hypot(*d) > 1e-9:
+        turn = _fine(_signed_angle(h0, d))
+        new += [("left", [turn])] if turn > 0 else [("right", [-turn])] if turn < 0 else []
+        facing = _rot(h0, turn)
+        new.append(("move", [_fine(math.hypot(*d) / step)]))
+    back = _fine(_signed_angle(facing, h1))
+    new += [("left", [back])] if back > 0 else [("right", [-back])] if back < 0 else []
+    return join(rows[:first] + new + rows[last + 1:])
