@@ -152,6 +152,7 @@ class BackgroundImageViewportMixin:
     _bg_tex = None
     _bg_tex_path = ""
     _bg_pick = None            # (points still wanted, collected, callback)
+    _bg_pick_release = False   # swallow the release of a press a pick took
     _bg_adjusting = False
     _bg_overlay = None         # handles and the Done button, while adjusting
     _bg_drag = None            # (mode, handle anchor, image at press, model point at press)
@@ -511,6 +512,12 @@ class BackgroundImageViewportMixin:
         return best
 
     def event(self, event):
+        # A pending pick takes its click ahead of everything, here rather
+        # than in mousePressEvent: a viewer's own press handler runs first
+        # there and took a click on a path point or joint as a drag of it,
+        # so on a traced image the pick only worked off the path (#861).
+        if (self._bg_pick is not None or self._bg_pick_release) and self._take_pick_click(event):
+            return True
         # Ahead of the editor's own mouse handlers, which would otherwise
         # select or drag the vertices hidden underneath. Not while a point
         # is being picked: "Scale from This Point" and the like wait for a
@@ -572,9 +579,14 @@ class BackgroundImageViewportMixin:
         else:
             self.unsetCursor()
 
-    def mousePressEvent(self, event):
-        if (self._bg_pick is not None and event.button() == Qt.MouseButton.LeftButton
-                and not event.modifiers()):
+    def _take_pick_click(self, event) -> bool:
+        """A plain left press is the next picked point; its release, and
+        any moves between, are swallowed with it."""
+        t = event.type()
+        if t == QEvent.Type.MouseButtonPress and self._bg_pick is not None:
+            if event.button() != Qt.MouseButton.LeftButton or event.modifiers():
+                return False
+            self._bg_pick_release = True
             pt = self._model_point(event.position())
             if pt is not None:
                 n, got, callback = self._bg_pick
@@ -582,10 +594,12 @@ class BackgroundImageViewportMixin:
                 if len(got) >= n:
                     self.cancel_pick()
                     callback(got)
-            # The subclass's release handler selects on a click it saw pressed.
-            self._press_pos = None
-            return
-        super().mousePressEvent(event)
+            return True
+        if not self._bg_pick_release or t not in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease):
+            return False
+        if t == QEvent.Type.MouseButtonRelease:
+            self._bg_pick_release = False
+        return True
 
 
 #: How near, in pixels, a press must be to a handle to take it.
