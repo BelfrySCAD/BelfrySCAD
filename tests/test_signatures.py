@@ -118,3 +118,41 @@ class TestLookupOrder:
 
     def test_no_scope_still_answers_builtins(self):
         assert signature_for("sphere", None) == BUILTIN_SIGNATURES["sphere"]
+
+
+HINT_DRIVER = r'''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.editor import CodeEditor
+out = []
+for auto in (True, False):
+    e = CodeEditor(); e.set_auto_close(auto); e.show(); e.setFocus()
+    shown = lambda: e.argument_hint_text() is not None
+    QTest.keyClicks(e, "cube(")
+    row = [shown()]
+    QTest.keyClicks(e, "[1, (2)], cen")   # nested brackets and typing keep it
+    row.append(shown())
+    QTest.keyClick(e, Qt.Key.Key_Escape)
+    row.append(shown())
+    e.setPlainText(""); QTest.keyClicks(e, "cube(1")
+    QTest.keyClick(e, Qt.Key.Key_Home)    # before the '('
+    row.append(shown())
+    e.setPlainText(""); QTest.keyClicks(e, "cube(1)")
+    row.append(shown())
+    out.append(row)
+print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+'''
+
+
+def test_the_hint_stays_up_until_the_call_is_left():
+    """#865: shown while the arguments are typed, gone after the ')' --
+    typed or stepped over -- before the '(', or on Escape."""
+    import json, subprocess, sys
+    r = subprocess.run([sys.executable, "-c", HINT_DRIVER], capture_output=True, text=True, timeout=60)
+    assert json.loads(r.stdout.strip().splitlines()[-1]) == [[True, True, False, False, False]] * 2, r.stderr

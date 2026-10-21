@@ -9,7 +9,7 @@ from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFo
                            QUndoStack, QTextCursor)
 from PySide6.QtCore import (Qt, QProcess, QSize, QSettings, QThread, QObject, QTimer, QUrl,
                             Signal, Slot)
-from belfryscad.settings import app_settings
+from belfryscad.settings import app_settings, backups_dir
 import copy
 import os
 import tempfile
@@ -442,6 +442,9 @@ class FileTab(QWidget):
         # falls back to the file's own basename.
         self.export_name = None
         self.is_modified = False
+        # This tab's crash backup, once a modified buffer has been rendered
+        # (MainWindow._save_backup); removed when the tab closes.
+        self.backup_path = None
         self.root_scope = None
         # The temp file most recently parsed for this tab's root_scope --
         # _RenderWorker always parses a temp copy of the live buffer (see
@@ -1510,6 +1513,12 @@ class MainWindow(QMainWindow):
         self._act_export.triggered.connect(self._export)
         tb.addAction(self._act_export)
 
+        self._act_quick_export_tb = QAction("Quick Export", self)
+        self._set_toolbar_icon(self._act_quick_export_tb, "quick-export")
+        self._act_quick_export_tb.setToolTip("Quick Export (F7): the last export's format and options")
+        self._act_quick_export_tb.triggered.connect(self._quick_export)
+        tb.addAction(self._act_quick_export_tb)
+
         tb.addSeparator()
 
         self._act_undo = self._undo_group.createUndoAction(self, "&Undo")
@@ -2193,11 +2202,43 @@ class MainWindow(QMainWindow):
                 return False
         return True
 
+    def _save_backup(self, tab, source: str):
+        """OpenSCAD's crash backup (#864): rendering a buffer with unsaved
+        edits first writes it to <name>-backup-XXXXXXXX.scad in
+        backups_dir(), one file per tab, rewritten at each render and
+        removed when the tab closes -- so one survives only a crash or a
+        kill, which is when it is wanted."""
+        if not tab.is_modified:
+            return
+        try:
+            if tab.backup_path is None:
+                folder = backups_dir()
+                os.makedirs(folder, exist_ok=True)
+                base = os.path.splitext(os.path.basename(str(tab.file_path)))[0] if tab.file_path else "unsaved"
+                fd, tab.backup_path = tempfile.mkstemp(prefix=f"{base}-backup-", suffix=".scad", dir=folder)
+                os.close(fd)
+            with open(tab.backup_path, "w", encoding="utf-8", newline="") as f:
+                f.write(source)
+        except OSError as e:
+            self.log(f"WARNING: Cannot save backup file: {e}")
+            return
+        self.log(f"Saved backup file: {tab.backup_path}")
+
+    @staticmethod
+    def _drop_backup(tab):
+        if tab is not None and tab.backup_path is not None:
+            try:
+                os.remove(tab.backup_path)
+            except OSError:
+                pass
+            tab.backup_path = None
+
     def _close_tab(self, index):
         tab = self._tabs.widget(index)
         if tab and not self._confirm_unsaved(tab):
             return
         if tab:
+            self._drop_backup(tab)
             if self._debug_tab is tab:
                 self._on_debug_stop()
             if self._rendered_tab is tab:
@@ -3016,12 +3057,21 @@ class MainWindow(QMainWindow):
         with the source file's basename, and assignable by the script),
         already reduced to filename-safe characters, in the source file's
         own directory when there is one -- so an export lands beside the
-        model rather than wherever the process happens to be."""
+        model rather than wherever the process happens to be. Exporting the
+        same design again starts in the folder its last export went to
+        (#863), so a separate output folder is chosen once, not every time."""
         tab = self._current_tab()
         if tab is None:
             return ""
         name = tab.export_name or default_export_name(tab.file_path)
-        folder = os.path.dirname(str(tab.file_path)) if tab.file_path else file_dialog_dir()
+        source = str(tab.file_path) if tab.file_path else ""
+        last = load_preference("export/lastDir", str)
+        if last and os.path.isdir(last) and load_preference("export/lastSource", str) == source:
+            folder = last
+        elif tab.file_path:
+            folder = os.path.dirname(str(tab.file_path))
+        else:
+            folder = file_dialog_dir()
         return os.path.join(folder, name)
 
     def _export_image(self):
@@ -3084,14 +3134,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
             return
 
-        # 3MF leads, and so is what the dialog opens on: it is the only
+        # 3MF leads, and so is what the dialog first opens on: it is the only
         # format here that carries colour, separate objects and per-triangle
         # colour all at once, which is what the rest of the export pipeline
         # actually produces. STL keeps none of it. (3MF is always available
         # now that it is written directly rather than through lib3mf, which
         # had no wheels for ARM platforms.)
         filters = ";;".join(f for f, _e in _EXPORT_FORMATS)
-        selected = next((f for f, e in _EXPORT_FORMATS if e == quick_ext), "")
+        # A full Export opens on the format exported last, too (#863).
+        last = quick_ext or load_preference("export/lastFormat", str)
+        selected = next((f for f, e in _EXPORT_FORMATS if e == last), "")
         path, chosen = QFileDialog.getSaveFileName(
             self, "Quick Export" if quick_ext else "Export", self._default_export_path(), filters, selected
         )
@@ -3134,7 +3186,9 @@ class MainWindow(QMainWindow):
             for problem in exporters.export_model(path, self._geometry, **kwargs):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
-            save_preferences({"export/lastFormat": ext})
+            save_preferences({"export/lastFormat": ext,
+                              "export/lastDir": os.path.dirname(os.path.abspath(path)),
+                              "export/lastSource": str(tab.file_path) if tab is not None and tab.file_path else ""})
         except OSError as e:
             QMessageBox.critical(self, "Export Error", str(e))
         except Exception as e:
@@ -3338,6 +3392,7 @@ class MainWindow(QMainWindow):
             self._measurements = []
             self._viewport.set_measurements([])
             self.log("Measurements cleared by the render.")
+        self._save_backup(tab, source)
         # Deliberately NOT self._viewport.load_geometry([]) here -- the
         # previous render's geometry stays visible (with the busy overlay on
         # top) until this one's new geometry is ready to replace it, in
@@ -5891,6 +5946,8 @@ class MainWindow(QMainWindow):
             if tab and not self._confirm_unsaved(tab):
                 event.ignore()
                 return
+        for i in range(self._tabs.count()):
+            self._drop_backup(self._tabs.widget(i))
         # Stop animation playback and any pending debounced Customizer
         # render (no more renders get queued) and let any in-flight render
         # thread finish — Qt aborts if a QThread is destroyed while still

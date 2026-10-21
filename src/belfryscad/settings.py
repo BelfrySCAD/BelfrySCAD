@@ -70,3 +70,16 @@ def use_scratch_settings(tmpdir: str, seed: bool = True) -> str:
         scratch.setValue(key, value)
     scratch.sync()
     return scratch.fileName()
+
+
+def backups_dir() -> str:
+    """Where a modified buffer is backed up at each render (#864): the
+    per-user data folder, or beside scratch settings so tests never write
+    to the real one. Not under Documents -- a Documents/BelfrySCAD folder
+    would become the default working directory (main._default_working_dir)."""
+    import os
+    if _scratch_dir is not None:
+        return os.path.join(_scratch_dir, "backups")
+    from PySide6.QtCore import QStandardPaths
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
+    return os.path.join(base, APP, "backups")

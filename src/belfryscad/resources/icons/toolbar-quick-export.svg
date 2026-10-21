@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Quick Export: the Export icon's page and arrow, with a lightning bolt. -->
+  <g fill="none" stroke="#444" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7.75 24.8 V28.9 H27.5 V8 L22.6 3.1 H7.75 V16" stroke-width="2.5"/>
+    <path d="M27.5 8.9 H21.8 V3.1" stroke-width="2"/>
+    <path d="M4.5 20.6 H13.8" stroke-width="2.5"/>
+    <path d="M11.1 24.4 L14.8 20.6 L11.1 16.6" stroke-width="2.5"/>
+  </g>
+  <polygon points="22.5,10 17,19 20.5,19 19,26.5 25,16.5 21.5,16.5 23.5,10" fill="#444"/>
+</svg>

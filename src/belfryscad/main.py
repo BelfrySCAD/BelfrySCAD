@@ -490,6 +490,19 @@ def _describe_qt_state(app) -> str:
              f"focusWidget={name(app.focusWidget())}",
              "visible top-level windows:"]
     lines += [f"  {name(w)}" for w in app.topLevelWidgets() if w.isVisible()]
+    # Input to a window Qt thinks a modal blocks is dropped before any event
+    # filter sees it, so a stray modal QWindow -- hidden, or not a widget,
+    # and so missing above -- would look exactly like input never arriving.
+    # So would a grab left behind by a widget (#703).
+    from PySide6.QtWidgets import QWidget
+    modal = app.modalWindow()
+    lines.append(f"modalWindow={'None' if modal is None else repr(modal.title()) + ' ' + type(modal).__name__}")
+    lines.append(f"mouseGrabber={name(QWidget.mouseGrabber())}")
+    lines.append(f"keyboardGrabber={name(QWidget.keyboardGrabber())}")
+    lines.append(f"mouseButtons={app.mouseButtons().value} overrideCursor={app.overrideCursor() is not None}")
+    lines.append("all top-level QWindows:")
+    lines += [f"  {type(w).__name__} {w.title()!r} visible={w.isVisible()} exposed={w.isExposed()} "
+              f"modality={w.modality().name} active={w.isActive()}" for w in app.topLevelWindows()]
     lines.append("screens: " + ", ".join(
         f"{s.name()} ({s.geometry().x()},{s.geometry().y()} "
         f"{s.geometry().width()}x{s.geometry().height()})" for s in app.screens()))

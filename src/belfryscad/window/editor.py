@@ -6,7 +6,7 @@ from belfryscad.scad_templates import expand as expand_template
 from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
-    QMenu, QCompleter, QApplication, QMessageBox, QStyle, QToolTip,
+    QMenu, QCompleter, QApplication, QMessageBox, QStyle, QToolTip, QFrame,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
@@ -1518,6 +1518,10 @@ class CodeEditor(QPlainTextEdit):
         self.document().contentsChanged.connect(self._on_doc_changed)
         self.cursorPositionChanged.connect(self._update_current_line)
         self.cursorPositionChanged.connect(self._update_bracket_match)
+        self.cursorPositionChanged.connect(self._track_arg_hint)
+        self.updateRequest.connect(lambda *_: self._place_arg_hint())
+        self._arg_hint = None        # the label, made on first use
+        self._arg_hint_open = None   # a QTextCursor on the call's '('
         self._update_line_number_area_width()
 
     _BP_W = 14  # breakpoint column width (left gutter)
@@ -1861,8 +1865,6 @@ class CodeEditor(QPlainTextEdit):
             self._auto_closed.remove(tracked)
             cursor.movePosition(QTextCursor.MoveOperation.Right)
             self.setTextCursor(cursor)
-            if text == ")":
-                QToolTip.hideText()
             return True
         if text not in _AUTO_PAIRS or self._in_comment_or_string(pos):
             return False
@@ -2048,6 +2050,7 @@ class CodeEditor(QPlainTextEdit):
         # receives. The context menu is a popup and takes no focus, so
         # arming through it survives.
         self.disarm_value_nudge()
+        self.hide_argument_hint()
         super().focusOutEvent(event)
 
     def arm_value_nudge(self, span):
@@ -2227,6 +2230,9 @@ class CodeEditor(QPlainTextEdit):
             if event.key() == Qt.Key.Key_Escape:
                 self._completer.popup().hide()
                 return
+        if event.key() == Qt.Key.Key_Escape and self._arg_hint_open is not None:
+            self.hide_argument_hint()
+            return
         if (event.matches(QKeySequence.StandardKey.Undo)
                 or event.matches(QKeySequence.StandardKey.Redo)):
             event.ignore()
@@ -2350,8 +2356,6 @@ class CodeEditor(QPlainTextEdit):
             self._completer.popup().hide()
         if text == '(':
             self.show_argument_hint()
-        elif text == ')':
-            QToolTip.hideText()
 
     def toPlainText(self) -> str:
         """The text exactly as loaded or typed.
@@ -2892,14 +2896,20 @@ class CodeEditor(QPlainTextEdit):
         return block_text[i:end]
 
     def show_argument_hint(self):
-        """Tooltip the signature of the call just opened, if it is known.
+        """Show the signature of the call just opened, if it is known, until
+        the cursor leaves the call's parentheses, Escape, or focus moves.
 
         The feature request that prompted this (#517) valued it above
         completion itself: "to save me from having to view documentation on
         syntax", especially for long argument lists like `text()`. Silent
         when the name is unknown -- a tooltip that says "no idea" on every
         stray paren would be worse than none.
+
+        A label of our own, not a QToolTip (#865): on macOS Qt hides a
+        tooltip at the next keystroke, so it could never stay up while the
+        arguments are typed, and any hover tooltip replaced it.
         """
+        self._completer.popup().hide()      # the word is finished
         from belfryscad.window.signatures import signature_for
 
         cursor = self.textCursor()
@@ -2912,7 +2922,61 @@ class CodeEditor(QPlainTextEdit):
                             live_origin=getattr(self, "_scope_parse_path", None))
         if not sig:
             return
-        QToolTip.showText(self.mapToGlobal(self.cursorRect().bottomLeft()), sig, self)
+        if self._arg_hint is None:
+            self._arg_hint = QLabel(self.viewport())
+            self._arg_hint.setObjectName("argumentHint")
+            self._arg_hint.setPalette(QToolTip.palette())
+            self._arg_hint.setAutoFillBackground(True)
+            self._arg_hint.setFrameShape(QFrame.Shape.Box)
+            self._arg_hint.setMargin(3)
+            self._arg_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._arg_hint.setText(sig)
+        self._arg_hint.adjustSize()
+        self._arg_hint_open = QTextCursor(cursor)
+        self._arg_hint_open.setPosition(cursor.position() - 1)
+        self._place_arg_hint()
+        self._arg_hint.show()
+
+    def hide_argument_hint(self):
+        self._arg_hint_open = None
+        if self._arg_hint is not None:
+            self._arg_hint.hide()
+
+    def argument_hint_text(self) -> str | None:
+        """The hint showing, or None."""
+        return self._arg_hint.text() if self._arg_hint_open is not None else None
+
+    def _track_arg_hint(self):
+        """Hide the hint once the cursor is no longer inside its call: before
+        the '(', or past the ')' that closes it -- typed, stepped over or
+        clicked past. Brackets in strings count; a rare false close only
+        hides a hint early."""
+        mark = self._arg_hint_open
+        if mark is None:
+            return
+        doc = self.document()
+        start, pos = mark.position(), self.textCursor().position()
+        if pos <= start or doc.characterAt(start) != "(":
+            self.hide_argument_hint()
+            return
+        depth = 0
+        for i in range(start + 1, pos):
+            c = doc.characterAt(i)
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth < 0:
+                    self.hide_argument_hint()
+                    return
+
+    def _place_arg_hint(self):
+        """Under the '(', kept inside the viewport; follows a scroll."""
+        if self._arg_hint_open is None:
+            return
+        rect = self.cursorRect(self._arg_hint_open)
+        x = max(0, min(rect.left(), self.viewport().width() - self._arg_hint.width()))
+        self._arg_hint.move(x, rect.bottom() + 2)
 
     def _text_under_cursor(self) -> str:
         cursor = self.textCursor()

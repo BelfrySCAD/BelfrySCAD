@@ -321,6 +321,8 @@ Pages are cached under `~/.cache/BelfrySCAD/bosl2-wiki/` for a week (`_MAX_AGE`)
 
 **Key handling in `keyPressEvent`**: when the popup is visible, Enter/Tab accept the selected completion and Escape dismisses. Tab for indent only fires when the popup is not visible. Other keys pass through to the editor and then `_update_completer_popup()` refreshes the prefix/popup state.
 
+**Argument hint** (#517): typing `(` after a known module or function name shows its signature under the `(` (`show_argument_hint`). It stays up while the arguments are typed and goes when the cursor leaves the call -- past the `)` that closes it (typed, stepped over or clicked past) or before the `(` -- on Escape, or when the editor loses focus (`_track_arg_hint` on `cursorPositionChanged`). It is a `QLabel` child of the viewport, not a `QToolTip` (#865): on macOS Qt hides any tooltip at the next keystroke, and the colour-swatch hover's `hideText()` killed it within a second whenever the mouse rested in the editor.
+
 `_text_under_cursor()` walks backward from the cursor to find the current identifier prefix (alphanumeric + underscore + leading `$`). `_insert_completion()` replaces the prefix with the selected completion.
 
 ## Colour swatch tooltips
@@ -855,6 +857,10 @@ Files can be opened in several ways:
 
 All paths converge on `open_file_by_path(path)`, which resolves the path and checks for an already-open tab before creating a new one.
 
+## Backups
+
+As OpenSCAD does, rendering a tab with **unsaved edits** first writes its text to `<name>-backup-XXXXXXXX.scad` (`unsaved-backup-…` for an untitled tab) and logs `Saved backup file: <path>` (#864). The folder is `settings.backups_dir()`: the per-user data folder's `BelfrySCAD/backups` (`~/Library/Application Support` on macOS, `%LOCALAPPDATA%` on Windows, `~/.local/share` on Linux), not Documents, since a `Documents/BelfrySCAD` folder would become the default working directory. One file per tab, rewritten at each render, removed when the tab or window closes -- so a backup outlives only a crash or a kill. `MainWindow._save_backup` / `_drop_backup`.
+
 ## Quit Behavior
 
 When the user quits the app and there are modified editors open, a Save/Discard/Cancel dialog is shown for each unsaved tab. Cancel aborts the quit.
@@ -1355,7 +1361,7 @@ A `VNFViewer` subclass for a BOSL2 **VNF tile texture**: a VNF whose X and Y lie
 
 Every menu and command has an Alt-key letter (`&File`, `Save &As…`), so on Windows and Linux Alt+F opens File and a letter then picks the command (#839). Where OpenSCAD has the same command, it has OpenSCAD's letter. The exceptions are the dynamic lists (Open Recent, Examples, the Window menu's documents), and Edit, which has more commands than letters: six of its rarely used ones share a letter, which Qt handles by cycling between them. Qt ignores the letters on macOS, which has no menu mnemonics. `tests/test_shortcuts.py` fails if a command is added without one.
 
-**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / Save All (Ctrl+Alt+S: every modified tab in the window, in tab order; an untitled one asks for a name, and cancelling stops the rest) / Reload (Ctrl+R, as OpenSCAD: the current tab's text from disk via `_reload_one(force=True)`, the path Automatic Reload uses; asks before discarding unsaved edits, which stay one Undo away since the swap goes through the undo stack; no render -- Design ▸ Reload and Render does both) / — / Export… / Quick Export… (F7, as OpenSCAD's Export as STL: asks only for the name, in the format exported last and with that format's saved options, never the options dialog; before any export it is a full Export…; #791) / Export as Image… (the 3D view as shown, as a PNG at the viewport's device-pixel size, offered as `$export_name.png` beside the source like Export…; the CLI's `-o out.png` renders headlessly with its own camera instead) / — / Quit
+**File**: New / Open… / Open Recent ▶ / Examples ▶ / Close / Save / Save As… / Save All (Ctrl+Alt+S: every modified tab in the window, in tab order; an untitled one asks for a name, and cancelling stops the rest) / Reload (Ctrl+R, as OpenSCAD: the current tab's text from disk via `_reload_one(force=True)`, the path Automatic Reload uses; asks before discarding unsaved edits, which stay one Undo away since the swap goes through the undo stack; no render -- Design ▸ Reload and Render does both) / — / Export… / Quick Export… (F7, as OpenSCAD's Export as STL: asks only for the name, in the format exported last and with that format's saved options, never the options dialog; before any export it is a full Export…; #791. Both open on the format exported last, and in the folder the same design was last exported to, else beside the design; #863) / Export as Image… (the 3D view as shown, as a PNG at the viewport's device-pixel size, offered as `$export_name.png` beside the source like Export…; the CLI's `-o out.png` renders headlessly with its own camera instead) / — / Quit
 
 **Examples** covers one feature per file, named for it, so the menu is a lookup: Basics holds the shapes and moves (`csg`, `transforms`, `mirror`, `resize`, `color`, `polygon`, `text`, `linear_extrude`, `rotate_extrude`, `modules`), Advanced the rest (`hull`, `minkowski`, `offset`, `projection`, `polyhedron`, `multmatrix`, `intersection_for`, `import`, `surface`, `children`). `import` and `surface` ship their data alongside in `Advanced/data/`, which works because both resolve a relative path against the file naming it.
 

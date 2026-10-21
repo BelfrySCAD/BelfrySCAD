@@ -133,6 +133,11 @@ _DEFAULTS = {
     # The format of the last export, which File > Quick Export reuses.
     # Empty until something has been exported.
     "export/lastFormat": "",
+    # The folder the last export went to, and the design it was exported
+    # from ("" for an unsaved one): exporting that design again starts
+    # there instead of beside the design (#863).
+    "export/lastDir": "",
+    "export/lastSource": "",
     # Keyboard shortcuts changed in Preferences > Keyboard, as JSON
     # {command id: key, or "" for none}; see window/shortcuts.py.
     "shortcuts/overrides": "{}",
