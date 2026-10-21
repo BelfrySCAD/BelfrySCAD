@@ -209,6 +209,8 @@ Finished measurements draw as overlay lines (`Viewport.upload_lines`) with a `_M
 
 ## Nudging
 
+**Typing in the view goes to the editor** (#841). A click in the main viewport gives it keyboard focus (for the arrow keys below), and text typed there used to go nowhere until the editor was clicked, which also moved its caret. Now any text key with no Ctrl/Cmd -- none of which the view uses itself -- moves the focus to the current tab's editor and is typed there, at the caret and selection the editor already had (`Viewport._forward_typing`, wired through `typing_target`; a data viewer's viewport has none). A read-only editor takes nothing.
+
 Arrow keys move the selected object without arming any tool, matching the
 editable data viewports key for key: 1 unit, 0.1 with Cmd, 10 with Shift
 (`_key_nudge_magnitude`), along the two world axes the screen most nearly shows

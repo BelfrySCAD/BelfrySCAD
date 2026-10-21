@@ -7,12 +7,12 @@ import numpy as np
 from dataclasses import dataclass
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
                              QEasingCurve, QEvent)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent,
-                            QContextMenuEvent, QGuiApplication)
+                            QContextMenuEvent, QGuiApplication, QKeyEvent)
 
 from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
@@ -382,6 +382,9 @@ class Viewport(QOpenGLWidget):
     camera_changed      = Signal()                       # emitted on any camera movement
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
     busy_cancel_requested = Signal()                     # the busy overlay's close box was clicked (#530)
+    #: A callable giving the code editor that text typed here goes to, or
+    #: None (#841). The main window's viewport has one; a data viewer's has not.
+    typing_target = None
     perspective_toggled = Signal(bool)                    # emitted on click, new perspective state
     measurement_taken   = Signal(object)                  # a finished Measurement
     measurement_dismissed = Signal(int)                   # index into the list
@@ -1342,7 +1345,28 @@ class Viewport(QOpenGLWidget):
                                               round(float(delta[2]), 4))
                 event.accept()
                 return
+        if self._forward_typing(event):
+            return
         super().keyPressEvent(event)
+
+    def _forward_typing(self, event) -> bool:
+        """Text typed here goes to the code editor, which takes the focus
+        (#841): after clicking the view to turn it, typing used to do
+        nothing until the editor was clicked, which also moved its caret.
+        Only text with no Ctrl/Cmd -- every key the view uses itself, and
+        every shortcut, is either not text or carries one. The editor's own
+        caret and selection are left where they were."""
+        editor = self.typing_target() if self.typing_target else None
+        text = event.text()
+        if (editor is None or editor.isReadOnly() or not text or not text.isprintable()
+                or event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                        | Qt.KeyboardModifier.MetaModifier)):
+            return False
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
+        QApplication.sendEvent(editor, QKeyEvent(event.type(), event.key(), event.modifiers(),
+                                                 text, event.isAutoRepeat(), event.count()))
+        event.accept()
+        return True
 
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
