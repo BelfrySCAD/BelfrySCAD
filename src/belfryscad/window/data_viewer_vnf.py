@@ -22,11 +22,12 @@ from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _lit_marker_triangles,
                                                   _marker_radii_for_points,
                                                   _marker_radius_for_point,
-                                                  _parse_number, _ray_plane_axis_locked,
+                                                  _parse_number, place_on_reference,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window,
                                                   _unlocked_plane_name,
                                                   _vertex_click_mode)
+from belfryscad.window.reference_3d import Reference3DViewportMixin
 
 
 def _is_vnf(v) -> bool:
@@ -113,7 +114,7 @@ def _tube_triangles(p0, p1, r0: float, r1: float, color: np.ndarray,
 # VNF Viewport (adds face picking and highlight)
 # ---------------------------------------------------------------------------
 
-class _VNFViewport(Viewport):
+class _VNFViewport(Reference3DViewportMixin, Viewport):
     face_clicked = Signal(int)
     vertex_clicked = Signal(int, str)  # (vertex index, click mode: "replace"/"add"/"toggle" -- see _vertex_click_mode) -- takes priority over face_clicked
     vertex_moved = Signal(int, float, float, float)  # (index, new_x, new_y, new_z) -- Cmd+drag, editable only
@@ -582,7 +583,8 @@ class _VNFViewport(Viewport):
                 self._drag_vertex_idx = vi
                 self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                 self._drag_plane_point = self._verts_3d[vi].copy()
-                self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                self._show_delta("Plane: the faced image's" if self._pick_plane_normal() is not None
+                                 else f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
                 self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
@@ -596,8 +598,9 @@ class _VNFViewport(Viewport):
                 self._drag_started = True
         if self._drag_vertex_idx >= 0:
             pos = event.position().toPoint()
-            ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
-            hit = _ray_plane_axis_locked(ray_o, ray_d, self._drag_plane_point, self._drag_lock_axis)
+            # The reference model's surface, a faced image's plane, or the
+            # axis plane, as in the 3D path editor (#836).
+            hit = place_on_reference(self, pos, self._drag_plane_point)
             if hit is not None:
                 self.vertex_moved.emit(self._drag_vertex_idx,
                                         round(float(hit[0]), 3), round(float(hit[1]), 3), round(float(hit[2]), 3))
@@ -656,7 +659,9 @@ class _VNFViewport(Viewport):
         if self._editable and self._vert_indices:
             lock_axis = _view_locked_axis(self._renderer.camera)
             magnitude = _key_nudge_magnitude(event.modifiers())
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
+            delta = self._reference_nudge(event.key(), magnitude)
+            if delta is None:
+                delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 self.vertex_drag_started.emit()
                 for vi in self._vert_indices:
@@ -690,25 +695,17 @@ class _VNFViewport(Viewport):
         doesn't reliably deliver this widget's own mouseReleaseEvent for a
         right-click that opens a popup, so without this a right-click that
         opens a menu can leave stale pan-drag state behind."""
-        if not self._editable:
-            return
+        menu = QMenu(self)
         pos = event.pos()
-        vi = self._pick_vertex(pos.x(), pos.y())
+        vi = self._pick_vertex(pos.x(), pos.y()) if self._editable else -1
+        face = self._pick_face(pos.x(), pos.y()) if self._editable and vi < 0 else -1
         if vi >= 0:
-            self._last_mouse = None
-            self._mouse_button = None
-            menu = QMenu(self)
             menu.addAction("Duplicate Vertex", lambda: self.duplicate_vertex_requested.emit(vi))
-            menu.exec(event.globalPos())
-            return
-        face = self._pick_face(pos.x(), pos.y())
-        if face >= 0:
-            self._last_mouse = None
-            self._mouse_button = None
-            menu = QMenu(self)
+        elif face >= 0:
             menu.addAction("Delete Face", lambda: self.delete_face_requested.emit(face))
             menu.addAction("Reverse Face", lambda: self.reverse_face_requested.emit(face))
-            menu.exec(event.globalPos())
+        # The reference geometry's actions, in the viewer too (#836).
+        self._exec_menu(menu, event)
 
     def closeEvent(self, event):
         self._vert_blink_timer.stop()
@@ -753,6 +750,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
                 self._vp._renderer.camera.orthographic = w._viewport._renderer.camera.orthographic
                 break
         _sync_viewport_to_main_window(self._vp)
+        self._vp.restore_references(self.windowTitle())
         self._vp.face_clicked.connect(self._on_viewport_face_clicked)
         self._vp.vertex_clicked.connect(self._on_viewport_vertex_clicked)
         splitter.addWidget(self._vp)
