@@ -57,7 +57,12 @@ def test_the_port_draws_what_bosl2_draws(tmp_path):
     path = tmp_path / "t.scad"
     path.write_text("\n".join(lines))
     out = []
-    Evaluator(echo_fn=out.append).evaluate(str(path))
+    try:
+        Evaluator(echo_fn=out.append).evaluate(str(path))
+    except Exception as e:
+        if "not found" in str(e):
+            pytest.skip("BOSL2 is not installed")
+        raise
     got = {int(l.split('"T')[1].split("=")[0]): float(l.split("=")[1].rstrip('"'))
            for l in out if l.startswith('ECHO: "T')}
     if not got:
