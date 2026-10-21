@@ -13,6 +13,7 @@ import re
 from PySide6.QtWidgets import QMenu
 
 from belfryscad.turtle import is_turtle as _is_turtle
+from belfryscad.turtle3d import is_turtle3d as _is_turtle3d, uses_3d_only as _uses_3d_only
 
 from belfryscad.window.data_viewer_affine import AffineMatrixViewer, _is_affine_matrix
 from belfryscad.window.data_viewer_common import (_is_list, _is_numeric_point,
@@ -25,7 +26,7 @@ from belfryscad.window.data_viewer_matrix import MatrixViewer, _is_matrix
 from belfryscad.window.data_viewer_object import ObjectViewer
 from belfryscad.window.data_viewer_path import PathViewer, _is_path
 from belfryscad.window.data_viewer_region import RegionViewer, _is_region
-from belfryscad.window.data_viewer_turtle import TurtleViewer, _session_starts
+from belfryscad.window.data_viewer_turtle import Turtle3DViewer, TurtleViewer, _session_starts
 from belfryscad.window.data_viewer_vnf import VNFViewer, _is_vnf
 from belfryscad.window.data_viewer_vnf_tile import VNFTileViewer, _is_vnf_tile
 
@@ -298,6 +299,51 @@ def turtle_call_context(text: str, start: int, end: int) -> dict | None:
     return ctx
 
 
+#: BOSL2's named directions, as `turtle3d(state=RIGHT)` may give one.
+_NAMED_DIRECTIONS = {
+    "RIGHT": [1, 0, 0], "LEFT": [-1, 0, 0], "BACK": [0, 1, 0], "FRONT": [0, -1, 0],
+    "FWD": [0, -1, 0], "FORWARD": [0, -1, 0], "UP": [0, 0, 1], "TOP": [0, 0, 1],
+    "DOWN": [0, 0, -1], "BOTTOM": [0, 0, -1], "BOT": [0, 0, -1],
+}
+
+
+def turtle3d_call_context(text: str, start: int, end: int) -> dict | None:
+    """`turtle_call_context` for `turtle3d(...)`, whose `state=` is a
+    direction or a transform rather than a point. `start` is the position
+    when the state is `move([x, y, z])`, or `[0, 0, 0]` when there is none;
+    `dir` is the direction when the state is one (a literal vector or a
+    BOSL2 name such as `RIGHT`). Anything else leaves both None."""
+    call = _enclosing_call(text, start, end)
+    if call is None or call["name"] != "turtle3d":
+        return None
+    mine = call["args"][call["index"]]
+    state = _call_arg(call, "state", 1 if mine["pos"] == 0 else None)
+    ctx = {"arg_start": mine["a"], "state": state["value"] if state else None,
+           "start": None if state else [0.0, 0.0, 0.0], "dir": None}
+    if state is None:
+        return ctx
+    word = _blank_comments(text)[state["value"][0]:state["value"][1]].strip()
+
+    def vec3(v):
+        return (isinstance(v, list) and len(v) in (2, 3)
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v))
+    m = re.fullmatch(r"move\s*\((.*)\)", word, re.S)
+    if m:
+        try:
+            v = ast.literal_eval(m.group(1).strip())
+        except (ValueError, SyntaxError):
+            v = None
+        if vec3(v):
+            ctx["start"] = [float(x) for x in v] + [0.0] * (3 - len(v))
+    elif word in _NAMED_DIRECTIONS:
+        ctx["dir"] = list(_NAMED_DIRECTIONS[word])
+    else:
+        v = _literal(text, state["value"])
+        if vec3(v) and len(v) == 3 and any(v):
+            ctx["dir"] = [float(x) for x in v]
+    return ctx
+
+
 def nurbs_interp_context(text: str, start: int, end: int) -> dict | None:
     """When the points at `text[start:end]` are `nurbs_interp()`'s (its
     first argument, or `points=`), what the call says, for the path editor
@@ -360,17 +406,20 @@ def nurbs_write_back(text: str, start: int, end: int, list_text: str,
 
 
 def turtle_write_back(text: str, start: int, end: int, list_text: str,
-                      ctx: dict | None, new_start) -> tuple[str, int, int]:
+                      ctx: dict | None, new_start, wrap: str = "{}") -> tuple[str, int, int]:
     """`(replacement, s, e)` writing a turtle editor's result back: the list
     at `text[start:end]` becomes `list_text`, and when the start was moved,
     the call's `state=` becomes `new_start` -- inserted before the list when
-    the call has none. One edit, so it is one undo."""
-    pt = "[" + ", ".join(f"{round(v, 2):g}" for v in new_start) + "]" if new_start else None
+    the call has none. One edit, so it is one undo. `wrap` formats the
+    point as the state: turtle3d's is `move([x, y, z])`."""
+    pt = wrap.format("[" + ", ".join(f"{round(v, 2):g}" for v in new_start) + "]") \
+        if new_start else None
     if ctx is None or pt is None:
         return list_text, start, end
-    old = ctx["start"] or [0.0, 0.0]
+    zero = [0.0] * len(new_start)
+    old = ctx["start"] or zero
     if ctx["state"] is None:
-        if list(new_start) == [0.0, 0.0]:
+        if list(new_start) == zero:
             return list_text, start, end
         a = ctx["arg_start"]
         return f"state={pt}, " + text[a:start] + list_text, a, end
@@ -468,6 +517,21 @@ def _find_object_call(text: str, offset: int):
     return None
 
 
+def _pick_turtle_kind(text: str, found: dict):
+    """Keep the turtle editor that fits: inside `turtle3d(...)` the 3D one,
+    inside `turtle(...)` the 2D one, and outside either call the 2D one
+    only for a list with nothing 3D-only in it -- a list both read, such as
+    `["move", 10]`, is offered as both."""
+    for key, other in (("turtle", "turtle3d"), ("turtle3d", "turtle")):
+        if key in found:
+            call = _enclosing_call(text, found[key][0], found[key][1])
+            name = call["name"] if call else None
+            if name == key:
+                found.pop(other, None)
+    if "turtle" in found and "turtle3d" in found and _uses_3d_only(found["turtle3d"][2]):
+        found.pop("turtle")
+
+
 def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
     """Find the innermost enclosing literal matching each of Path/Grid/
     Matrix/Affine/VNF/Region *independently*, as `{shape: (start, end,
@@ -497,12 +561,15 @@ def find_editable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["region"] = (start, end, value)
         if "turtle" not in found and _is_turtle(value):
             found["turtle"] = (start, end, value)
+        if "turtle3d" not in found and _is_turtle3d(value):
+            found["turtle3d"] = (start, end, value)
     # An object is a CALL, not a bracket literal, so it has its own
     # finder. entries is None when the call references variables, which
     # cannot be round-tripped through text -- view-only, never editable.
     call = _find_object_call(text, offset)
     if call is not None and call[2] is not None:
         found["object"] = call
+    _pick_turtle_kind(text, found)
     return found
 
 
@@ -537,6 +604,8 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
             found["region"] = (start, end, value)
         if "turtle" not in found and _is_turtle(value):
             found["turtle"] = (start, end, value)
+        if "turtle3d" not in found and _is_turtle3d(value):
+            found["turtle3d"] = (start, end, value)
     # Only when the call is all-literal. `object(other, [["k"]])` depends on
     # `other`, whose contents are not knowable from source text, so there is
     # nothing truthful to display -- offering it produced an EMPTY viewer.
@@ -545,6 +614,7 @@ def find_viewable_literals(text: str, offset: int, max_levels: int = 8) -> dict:
     call = _find_object_call(text, offset)
     if call is not None and call[2] is not None:
         found["object"] = call
+    _pick_turtle_kind(text, found)
     return found
 
 
@@ -589,6 +659,10 @@ def _open_region_viewer(title: str, value, parent=None):
 
 def _open_turtle_viewer(title: str, value, parent=None):
     TurtleViewer(title, value, parent).show()
+
+
+def _open_turtle3d_viewer(title: str, value, parent=None):
+    Turtle3DViewer(title, value, parent).show()
 
 
 def _open_object_viewer(title: str, value, parent=None, entries=None):
@@ -652,8 +726,11 @@ def build_viewer_menu(menu: QMenu, name: str, value, parent=None):
         menu.addAction("View as Path...", lambda: _open_path_viewer(name, value, parent))
     if _is_region(value):
         menu.addAction("View as Region...", lambda: _open_region_viewer(name, value, parent))
-    if _is_turtle(value):
+    three_d = _is_turtle3d(value)
+    if _is_turtle(value) and not (three_d and _uses_3d_only(value)):
         menu.addAction("View as Turtle Path...", lambda: _open_turtle_viewer(name, value, parent))
+    if three_d:
+        menu.addAction("View as 3D Turtle Path...", lambda: _open_turtle3d_viewer(name, value, parent))
     if _is_matrix(value):
         menu.addAction("View as Matrix...", lambda: _open_matrix_viewer(name, value, parent))
     if _is_affine_matrix(value):
@@ -708,6 +785,10 @@ def build_lexical_view_menu(menu: QMenu, text: str, literals: dict, parent=None)
         start, end, value = literals["turtle"]
         menu.addAction("View as Turtle Path...", lambda start=start, end=end, value=value:
                        _open_turtle_viewer(_preview(start, end), value, parent))
+    if "turtle3d" in literals:
+        start, end, value = literals["turtle3d"]
+        menu.addAction("View as 3D Turtle Path...", lambda start=start, end=end, value=value:
+                       _open_turtle3d_viewer(_preview(start, end), value, parent))
 
 
 def _lock_parent_editor_while_open(dlg, parent):
@@ -796,29 +877,38 @@ def _open_region_editor(title: str, value: list, on_commit, parent=None):
 
 
 def _open_turtle_editor(title: str, value: list, on_commit, parent=None,
-                        text: str | None = None, start: int = 0, end: int = 0):
+                        text: str | None = None, start: int = 0, end: int = 0,
+                        three_d: bool = False):
     """With `text`, the list is `text[start:end]` and `on_commit` takes
     `(new_text, s, e)`: the start point is read from the enclosing
     turtle() call's state= and written back there. Without it (a new
-    literal) `on_commit` takes the list alone."""
-    ctx = turtle_call_context(text, start, end) if text is not None else None
-    key = f"Turtle Editor: {title}" if title else "Turtle Editor"
-    movable = True
+    literal) `on_commit` takes the list alone. `three_d` opens the
+    turtle3d() editor instead."""
+    context = turtle3d_call_context if three_d else turtle_call_context
+    ctx = context(text, start, end) if text is not None else None
+    name = "3D Turtle" if three_d else "Turtle"
+    key = f"{name} Editor: {title}" if title else f"{name} Editor"
+    zero = [0.0] * (3 if three_d else 2)
+    movable, extra = True, {}
     if ctx is not None:
         note = ""
-        first = ctx["start"] or [0.0, 0.0]
-        if ctx["state"] is not None and ctx["start"] is None:
+        first = ctx["start"] or zero
+        if three_d and ctx["dir"] is not None:
+            movable = False
+            extra["state_dir"] = ctx["dir"]
+            note = "state= gives the start direction, so the start stays at the origin."
+        elif ctx["state"] is not None and ctx["start"] is None:
             movable = False
             note = "The start position is worked out by the script (state=), so it can't be moved here."
     else:
-        first = _session_starts.get(key, [0.0, 0.0])
-        note = ("Not in a turtle() call, so a moved start position is kept for this "
-                "session only. The start direction is saved.") if text is not None else ""
+        first = _session_starts.get(key, zero)
+        note = (f"Not in a {'turtle3d' if three_d else 'turtle'}() call, so a moved start position "
+                "is kept for this session only. The start direction is saved.") if text is not None else ""
     line_start = text.rfind("\n", 0, start) + 1 if text is not None else 0
     indent = re.match(r"[ \t]*", text[line_start:]).group() if text is not None else ""
-    dlg = TurtleViewer(title, value, parent, editable=True, start=first,
-                       start_movable=movable,
-                       start_note=note, indent=indent)
+    dlg = (Turtle3DViewer if three_d else TurtleViewer)(
+        title, value, parent, editable=True, start=first, start_movable=movable,
+        start_note=note, indent=indent, **extra)
 
     def commit(list_text):
         if text is None:
@@ -826,7 +916,8 @@ def _open_turtle_editor(title: str, value: list, on_commit, parent=None,
             return
         if ctx is None:
             _session_starts[key] = list(dlg.start_point())
-        on_commit(*turtle_write_back(text, start, end, list_text, ctx, dlg.start_point()))
+        on_commit(*turtle_write_back(text, start, end, list_text, ctx, dlg.start_point(),
+                                     wrap="move({})" if three_d else "{}"))
     dlg.committed.connect(commit)
     _lock_parent_editor_while_open(dlg, parent)
     dlg.show()
@@ -896,6 +987,11 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         menu.addAction("Edit as Turtle Path...", lambda start=start, end=end, value=value:
                        _open_turtle_editor(_preview(start, end), value, on_commit, parent,
                                            text, start, end))
+    if "turtle3d" in literals:
+        start, end, value = literals["turtle3d"]
+        menu.addAction("Edit as 3D Turtle Path...", lambda start=start, end=end, value=value:
+                       _open_turtle_editor(_preview(start, end), value, on_commit, parent,
+                                           text, start, end, three_d=True))
 
 
 # ---------------------------------------------------------------------------
@@ -925,6 +1021,7 @@ _NEW_LITERAL_SEEDS = [
     ("3D Path", "path", lambda *a: _open_path_editor(*a, is_2d=False), []),
     ("Region", "region", lambda *a: _open_region_editor(*a), [[]]),
     ("Turtle Path", "turtle", lambda *a: _open_turtle_editor(*a), ["move", 10]),
+    ("3D Turtle Path", "turtle3d", lambda *a: _open_turtle_editor(*a, three_d=True), ["move", 10]),
     ("Grid", "grid", lambda *a: _open_grid_editor(*a),
      [[[0, 0, 0], [10, 0, 0]], [[0, 10, 0], [10, 10, 0]]]),
     ("Heightfield", "heightfield", lambda *a: _open_heightfield_editor(*a),

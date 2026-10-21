@@ -3148,6 +3148,7 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
     so the user could create it once and never reopen it.
     """
     from belfryscad.window.data_viewers import _NEW_LITERAL_SEEDS
+    from belfryscad.turtle3d import is_turtle3d
     from belfryscad.window.data_viewer_path import _is_path
     from belfryscad.window.data_viewer_grid import _is_grid
     from belfryscad.window.data_viewer_heightfield import _is_heightfield
@@ -3160,6 +3161,7 @@ def test_every_new_literal_seed_is_accepted_by_its_own_shape_predicate():
         "path": _is_path, "grid": _is_grid, "heightfield": _is_heightfield,
         "matrix": _is_matrix, "affine": _is_affine_matrix, "vnf": _is_vnf,
         "vnf_tile": _is_vnf_tile, "region": _is_region, "turtle": is_turtle,
+        "turtle3d": is_turtle3d,
     }
     seen = set()
     for label, shape, _opener, seed in _NEW_LITERAL_SEEDS:
