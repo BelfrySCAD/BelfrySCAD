@@ -28,7 +28,8 @@ from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window,
                                                   _unlocked_plane_name,
-                                                  _vertex_click_mode)
+                                                  _vertex_click_mode, place_on_reference)
+from belfryscad.window.reference_3d import Reference3DViewportMixin
 
 
 def _is_path(v) -> bool:
@@ -315,7 +316,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         layout.setContentsMargins(4, 4, 4, 4)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._vp = _PathViewport(path_value, self._is_2d, self, editable=editable)
+        self._vp = (_PathViewport if self._is_2d else _Path3DViewport)(
+            path_value, self._is_2d, self, editable=editable)
         self._corners = set(corners or ())
         self._vp.corners = self._corners
         _sync_viewport_to_main_window(self._vp)
@@ -412,6 +414,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
             restore_session_background(self.windowTitle(), self._vp)
+        else:
+            # Images on any plane and a model to trace over in 3D (#836).
+            self._vp.restore_references(self.windowTitle())
         if editable:
             btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
@@ -1287,6 +1292,15 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._blink_timer.stop()
         super().closeEvent(event)
 
+    def _pick_plane_normal(self):
+        """A plane, other than the axis one, that 3D clicks and drags work
+        on -- see `Reference3DViewportMixin`. None here."""
+        return None
+
+    def _reference_hit(self, ray_o, ray_d):
+        """A surface a 3D click lands on before any plane. None here."""
+        return None
+
     def _pick_vertex(self, px: float, py: float) -> int:
         if len(self._path_pts) == 0:
             return -1
@@ -1316,7 +1330,9 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 else:
                     self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                     self._drag_plane_point = self._path_pts[vi].copy()
-                self._show_delta(f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                faced = None if self._is_2d else self._pick_plane_normal()
+                self._show_delta("Plane: the faced image's" if faced is not None
+                                 else f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
                 self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
@@ -1330,8 +1346,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 self._drag_started = True
         if self._drag_vertex_idx >= 0:
             pos = event.position().toPoint()
-            ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
-            hit = _ray_plane_axis_locked(ray_o, ray_d, self._drag_plane_point, self._drag_lock_axis)
+            if self._is_2d:
+                ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+                hit = _ray_plane_axis_locked(ray_o, ray_d, self._drag_plane_point, self._drag_lock_axis)
+            else:
+                hit = place_on_reference(self, pos, self._drag_plane_point)
             if hit is not None:
                 for idx, new_pos in self._resolve_bezier_moves(self._drag_vertex_idx, hit):
                     self.vertex_moved.emit(idx, round(float(new_pos[0]), 3),
@@ -1454,13 +1473,12 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         points go in a straight line between the last point and the click."""
         menu = QMenu(self)
         if self._is_2d:
-            axis, through = 2, np.zeros(3, dtype=np.float32)
+            ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+            hit = _ray_plane_axis_locked(ray_o, ray_d, np.zeros(3, dtype=np.float32), 2)
         else:
-            axis = _view_locked_axis(self._renderer.camera)
             through = (self._path_pts[-1] if len(self._path_pts)
                        else np.zeros(3, dtype=np.float32))
-        ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
-        hit = _ray_plane_axis_locked(ray_o, ray_d, through, axis)
+            hit = place_on_reference(self, pos, through)
         if hit is not None:
             hit = np.asarray(hit, dtype=np.float64)
             new = [hit]
@@ -1543,3 +1561,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+
+class _Path3DViewport(Reference3DViewportMixin, _PathViewport):
+    """The 3D path editor's viewport, with reference images and a model to
+    trace over (#836)."""

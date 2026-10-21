@@ -27,11 +27,11 @@ from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _lit_marker_triangles,
                                                   _marker_radius_for_point,
-                                                  _ray_plane_axis_locked,
+                                                  place_on_reference,
                                                   _style_table_headers,
                                                   _sync_viewport_to_main_window)
 from belfryscad.window.data_viewer_path import _PathViewport
-from belfryscad.window.viewport import _view_locked_axis
+from belfryscad.window.reference_3d import Reference3DViewportMixin
 
 
 def format_turtle(value) -> str:
@@ -843,7 +843,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
 
 # -- turtle3d -------------------------------------------------------------------
 
-class _Turtle3DViewport(_TurtleViewport):
+class _Turtle3DViewport(Reference3DViewportMixin, _TurtleViewport):
     """The 3D path viewport, with the turtle's frame drawn at the start
     (green) and the end (black): an arrowhead the way it faces and a fin
     the way its "up" points, since the roll changes what "left" means.
@@ -856,9 +856,7 @@ class _Turtle3DViewport(_TurtleViewport):
     def click_point(self, pos):
         if self.heading is None:
             return None
-        ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
-        hit = _ray_plane_axis_locked(ray_o, ray_d, np.asarray(self.heading[:3, 3], dtype=np.float32),
-                                     _view_locked_axis(self._renderer.camera))
+        hit = place_on_reference(self, pos, np.asarray(self.heading[:3, 3], dtype=np.float32))
         return None if hit is None else tuple(float(v) for v in hit)
 
     def first_point(self) -> tuple:
@@ -917,6 +915,11 @@ class Turtle3DViewer(TurtleViewer):
         super().__init__(title, commands, parent, editable, start, start_movable,
                          start_note, indent)
         self._vp.start_movable = False   # no drag handle: Start Here / Start From… instead
+        # Reference images on any plane, and a model, instead of the 2D
+        # editor's one image in XY (#836).
+        self._vp.background_key = ""
+        self._vp.set_background(None)
+        self._vp.restore_references(self.windowTitle())
         # Room for a direction vector, which most 3D rows carry.
         fm = self._table.fontMetrics()
         self._table.setColumnWidth(1, fm.horizontalAdvance("[-0.0000, -0.0000, -0.0000]") + 16)

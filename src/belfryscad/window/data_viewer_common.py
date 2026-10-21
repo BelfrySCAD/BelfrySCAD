@@ -357,6 +357,36 @@ def _ray_plane_axis_locked(ray_origin: np.ndarray, ray_dir: np.ndarray,
     return hit
 
 
+def _ray_plane(ray_origin: np.ndarray, ray_dir: np.ndarray,
+               plane_point: np.ndarray, normal: np.ndarray) -> np.ndarray | None:
+    """Intersect a ray with the plane through `plane_point` with `normal`,
+    any direction -- `_ray_plane_axis_locked` for a plane no axis is square
+    to (a reference image's, #836). None if the ray is parallel to it."""
+    normal = np.asarray(normal, dtype=np.float64)
+    denom = float(normal @ ray_dir)
+    if abs(denom) < 1e-9:
+        return None
+    t = float(normal @ (np.asarray(plane_point, dtype=np.float64) - ray_origin)) / denom
+    return (ray_origin + t * np.asarray(ray_dir, dtype=np.float64)).astype(np.float32)
+
+
+def place_on_reference(vp, pos, through: np.ndarray):
+    """Where a click at widget point `pos` lands in a 3D editor: on the
+    reference model's surface when its ray hits it; else on the plane
+    through `through` parallel to the reference image the view faces;
+    else on the axis plane the view is nearest square-on to. None if the
+    ray misses every candidate."""
+    from belfryscad.window.viewport import _view_locked_axis
+    ray_o, ray_d = vp._renderer.camera_ray(pos.x(), pos.y(), vp.width(), vp.height())
+    hit = vp._reference_hit(ray_o, ray_d)
+    if hit is not None:
+        return np.asarray(hit, dtype=np.float32)
+    normal = vp._pick_plane_normal()
+    if normal is not None:
+        return _ray_plane(ray_o, ray_d, through, normal)
+    return _ray_plane_axis_locked(ray_o, ray_d, through, _view_locked_axis(vp._renderer.camera))
+
+
 def _unlocked_plane_name(lock_axis: int) -> str:
     """Name of the drag plane spanned by the two axes *other* than
     `lock_axis` (e.g. lock_axis=2 (Z) -> "XY") — shown as a `_show_delta`
