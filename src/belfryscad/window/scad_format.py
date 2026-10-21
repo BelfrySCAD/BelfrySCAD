@@ -972,6 +972,92 @@ def nudge_component(text: str, amount: float, mode: str) -> str:
     return f"{base} * {_fmt_num(amount)}"
 
 
+def _pivot_text(v: float) -> str:
+    """A pivot coordinate: finer than `_fmt_num`, since any rounding of
+    the pivot shows up as a jump when the rotated part lands."""
+    v = round(float(v), 4) + 0.0          # + 0.0: never "-0"
+    return f"{v:.10g}"
+
+
+def _next_call(source: str, at: int, name: str):
+    """`name(...)` starting at the first non-space at or after `at`."""
+    while at < len(source) and source[at] in " \t\r\n":
+        at += 1
+    return transform_at(source, at, name)
+
+
+def _pivot_middle(source: str, start: int, chain: list, name: str, pivot):
+    """The `name(...)` in a `translate(c) name(...) translate(-c)` this
+    function wrote earlier around the node, pivoting about the same `c`, or
+    None. Found either as the outermost three wrappers or at the start of
+    the span (see `transform_at`)."""
+    neg = [_pivot_text(-float(p)) for p in pivot]
+    if len(chain) >= 3:
+        (n0, inner), (n1, mid), (n2, outer) = chain[-3:]
+        if (n0, n1, n2) == ("translate", name, "translate") \
+                and vector_texts(outer, "v", 3, "0") == pivot \
+                and vector_texts(inner, "v", 3, "0") == neg:
+            return mid
+    if chain:
+        return None          # wrapped in something else: a new pivot goes outside
+    outer = transform_at(source, start, "translate")
+    mid = outer and _next_call(source, outer.end, name)
+    inner = mid and _next_call(source, mid.end, "translate")
+    if inner and vector_texts(outer, "v", 3, "0") == pivot \
+            and vector_texts(inner, "v", 3, "0") == neg:
+        return mid
+    return None
+
+
+def transform_edit(source: str, start: int, name: str, keyword: str, fill: str,
+                   amounts, mode: str, pivot=None):
+    """`source` with a `name(...)` transform wrapped around, or updated on,
+    the node at `start`, and where the edit begins.
+
+    A new wrapper goes OUTSIDE anything already wrapping the node, so a
+    world-aligned handle tells the truth (#452, #453); an outermost wrapper
+    of the same kind is updated instead, its components keeping their own
+    text (see `nudge_component`).
+
+    `pivot`, for rotate and scale, is the world point the drag preview
+    turned or scaled about -- the selection's bounding-box centre. Away
+    from the origin the edit is `translate(c) name(...) translate(-c)`,
+    because a bare `rotate()`/`scale()` pivots about the origin and the part
+    jumped when the drag was released (#838). A second drag about the same
+    centre updates the middle call rather than stacking another three.
+    """
+    chain = find_transform_chain(source, start)
+    outer = chain[-1][1] if chain else None
+    if pivot is not None:
+        pivot = [_pivot_text(p) for p in pivot]
+        if all(p == "0" for p in pivot):
+            pivot = None
+    if pivot is None:
+        call = outer if chain and chain[-1][0] == name else None
+        if call is None:
+            # The span may BEGIN with the transform rather than sit after
+            # it: the evaluator attributes some bodies to the statement
+            # rather than to the call inside it, and then the wrapper to
+            # update is the first thing in the span, not behind it.
+            call = transform_at(source, start, name)
+    else:
+        call = _pivot_middle(source, start, chain, name, pivot)
+    texts = vector_texts(call, keyword, 3, fill) if call is not None else None
+
+    base = texts if texts is not None else [fill] * 3
+    parts = [nudge_component(base[i], amounts[i], mode) for i in range(3)]
+    text = f"{name}([{parts[0]}, {parts[1]}, {parts[2]}])"
+    if texts is not None:
+        # Update that wrapper in place, keeping everything after it -- a
+        # comment between it and the node stays where the user put it.
+        return source[:call.start] + text + source[call.end:], call.start
+    if pivot is not None:
+        neg = ", ".join(_pivot_text(-float(p)) for p in pivot)
+        text = f"translate([{', '.join(pivot)}]) {text} translate([{neg}])"
+    at = outer.start if outer is not None else start
+    return source[:at] + text + " " + source[at:], at
+
+
 #: OpenSCAD's default `linear_extrude` height, for a call that gives none.
 _DEFAULT_EXTRUDE_HEIGHT = "100"
 

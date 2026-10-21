@@ -304,8 +304,8 @@ When a tool is active, axis handles are drawn over the selected shape. Dragging 
 | Tool | Handle | AST effect |
 |---|---|---|
 | Translate | Arrow per axis | Modify/insert `translate([x,y,z])` wrapper |
-| Rotate | Arc per axis | Modify/insert `rotate(...)` wrapper |
-| Scale | Handle per axis | Modify/insert `scale([x,y,z])` wrapper |
+| Rotate | Arc per axis | Modify/insert `rotate(...)` wrapper, pivoting about the selection's centre |
+| Scale | Handle per axis | Modify/insert `scale([x,y,z])` wrapper, pivoting about the selection's centre |
 | Scale (Shift+drag) | Any axis handle | Scale all three components uniformly |
 | Extrude | One +Z arrow | Modify/insert `linear_extrude(height=h)` |
 | Extrude Centered | One +Z arrow | The same, with `center=true` |
@@ -520,6 +520,7 @@ During translate/rotate/scale, a text readout of the current value is shown in t
   `find_transform_chain` walks out while each enclosing call is one of `TRANSFORM_WRAPPERS` (translate, rotate, scale, mirror, resize, multmatrix, color) and **stops at anything else**. A `for` is a wrapper too, but hoisting a drag outside the loop would move every iteration rather than the one the user grabbed; the same goes for `if`, a `difference()` operand and a user module's call.
 
   An *inner* wrapper of the same type is deliberately left alone: merging into the `translate` in `rotate([0,0,45]) translate([1,0,0]) cube(10)` would move along the rotated axis, so a new outer one is added instead.
+- **Rotate and scale pivot about the selection's bounding-box centre**, as the drag preview does. A bare `rotate()`/`scale()` pivots about the origin, so away from it the edit is `translate(c) rotate(a) translate(-c)`, and the part used to jump on release (#838). `c` is written to 4 decimal places (a 2D shape's at z=0), and a later drag about the same `c` updates the middle call instead of adding three more. A turn by an angle that is not a multiple of 90° usually moves the bounding-box centre, so the next drag about it wraps again. At the origin a plain `rotate()`/`scale()` is written and updated as before. Plain transforms on purpose: BOSL2's `rot(cp=)` would need the include. See `scad_format.transform_edit`.
 - **Live drag preview** — **[NOT IMPLEMENTED]**. There is no ghost mesh; only the delta readout updates during a drag. The AST edit and re-render still happen on mouse-up, as one undo step.
   > Original intent: wireframe ghost copy of the mesh during drag.
 - **Gizmo orientation**: handles are world-axis aligned (`Viewport._AXIS_DIRS` is the identity basis), at the selection's bounding-box centre, and since #453 the *edit* is world-aligned to match — a drag on the world-x handle moves the object along world x whatever it is wrapped in.
