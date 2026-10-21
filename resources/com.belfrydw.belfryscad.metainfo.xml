@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.83.0" date="2026-10-20">
+      <description>
+        <p>A 3D turtle editor for BOSL2's turtle3d(), and reference images on any plane and reference models to trace over in the 3D path, turtle and VNF editors.</p>
+      </description>
+    </release>
     <release version="1.82.0" date="2026-10-20">
       <description>
         <p>Optional auto-closing brackets and indenting with tabs, shortcuts edited in place in Preferences, Tab rebindable, rotate and scale drags that commit about the part's centre without jumping, and turtle editor and stereo fixes.</p>
