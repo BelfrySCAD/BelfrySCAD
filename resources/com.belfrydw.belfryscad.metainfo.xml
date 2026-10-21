@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.82.0" date="2026-10-20">
+      <description>
+        <p>Optional auto-closing brackets and indenting with tabs, shortcuts edited in place in Preferences, Tab rebindable, rotate and scale drags that commit about the part's centre without jumping, and turtle editor and stereo fixes.</p>
+      </description>
+    </release>
     <release version="1.81.0" date="2026-10-19">
       <description>
         <p>Ctrl+/ toggles line comments the way VS Code does, Comment and Uncomment add or remove exactly one //, and Preferences has VS Code's two comment options.</p>
