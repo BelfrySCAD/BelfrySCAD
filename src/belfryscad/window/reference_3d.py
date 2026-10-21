@@ -10,7 +10,7 @@ background image is:
   makes clicks and drags work on planes parallel to it.
 * **A model.** A mesh file read through the evaluator's own `import()` --
   STL, OBJ, OFF, 3MF, AMF or X3D -- or the main window's last render,
-  placed by a translate, rotation and uniform scale. A click whose ray hits
+  placed by an anchor, a rotation and a uniform scale. A click whose ray hits
   it lands on its surface.
 """
 from __future__ import annotations
@@ -21,10 +21,12 @@ import tempfile
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QMessageBox, QWidget)
 
-from belfryscad.window.background_image import _IMAGE_FILTER, load_image
+from belfryscad.window.background_image import (ANCHORS, _IMAGE_FILTER, ImageSizeDialog,
+                                                  anchor_name, load_image)
 
 #: The plane presets: name -> (normal, the image's "up" there). Each is
 #: seen square-on from the side its normal points to, upright.
@@ -46,10 +48,15 @@ def _unit(v):
 
 @dataclass
 class RefImage:
+    """An image on a plane. `position` is where its `anchor` sits -- one of
+    the 2D background image's nine (`ANCHORS`: fractions of its width from
+    the left and height from the bottom) -- and it turns and grows about
+    that point, as the 2D one does."""
     path: str
     aspect: float = 1.0            # height / width
     width: float = 100.0
-    center: tuple = (0.0, 0.0, 0.0)
+    position: tuple = (0.0, 0.0, 0.0)
+    anchor: tuple = (0.5, 0.5)
     normal: tuple = (0.0, 0.0, 1.0)
     rotation: float = 0.0          # degrees about the normal, from upright
     opacity: float = 0.5
@@ -73,10 +80,30 @@ class RefImage:
         c, s = math.cos(a), math.sin(a)
         return c * right + s * up, -s * right + c * up, n
 
+    def point_at(self, fx: float, fy: float) -> np.ndarray:
+        """The point at fraction (fx, fy) of the image's width and height
+        from its bottom-left corner."""
+        right, up, _ = self.basis()
+        ax, ay = self.anchor
+        return (np.asarray(self.position, dtype=np.float64)
+                + (fx - ax) * self.width * right + (fy - ay) * self.height * up)
+
+    @property
+    def center(self) -> tuple:
+        return tuple(float(v) for v in self.point_at(0.5, 0.5))
+
+    @center.setter
+    def center(self, c):
+        """Move the image so its centre is at `c`, keeping the anchor."""
+        shift = np.asarray(c, dtype=np.float64) - np.asarray(self.center)
+        self.position = tuple(float(v) for v in np.asarray(self.position) + shift)
+
     def set_plane(self, name: str):
         """Put the image square on a preset plane, upright, keeping its centre."""
+        c = self.center
         self.normal, _ = PLANES[name]
         self.rotation = 0.0
+        self.center = c
 
     def hit(self, o, d):
         """Where the ray (o, d) meets the image itself, or None."""
@@ -93,39 +120,72 @@ class RefImage:
             return p
         return None
 
+    def _box_in_plane(self, lo, hi):
+        """The box (lo, hi)'s extent along the image's right and up."""
+        right, up, _ = self.basis()
+        corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                            for z in (lo[2], hi[2])], dtype=np.float64)
+        return corners @ right, corners @ up
+
     def fit(self, lo, hi):
         """Centre on the box (lo, hi), sized to cover it as seen square-on."""
         lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
-        right, up, _ = self.basis()
-        corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
-                            for z in (lo[2], hi[2])])
-        center = (lo + hi) / 2
-        w = float(np.ptp(corners @ right))
-        h = float(np.ptp(corners @ up))
-        size = max(w, h / self.aspect if self.aspect else 0)
-        self.width = size * 1.1 if size > 0 else self.width
-        self.center = tuple(float(v) for v in center)
+        r, u = self._box_in_plane(lo, hi)
+        size = max(float(np.ptp(r)), float(np.ptp(u)) / self.aspect if self.aspect else 0)
+        if size > 0:
+            self.width = size * 1.1
+        self.center = tuple(float(v) for v in (lo + hi) / 2)
+
+    def anchor_to_box(self, lo, hi):
+        """Put the anchor on the same point of the box (lo, hi) as seen
+        square-on -- Top Left on its top-left corner -- staying on the
+        image's own plane."""
+        right, up, n = self.basis()
+        r, u = self._box_in_plane(lo, hi)
+        fx, fy = self.anchor
+        depth = float(np.asarray(self.position) @ n)
+        p = ((r.min() + fx * np.ptp(r)) * right + (u.min() + fy * np.ptp(u)) * up + depth * n)
+        self.position = tuple(float(v) for v in p)
 
     def corners(self) -> np.ndarray:
-        right, up, _ = self.basis()
-        c = np.asarray(self.center, dtype=np.float64)
-        w, h = self.width / 2, self.height / 2
-        return np.array([c + sx * w * right + sy * h * up for sx, sy in
-                         ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+        return np.array([self.point_at(fx, fy) for fx, fy in ((0, 0), (1, 0), (1, 1), (0, 1))])
+
+
+#: A model's anchors: a point of its bounding box, as fractions along X, Y
+#: and Z -- the 2D image's nine at each of three heights.
+MODEL_LEVELS = {"Top": 1.0, "Center": 0.5, "Bottom": 0.0}
+_FLAT = {"Top Left": "Back Left", "Top": "Back", "Top Right": "Back Right",
+         "Bottom Left": "Front Left", "Bottom": "Front", "Bottom Right": "Front Right"}
+
+
+def model_anchor_name(anchor) -> str:
+    """`Top Back Left`, `Bottom`, `Center`..."""
+    fx, fy, fz = anchor
+    flat = anchor_name((fx, fy))
+    flat = _FLAT.get(flat, flat)
+    level = next(n for n, z in MODEL_LEVELS.items() if z == fz)
+    if level == "Center":
+        return flat
+    return level if flat == "Center" else f"{level} {flat}"
 
 
 @dataclass
 class RefModel:
+    """A mesh to trace over. Turned (as `rotate([x, y, z])`) and scaled
+    about its `anchor` -- a point of its bounding box, as fractions along X,
+    Y and Z -- which then sits at `position`."""
     name: str
     tris: np.ndarray               # (n, 3, 3), as read
-    translate: tuple = (0.0, 0.0, 0.0)
-    rotate: tuple = (0.0, 0.0, 0.0)    # degrees about X, then Y, then Z, as rotate([x, y, z])
+    position: tuple = (0.0, 0.0, 0.0)
+    rotate: tuple = (0.0, 0.0, 0.0)
     scale: float = 1.0
+    anchor: tuple = (0.5, 0.5, 0.5)
     opacity: float = 0.35
     visible: bool = True
     _cache: tuple = field(default=(None, None), repr=False, compare=False)
 
-    def matrix(self) -> np.ndarray:
+    def _turned(self) -> np.ndarray:
+        """The triangles rotated and scaled, before the anchor goes to `position`."""
         def axis(i, deg):
             c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
             m = np.eye(3)
@@ -133,16 +193,14 @@ class RefModel:
             m[j, j], m[j, k], m[k, j], m[k, k] = c, -s, s, c
             return m
         R = axis(2, self.rotate[2]) @ axis(1, self.rotate[1]) @ axis(0, self.rotate[0])
-        m = np.eye(4)
-        m[:3, :3] = R * self.scale
-        m[:3, 3] = self.translate
-        return m
+        return self.tris.reshape(-1, 3) @ (R * self.scale).T
 
     def world_tris(self) -> np.ndarray:
-        key = (tuple(self.translate), tuple(self.rotate), self.scale, id(self.tris))
+        key = (tuple(self.position), tuple(self.rotate), self.scale, tuple(self.anchor), id(self.tris))
         if self._cache[0] != key:
-            m = self.matrix()
-            w = self.tris.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3]
+            w = self._turned()
+            lo, hi = w.min(axis=0), w.max(axis=0)
+            w = w - (lo + np.asarray(self.anchor) * (hi - lo)) + np.asarray(self.position)
             self._cache = (key, w.reshape(-1, 3, 3))
         return self._cache[1]
 
@@ -160,16 +218,22 @@ class RefModel:
                                       w[:, 0], w[:, 1], w[:, 2])
         return None if i is None else np.asarray(o, dtype=np.float64) + t * np.asarray(d, dtype=np.float64)
 
+    def anchor_to_box(self, lo, hi):
+        """Put the anchor on the same point of the box (lo, hi)."""
+        lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
+        self.position = tuple(float(v) for v in lo + np.asarray(self.anchor) * (hi - lo))
+
     def fit(self, lo, hi):
         """Scale and move the model to sit centred in the box (lo, hi)."""
-        self.translate, self.scale = (0.0, 0.0, 0.0), 1.0
-        mlo, mhi = self.bounds()
-        size = float(np.max(mhi - mlo))
+        self.scale = 1.0
+        w = self._turned()
+        size = float(np.max(w.max(axis=0) - w.min(axis=0)))
         want = float(np.max(np.asarray(hi) - np.asarray(lo)))
         if size > 0 and want > 0:
             self.scale = want / size
         mlo, mhi = self.bounds()
-        self.translate = tuple(float(v) for v in (np.asarray(lo) + np.asarray(hi)) / 2 - (mlo + mhi) / 2)
+        shift = (np.asarray(lo) + np.asarray(hi)) / 2 - (mlo + mhi) / 2
+        self.position = tuple(float(v) for v in np.asarray(self.position) + shift)
 
 
 def load_model_triangles(path: str) -> tuple[np.ndarray, list[str]]:
@@ -311,6 +375,23 @@ class Reference3DViewportMixin:
         img = self.faced_image()
         return None if img is None else _unit(img.normal)
 
+    def _reference_nudge(self, key, magnitude: float):
+        """An arrow key's step along a faced image's plane: screen-right and
+        screen-up projected onto it, so a press moves along the image as it
+        is seen. None when no image is faced (the axis-plane nudge then)."""
+        img = self.faced_image()
+        if img is None:
+            return None
+        view = self._renderer.camera.view_matrix()
+        n = _unit(img.normal)
+        row = {Qt.Key.Key_Right: (0, 1), Qt.Key.Key_Left: (0, -1),
+               Qt.Key.Key_Up: (1, 1), Qt.Key.Key_Down: (1, -1)}.get(key)
+        if row is None:
+            return None
+        v = np.asarray(view[row[0], :3], dtype=np.float64)
+        v = _unit(v - (v @ n) * n)
+        return (row[1] * magnitude * v).astype(np.float32)
+
     def _reference_hit(self, o, d):
         m = self.ref_model
         if m is None or not m.visible:
@@ -340,7 +421,9 @@ class Reference3DViewportMixin:
         self._extend_scene_bounds()
 
     def _paint_under(self, mvp: np.ndarray):
-        super()._paint_under(mvp)
+        under = getattr(super(), "_paint_under", None)   # the 2D background image, where there is one
+        if under is not None:
+            under(mvp)
         if not self.ref_images and self.ref_model is None:
             return
         import moderngl as mgl
@@ -362,7 +445,7 @@ class Reference3DViewportMixin:
         mvp32 = mvp.T.astype(np.float32).tobytes()
         m = self.ref_model
         if m is not None and m.visible:
-            key = (id(m.tris), tuple(m.translate), tuple(m.rotate), m.scale)
+            key = (id(m.tris), tuple(m.position), tuple(m.rotate), m.scale, tuple(m.anchor))
             if self._ref_model_key != key:
                 if self._ref_model_vao is not None:
                     self._ref_model_vao.release()
@@ -403,6 +486,77 @@ class Reference3DViewportMixin:
         fbo.depth_mask = True
         ctx.disable(mgl.BLEND)
 
+    # -- moving an image with the mouse ----------------------------------------------
+
+    _ref_moving = None          # the RefImage being moved, while in Move Image
+    _ref_drag = None            # (mode, image at press, press point, press ray)
+
+    def begin_move_image(self, img: RefImage):
+        """Drags move `img` until Esc or Return: in its plane; with Shift
+        along its normal; with Option turning it about its anchor."""
+        self._ref_moving = img
+        img.visible = True
+        self._show_delta("Moving image: drag it in its plane, Shift-drag along its normal, "
+                         "Option-drag to turn it about its anchor. Esc when done.")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setFocus()
+        self.references_edited()
+
+    def end_move_image(self):
+        if self._ref_moving is None:
+            return
+        self._ref_moving = self._ref_drag = None
+        self._delta_label.hide()
+        self.unsetCursor()
+        self.references_edited()
+
+    def event(self, ev):
+        # Ahead of the editor's own handlers, which would select or drag
+        # the vertices underneath.
+        if self._ref_moving is not None and ev.type() in (
+                QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove,
+                QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+            if self._move_image_mouse(ev):
+                return True
+        if (self._ref_moving is not None and ev.type() == QEvent.Type.KeyPress
+                and ev.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            self.end_move_image()
+            return True
+        return super().event(ev)
+
+    def _move_image_mouse(self, ev) -> bool:
+        img = self._ref_moving
+        t = ev.type()
+        if t == QEvent.Type.MouseButtonDblClick:
+            return True
+        left = Qt.MouseButton.LeftButton
+        if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease) and ev.button() != left:
+            return False            # right and middle drags still turn and pan the view
+        if t == QEvent.Type.MouseMove and ev.buttons() not in (Qt.MouseButton.NoButton, left):
+            return False
+        pos = ev.position()
+        o, d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        o, d = np.asarray(o, dtype=np.float64), np.asarray(d, dtype=np.float64)
+        if t == QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+            mods = ev.modifiers()
+            mode = ("normal" if mods & Qt.KeyboardModifier.ShiftModifier
+                    else "turn" if mods & Qt.KeyboardModifier.AltModifier else "plane")
+            p0 = _plane_point(img, img.center, o, d)
+            if p0 is None and mode != "normal":
+                return True
+            self._ref_drag = (mode, replace(img), p0, (o, d))
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return True
+        if t == QEvent.Type.MouseMove and self._ref_drag is not None:
+            drag_ref_image(img, *self._ref_drag, o, d)
+            self.references_edited()
+            return True
+        if t == QEvent.Type.MouseButtonRelease and self._ref_drag is not None:
+            self._ref_drag = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return True
+        return t != QEvent.Type.MouseMove     # a left click off the image does nothing else
+
     # -- the menu -----------------------------------------------------------------
 
     def _exec_menu(self, menu, event):
@@ -414,34 +568,104 @@ class Reference3DViewportMixin:
             plane = sub.addMenu("Plane")
             for name in PLANES:
                 plane.addAction(name, lambda img=img, name=name: self._edit(lambda: img.set_plane(name)))
+            move = sub.addAction("Move Image", lambda img=img: (
+                self.end_move_image() if self._ref_moving is img else self.begin_move_image(img)))
+            move.setCheckable(True)
+            move.setChecked(self._ref_moving is img)
+            sub.addAction("Move Anchor To…", lambda img=img: self._move_anchor(img))
+            sub.addAction("Set Image Size…", lambda img=img: self._image_size(img))
             sub.addAction("Placement…", lambda img=img: self._image_placement(img))
-            fit = sub.addAction("Fit to Path", lambda img=img: self._edit(lambda: img.fit(*self._path_box())))
-            fit.setEnabled(self._path_box() is not None)
+            sub.addSeparator()
+            anchors = sub.addMenu("Image Anchor")
+            for i, (name, a) in enumerate(ANCHORS.items()):
+                if i and i % 3 == 0:
+                    anchors.addSeparator()
+                act = anchors.addAction(name, lambda img=img, a=a: self._edit(lambda: setattr(img, "anchor", a)))
+                act.setCheckable(True)
+                act.setChecked(tuple(img.anchor) == a)
+            self._align_menu(sub, "Align Image", img, anchor_name(img.anchor))
             sub.addSeparator()
             sub.addAction("Show" if not img.visible else "Hide",
                           lambda img=img: self._edit(lambda: setattr(img, "visible", not img.visible)))
-            sub.addAction("Remove", lambda img=img: self._edit(lambda: self.ref_images.remove(img)))
+            sub.addAction("Remove", lambda img=img: self._edit(lambda: self._remove_image(img)))
         ref.addSeparator()
         ref.addAction("Load Model…", self.load_reference_model)
         ref.addAction("Use Current Render", self.use_current_render)
         m = self.ref_model
         if m is not None:
             sub = ref.addMenu(f"Model: {m.name}")
+            sub.addAction("Move Anchor To…", lambda: self._move_anchor(m))
             sub.addAction("Placement…", self._model_placement)
-            fit = sub.addAction("Fit to Path", lambda: self._edit(lambda: m.fit(*self._path_box())))
-            fit.setEnabled(self._path_box() is not None)
+            sub.addSeparator()
+            anchors = sub.addMenu("Model Anchor")
+            for level, fz in MODEL_LEVELS.items():
+                lm = anchors.addMenu(level)
+                for i, (fx, fy) in enumerate(ANCHORS.values()):
+                    if i and i % 3 == 0:
+                        lm.addSeparator()
+                    a = (fx, fy, fz)
+                    act = lm.addAction(model_anchor_name(a),
+                                       lambda a=a: self._edit(lambda: setattr(m, "anchor", a)))
+                    act.setCheckable(True)
+                    act.setChecked(tuple(m.anchor) == a)
+            self._align_menu(sub, "Align Model", m, model_anchor_name(m.anchor))
             sub.addSeparator()
             sub.addAction("Show" if not m.visible else "Hide",
                           lambda: self._edit(lambda: setattr(m, "visible", not m.visible)))
             sub.addAction("Remove", lambda: self._edit(lambda: setattr(self, "ref_model", None)))
-        super()._exec_menu(menu, event)
+        base = getattr(super(), "_exec_menu", None)
+        if base is not None:
+            base(menu, event)
+            return
+        # As BackgroundImageViewportMixin._exec_menu does, and why: Qt may
+        # never deliver this press's release, leaving a pan armed.
+        self._last_mouse = None
+        self._mouse_button = None
+        menu.exec(event.globalPos())
+
+    def _align_menu(self, parent, title, ref, anchor_label):
+        """Align ▸ as the 2D image has it: the anchor to the origin or to the
+        same point of the path's bounding box, or fit to the path."""
+        box = self._path_box()
+        align = parent.addMenu(title)
+        align.addAction("Anchor to Origin", lambda: self._edit(lambda: _anchor_to_origin(ref)))
+        on_path = align.addAction(f"Anchor to Path's {anchor_label}",
+                                  lambda: self._edit(lambda: ref.anchor_to_box(*box)))
+        align.addSeparator()
+        fit = align.addAction("Fit to Path", lambda: self._edit(lambda: ref.fit(*box)))
+        for act in (on_path, fit):
+            act.setEnabled(box is not None)
+
+    def _move_anchor(self, ref):
+        name = anchor_name(ref.anchor) if isinstance(ref, RefImage) else model_anchor_name(ref.anchor)
+        dlg = _PlacementDialog("Move Anchor To", self, [(f"{name} anchor at:", ref.position, 3)])
+        if dlg.exec():
+            ref.position = tuple(dlg.values()[0])
+            self.references_edited()
+
+    def _image_size(self, img: RefImage):
+        """Width and height, linked by the image's proportions; it grows or
+        shrinks about its anchor."""
+        size = ImageSizeDialog(img.width, img.aspect, self)
+        if size.exec() == QDialog.DialogCode.Accepted:
+            img.width = size.image_width()
+            self.references_edited()
+
+    def _remove_image(self, img):
+        if self._ref_moving is img:
+            self.end_move_image()
+        self.ref_images.remove(img)
 
     def _edit(self, fn):
         fn()
         self.references_edited()
 
     def _path_box(self):
+        """The bounding box of what is being edited: a path's points, or a
+        VNF's vertices. None when it has no extent."""
         pts = getattr(self, "_path_pts", None)
+        if pts is None:
+            pts = getattr(self, "_verts_3d", None)
         if pts is None or len(pts) < 2:
             return None
         lo, hi = pts.min(axis=0).astype(np.float64), pts.max(axis=0).astype(np.float64)
@@ -485,8 +709,9 @@ class Reference3DViewportMixin:
             model.fit(*box)
         elif self.ref_model is not None:
             # A replacement keeps the old one's placement.
-            model.translate, model.rotate, model.scale = (self.ref_model.translate,
-                                                          self.ref_model.rotate, self.ref_model.scale)
+            old = self.ref_model
+            model.position, model.rotate, model.scale, model.anchor = (old.position, old.rotate,
+                                                                       old.scale, old.anchor)
         self.ref_model = model
         self.references_edited()
         if warnings:
@@ -513,25 +738,74 @@ class Reference3DViewportMixin:
     def _image_placement(self, img: RefImage):
         right, up, n = img.basis()
         dlg = _PlacementDialog("Image Placement", self, [
-            ("Centre:", img.center, 3), ("Normal:", img.normal, 4),
+            (f"{anchor_name(img.anchor)} anchor at:", img.position, 3), ("Normal:", img.normal, 4),
             ("Rotation (°):", [img.rotation], 2), ("Width:", [img.width], 3)])
         if dlg.exec():
-            center, normal, (rotation,), (width,) = dlg.values()
+            position, normal, (rotation,), (width,) = dlg.values()
             if not any(normal) or width <= 0:
                 return
-            img.center, img.normal, img.rotation, img.width = tuple(center), tuple(normal), rotation, width
+            img.position, img.normal, img.rotation, img.width = tuple(position), tuple(normal), rotation, width
             self.references_edited()
 
     def _model_placement(self):
         m = self.ref_model
         dlg = _PlacementDialog("Model Placement", self, [
-            ("Translate:", m.translate, 3), ("Rotate (°):", m.rotate, 2), ("Scale:", [m.scale], 4)])
+            (f"{model_anchor_name(m.anchor)} anchor at:", m.position, 3),
+            ("Rotate (°):", m.rotate, 2), ("Scale:", [m.scale], 4)])
         if dlg.exec():
             t, r, (s,) = dlg.values()
             if s <= 0:
                 return
-            m.translate, m.rotate, m.scale = tuple(t), tuple(r), s
+            m.position, m.rotate, m.scale = tuple(t), tuple(r), s
             self.references_edited()
+
+
+def _anchor_to_origin(ref):
+    ref.position = (0.0, 0.0, 0.0)
+
+
+def _plane_point(img: RefImage, through, o, d):
+    """Where the ray (o, d) meets the plane through `through` parallel to
+    `img`, or None."""
+    n = _unit(img.normal)
+    denom = float(n @ d)
+    if abs(denom) < 1e-12:
+        return None
+    t = float(n @ (np.asarray(through, dtype=np.float64) - o)) / denom
+    return o + t * d
+
+
+def drag_ref_image(img: RefImage, mode: str, start: RefImage, p0, ray0, o, d):
+    """One step of a Move Image drag, from the image as it was at the press
+    (`start`, pressed at `p0` on its plane, along `ray0`) to the ray (o, d)
+    under the pointer now. "plane": shift by the pointer's travel across
+    the plane. "normal": along the normal, by how far along it the
+    pointer's ray now passes. "turn": about the anchor, by the angle the
+    pointer swept round it, as the 2D image turns."""
+    c0 = np.asarray(start.center, dtype=np.float64)
+    n = _unit(start.normal)
+    if mode == "plane":
+        p = _plane_point(start, c0, o, d)
+        if p is not None:
+            img.center = tuple(float(v) for v in c0 + (p - p0))
+    elif mode == "normal":
+        def along(o_, d_):
+            # The parameter on the line c0 + s*n nearest the ray (o_, d_).
+            w = c0 - o_
+            b, dd, e = float(n @ d_), float(d_ @ d_), float(n @ w)
+            den = dd - b * b
+            return None if abs(den) < 1e-12 else (b * float(d_ @ w) - dd * e) / den
+        s0, s = along(*ray0), along(o, d)
+        if s0 is not None and s is not None:
+            img.center = tuple(float(v) for v in c0 + (s - s0) * n)
+    elif mode == "turn":
+        p = _plane_point(start, c0, o, d)
+        if p is not None and p0 is not None:
+            right, up, _ = start.basis()
+            k = np.asarray(start.position, dtype=np.float64)
+            a0 = math.atan2((p0 - k) @ up, (p0 - k) @ right)
+            a1 = math.atan2((p - k) @ up, (p - k) @ right)
+            img.rotation = (start.rotation + math.degrees(a1 - a0) + 180) % 360 - 180
 
 
 class _PlacementDialog(QDialog):

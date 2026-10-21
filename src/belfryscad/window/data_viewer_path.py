@@ -1301,6 +1301,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         """A surface a 3D click lands on before any plane. None here."""
         return None
 
+    def _reference_nudge(self, key, magnitude):
+        """An arrow key's step along a faced reference image. None here."""
+        return None
+
     def _pick_vertex(self, px: float, py: float) -> int:
         if len(self._path_pts) == 0:
             return -1
@@ -1543,7 +1547,9 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         if self._editable and self._selected_indices:
             lock_axis = 2 if self._is_2d else _view_locked_axis(self._renderer.camera)
             magnitude = _key_nudge_magnitude(event.modifiers())
-            delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
+            delta = None if self._is_2d else self._reference_nudge(event.key(), magnitude)
+            if delta is None:
+                delta = _key_nudge_delta(self._renderer.camera, lock_axis, event.key(), magnitude)
             if delta is not None:
                 # Same bezier linking as a drag (_resolve_bezier_moves) --
                 # if two linked points are *both* independently selected,
