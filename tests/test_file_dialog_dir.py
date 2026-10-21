@@ -58,3 +58,29 @@ def test_any_open_remembers_the_folder_but_revealing_a_library_does_not():
     import json, subprocess, sys
     r = subprocess.run([sys.executable, "-c", DRIVER], capture_output=True, text=True, timeout=60)
     assert json.loads(r.stdout.strip().splitlines()[-1]) == {"lib": False, "work": True}, r.stderr
+
+
+def test_exporting_a_design_again_starts_where_its_last_export_went(tmp_path, monkeypatch):
+    """#863: the folder an export went to is offered the next time the same
+    design is exported -- not for another design, and not once it is gone."""
+    from types import SimpleNamespace
+    from belfryscad.window.main_window import MainWindow
+    from belfryscad.window.preferences import save_preferences
+    monkeypatch.setattr(settings, "_scratch_dir", settings._scratch_dir)
+    use_scratch_settings(str(tmp_path / "settings"), seed=False)
+    assert Path(app_settings().fileName()).resolve().is_relative_to(tmp_path.resolve())
+    design = tmp_path / "src" / "part.scad"
+    out = tmp_path / "out"
+    out.mkdir()
+    tab = SimpleNamespace(file_path=design, export_name="part")
+    win = SimpleNamespace(_current_tab=lambda: tab)
+    offered = lambda: MainWindow._default_export_path(win)
+
+    assert offered() == os.path.join(str(tmp_path / "src"), "part")
+    save_preferences({"export/lastDir": str(out), "export/lastSource": str(design)})
+    assert offered() == os.path.join(str(out), "part")
+    tab.file_path = tmp_path / "src" / "other.scad"
+    assert offered() == os.path.join(str(tmp_path / "src"), "part")
+    tab.file_path = design
+    os.rmdir(out)
+    assert offered() == os.path.join(str(tmp_path / "src"), "part")
