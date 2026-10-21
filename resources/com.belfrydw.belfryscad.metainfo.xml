@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.85.0" date="2026-10-21">
+      <description>
+        <p>Move a single turtle path point without disturbing the rest, crash backups of unsaved edits, an argument hint that stays up while typing, and exports that remember their folder and format.</p>
+      </description>
+    </release>
     <release version="1.84.0" date="2026-10-21">
       <description>
         <p>Split and straighten sections of a turtle path without moving the rest, and gizmo drags made while the last one is still rendering are no longer lost.</p>
