@@ -132,8 +132,11 @@ class _TurtleViewport(_PathViewport):
     _joint_moved = False
     hover: QPoint | None = None
     _preview_lb = None
+    _ghost_lb = None
+    _start_moved = False
 
     _PREVIEW_COLOR = (0.15, 0.4, 0.95)
+    _GHOST_COLOR = (0.72, 0.72, 0.72)
 
     def segment_at(self, pos) -> int:
         """The path segment under widget point `pos`, or -1."""
@@ -180,19 +183,60 @@ class _TurtleViewport(_PathViewport):
         """The spacing of the smallest scale ticks now shown: Shift's snap."""
         return _drawn_spacings(_axis_extent(self._renderer.camera))[2]
 
-    def set_preview(self, points):
-        """Show `points` (a polyline, [x, y] each) as a dashed line, or
-        clear it with None. Dashes are a fixed size on screen."""
-        if self._ctx is None:
-            return
-        self.makeCurrent()
-        lb, self._preview_lb = self._preview_lb, None
+    def closes_at(self, pos) -> bool:
+        """Whether widget point `pos` is on the path's first point, so a
+        click there draws back to it and closes the outline (#837). Never
+        for a path that is a single point, or already ends there."""
+        pts = self._path_pts
+        if len(pts) < 2 or np.linalg.norm(pts[-1] - pts[0]) < 1e-9:
+            return False
+        return self._renderer.pick_nearest_point(pts[:1], pos.x(), pos.y(),
+                                                 self.width(), self.height()) == 0
+
+    def _set_lines(self, attr: str, rows, under: bool = False):
+        """Replace the line buffer held in `attr` with `rows` (none if
+        empty); `under` draws it before everything else."""
+        lb = getattr(self, attr)
+        setattr(self, attr, None)
         lines = self._renderer._line_buffers
         if lb is not None and lb in lines:   # a reload has already freed it otherwise
             lines.remove(lb)
             lb.vao.release()
             lb.wide_vao.release()
             lb.vbo.release()
+        if rows:
+            lb = self._renderer.upload_lines(np.array(rows, dtype=np.float32))
+            if under:
+                lines.remove(lb)
+                lines.insert(0, lb)
+            setattr(self, attr, lb)
+
+    def set_ghost(self, points):
+        """Show `points` (a polyline, [x, y] each) faintly under the path --
+        the path as it was when the editor opened, so what an edit changed
+        can be seen (#837) -- or clear it with None. Set after each load,
+        which frees every line."""
+        if self._ctx is None:
+            return
+        self.makeCurrent()
+        rows = []
+        if points is not None:
+            # A hair behind the plane: where the two coincide, the depth test
+            # would otherwise keep whichever was drawn first.
+            z = -1e-3 * self._renderer.camera.distance
+            for a, b in zip(points, points[1:]):
+                rows += [[a[0], a[1], z, *self._GHOST_COLOR], [b[0], b[1], z, *self._GHOST_COLOR]]
+        self._set_lines("_ghost_lb", rows, under=True)
+        self.doneCurrent()
+        self.update()
+
+    def set_preview(self, points):
+        """Show `points` (a polyline, [x, y] each) as a dashed line, or
+        clear it with None. Dashes are a fixed size on screen."""
+        if self._ctx is None:
+            return
+        self.makeCurrent()
+        rows = []
         if points is not None and len(points) >= 2:
             pts = [np.array([p[0], p[1], 0.0]) for p in points]
             dash = 2.0 * _marker_radius_for_point(self, pts[0])
@@ -210,8 +254,7 @@ class _TurtleViewport(_PathViewport):
                     pos, rest, left = q, rest - step, left - step
                     if left <= 1e-12:
                         on, left = not on, dash
-            if rows:
-                self._preview_lb = self._renderer.upload_lines(np.array(rows, dtype=np.float32))
+        self._set_lines("_preview_lb", rows)
         self.doneCurrent()
         self.update()
 
@@ -220,7 +263,7 @@ class _TurtleViewport(_PathViewport):
         left = event.button() == Qt.MouseButton.LeftButton
         kind = self.start_handle_at(pos) if left else None
         if kind is not None:
-            self._start_drag = kind
+            self._start_drag, self._start_moved = kind, False
             self.start_drag_started.emit()
             return   # a drag of the handle, not of the view
         j = self.joint_at(pos) if left else -1
@@ -234,6 +277,7 @@ class _TurtleViewport(_PathViewport):
         if self._start_drag is not None:
             pt = self._model_point(event.position().toPoint())
             if pt is not None:
+                self._start_moved = True
                 self.start_dragged.emit(pt[0], pt[1], self._start_drag)
             return
         if self._joint_drag is not None:
@@ -291,7 +335,10 @@ class _TurtleViewport(_PathViewport):
         side = np.array([-d[1], d[0], 0.0], dtype=np.float32)
         end = self._path_pts[-1]
         size = 3.0 * _marker_radius_for_point(self, end)
-        tip, left, right = end + d * size, end + side * size * 0.45, end - side * size * 0.45
+        # The tip ON the end point, as an arrow ends at what it points to;
+        # drawn ahead of it, the path looked longer than it is (#837).
+        back = end - d * size
+        tip, left, right = end, back + side * size * 0.45, back - side * size * 0.45
         up, color = [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]
         rows = [[*p, *up, *color] for p in (tip, left, right)]
         self._renderer.upload_points(np.array(rows, dtype=np.float32))
@@ -306,8 +353,11 @@ class _TurtleViewport(_PathViewport):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self._start_drag is not None:
-            self._start_drag = None
+            kind, self._start_drag = self._start_drag, None
             self.start_drag_finished.emit()
+            # A click on the start dot, not a drag of it: close the outline.
+            if kind == "move" and not self._start_moved and self.closes_at(event.position().toPoint()):
+                self.draw_clicked.emit(float(self._path_pts[0][0]), float(self._path_pts[0][1]))
             return
         if self._joint_drag is not None:
             j, self._joint_drag = self._joint_drag, None
@@ -319,8 +369,11 @@ class _TurtleViewport(_PathViewport):
             pos = event.position().toPoint()
             seg = self.segment_at(pos)
             pt = self._model_point(pos)
-            # On the path, a click selects; anywhere else it draws.
-            if seg >= 0 or pt is None:
+            # On the first point, a click closes the outline; elsewhere on
+            # the path it selects; anywhere else it draws.
+            if self.closes_at(pos):
+                self.draw_clicked.emit(float(self._path_pts[0][0]), float(self._path_pts[0][1]))
+            elif seg >= 0 or pt is None:
                 self.segment_clicked.emit(seg)
             else:
                 self.draw_clicked.emit(*pt)
@@ -490,9 +543,21 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             self._vp.joints = [path[self._spans[d][1]] for d in draws] if draws else []
         if self._vp._ctx is not None:
             self._vp.load_path(path, False, reframe=reframe)
+            self._vp.set_ghost(self._original_path())
             self._highlight_selection()
             if self._editable:
                 self._update_preview()
+
+    def _original_path(self):
+        """The path as the editor opened it, once an edit has changed it."""
+        orig = getattr(self, "_original_value", None)
+        if (not self._editable or orig is None
+                or (orig["commands"] == self._commands and list(orig["start"]) == list(self._start))):
+            return None
+        try:
+            return turtle.run(orig["commands"], start=orig["start"])[0]
+        except (turtle.TurtleError, KeyError, TypeError):
+            return None
 
     def _highlight_selection(self):
         rows = self._table.selectionModel().selectedRows()
@@ -512,19 +577,23 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
 
     # -- drawing ----------------------------------------------------------
 
-    def _draw_commands(self, x: float, y: float) -> list:
+    def _draw_commands(self, x: float, y: float, closing: bool = False) -> list:
         """What a click at (x, y) appends, by the modifiers held now:
         Option, a tangent arc; none, a turn and a move; Cmd (Ctrl off
         macOS), a turn and an exact jump. Shift snaps angles to 30 degrees
         and distances (a move's length, an arc's radius) to the smallest
         scale ticks shown -- except with Cmd, where it snaps the jump's
-        point to the grid of those ticks."""
+        point to the grid of those ticks. `closing`, back to the start
+        point: an exact jump, or with Option an arc, and never snapped."""
         try:
             path, _, heading = self._run()
         except turtle.TurtleError:
             return []
         mods = QGuiApplication.queryKeyboardModifiers()
-        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        if closing and not mods & Qt.KeyboardModifier.AltModifier:
+            # Back to the start, exactly: a rounded move would leave a gap.
+            return turtle.line_to(path[-1], heading, (x, y), jump=True)
+        shift = not closing and bool(mods & Qt.KeyboardModifier.ShiftModifier)
         jump = bool(mods & Qt.KeyboardModifier.ControlModifier)
         step = self._vp.minor_step()
         if shift and jump and not mods & Qt.KeyboardModifier.AltModifier:
@@ -541,9 +610,11 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         pos = vp.hover
         pt = vp._model_point(pos) if pos is not None else None
         extra = []
-        if pt is not None and not vp._bg_adjusting and vp.segment_at(pos) < 0 \
-                and vp.start_handle_at(pos) is None and vp.joint_at(pos) < 0:
-            extra = self._draw_commands(*pt)
+        if pt is not None and not vp._bg_adjusting:
+            if vp.closes_at(pos):     # back to the start, exactly
+                extra = self._draw_commands(*vp._path_pts[0][:2], closing=True)
+            elif vp.segment_at(pos) < 0 and vp.start_handle_at(pos) is None and vp.joint_at(pos) < 0:
+                extra = self._draw_commands(*pt)
         if not extra:
             vp.set_preview(None)
             return
@@ -552,7 +623,10 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         vp.set_preview(path[spans[n][0]:])
 
     def _on_draw_clicked(self, x: float, y: float):
-        extra = self._draw_commands(x, y)
+        pts = self._vp._path_pts
+        # Closing on the start point goes there exactly, Shift or not.
+        closing = len(pts) > 0 and abs(pts[0][0] - x) < 1e-9 and abs(pts[0][1] - y) < 1e-9
+        extra = self._draw_commands(x, y, closing=closing)
         if extra:
             self._commit(self._commands + extra, label="Draw")
 
