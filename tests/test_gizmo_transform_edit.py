@@ -308,3 +308,66 @@ def test_the_statement_case_merges_instead_of_stacking():
     merged = src[:call.start] + f"translate([{out[0]}, {out[1]}, {out[2]}])" + src[call.end:]
     assert merged == "translate([25, 33.1, 0]) cuboid(10, rounding = 2);"
     assert merged.count("translate") == 1, "one wrapper, not two"
+
+
+# -- Rotate and scale pivot about the selection's centre (#838) -------------
+
+from belfryscad.window.scad_format import transform_edit
+
+
+def _rot(src, amounts, pivot, child="cube("):
+    return transform_edit(src, src.index(child), "rotate", "a", "0",
+                          amounts, "add", pivot)[0]
+
+
+def test_a_rotate_away_from_the_origin_pivots_about_the_centre():
+    assert _rot("translate([20,0,0]) cube(10, center=true);", (0, 0, 90), (20, 0, 0)) == \
+        "translate([20, 0, 0]) rotate([0, 0, 90]) translate([-20, 0, 0]) " \
+        "translate([20,0,0]) cube(10, center=true);"
+
+
+def test_a_second_turn_about_the_same_centre_updates_the_first():
+    once = _rot("cube(10);", (0, 0, 90), (5, 5, 5))
+    assert _rot(once, (0, 0, 90), (5, 5, 5)) == \
+        "translate([5, 5, 5]) rotate([0, 0, 180]) translate([-5, -5, -5]) cube(10);"
+
+
+def test_a_turn_about_a_different_centre_wraps_again():
+    once = _rot("cube(10);", (0, 0, 30), (5, 5, 5))
+    assert _rot(once, (0, 0, 30), (6, 5, 5)).startswith(
+        "translate([6, 5, 5]) rotate([0, 0, 30]) translate([-6, -5, -5]) translate([5, 5, 5])")
+
+
+def test_at_the_origin_a_plain_rotate_is_still_updated():
+    assert _rot("rotate([0,0,45]) cube(10, center=true);", (0, 0, 45), (1e-7, 0, 0)) == \
+        "rotate([0, 0, 90]) cube(10, center=true);"
+
+
+def test_a_span_that_begins_with_the_pivot_updates_it():
+    src = "translate([5, 5, 5]) rotate([0, 0, 90]) translate([-5, -5, -5]) cube(10);"
+    out, at = transform_edit(src, 0, "rotate", "a", "0", (0, 0, 90), "add", (5, 5, 5))
+    assert (out, at) == (src.replace("90", "180"), src.index("rotate"))
+
+
+def test_scale_pivots_too():
+    out = transform_edit("cube(10);", 0, "scale", "v", "1", (2, 2, 2), "mul",
+                         (5, 5, 5))[0]
+    assert out == "translate([5, 5, 5]) scale([2, 2, 2]) translate([-5, -5, -5]) cube(10);"
+
+
+def test_the_committed_edit_lands_where_the_preview_showed(tmp_path):
+    """What the bug was: the preview turned about the centre, the code about
+    the origin, and the part jumped on release. The real evaluator measures
+    the result -- the centre has not moved."""
+    from openscad_cpp_evaluator import Evaluator
+    src = "translate([30, 10, 0]) cube([10, 4, 2]);"
+    centre = (35, 12, 1)
+    for out in (_rot(src, (0, 0, 37), centre),
+                transform_edit(src, src.index("cube("), "scale", "v", "1",
+                               (3, 1, 1), "mul", centre)[0]):
+        lines = []
+        path = tmp_path / "t.scad"
+        path.write_text(f"b = render() {{ {out} }}; echo(b.boundingbox);")
+        Evaluator(echo_fn=lines.append).evaluate(str(path))
+        (lo, hi), = [eval(l.split("ECHO: ", 1)[1]) for l in lines if "ECHO" in l]
+        assert [round((a + b) / 2, 3) for a, b in zip(lo, hi)] == list(centre), out

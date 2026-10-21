@@ -26,10 +26,7 @@ from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
 from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.scad_format import (comment_lines, extrude_edit, extrude_is_centered,
-                                           find_extrude_call,
-                                           find_transform_chain,
-                                           nudge_component, transform_at,
-                                           vector_texts)
+                                           find_extrude_call, transform_edit)
 from belfryscad.window.debugger import (DEBUG_SHORTCUTS, DebuggerPane, DebugSession,
                                         _pretty_assignment)
 from belfryscad.window.animate import AnimatePane
@@ -6425,7 +6422,8 @@ class MainWindow(QMainWindow):
         ))
 
     def _commit_transform(self, name: str, keyword: str, fill: str,
-                          amounts, mode: str, label: str, merge_id: int):
+                          amounts, mode: str, label: str, merge_id: int,
+                          pivot: bool = False):
         """Wrap or update a `name(...)` transform around the selected node.
 
         One implementation for translate/rotate/scale, which differed only
@@ -6441,38 +6439,19 @@ class MainWindow(QMainWindow):
         expression has the adjustment appended (`wall/2` -> `wall/2 + 1`),
         so a parametric model keeps its relationships instead of being
         overwritten with a constant or gaining a wrapper per drag.
+
+        `pivot`: turn or scale about the selection's centre, as the drag
+        preview does, not the origin (#838). The edit itself is
+        `scad_format.transform_edit`.
         """
         target = self._gizmo_target()
         if target is None:
             return
         source, start = target
 
-        chain = find_transform_chain(source, start)
-        outer_name, outer = chain[-1] if chain else (None, None)
-        call = outer if outer_name == name else None
-        if call is None:
-            # The span may BEGIN with the transform rather than sit after
-            # it: the evaluator attributes some bodies to the statement
-            # rather than to the call inside it, and then the wrapper to
-            # update is the first thing in the span, not behind it. Scanning
-            # only backwards wrapped the statement in a second one.
-            call = transform_at(source, start, name)
-        texts = vector_texts(call, keyword, 3, fill) if call is not None else None
-
-        base = texts if texts is not None else [fill] * 3
-        parts = [nudge_component(base[i], amounts[i], mode) for i in range(3)]
-        text = f"{name}([{parts[0]}, {parts[1]}, {parts[2]}]) "
-        if texts is not None:
-            # Update that wrapper in place, keeping everything after it --
-            # a comment between it and the node stays where the user put it.
-            head, tail = source[:call.start], source[call.end:]
-            new_source = head + text.rstrip() + tail
-            new_node_start = call.start
-        else:
-            # Outside the whole chain, not against the node.
-            at = outer.start if outer is not None else start
-            new_source = source[:at] + text + source[at:]
-            new_node_start = at
+        new_source, new_node_start = transform_edit(
+            source, start, name, keyword, fill, amounts, mode,
+            self._gizmo_pivot() if pivot else None)
 
         self._stack_for(self._rendered_tab).push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
@@ -6558,13 +6537,28 @@ class MainWindow(QMainWindow):
     def _on_rotate_committed(self, axis: int, angle_deg: float):
         amounts = [0.0, 0.0, 0.0]
         amounts[axis] = angle_deg
-        self._commit_transform("rotate", "a", "0", amounts, "add", "Rotate", 1002)
+        self._commit_transform("rotate", "a", "0", amounts, "add", "Rotate", 1002,
+                               pivot=True)
 
     def _on_scale_committed(self, axis: int, factor: float, uniform: bool):
         amounts = [factor] * 3 if uniform else [1.0, 1.0, 1.0]
         if not uniform:
             amounts[axis] = factor
-        self._commit_transform("scale", "v", "1", amounts, "mul", "Scale", 1003)
+        self._commit_transform("scale", "v", "1", amounts, "mul", "Scale", 1003,
+                               pivot=True)
+
+    def _gizmo_pivot(self):
+        """The world point the rotate/scale preview pivots about: the
+        selection's bounding-box centre (`Renderer._rotation_model`), flat
+        on z=0 for a 2D shape, whose slab is drawing only."""
+        renderer = self._viewport._renderer
+        bbox = renderer._selected_buffer_bbox()
+        if bbox is None:
+            return None
+        c = [float(v) for v in bbox[0]]
+        if renderer.selected_is_2d():
+            c[2] = 0.0
+        return c
 
     # ------------------------------------------------------------------
     # Coordinate display
