@@ -233,3 +233,45 @@ def test_straightening_refuses_what_a_line_cannot_stand_in_for():
     c = ["move", 5, "length", 2, "move", 3]
     assert turtle.straighten(c, (0, 0), 0, 1) is None
     assert turtle.straighten(c, (0, 0), 2, 2) is not None
+
+
+@pytest.mark.parametrize("cmds", [
+    ["move", 10, "left", 30, "move", 8, "right", 50, "move", 6, "arcleft", 4, 90, "move", 5],
+    ["move", 10, "arcleft", 6, 60, "move", 5, "left", 20, "move", 4],
+    ["setdir", 20, "move", 10, "jump", [15, 12], "right", 45, "move", 3],
+    ["move", 10, "left", 90, "move", 10, "move", 7],
+])
+@pytest.mark.parametrize("j", [0, 1])
+def test_drag_joint_local_moves_only_that_joint(cmds, j):
+    """Option-drag: joint j lands on the target, and every other joint, and
+    the whole path after command j+1, stays where it was."""
+    start = [1, 2]
+    draws = turtle.joints(cmds)
+    path, spans, h = turtle.run(cmds, start)
+    ends = [path[spans[d][1]] for d in draws]
+    target = [ends[j][0] + 1.5, ends[j][1] - 2.0]
+    new = turtle.drag_joint_local(cmds, start, j, target)
+    assert new is not None
+    npath, nspans, nh = turtle.run(new, start)
+    nd = turtle.joints(new)
+    nends = [npath[nspans[d][1]] for d in nd]
+    assert len(nends) == len(ends)
+    assert math.dist(nends[j], target) < 0.05
+    for k in range(len(ends)):
+        if k != j:
+            assert math.dist(nends[k], ends[k]) < 0.01, (k, new)
+    assert math.dist(nh, h) < 1e-3
+    # after j+1, the same commands as before
+    tail = turtle.split(cmds)[draws[j + 1] + 1:]
+    rest = tail[1:] if tail and tail[0][0] in ("left", "right") else tail
+    if rest:
+        assert turtle.split(new)[-len(rest):] == rest
+
+
+def test_drag_joint_local_folds_its_turn_and_does_not_accumulate():
+    cmds = ["move", 10, "move", 10, "left", 90, "move", 5]
+    once = turtle.drag_joint_local(cmds, [0, 0], 0, [10, 3])
+    twice = turtle.drag_joint_local(once, [0, 0], 0, [10, 4])
+    assert len(turtle.split(once)) == len(turtle.split(twice))
+    assert turtle.split(once)[-1] == ("move", [5])
+    assert turtle.drag_joint_local(cmds, [0, 0], 0, [10, 0]) is not None

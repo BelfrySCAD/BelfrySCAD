@@ -405,6 +405,71 @@ def drag_joint(commands: list, start, j: int, target) -> list | None:
     return join(out)
 
 
+def drag_joint_local(commands: list, start, j: int, target) -> list | None:
+    """`commands` with joint `j` moved to `target` and nothing else: only
+    the two drawing commands touching it change. Command j is refitted into
+    `target` as `drag_joint` does; command j+1 is refitted from there back
+    to its own end -- a turn and a move, the tangent arc from the new
+    heading, or the same jump -- and a turn after it restores the heading
+    the turtle had there, so every later command draws exactly as before.
+    That turn is folded into a numeric `left`/`right` already following,
+    so dragging again does not pile up turns.
+
+    Command j+1 and the turn are written to 0.001, finer than drawing's
+    rounding, since the rest of the path hangs off them. None when
+    `drag_joint` would refuse, or command j+1 cannot reach its end (an arc
+    to a point straight behind)."""
+    draws = joints(commands)
+    if draws is None or not 0 <= j < len(draws):
+        return None
+    if j == len(draws) - 1:
+        return drag_joint(commands, start, j, target)
+    rows = split(commands)
+    path, spans, _ = run(commands, start)
+    end = path[spans[draws[j + 1]][1]]
+    h_end = run(join(rows[:draws[j + 1] + 1]), start)[2]
+    head = drag_joint(join(rows[:draws[j] + 1]), start, j, target)
+    if head is None:
+        return None
+    out = split(head)
+    group = rows[draws[j] + 1:draws[j + 1]]
+    c, a = rows[draws[j + 1]]
+    if c == "move":
+        out += [r for r in group if r[0] not in _TURNS]
+    else:
+        out += group
+    p0, h0 = run(join(out), start)[0][-1], run(join(out), start)[2]
+    step = math.hypot(*h0)
+    t = [h0[0] / step, h0[1] / step]
+    d = [end[0] - p0[0], end[1] - p0[1]]
+    dist = math.hypot(*d)
+    if c == "jump":
+        out.append((c, a))
+    elif dist < 1e-9:
+        return None
+    elif c == "move":
+        turn = _fine(_signed_angle(t, d))
+        out += [("left", [turn])] if turn > 0 else [("right", [-turn])] if turn < 0 else []
+        out.append(("move", [_fine(dist / step)]))
+    else:
+        half = _signed_angle(t, d)
+        if abs(half) > 179.9:
+            return None
+        if abs(half) < 1e-4:
+            out.append(("move", [_fine(dist / step)]))
+        else:
+            radius = dist / (2 * math.sin(math.radians(abs(half))))
+            out.append(("arcleft" if half > 0 else "arcright", [_fine(radius), _fine(abs(2 * half))]))
+    back = _signed_angle(run(join(out), start)[2], h_end)
+    rest = rows[draws[j + 1] + 1:]
+    if rest and rest[0][0] in ("left", "right") and len(rest[0][1]) == 1 and _is_num(rest[0][1][0]):
+        back += rest[0][1][0] if rest[0][0] == "left" else -rest[0][1][0]
+        rest = rest[1:]
+    back = _fine(back)
+    out += [("left", [back])] if back > 0 else [("right", [-back])] if back < 0 else []
+    return join(out + rest)
+
+
 # -- Reshaping a section: split a command, or flatten a run of them (#837) ----
 
 def _fine(v, places=3):

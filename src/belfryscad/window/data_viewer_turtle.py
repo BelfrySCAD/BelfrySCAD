@@ -826,12 +826,17 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         self._begin_live_edit()
 
     def _on_joint_dragged(self, j: int, x: float, y: float):
-        """Shift snaps the joint to the smallest grid ticks shown. A point
-        no refit reaches leaves the path as it last was."""
-        if QGuiApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+        """Shift snaps the joint to the smallest grid ticks shown. Option
+        (Alt) moves only this joint: just the two commands touching it change,
+        and a turn after the second keeps the rest of the path where it was.
+        Read each frame, so it can be pressed mid-drag. A point no refit
+        reaches leaves the path as it last was."""
+        mods = QGuiApplication.queryKeyboardModifiers()
+        if mods & Qt.KeyboardModifier.ShiftModifier:
             step = self._vp.minor_step()
             x, y = round(x / step) * step, round(y / step) * step
-        new = turtle.drag_joint(self._joint_base, self._start, j, (x, y))
+        drag = turtle.drag_joint_local if mods & Qt.KeyboardModifier.AltModifier else turtle.drag_joint
+        new = drag(self._joint_base, self._start, j, (x, y))
         if new is not None:
             self._commands = new
             self._populate_table()
