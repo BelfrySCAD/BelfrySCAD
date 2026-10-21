@@ -355,6 +355,19 @@ class _TextEditCmd(QUndoCommand):
         self._set_cursor(self._cursor_after, changed)
 
 
+def _shifted_offset(before: str, after: str, offset: int) -> int:
+    """Where `offset` in `before` is in `after`, for an edit that changed
+    one run of text: moved by the change's length if the run ends at or
+    before it, otherwise left alone."""
+    n = min(len(before), len(after))
+    tail = 0
+    while tail < n and before[-1 - tail] == after[-1 - tail]:
+        tail += 1
+    if len(before) - tail <= offset:
+        return offset + len(after) - len(before)
+    return offset
+
+
 class _GizmoCmd(QUndoCommand):
     def __init__(self, tab, editor, before, after, render_fn, new_node_start, restore_fn,
                  merge_id, label, viewport):
@@ -3419,6 +3432,7 @@ class MainWindow(QMainWindow):
 
         self._rendered_tab = file_tab
         self.id_to_node = id_to_node
+        self._gizmo_followup = None
         # Stored only past the render_id guard above, so a superseded render
         # can never leave its geometry behind for Export to write -- the
         # handle has to stay in step with self._bodies, which is what the
@@ -6338,6 +6352,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     _VALUE_NUDGE_RENDER_DELAY_MS = 400
+    # (selected id, text after the last gizmo edit, the node's offset in
+    # it) until that edit's render lands; see `_gizmo_target`.
+    _gizmo_followup = None
 
     def _on_value_nudge_status(self, text: str):
         """Show, or clear, the armed-value message. Arming changes what the
@@ -6380,6 +6397,14 @@ class MainWindow(QMainWindow):
         orig_id = self._viewport._renderer.selected_id
         if orig_id is None:
             return None
+        followup = self._gizmo_followup
+        if (followup is not None and followup[0] == orig_id
+                and followup[1] == self._rendered_tab.editor.toPlainText()):
+            # A drag released before the last one's render landed (#838):
+            # the id map still describes the text before that edit, and
+            # the render under way has already moved the parse path, so
+            # the node is found where that edit left it instead.
+            return followup[1], followup[2]
         span = self._editable_span_for_id(orig_id)
         if span is None:
             return None
@@ -6454,6 +6479,8 @@ class MainWindow(QMainWindow):
         new_source, new_node_start = transform_edit(
             source, start, name, keyword, fill, amounts, mode,
             self._gizmo_pivot() if pivot else None)
+        self._gizmo_followup = (self._viewport._renderer.selected_id, new_source,
+                                _shifted_offset(source, new_source, start))
 
         self._stack_for(self._rendered_tab).push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
