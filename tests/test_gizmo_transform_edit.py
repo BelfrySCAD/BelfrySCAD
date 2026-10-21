@@ -371,3 +371,28 @@ def test_the_committed_edit_lands_where_the_preview_showed(tmp_path):
         Evaluator(echo_fn=lines.append).evaluate(str(path))
         (lo, hi), = [eval(l.split("ECHO: ", 1)[1]) for l in lines if "ECHO" in l]
         assert [round((a + b) / 2, 3) for a, b in zip(lo, hi)] == list(centre), out
+
+
+@pytest.mark.parametrize("name, amounts, pivot", [
+    ("translate", [0, 7, 0], None),
+    ("rotate", [0, 0, 30], [32.5, 2.5, 2.5]),
+])
+def test_a_second_drag_before_the_render_finds_the_node(name, amounts, pivot):
+    """A drag released while the last one is still rendering edits the node
+    where that edit left it (#838) -- the id map is the older text's."""
+    from belfryscad.window.main_window import _shifted_offset
+    src = "cube(5);\ntranslate([20, 0, 0]) cube(5);\n"
+    start = src.index("translate")
+    once, _ = transform_edit(src, start, "translate", "v", "0", [10, 0, 0], "add")
+    twice, _ = transform_edit(once, _shifted_offset(src, once, start), name, "v", "0",
+                              amounts, "add", pivot)
+    assert twice.count("cube(5)") == 2 and twice.startswith("cube(5);\n")
+    assert ("translate([30, 7, 0]) cube(5)" in twice if name == "translate"
+            else "rotate([0, 0, 30]) translate([-32.5, -2.5, -2.5]) translate([30, 0, 0])" in twice)
+
+
+def test_shifted_offset():
+    from belfryscad.window.main_window import _shifted_offset
+    assert _shifted_offset("ab cube", "ab t() cube", 3) == 7    # inserted before
+    assert _shifted_offset("t(1) cube", "t(12) cube", 0) == 0   # changed at it
+    assert _shifted_offset("cube; x=1;", "cube; x=12;", 0) == 0  # changed after
