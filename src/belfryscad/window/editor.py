@@ -1446,6 +1446,7 @@ class CodeEditor(QPlainTextEdit):
         self._line_number_area = LineNumberArea(self)
         self._highlighter = OpenSCADHighlighter(self.document())
         on_appearance_change(self, self._retheme)
+        self._keep_selection_visible()
 
         self.setUndoRedoEnabled(False)
 
@@ -3222,6 +3223,19 @@ class CodeEditor(QPlainTextEdit):
         self._refresh_extra_selections()
         self.scroll_to_line(line)
 
+    def _keep_selection_visible(self):
+        """The selection keeps its colour while another window has the
+        focus -- a right-click menu, the Find bar, a dialog. Qt switches to
+        the palette's inactive colour, which on Windows is nearly the
+        background, so the selection seemed to vanish as the menu opened
+        (#838). Only these two roles are set; the rest still follow the
+        theme, and a theme switch calls this again."""
+        pal = self.palette()
+        for role in (QPalette.ColorRole.Highlight, QPalette.ColorRole.HighlightedText):
+            pal.setColor(QPalette.ColorGroup.Inactive, role,
+                         pal.color(QPalette.ColorGroup.Active, role))
+        self.setPalette(pal)
+
     def _retheme(self):
         """Follow a light/dark switch.
 
@@ -3231,6 +3245,7 @@ class CodeEditor(QPlainTextEdit):
         rewritten in place -- rather than re-running set_execution_line(),
         which would also scroll the view out from under the user.
         """
+        self._keep_selection_visible()
         for sel in self._exec_selection:
             sel.format.setBackground(QColor(execution_line_color()))
         self._update_current_line()     # re-derives its band from the new theme
