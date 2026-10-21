@@ -803,3 +803,27 @@ def test_the_projection_fit_never_clips(az, el, ortho, bb):
     # And it is a FIT, not just a safe distance: the binding dimension
     # should actually reach the margin rather than stopping short.
     assert fill == pytest.approx(1.0 - 2 * Camera.FIT_MARGIN, abs=1e-3)
+
+
+def test_a_released_drag_is_held_until_the_next_render():
+    """#817: on release the part went back to where it started until the
+    commit's render landed -- seconds, on a slow model. The drag is now held
+    on the selection, and the next load_geometry drops it."""
+    import types
+    from belfryscad.engine.renderer import SceneRenderer
+    r = SceneRenderer()
+    v = np.array([[0, 0, 0], [10, 10, 10]], dtype=np.float32)
+    r._buffers = [types.SimpleNamespace(original_ids={7}, cpu_v0=v, cpu_v1=v, cpu_v2=v)]
+    r.selected_id = 7
+    r.drag_offset = np.array([3, 0, 0], dtype=np.float32)
+    r.hold_drag()
+    r.drag_offset = np.zeros(3, dtype=np.float32)
+    r.drag_rotation_axis, r.drag_rotation_angle = 2, 90.0
+    r.hold_drag()                  # a second drag before the first render lands
+    centre = r.held_model @ np.array([5, 5, 5, 1], dtype=np.float32)
+    assert np.allclose(centre[:3], [8, 5, 5]), "turned about where the part now is"
+    corner = r.held_model @ np.array([0, 0, 0, 1], dtype=np.float32)
+    assert np.allclose(corner[:3], [13, 0, 0], atol=1e-5)
+    r._buffers = []                # fakes; nothing to release
+    r.load_geometry([])
+    assert r.held_model is None

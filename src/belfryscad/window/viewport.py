@@ -1853,6 +1853,7 @@ class Viewport(QOpenGLWidget):
             dy = round(float(offset[1]), 4)
             dz = round(float(offset[2]), 4)
             if abs(dx) + abs(dy) + abs(dz) > 1e-4:
+                self._hold_drag(lambda r: setattr(r, "drag_offset", offset))
                 self.translate_committed.emit(dx, dy, dz)
         elif self._active_tool in EXTRUDE_GIZMOS:
             dz = round(float(self._renderer.drag_offset[2]), 4)
@@ -1871,6 +1872,8 @@ class Viewport(QOpenGLWidget):
             self._gizmo_drag_axis = -1
             self.update()
             if angle != 0:
+                self._hold_drag(lambda r: (setattr(r, "drag_rotation_axis", axis),
+                                           setattr(r, "drag_rotation_angle", angle)))
                 self.rotate_committed.emit(axis, float(angle))
         else:
             factor  = self._renderer.drag_scale_factor
@@ -1884,7 +1887,22 @@ class Viewport(QOpenGLWidget):
             # Half the finest step: 0.05 silently threw away every Cmd-drag,
             # which quantizes to 0.01.
             if abs(factor - 1.0) > min(_SCALE_DRAG_STEPS.values()) / 2:
+                self._hold_drag(lambda r: (setattr(r, "drag_scale_axis", axis),
+                                           setattr(r, "drag_scale_factor", factor),
+                                           setattr(r, "drag_scale_uniform", uniform)))
                 self.scale_committed.emit(axis, factor, uniform)
+
+    def _hold_drag(self, restore):
+        """Hold the released drag's preview until its render lands (#817).
+        The drag state is already reset by now, so `restore` puts it back
+        for `Renderer.hold_drag` to read, and it is reset again after."""
+        r = self._renderer
+        restore(r)
+        r.hold_drag()
+        r.drag_offset = np.zeros(3, dtype=np.float32)
+        r.drag_rotation_angle, r.drag_rotation_axis = 0.0, -1
+        r.drag_scale_factor, r.drag_scale_axis, r.drag_scale_uniform = 1.0, -1, False
+        self.update()
 
     def _axis_ring_hit(self, px: float, py: float) -> float | None:
         """

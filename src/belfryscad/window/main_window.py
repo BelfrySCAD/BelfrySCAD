@@ -6446,6 +6446,8 @@ class MainWindow(QMainWindow):
         """
         target = self._gizmo_target()
         if target is None:
+            # No edit, so no render to drop the held drag preview.
+            self._viewport._renderer.held_model = None
             return
         source, start = target
 
