@@ -1184,6 +1184,7 @@ class MainWindow(QMainWindow):
         # minimum is what stops the window being made small; 320x200 lets it
         # go down to the smallest size a rendered image is ever wanted at.
         self._viewport.setMinimumSize(320, 200)
+        self._viewport.typing_target = self._current_editor   # #841
         self._viewport.selection_changed.connect(self._on_selection_changed)
         self._viewport.selection_level_step.connect(self._step_selection_level)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
