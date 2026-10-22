@@ -321,6 +321,11 @@ def _key_nudge_delta(camera, lock_axis: int, key, magnitude: float = 1.0) -> np.
     }.get(key)
 
 
+#: Keys that move the editor's caret, forwarded by `Viewport._forward_typing`.
+_CARET_KEYS = frozenset({Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down,
+                         Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown})
+
+
 class _QtGLLoader:
     """moderngl's loader protocol, answered by Qt's own current context.
 
@@ -1355,12 +1360,19 @@ class Viewport(QOpenGLWidget):
         nothing until the editor was clicked, which also moved its caret.
         Only text with no Ctrl/Cmd -- every key the view uses itself, and
         every shortcut, is either not text or carries one. The editor's own
-        caret and selection are left where they were."""
+        caret and selection are left where they were.
+
+        The caret keys go too, so an arrow key is a way back to the editor
+        -- they reach here only when there is no selection to nudge. Unlike
+        text, they go even to a read-only editor: getting back to it is
+        the point."""
         editor = self.typing_target() if self.typing_target else None
         text = event.text()
-        if (editor is None or editor.isReadOnly() or not text or not text.isprintable()
-                or event.modifiers() & (Qt.KeyboardModifier.ControlModifier
-                                        | Qt.KeyboardModifier.MetaModifier)):
+        if (editor is None or event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                                   | Qt.KeyboardModifier.MetaModifier)):
+            return False
+        if event.key() not in _CARET_KEYS and (editor.isReadOnly() or not text
+                                               or not text.isprintable()):
             return False
         editor.setFocus(Qt.FocusReason.OtherFocusReason)
         QApplication.sendEvent(editor, QKeyEvent(event.type(), event.key(), event.modifiers(),
