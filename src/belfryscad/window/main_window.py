@@ -1221,6 +1221,8 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setDockNestingEnabled(True)
+        # Pane separators are 1 px in some styles (macOS, some Linux themes), too thin to find (#868).
+        self.setStyleSheet("QMainWindow::separator { width: 6px; height: 6px; }")
         self.setAnimated(False)  # Qt bug: dock drag-to-tab animation crashes via null QVariantAnimation
 
         # --- Editor dock (left) — added first so left area owns the splitter root ---
