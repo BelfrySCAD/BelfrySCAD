@@ -3107,6 +3107,10 @@ class MainWindow(QMainWindow):
             return
         hidden = dock.isHidden()
         dock.setWindowFlags(self._PANE_WINDOW_FLAGS)
+        # Qt counts only a tool-window dock as part of this window, so the
+        # window's shortcuts (Ctrl+F, F2...) stopped working in a pane made
+        # an ordinary window. Adding them to the pane makes them its own (#874).
+        dock.addActions(self.findChildren(QAction, options=Qt.FindChildOption.FindDirectChildrenOnly))
         if not hidden:
             dock.show()   # setWindowFlags hides a window
 
