@@ -92,7 +92,7 @@
   <releases>
     <release version="1.85.2" date="2026-10-22">
       <description>
-        <p>Wider separators between docked panes, so they are easy to find and drag.</p>
+        <p>Wider separators between docked panes, so they are easy to find and drag, and no more occasional crash on quit on Windows.</p>
       </description>
     </release>
     <release version="1.85.1" date="2026-10-21">
