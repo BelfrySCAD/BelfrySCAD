@@ -21,14 +21,18 @@ from PySide6.QtCore import Qt, QObject, Signal
 # which macOS renders as Command, but the tooltip said Control, and Restart
 # claimed Command when the binding asks for Meta. Qt names the key, so
 # neither the tooltip nor the platform can be got wrong by hand.
+#
+# Continue is F12, not VS Code's F5: F5 is Preview, as in OpenSCAD (#884).
+# F12 sits beside the F10/F11 step keys; F8, the browsers' Resume, is
+# OpenSCAD's 3D Print (Send to Slicer here).
 DEBUG_SHORTCUTS = {
-    "continue": Qt.Key.Key_F5,
+    "continue": Qt.Key.Key_F12,
     "step_over": Qt.Key.Key_F10,
     "step_into": Qt.Key.Key_F11,
     "step_to_child": Qt.Modifier.CTRL | Qt.Key.Key_F11,
     "step_out": Qt.Modifier.SHIFT | Qt.Key.Key_F11,
-    "restart": Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F5,
-    "stop": Qt.Modifier.SHIFT | Qt.Key.Key_F5,
+    "restart": Qt.Modifier.SHIFT | Qt.Modifier.META | Qt.Key.Key_F12,
+    "stop": Qt.Modifier.SHIFT | Qt.Key.Key_F12,
 }
 
 

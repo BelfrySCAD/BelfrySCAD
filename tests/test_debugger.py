@@ -1178,4 +1178,4 @@ def test_debug_shortcut_labels_match_their_bindings():
     ctrl = _key_label("step_to_child")
     meta = _key_label("restart")
     assert ctrl != meta
-    assert ctrl.endswith("F11") and meta.endswith("F5")
+    assert ctrl.endswith("F11") and meta.endswith("F12")

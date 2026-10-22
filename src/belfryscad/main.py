@@ -28,8 +28,13 @@ def _parse_args(argv):
                               "surface()/*_extrude(file=...) target, that doesn't exist yet, before "
                               "evaluation. Only applies together with -o")
     parser.add_argument("--render", action="store_true",
-                         help="Accepted for OpenSCAD CLI compatibility -- BelfrySCAD has no separate "
-                              "preview mode, so this has no effect (headless export always fully renders)")
+                         help="For -o x.png: render rather than preview, as OpenSCAD's --render -- $preview "
+                              "is false and # and %% objects are drawn as an export writes them. Mesh "
+                              "exports are always a render")
+    parser.add_argument("--preview", action="store_true",
+                         help="For -o x.png, the default: $preview is true and # and %% objects are shown, "
+                              "as OpenSCAD's --preview. --preview=throwntogether also shows faces' backsides "
+                              "(open surfaces, inverted normals), like --view backfaces")
     parser.add_argument("--animate", type=int, metavar="N",
                          help="Export N animated frames ($t = i/N) instead of a single render. "
                               "Only applies together with -o; frames are named {stem}{00000..N-1}{ext}")
@@ -124,7 +129,15 @@ def _parse_args(argv):
     # OS-injected arguments unrelated to this app (e.g. macOS LaunchServices'
     # own -psn_... process serial number) -- match the pre-argparse loop's
     # own tolerance of anything it didn't recognize rather than erroring out.
+    #
+    # OpenSCAD's --preview/--render take a value only as `--preview=VALUE`;
+    # a separate word after them is the next argument, often the input file.
+    # So they are switches here, and the `=VALUE` is read off before parsing.
+    argv = list(argv)
+    throwntogether = "--preview=throwntogether" in argv
+    argv = [a.split("=", 1)[0] if a.startswith(("--preview=", "--render=")) else a for a in argv]
     ns, _unknown = parser.parse_known_args(argv)
+    ns.throwntogether = throwntogether
     if ns.help:
         parser.print_help()
         raise SystemExit(0)
@@ -716,6 +729,7 @@ def main():
             png_common = dict(
                 common, imgsize=args.imgsize, camera=args.camera, autocenter=args.autocenter,
                 viewall=args.viewall, projection=args.projection, view=args.view, colorscheme=args.colorscheme,
+                preview=not args.render, show_backfaces=args.throwntogether,
             )
             if args.animate is not None:
                 from belfryscad.headless_render import render_png_animation

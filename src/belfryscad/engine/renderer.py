@@ -478,6 +478,16 @@ void main() {
 """
 
 
+
+def as_rendered(bodies):
+    """The bodies as OpenSCAD's Render (F6, `--render`) shows them: a `#`
+    object is an ordinary solid, and the see-through copies of `#` boolean
+    operands and every `%` object are gone -- exactly what an export writes.
+    Preview, the default, draws them all (#884)."""
+    from dataclasses import replace
+    return [replace(b, role="normal") if b.role == "highlight" else b
+            for b in bodies if b.role not in ("highlight_ghost", "background")]
+
 class Camera:
     """Spherical-coordinate orbit camera."""
 

@@ -164,7 +164,11 @@ class _RenderOptions:
     regardless of frame count."""
 
     def __init__(self, imgsize, camera, autocenter, viewall, projection, view, colorscheme,
-                 show_backfaces=False):
+                 show_backfaces=False, preview=True):
+        # OpenSCAD's `-o x.png` is a Preview unless --render is given:
+        # $preview true and #/% objects drawn. Render shows what an export
+        # writes (#884). Mesh exports are always a render.
+        self.preview = bool(preview)
         # Paint face backsides with the magenta inverted-normal cue instead
         # of lighting them, which is what reveals an open surface or a
         # non-manifold mesh. See apply_view_options. (#524)
@@ -405,15 +409,17 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
                 projection: str | None = None, view: str | None = None, colorscheme: str | None = None,
                 defines: list[str] = (), quiet: bool = False, hard_warnings: bool = False,
                 backend: str | None = None, strict_commas: bool = False, summary: str | None = None,
-                summary_file: str | None = None) -> int:
+                summary_file: str | None = None, preview: bool = True, show_backfaces: bool = False) -> int:
     """Parse + evaluate source_path and render a PNG screenshot to
     output_path. Returns a process exit code (0 success, 1 failure)."""
     from belfryscad.headless import _evaluate, _prepare_source, _cleanup, _validate_backend, _emit_summary
+    from belfryscad.engine.renderer import as_rendered
 
     if not _validate_backend(backend):
         return 1
     opts = _RenderOptions.parse(imgsize=imgsize, camera=camera, autocenter=autocenter, viewall=viewall,
-                                 projection=projection, view=view, colorscheme=colorscheme)
+                                 projection=projection, view=view, colorscheme=colorscheme,
+                                 show_backfaces=show_backfaces, preview=preview)
     if opts is None:
         return 1
 
@@ -421,13 +427,16 @@ def render_png(source_path: str, output_path: str, imgsize: str = "1024,768",
     if parse_path is None:
         return 1
     try:
-        result = _evaluate(parse_path, viewport_params_from_camera(opts.camera_spec),
+        result = _evaluate(parse_path, dict(viewport_params_from_camera(opts.camera_spec),
+                                            **{"$preview": opts.preview}),
                             quiet=quiet, hard_warnings=hard_warnings, strict_commas=strict_commas)
     finally:
         _cleanup(tmp_path)
     if result is None:
         return 1
     bodies, elapsed, _geometry = result
+    if not opts.preview:
+        bodies = as_rendered(bodies)
 
     setup = _make_offscreen_renderer(opts)
     if setup is None:
@@ -453,12 +462,13 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
                           projection: str | None = None, view: str | None = None, colorscheme: str | None = None,
                           defines: list[str] = (), animate_dir: str | None = None,
                           quiet: bool = False, hard_warnings: bool = False, backend: str | None = None,
-                          strict_commas: bool = False) -> int:
+                          strict_commas: bool = False, preview: bool = True, show_backfaces: bool = False) -> int:
     """PNG counterpart to belfryscad.headless.render_and_export_animation --
     same $t = i/steps cycle and {stem}{i:05d}.png frame naming. The camera
     is re-fit (or an explicit --camera re-applied) on every frame -- see
     _paint_frame's own doc comment for why."""
     from belfryscad.headless import _evaluate, _prepare_source, _cleanup, _validate_backend
+    from belfryscad.engine.renderer import as_rendered
 
     if not _validate_backend(backend):
         return 1
@@ -466,7 +476,8 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
         print(f"belfryscad: --animate {steps}: must be at least 1", file=sys.stderr)
         return 1
     opts = _RenderOptions.parse(imgsize=imgsize, camera=camera, autocenter=autocenter, viewall=viewall,
-                                 projection=projection, view=view, colorscheme=colorscheme)
+                                 projection=projection, view=view, colorscheme=colorscheme,
+                                 show_backfaces=show_backfaces, preview=preview)
     if opts is None:
         return 1
 
@@ -486,6 +497,7 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
             frame_path = dest_dir / f"{out.stem}{i:05d}.png"
             frame_params = dict(viewport_params_from_camera(opts.camera_spec))
             frame_params["$t"] = i / steps
+            frame_params["$preview"] = opts.preview
             result = _evaluate(parse_path, frame_params, quiet=quiet, hard_warnings=hard_warnings,
                                 strict_commas=strict_commas)
             if result is None:
@@ -493,6 +505,8 @@ def render_png_animation(source_path: str, output_path: str, steps: int, imgsize
                 ok = False
                 continue
             bodies, _elapsed, _geometry = result
+            if not opts.preview:
+                bodies = as_rendered(bodies)
 
             if setup is None:
                 setup = _make_offscreen_renderer(opts)

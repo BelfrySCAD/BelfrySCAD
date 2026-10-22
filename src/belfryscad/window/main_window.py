@@ -23,7 +23,7 @@ from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
-from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT
+from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT, as_rendered
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.scad_format import (comment_lines, extrude_edit, extrude_is_centered,
                                            find_extrude_call, transform_edit)
@@ -1040,6 +1040,13 @@ class MainWindow(QMainWindow):
         self._render_id: int = 0
         #: The render whose result should be framed -- see _render(reframe=).
         self._reframe_render_id: int = -1
+        #: Whether the render started last is a Preview (`_render(preview=)`),
+        #: and whether the geometry on screen came from one.
+        self._render_is_preview: bool = True
+        self._geometry = None
+        self._geometry_is_preview: bool = True
+        #: (render id, callable) to run once that render lands -- _render_then.
+        self._after_render = None
         self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
         # Window-level render results (shared by viewport, export, gizmo, selection)
         self.id_to_node: dict = {}
@@ -1569,10 +1576,16 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        self._act_preview = QAction("Preview", self)
+        self._set_toolbar_icon(self._act_preview, "preview")
+        self._act_preview.setToolTip("Preview (F5): shows # and % objects, $preview is true")
+        self._act_preview.triggered.connect(lambda: self._render())
+        tb.addAction(self._act_preview)
+
         self._act_render = QAction("Render", self)
         self._set_toolbar_icon(self._act_render, "render")
-        self._act_render.setToolTip("Render (F6)")
-        self._act_render.triggered.connect(self._render)
+        self._act_render.setToolTip("Render (F6): the model as exported, $preview is false")
+        self._act_render.triggered.connect(lambda: self._render(preview=False))
         tb.addAction(self._act_render)
 
         self._act_debug_tb = QAction("Debug", self)
@@ -1731,15 +1744,19 @@ class MainWindow(QMainWindow):
         # Design
         design_menu = mb.addMenu("&Design")
         self._act_auto_reload = self._add_checkable(
-            design_menu, "&Automatic Reload and Render",
+            design_menu, "&Automatic Reload and Preview",
             app_settings().value(
                 "autoReload", False, type=bool),
             self._set_auto_reload)
         design_menu.addSeparator()
-        # OpenSCAD's Reload and Preview, and its key.
-        self._add_action(design_menu, "&Reload and Render", self._reload_and_render, QKeySequence("F4"))
-        self._act_render_menu = self._add_action(design_menu, "R&ender", self._render, QKeySequence("F6"))
-        self._add_action(design_menu, "Render with &Profiling", lambda: self._render(profile=True))
+        # OpenSCAD's Reload and Preview, Preview and Render, and their keys.
+        # Preview is the norm -- every automatic render is one -- and Render
+        # is asked for, or done by Export, which needs $preview false (#884).
+        self._add_action(design_menu, "&Reload and Preview", self._reload_and_preview, QKeySequence("F4"))
+        self._add_action(design_menu, "&Preview", lambda: self._render(), QKeySequence("F5"))
+        self._act_render_menu = self._add_action(design_menu, "R&ender", lambda: self._render(preview=False),
+                                                 QKeySequence("F6"))
+        self._add_action(design_menu, "Render with &Profiling", lambda: self._render(profile=True, preview=False))
         self._add_action(design_menu, "S&how Profile Report…", self._show_profile_report)
         design_menu.addSeparator()
         # OpenSCAD's Design > 3D Print, and its key. A slicer is the one
@@ -2623,7 +2640,7 @@ class MainWindow(QMainWindow):
         s = app_settings()
         s.setValue("autoReload", bool(on))
         self._refresh_watched_files()
-        self.log("Automatic Reload and Render is "
+        self.log("Automatic Reload and Preview is "
                  + ("on: changes made outside BelfrySCAD to open files, or to "
                     "the files they use or include, will be loaded and "
                     "rendered." if on else "off."))
@@ -2858,10 +2875,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{tab.display_name()} is unchanged on disk.", 3000)
         return True
 
-    def _reload_and_render(self):
-        """Design > Reload and Render (F4, as OpenSCAD's Reload and Preview):
+    def _reload_and_preview(self):
+        """Design > Reload and Preview (F4, as OpenSCAD's):
         reload the tab if its file changed on disk since it was last read or
-        saved, then render -- even when nothing reloaded, since what changed
+        saved, then preview -- even when nothing reloaded, since what changed
         may be a file it includes (#770). As in OpenSCAD, unsaved edits are
         asked about only when the disk really moved on; otherwise they are
         what renders. (OpenSCAD's F4 then does nothing at all; rendering
@@ -3160,9 +3177,10 @@ class MainWindow(QMainWindow):
             return
         self._export(quick_ext=last)
 
-    def _export(self, quick_ext: str | None = None):
-        if not self._bodies:
-            self._render()
+    def _export(self, quick_ext: str | None = None, rendered: bool = False):
+        if not rendered and self._needs_render():
+            self._render_then(lambda: self._export(quick_ext, rendered=True))
+            return
         bodies = self._bodies
         if not bodies:
             QMessageBox.warning(self, "Export", "No geometry to export. Render first.")
@@ -3272,14 +3290,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Send to Slicer will use {chosen.name}.", 3000)
         return chosen
 
-    def _send_to_slicer(self):
+    def _send_to_slicer(self, rendered: bool = False):
         """Design > Send to Slicer (F8): export the current render as 3MF --
         colour and separate parts, which Orca and Bambu Studio read as
         multi-material -- to a temporary file, and open it in the chosen
         slicer. Asks which slicer the first time."""
         from belfryscad import slicers
-        if not self._bodies:
-            self._render()
+        if not rendered and self._needs_render():
+            self._render_then(lambda: self._send_to_slicer(rendered=True))
+            return
         if not self._bodies or self._geometry is None:
             QMessageBox.warning(self, "Send to Slicer", "No geometry to send. Render first.")
             return
@@ -3385,8 +3404,29 @@ class MainWindow(QMainWindow):
             self._viewport.update()
         return changed
 
-    def _render(self, tab=None, profile: bool = False, reframe: bool = False):
-        """`reframe` fits the camera to the result when it lands.
+    def _needs_render(self) -> bool:
+        """Whether Export has to render first: nothing is rendered, or what
+        is on screen is a Preview, whose `$preview` branches and `#`/`%`
+        objects must never reach a file."""
+        return self._geometry is None or self._geometry_is_preview
+
+    def _render_then(self, then):
+        """Render (not Preview) the current tab, then call `then` once the
+        result lands. Rendering runs on a worker thread, so Export used to
+        start one and immediately find nothing to write."""
+        before = self._render_id
+        self._render(preview=False)
+        if self._render_id != before:      # an empty tab starts nothing
+            self._after_render = (self._render_id, then)
+        else:
+            then()
+
+    def _render(self, tab=None, profile: bool = False, reframe: bool = False, preview: bool = True):
+        """`preview` is OpenSCAD's F5 against its F6: `$preview` is true and
+        `#`/`%` objects are shown. Every automatic render is a Preview; a
+        Render is asked for, or made by Export (#884).
+
+        `reframe` fits the camera to the result when it lands.
 
         Only a tab newly loaded from a file asks for it. Re-fitting after
         every render fought the user: any edit-and-re-render threw away the
@@ -3411,6 +3451,7 @@ class MainWindow(QMainWindow):
 
         self._render_id += 1
         render_id = self._render_id
+        self._render_is_preview = preview
         # Recorded by id rather than as a plain flag: renders overlap (an
         # animation frame can start before the last one finished), and only
         # the render that asked for it should move the camera.
@@ -3435,13 +3476,14 @@ class MainWindow(QMainWindow):
         # violated for the whole render duration, not just error cases --
         # most visible during animation playback on a slow model, where the
         # viewport was empty for seconds at a time between frames.
-        self.log("Rendering…")
+        self.log("Previewing…" if preview else "Rendering…")
 
         cancel = _RenderCancel()
         self._render_cancel = cancel
         self._set_render_busy(True)
 
-        worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
+        params = dict(self._viewport_params(), **{"$preview": preview})
+        worker = _RenderWorker(source, tab.file_path, cancel, params, manifold_cache=self._csg_cache,
                                max_warnings=self._warning_limit(), profile=profile,
                                keep_minuend_color=load_preference("viewport/keepMinuendColor", bool),
                                near=tab.resolve_near)
@@ -3528,6 +3570,9 @@ class MainWindow(QMainWindow):
         # handle has to stay in step with self._bodies, which is what the
         # viewport is showing.
         self._geometry = geometry
+        self._geometry_is_preview = self._render_is_preview
+        if not self._render_is_preview:
+            bodies = as_rendered(bodies)
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result
         if profile_result is not None:
@@ -3590,6 +3635,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             import traceback
             self.log(f"Post-render error: {e}\n{traceback.format_exc()}")
+
+        then = self._after_render
+        if then is not None and then[0] == render_id:
+            self._after_render = None
+            QTimer.singleShot(0, then[1])   # after this slot: it may open a dialog
 
     def _on_render_thread_done(self, file_tab):
         """Called once the render worker thread has fully finished.
