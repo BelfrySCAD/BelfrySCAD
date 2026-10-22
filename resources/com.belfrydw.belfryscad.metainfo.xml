@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.85.2" date="2026-10-22">
+      <description>
+        <p>Wider separators between docked panes, so they are easy to find and drag, and no more occasional crash on quit on Windows.</p>
+      </description>
+    </release>
     <release version="1.85.1" date="2026-10-21">
       <description>
         <p>Keyboard shortcuts work again in an undocked editor on Windows and Linux, picking a background image's scale point works over path points, and # and % objects no longer leak into projection() and extrusions.</p>
