@@ -138,6 +138,29 @@ def examples_dir() -> Path:
     return _EXAMPLES_DIR
 
 
+_examples_copy: Path | None = None
+
+
+def example_resolve_path(path) -> str:
+    """Where an example opened as an untitled copy should resolve relative
+    paths from: the same file inside a session-scoped copy of the examples.
+
+    `import("data/knob.stl")` resolves against the folder the parsed temp
+    file sits in. An untitled tab's temp went to the system temp folder, so
+    every example reading a data file failed (#883). The installed examples
+    are no place for the temp either: read-only under Program Files, and
+    inside a signed macOS bundle. The whole tree is ~140K, copied once.
+    """
+    global _examples_copy
+    if _examples_copy is None or not _examples_copy.is_dir():
+        import atexit, shutil
+        root = Path(tempfile.mkdtemp(prefix="belfryscad-examples-"))
+        shutil.copytree(examples_dir(), root / "examples")
+        atexit.register(shutil.rmtree, root, True)
+        _examples_copy = root / "examples"
+    return str(_examples_copy / Path(path).resolve().relative_to(examples_dir().resolve()))
+
+
 def example_categories() -> list[tuple[str, list[Path]]]:
     """(category, example paths) from the bundled manifest, skipping any
     file or category that is missing. Empty if the manifest is."""
@@ -437,6 +460,10 @@ class FileTab(QWidget):
         # propose_new_script supplies one, and without this the tab it
         # created read as "Untitled" and its filename argument did nothing.
         self.suggested_name = None
+        # For an untitled tab, a path to resolve relative use/include/import
+        # against as if the buffer were that file (an example copy, #883).
+        # file_path wins once the tab is saved.
+        self.resolve_near = None
         # Final $export_name from the last successful render, sanitised.
         # None until this tab has rendered once; the Export dialog then
         # falls back to the file's own basename.
@@ -623,10 +650,11 @@ class _RenderWorker(QObject):
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
                  manifold_cache=None, profile: bool = False, max_warnings: int | None = None,
-                 keep_minuend_color: bool = False):
+                 keep_minuend_color: bool = False, near=None):
         super().__init__()
         self._source = source
         self._file_path = file_path
+        self._near = near or file_path
         self._cancel = cancel
         self._viewport_params = viewport_params or {}
         self._manifold_cache = manifold_cache
@@ -796,7 +824,7 @@ class _RenderWorker(QObject):
         # statements still resolve (same convention as
         # belfryscad.headless's CLI -D handling, _prepare_source).
         parse_path = self._tmp_path = scad_temp.write_temp_scad(
-            self._source, near=self._file_path)
+            self._source, near=self._near)
         # Every position the evaluator reports (errors, warnings, profile
         # call sites) names this temp file rather than the tab, since that
         # is genuinely what it parsed. Announce it so the UI can show the
@@ -3415,7 +3443,8 @@ class MainWindow(QMainWindow):
 
         worker = _RenderWorker(source, tab.file_path, cancel, self._viewport_params(), manifold_cache=self._csg_cache,
                                max_warnings=self._warning_limit(), profile=profile,
-                               keep_minuend_color=load_preference("viewport/keepMinuendColor", bool))
+                               keep_minuend_color=load_preference("viewport/keepMinuendColor", bool),
+                               near=tab.resolve_near)
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -3952,6 +3981,7 @@ class MainWindow(QMainWindow):
             return
         tab = self._new_document()
         tab.suggested_name = Path(path).name
+        tab.resolve_near = example_resolve_path(path)
         tab.editor.setPlainText(text)
         # setPlainText fires contentsChanged, so clear the flag after it:
         # a pristine copy is not a modified one, and marking it modified
@@ -5359,7 +5389,7 @@ class MainWindow(QMainWindow):
         # use/include still resolve. The debug session owns the temp's
         # lifetime -- it unlinks cleanup_path when it ends.
         parse_path = cleanup_path = scad_temp.write_temp_scad(
-            source, near=tab.file_path)
+            source, near=tab.file_path or tab.resolve_near)
         tab._last_parse_path = parse_path
 
         # checkDebug()/AST positions now always report *parse_path* as

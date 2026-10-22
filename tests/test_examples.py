@@ -48,3 +48,22 @@ def test_every_example_on_disk_is_listed():
 def test_categories_are_real_directories():
     for category in _manifest():
         assert (examples_dir() / category).is_dir(), f"no such category dir: {category}"
+
+
+def test_examples_find_their_data_files_when_opened_as_copies():
+    """An example opens as an untitled copy, so its render temp used to land
+    in the system temp folder, where `data/knob.stl` does not exist (#883)."""
+    from openscad_cpp_evaluator import Evaluator
+    from belfryscad import scad_temp
+    from belfryscad.window.main_window import example_categories, example_resolve_path
+
+    for _, paths in example_categories():
+        for path in paths:
+            messages = []
+            tmp = scad_temp.write_temp_scad(path.read_text(encoding="utf-8"),
+                                            near=example_resolve_path(path))
+            try:
+                Evaluator(echo_fn=messages.append).evaluate(tmp)
+            finally:
+                scad_temp.remove(tmp)
+            assert not [m for m in messages if "couldn't be opened" in m], (path, messages)
