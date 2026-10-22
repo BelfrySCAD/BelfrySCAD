@@ -4,7 +4,10 @@
 // and raises the surface to match, skirting it down to Z=0 to make a
 // closed solid. It also reads images, taking brightness as height.
 //
-// The path is relative to this file.
+// The path is relative to this file: data/ is a folder next to it,
+// shipped with the examples. If you Save As somewhere else, copy
+// data/heightmap.dat into a data/ folder beside your copy, or the
+// surface will not be found.
 
 surface(file="data/heightmap.dat");
 
