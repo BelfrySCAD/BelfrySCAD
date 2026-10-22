@@ -39,6 +39,10 @@ out = {}
 first = os.path.join(d, "first.3mf")
 mw.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (first, "3MF Files (*.3mf)"))
 w._quick_export()
+# Opening previewed it; Export renders first and runs once that lands (#884).
+deadline = time.time() + 60
+while not asked and time.time() < deadline:
+    app.processEvents(); time.sleep(0.05)
 out["first_asked"] = asked == [".3mf"]
 for ext, filt in ((".3mf", "3MF Files (*.3mf)"), (".stl", "STL Files (*.stl)")):
     path = os.path.join(d, "out" + ext)

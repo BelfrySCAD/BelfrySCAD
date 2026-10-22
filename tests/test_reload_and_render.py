@@ -1,4 +1,4 @@
-"""#770: Design > Reload and Render (F4) reloads the tab from disk and renders,
+"""#770: Design > Reload and Preview (F4) reloads the tab from disk and previews,
 even when only a file it includes changed.
 
 MainWindow is a widget, so this runs in a subprocess with scratch settings,
@@ -26,13 +26,13 @@ w.open_file_by_path(main, render=False)
 tab = w._current_tab()
 renders = []
 w._render = lambda *a, **k: renders.append(tab.editor.toPlainText())
-out["in_menu"] = any(a.text().replace("&", "") == "Reload and Render" and a.shortcut().toString() == "F4"
+out["in_menu"] = any(a.text().replace("&", "") == "Reload and Preview" and a.shortcut().toString() == "F4"
                      for m in w.menuBar().findChildren(QMenu)
                      for a in m.actions())
 open(main, "w").write("cube(2);\\n")
-w._reload_and_render()
+w._reload_and_preview()
 out["picked_up_disk"] = renders[-1:] == ["cube(2);\\n"]
-w._reload_and_render()          # unchanged on disk: still renders
+w._reload_and_preview()          # unchanged on disk: still renders
 out["renders_when_unchanged"] = len(renders) == 2
 # Unsaved edits, disk unchanged: nothing to ask about, the edits render.
 asked = []
@@ -41,17 +41,17 @@ real_question = mw.QMessageBox.question
 mw.QMessageBox.question = lambda *a, **k: asked.append(1) or mw.QMessageBox.StandardButton.Cancel
 w.skip_unsaved_prompts = False
 tab.editor.setPlainText("cube(3);\\n"); tab.is_modified = True
-w._reload_and_render()
+w._reload_and_preview()
 out["edits_render_unasked"] = renders[-1:] == ["cube(3);\\n"] and not asked
 # Disk changes under unsaved edits: Automatic Reload only warns, and F4
 # must still see that change -- and ask, since it would discard the edits.
 open(main, "w").write("cube(4);\\n")
 w._reload_one(main)
-w._reload_and_render()
+w._reload_and_preview()
 out["asks_when_disk_moved"] = len(asked) == 1 and tab.editor.toPlainText() == "cube(3);\\n"
 mw.QMessageBox.question = real_question
 w.skip_unsaved_prompts = True
-w._reload_and_render()
+w._reload_and_preview()
 out["then_reloads"] = renders[-1:] == ["cube(4);\\n"]
 print(json.dumps(out)); sys.stdout.flush()
 try:

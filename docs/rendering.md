@@ -97,12 +97,17 @@ In orthographic mode, stereo still works: the same toe-in view matrices are used
 
 ## Modifier characters
 
-| | model | viewport | export |
-|---|---|---|---|
-| `#` highlight | unchanged | drawn see-through in red, never solid | included — `#` does not change the model |
-| `%` background | excluded | drawn as a translucent grey ghost | **excluded** |
-| `!` show only | becomes the whole model | its subtree only | its subtree only |
-| `*` disable | removed | nothing | nothing |
+| | model | Preview (F5) | Render (F6) | export |
+|---|---|---|---|---|
+| `#` highlight | unchanged | drawn see-through in red, never solid | an ordinary solid; an operand's copy is gone | included — `#` does not change the model |
+| `%` background | excluded | drawn as a translucent grey ghost | not drawn | **excluded** |
+| `!` show only | becomes the whole model | its subtree only | its subtree only | its subtree only |
+| `*` disable | removed | nothing | nothing | nothing |
+
+Preview and Render are OpenSCAD's F5 and F6 (#884): Preview, the default for
+every automatic render, sets `$preview` true; Render sets it false and shows
+what an export writes (`renderer.as_rendered`, keyed on each body's
+`role`). Checked against OpenSCAD 2026.02's `--preview` and `--render`.
 
 `%` is scenery: something to line other work up against. It is kept out of
 the booleans upstream, and `exporters.exportable()` keeps it out of files
@@ -120,17 +125,6 @@ never opaquely: `#` marks something to look at, not something to look at
 the outside of, and a solid draw underneath leaves nothing to see through
 to. The alpha is measured — below about 0.4 the wash lands within a shade
 of the untouched surface colour and reads as no highlight at all.
-
-### Known divergence
-
-A `#` on an operand of a boolean is exported twice over. The evaluator
-returns the boolean's result *and* a copy of the highlighted operand for
-the viewport to ghost, and nothing in a `ColoredBody` distinguishes that
-display copy from a highlighted object at top level, which is real
-geometry and must be exported. Measured against the reference:
-`difference() { cylinder(h=10,d=10); #cube(10); }` writes 64 triangles
-where it should write 52. Fixing it means marking the copy in the
-evaluator, not guessing in the exporter.
 
 ## `$export_name`
 

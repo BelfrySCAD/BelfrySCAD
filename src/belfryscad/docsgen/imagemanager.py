@@ -45,8 +45,8 @@ _DEFAULT_FRAMES = 36
 #: Warnings that must not fail a docs image, because OpenSCAD does not emit
 #: them for the render docsgen actually asks for.
 #:
-#: docsgen renders examples in PREVIEW mode. This evaluator has no preview
-#: mode -- it always performs full CSG -- and OpenSCAD emits these exact
+#: docsgen renders examples in PREVIEW mode. Ours, Preview included,
+#: always performs full CSG -- and OpenSCAD emits these exact
 #: warnings in its own `--render` mode too, verified word-for-word against
 #: 2026.02.01. So they are a preview-vs-render artifact, not a defect in the
 #: example being documented, and failing on them would reject examples that
@@ -369,7 +369,13 @@ class ImageManager:
             if opts is None:
                 req.completed("FAIL", last)
                 return
-            rgba = runner.render_rgba(last.bodies, opts)
+            bodies = last.bodies
+            if not req.preview:
+                # A `Render` example is the reference's --render: # and %
+                # objects drawn as an export writes them (#884).
+                from belfryscad.engine.renderer import as_rendered
+                bodies = as_rendered(bodies)
+            rgba = runner.render_rgba(bodies, opts)
             if rgba is None:
                 last.errors.append("ERROR: offscreen rendering failed")
                 req.completed("FAIL", last)

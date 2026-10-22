@@ -94,7 +94,7 @@ mw.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (fake, ""))
 w._send_to_slicer()
 deadline = time.time() + 20
 while not os.path.exists(record) and time.time() < deadline:
-    time.sleep(0.05)
+    app.processEvents(); time.sleep(0.05)
 sent = json.load(open(record))
 out["argv_len"] = len(sent)
 out["name"] = os.path.basename(sent[0])
@@ -106,14 +106,16 @@ QInputDialog.getItem = staticmethod(lambda *a, **k: (_ for _ in ()).throw(Assert
 w._send_to_slicer()
 deadline = time.time() + 20
 while not os.path.exists(record) and time.time() < deadline:
-    time.sleep(0.05)
+    app.processEvents(); time.sleep(0.05)
 out["second_send"] = os.path.exists(record)
 # A 2D model is refused, and nothing launched.
 os.remove(record)
 w._geometry = None; w._bodies = []
 render("square(10);", "outline.scad")
 w._send_to_slicer()
-time.sleep(1)
+deadline = time.time() + 20   # it renders first: the Preview on screen cannot be sent (#884)
+while not warnings and time.time() < deadline:
+    app.processEvents(); time.sleep(0.05)
 out["2d_launched"] = os.path.exists(record)
 out["warnings"] = warnings
 print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)

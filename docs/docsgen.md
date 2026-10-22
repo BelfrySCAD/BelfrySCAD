@@ -414,16 +414,19 @@ example marked `Render`, which clears it. (Both flags take an optional
 argument, which is why the reference passes an empty string: a bare
 `--preview` swallows the filename and OpenSCAD prints its help instead.)
 
-BelfrySCAD has no preview mode of its own and the evaluator defaults
-`$preview` to false, so every example that branches on it took the wrong
-arm. BOSL2's `ruler()` is `if ($preview)` all the way down: all seven
+BelfrySCAD had no preview mode then, and the evaluator defaults `$preview`
+to false, so every example that branches on it took the wrong arm. BOSL2's `ruler()` is `if ($preview)` all the way down: all seven
 `ruler()` examples rendered as bare axes, and -- because they all produced
 the same empty scene -- as *byte-identical* PNGs, which is what finally gave
 it away. The runner now seeds `$preview` per request; no evaluator change
 was needed, since `viewport_params` already seeds arbitrary `$`-names.
 
-This affects only docs generation. An ordinary render, in the GUI or
-through `-o`, is a real render and leaves `$preview` false.
+The GUI and the CLI now have OpenSCAD's two modes as well (#884): Preview
+(F5, and `-o x.png` by default) sets `$preview` true and shows `#`/`%`
+objects; Render (F6, `--render`, every mesh export) leaves it false and draws
+them as an export writes them. An example marked `Render` gets that look too
+(`renderer.as_rendered`). Unlike the reference, a bare `--preview` does not
+swallow the next word: `--preview part.scad` works.
 
 **The error pane appears only when something is wrong.** A clean file
 should not carry an empty list around under its docs, so the whole pane is
@@ -806,8 +809,8 @@ dotted axes.
 
 ### Preview vs render: why some warnings are masked
 
-docsgen renders examples in OpenSCAD's **preview** mode. This evaluator has
-no preview mode — it always performs full CSG — and that difference, not any
+docsgen renders examples in OpenSCAD's **preview** mode. Ours, Preview
+included, always performs full CSG — and that difference, not any
 disagreement about geometry, was behind most of the examples that used to
 fail here.
 

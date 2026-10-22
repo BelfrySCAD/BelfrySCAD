@@ -201,8 +201,8 @@ class ScriptRunner:
                 # false only for an example marked `Render`. BOSL2's
                 # ruler() is `if ($preview)` all the way down, so getting
                 # this wrong renders nothing at all and says nothing about
-                # why. BelfrySCAD has no preview mode of its own; this is
-                # about matching what the published docs show.
+                # why. This is about matching what the published docs
+                # show, whatever the GUI's own mode.
                 seeded = dict(params or {})
                 seeded["$preview"] = bool(preview)
                 # generate=False stops after the resolve pass. The script

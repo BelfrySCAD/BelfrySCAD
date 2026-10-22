@@ -113,13 +113,15 @@ Keyboard shortcuts (window-scoped `QShortcut` objects on `MainWindow`, connected
 
 | Key | Action |
 |---|---|
-| F5 | Continue / Pause |
+| F12 | Continue / Pause |
 | F10 | Step Over |
 | F11 | Step Into |
 | ⌘F11 (Qt's CTRL) | Step to Child |
 | Shift+F11 | Step Out |
-| ⌃⇧F5 (Qt's SHIFT+META) | Restart |
-| Shift+F5 | Stop |
+| ⌃⇧F12 (Qt's SHIFT+META) | Restart |
+| Shift+F12 | Stop |
+
+Continue is F12 rather than VS Code's F5, which is Preview, as in OpenSCAD (#884); F8, the browsers' Resume, is Send to Slicer.
 
 ### Button behaviors
 
