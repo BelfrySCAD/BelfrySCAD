@@ -116,7 +116,7 @@ w._send_to_slicer()
 time.sleep(1)
 out["2d_launched"] = os.path.exists(record)
 out["warnings"] = warnings
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

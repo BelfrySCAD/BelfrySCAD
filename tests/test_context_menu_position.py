@@ -73,7 +73,7 @@ out["read_only"] = menu_at("//   Makes a widget", "//   Makes a widget")
 ed.setReadOnly(False)
 
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

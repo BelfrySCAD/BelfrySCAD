@@ -47,7 +47,7 @@ out["new_file"] = open(new_path).read()
 out["untitled_path"] = untitled.file_path == new_path
 out["none_modified"] = not any(w._tabs.widget(i).is_modified for i in range(w._tabs.count()))
 out["b_untouched"] = os.stat(paths["b"]).st_mtime_ns == b_mtime
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

@@ -36,7 +36,7 @@ def run(on, start, keys):
         return t[:c.selectionStart()] + "<" + t[c.selectionStart():c.selectionEnd()] + ">" + t[c.selectionEnd():]
     return t[:c.position()] + "|" + t[c.position():]
 cases = json.loads(sys.argv[1])
-print(json.dumps([run(*c[:3]) for c in cases])); sys.stdout.flush(); os._exit(0)
+print(json.dumps([run(*c[:3]) for c in cases])); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 CASES = [

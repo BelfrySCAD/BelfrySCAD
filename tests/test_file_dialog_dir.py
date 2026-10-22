@@ -48,7 +48,7 @@ for name, render in (("lib", False), ("work", True)):
     w.open_file_by_path(path, render=render)
     out[name] = file_dialog_dir() == d
 print(json.dumps(out), flush=True)
-os._exit(0)                  # skip teardown of threads Qt left behind
+from belfryscad.main import hard_exit; hard_exit(0)                  # skip teardown of threads Qt left behind
 '''
 
 

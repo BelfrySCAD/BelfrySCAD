@@ -62,7 +62,7 @@ for n, (name, save) in enumerate([("in_place", in_place), ("by_rename", by_renam
     spin(3.0)
     out[name] = len(renders)
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

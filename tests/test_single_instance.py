@@ -25,7 +25,7 @@ out = {}
 if backend == "dbus":
     from PySide6.QtDBus import QDBusConnection
     if not QDBusConnection.sessionBus().isConnected():
-        print(json.dumps({"no_bus": True})); sys.stdout.flush(); os._exit(0)
+        print(json.dumps({"no_bus": True})); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 out["handoff_with_nobody_listening"] = hand_off(["a.scad"], name=name, timeout_ms=300, backend=backend)
 server = InstanceServer(name=name, backend=backend)
 out["listening"] = server.is_listening()
@@ -53,7 +53,7 @@ if backend == "local":
     server2 = InstanceServer(name=name, backend=backend)
     out["relisten_after_stale"] = server2.is_listening()
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

@@ -67,7 +67,7 @@ ed = editor("    x=0;", pos=8)
 ed.keyPressEvent(BACKTAB)
 out["backtab"] = ed.toPlainText()
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

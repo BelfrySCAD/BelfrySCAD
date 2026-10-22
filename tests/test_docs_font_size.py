@@ -72,7 +72,7 @@ fresh.set_font_size(18)
 out["no_preview_ok"] = True
 
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
