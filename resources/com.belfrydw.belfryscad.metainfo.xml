@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.85.1" date="2026-10-21">
+      <description>
+        <p>Keyboard shortcuts work again in an undocked editor on Windows and Linux, picking a background image's scale point works over path points, and # and % objects no longer leak into projection() and extrusions.</p>
+      </description>
+    </release>
     <release version="1.85.0" date="2026-10-21">
       <description>
         <p>Move a single turtle path point without disturbing the rest, crash backups of unsaved edits, an argument hint that stays up while typing, and exports that remember their folder and format.</p>
