@@ -11,7 +11,8 @@ color("steelblue") translate([25, 0, 0]) cube([20, 20, 8]);
 color([0.2, 0.8, 0.4])      translate([0, 25, 0]) cube([20, 20, 8]);
 color([0.2, 0.8, 0.4, 0.35]) translate([25, 25, 0]) cube([20, 20, 8]);
 
-// A color applies to everything below it unless a child overrides it.
+// A color applies to everything below it, and overrides any color set
+// inside it: the outer color() wins, so both of these are gold.
 translate([0, 50, 0])
     color("gold") {
         cube([20, 20, 8]);

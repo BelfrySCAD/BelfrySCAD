@@ -1,7 +1,9 @@
 // import(): bring in a mesh made somewhere else.
 //
 // STL, OBJ, OFF, 3MF and more. The path is relative to THIS file, so an
-// example can ship its own data next to it.
+// example can ship its own data next to it: data/ is a folder beside
+// this file. If you Save As somewhere else, copy data/knob.stl into a
+// data/ folder beside your copy, or the import will not be found.
 //
 // An imported mesh is ordinary geometry: it can be transformed, and it
 // can take part in booleans -- provided it is a closed solid. A mesh
