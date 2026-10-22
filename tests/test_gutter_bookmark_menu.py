@@ -56,7 +56,7 @@ out["bp_after_right"] = sorted(ed.breakpoint_lines())
 press(Qt.MouseButton.LeftButton, 5, 7)
 out["bp_after_left"] = sorted(ed.breakpoint_lines())
 print(json.dumps(out), flush=True)
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 """
 
 

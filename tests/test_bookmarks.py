@@ -72,7 +72,7 @@ def row_has_fill(line):
     return any(img.pixel(x, y) == fill for x in range(img.width()))
 out["pill_on_mark"] = row_has_fill(ed.bookmark_lines()[0])
 out["pill_off_mark"] = row_has_fill(ed.bookmark_lines()[0] + 1)
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
@@ -123,7 +123,7 @@ out["same_line_edit_signals"] = list(seen)
 out["collected"] = sorted(next(iter(w._collect_breakpoints().values())))
 ed.setPlainText(ed.toPlainText())
 out["after_set_plain"] = sorted(ed.breakpoint_lines())
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

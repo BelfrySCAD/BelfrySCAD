@@ -94,7 +94,7 @@ e.set_selection(start, start + len("cube(1)"))
 out["selected"] = e._selection_extra[0].cursor.selectedText()
 out["errors"] = errors
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

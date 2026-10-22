@@ -65,7 +65,7 @@ try:
     w.close()
 except Exception:
     pass
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
@@ -104,7 +104,7 @@ try:
     w.close()
 except Exception:
     pass
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

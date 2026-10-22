@@ -32,7 +32,7 @@ out["ctrl"] = e.toPlainText()
 e.setReadOnly(True); vp.setFocus(); app.processEvents()
 QTest.keyClicks(vp, "y")
 out["readonly"] = [e.toPlainText(), vp.hasFocus()]
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

@@ -54,7 +54,7 @@ out["restored"] = [keys(w1, "File > Exportâ€¦"), keys(w1, "File > Quick Exportâ€
 w3 = mw.MainWindow(); w3.skip_unsaved_prompts = True
 out["new_window"] = keys(w3, "Edit > Comment")
 out["saved"] = json.loads(mw.app_settings().value("shortcuts/overrides"))
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
@@ -131,7 +131,7 @@ in_cell("Edit > Comment", Qt.Key.Key_Delete)
 out["cleared"] = keys("Edit > Comment")
 out["ended"] = [in_cell("Edit > Indent", Qt.Key.Key_Tab), in_cell("Edit > Undent", Qt.Key.Key_Backtab, S)]
 out["back"] = [keys("Edit > Indent"), keys("Edit > Undent"), keys("Edit > Comment"), tab("a;\nb;", True)]
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

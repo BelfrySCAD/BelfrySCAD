@@ -71,7 +71,7 @@ pane.refresh("// x", real)
 out["own_folder"] = built[-1]
 out["real"], out["target"] = real, target
 print(json.dumps(out), flush=True)
-os._exit(0)   # the pane's worker thread is still running; skip Qt's teardown
+from belfryscad.main import hard_exit; hard_exit(0)   # the pane's worker thread is still running; skip Qt's teardown
 """
 
 
