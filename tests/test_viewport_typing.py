@@ -28,10 +28,27 @@ out = {"typed": e.toPlainText(), "caret": e.textCursor().position(), "focus": e.
 vp.setFocus(); app.processEvents()
 QTest.keyClick(vp, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
 out["ctrl"] = e.toPlainText()
+# With nothing selected, an arrow key moves the editor's caret and takes the
+# focus there, as a way back to the editor.
+vp.setFocus(); app.processEvents()
+QTest.keyClick(vp, Qt.Key.Key_Right)
+out["arrow"] = [e.textCursor().position(), e.hasFocus()]
+# With a selection, the arrows nudge it instead, and the editor is left alone.
+nudges = []
+vp.translate_committed.connect(lambda *d: nudges.append(d))
+vp._renderer.selected_id = 1
+before = e.textCursor().position()
+vp.setFocus(); app.processEvents()
+QTest.keyClick(vp, Qt.Key.Key_Right)
+out["selected_arrow"] = [len(nudges), e.textCursor().position() == before, vp.hasFocus()]
+vp._renderer.selected_id = None
 # A read-only editor takes nothing, and keeps the focus where it was.
 e.setReadOnly(True); vp.setFocus(); app.processEvents()
 QTest.keyClicks(vp, "y")
 out["readonly"] = [e.toPlainText(), vp.hasFocus()]
+# ...except caret keys, which still take the focus back to it.
+QTest.keyClick(vp, Qt.Key.Key_Left)
+out["readonly_arrow"] = [e.toPlainText(), e.hasFocus()]
 print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
@@ -45,3 +62,6 @@ def test_typing_in_the_viewport_goes_to_the_editor():
     assert out["caret"] == 13 and out["focus"]
     assert out["ctrl"] == out["typed"]
     assert out["readonly"] == [out["typed"], True]
+    assert out["arrow"] == [14, True]
+    assert out["selected_arrow"] == [1, True, True]
+    assert out["readonly_arrow"] == [out["typed"], True]
