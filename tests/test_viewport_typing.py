@@ -33,6 +33,15 @@ out["ctrl"] = e.toPlainText()
 vp.setFocus(); app.processEvents()
 QTest.keyClick(vp, Qt.Key.Key_Right)
 out["arrow"] = [e.textCursor().position(), e.hasFocus()]
+# With a selection, the arrows nudge it instead, and the editor is left alone.
+nudges = []
+vp.translate_committed.connect(lambda *d: nudges.append(d))
+vp._renderer.selected_id = 1
+before = e.textCursor().position()
+vp.setFocus(); app.processEvents()
+QTest.keyClick(vp, Qt.Key.Key_Right)
+out["selected_arrow"] = [len(nudges), e.textCursor().position() == before, vp.hasFocus()]
+vp._renderer.selected_id = None
 # A read-only editor takes nothing, and keeps the focus where it was.
 e.setReadOnly(True); vp.setFocus(); app.processEvents()
 QTest.keyClicks(vp, "y")
@@ -54,4 +63,5 @@ def test_typing_in_the_viewport_goes_to_the_editor():
     assert out["ctrl"] == out["typed"]
     assert out["readonly"] == [out["typed"], True]
     assert out["arrow"] == [14, True]
+    assert out["selected_arrow"] == [1, True, True]
     assert out["readonly_arrow"] == [out["typed"], True]
