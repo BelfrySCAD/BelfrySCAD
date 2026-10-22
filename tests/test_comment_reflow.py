@@ -218,7 +218,7 @@ out["reformat_changed_text"] = ed5.toPlainText() != CODE
 out["rerenders"] = fired
 
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
@@ -367,7 +367,7 @@ out = {"interior": ed._reflow_target(sel(2, 4)), "whole": ed._reflow_target(sel(
        "with_code": ed._reflow_target(sel(1, 6)), "code": ed._reflow_target(sel(6, 6))}
 ed._reflow_comment(2, 4, width=50)
 out["lines"] = ed.toPlainText().splitlines()
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

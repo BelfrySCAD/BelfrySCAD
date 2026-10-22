@@ -32,7 +32,7 @@ sb.setValue(sb.maximum())
 for _ in range(10): app.processEvents(); time.sleep(0.01)
 g = ed.blockBoundingGeometry(ed.document().lastBlock()).translated(ed.contentOffset())
 print(json.dumps({"last_bottom": g.bottom(), "viewport": ed.viewport().height()}), flush=True)
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
@@ -52,7 +52,7 @@ plain = doc.findBlockByNumber(0).layout().lineAt(0).x()
 wrapped = doc.findBlockByNumber(2).layout()
 print(json.dumps({"plain": plain, "rows": wrapped.lineCount(),
                   "first": wrapped.lineAt(0).x(), "second": wrapped.lineAt(1).x()}), flush=True)
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

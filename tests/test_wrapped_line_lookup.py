@@ -102,7 +102,7 @@ out["wrapping_off"] = ed._wrapping()
 out["rows_without_wrap"] = sum(max(0, doc.findBlockByNumber(b).layout().lineCount() - 1)
                                for b in range(doc.blockCount()))
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

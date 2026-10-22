@@ -68,7 +68,7 @@ spin(2.0)
 out["unsaved_include"] = renders[:]
 out["path"] = path
 print(json.dumps(out)); sys.stdout.flush()
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

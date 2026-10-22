@@ -24,7 +24,7 @@ out = [p.color(I, H).name() == p.color(A, H).name(), p.color(I, H).name() != "#f
 pal.setColor(A, H, QColor("#123456")); app.setPalette(pal); app.processEvents()
 p = e.palette()
 out += [p.color(A, H).name() == "#123456", p.color(I, H).name() == "#123456"]
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

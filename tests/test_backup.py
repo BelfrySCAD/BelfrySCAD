@@ -31,7 +31,7 @@ out["rewritten"] = [open(os.path.join(backups_dir(), n)).read() for n in os.list
 w._close_tab(w._tabs.indexOf(tab))
 out["after_close"] = os.listdir(backups_dir())
 print(json.dumps(out), flush=True)
-os._exit(0)
+from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

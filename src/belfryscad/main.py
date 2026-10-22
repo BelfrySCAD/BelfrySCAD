@@ -314,6 +314,22 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # recently active (see MainWindow.closeEvent). MainWindow.closeEvent
     # has already saved settings (with an explicit sync()) and released
     # geometry, so there's nothing left to clean up.
+    hard_exit(code)
+
+
+def hard_exit(code=0):
+    """Exit now, running no cleanup at all. On Windows, os._exit is
+    ExitProcess, which still runs every DLL's detach code after killing the
+    other threads, and some 15% of the time a Qt/GL/evaluator DLL crashes
+    there (0xC0000005) -- a crash on quit, and the flaky Windows CI tests.
+    TerminateProcess skips it: 0 crashes in 40 runs where os._exit had 6."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.TerminateProcess(k32.GetCurrentProcess(), code & 0xFFFFFFFF)
     os._exit(code)
 
 

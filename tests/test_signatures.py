@@ -146,7 +146,7 @@ for auto in (True, False):
     e.setPlainText(""); QTest.keyClicks(e, "cube(1)")
     row.append(shown())
     out.append(row)
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

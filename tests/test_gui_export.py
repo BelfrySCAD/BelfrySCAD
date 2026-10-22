@@ -55,7 +55,7 @@ out["quick_filter"] = seen[0][4] if seen else None
 out["quick_written"] = os.path.exists(quick + ".stl")
 out["quick_asked"] = asked
 out["errors"] = errors
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 

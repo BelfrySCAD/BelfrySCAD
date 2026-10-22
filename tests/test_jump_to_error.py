@@ -31,7 +31,7 @@ w._parse_error_to_editor(tab, "ERROR: Parser error: syntax error at line 3, colu
 w._jump_to_next_error()
 out["pos"] = ed.textCursor().position()
 out["line"] = ed.textCursor().blockNumber() + 1
-print(json.dumps(out)); sys.stdout.flush(); os._exit(0)
+print(json.dumps(out)); sys.stdout.flush(); from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
