@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.88.1" date="2026-10-23">
+      <description>
+        <p>Background image changes in the path, region and turtle editors can be undone, and a turtle made with New keeps its background image when reopened.</p>
+      </description>
+    </release>
     <release version="1.88.0" date="2026-10-23">
       <description>
         <p>Double-click the model to centre the view on it, OpenSCAD-style reference axes beside the orientation cube, a right-click menu of views on the cube, and an option to reopen the files open at the last quit.</p>
