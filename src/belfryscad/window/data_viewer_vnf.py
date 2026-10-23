@@ -828,7 +828,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         btn_row.addWidget(self._validation_label, 1)
         if editable:
             self._setup_undo(vnf_value)
-            btn_row.addLayout(self._make_reset_button_row())
+            btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")

@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QTableWidget, QPushButton,
+from PySide6.QtWidgets import (QApplication, QTableWidget, QPushButton,
                                QComboBox)
 from PySide6.QtCore import Qt, QItemSelectionModel
 from PySide6.QtGui import QUndoStack, QUndoCommand, QKeySequence
@@ -579,19 +579,20 @@ class _UndoableViewerMixin:
     def _on_reset_original(self):
         self._commit_value(self._original_value, "Reset to Original")
 
-    def _make_reset_button_row(self) -> QHBoxLayout:
-        """Reset to Original, meant to be inserted into the dialog's
-        existing button row. No dedicated Undo/Redo buttons -- Cmd+Z/
+    def _make_reset_button(self) -> QPushButton:
+        """Reset (to Original), added straight to the dialog's button row:
+        wrapped in a layout of its own it sat 2px above Cancel and Save on
+        macOS. No dedicated Undo/Redo buttons -- Cmd+Z/
         Cmd+Shift+Z (`_undo_action`/`_redo_action`, still wired up in
         `_setup_undo` via `self.addAction(...)`) are always expected to
         be available regardless of any visible button. Reset-to-Identity
         (Matrix/Affine only, where "identity" is a meaningful concept) is
         added separately by those two classes."""
-        row = QHBoxLayout()
-        reset = QPushButton("Reset to Original")
+        reset = QPushButton("Reset")
+        reset.setToolTip("Reset to Original: back to the value this editor was opened on.\n"
+                         "One step, so Undo brings your edits back.")
         reset.clicked.connect(self._on_reset_original)
-        row.addWidget(reset)
-        return row
+        return reset
 
 
 # ---------------------------------------------------------------------------

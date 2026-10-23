@@ -295,7 +295,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         btn_row.addSpacing(20)
         if editable:
             self._setup_undo(grid_value)
-            btn_row.addLayout(self._make_reset_button_row())
+            btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")

@@ -321,7 +321,13 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._corners = set(corners or ())
         self._vp.corners = self._corners
         _sync_viewport_to_main_window(self._vp)
-        splitter.addWidget(self._vp)
+        # The view's own controls sit under it, and the dialog's buttons
+        # under the table, so the table runs down beside the controls.
+        vp_container = QWidget()
+        vp_layout = QVBoxLayout(vp_container)
+        vp_layout.setContentsMargins(0, 0, 0, 0)
+        vp_layout.addWidget(self._vp, 1)
+        splitter.addWidget(vp_container)
 
         self._vert_table = self._make_vert_table(path_value, self._is_2d, editable)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
@@ -358,8 +364,10 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row = QHBoxLayout()          # view options
+        btn_row.setContentsMargins(20, 0, 0, 0)
+        nurbs_row = QHBoxLayout()        # NURBS Interpolated's corners
+        nurbs_row.setContentsMargins(20, 0, 0, 0)
         # Checked by default here, unlike VNFViewer's opt-in: these
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
@@ -397,11 +405,15 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._corners_label = QLabel()
         self._corners_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._corners_label.setStyleSheet("QLabel { padding-left: 12px; }")
-        btn_row.addWidget(self._corners_label)
+        nurbs_row.addWidget(self._corners_label)
         self._corners_copy = QPushButton("Copy")
+        self._corners_copy.setToolTip(
+            "Copy the corners argument to the clipboard, ready to paste into a\n"
+            "nurbs_interp() call: the points marked as corners (right-click a point\n"
+            "> Corner), where the curve may turn sharply instead of passing smoothly.")
         self._corners_copy.clicked.connect(
             lambda: QGuiApplication.clipboard().setText(self._corners_label.text()))
-        btn_row.addWidget(self._corners_copy)
+        nurbs_row.addWidget(self._corners_copy)
         # Opened on nurbs_interp()'s points: show them as that call does.
         preset = preset or {}
         if preset.get("mode"):
@@ -421,21 +433,26 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         else:
             # Images on any plane and a model to trace over in 3D (#836).
             self._vp.restore_references(self.windowTitle())
-        if editable:
-            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
+        nurbs_row.addStretch()
+        vp_layout.addLayout(btn_row)
+        vp_layout.addLayout(nurbs_row)
+
+        act_row = QHBoxLayout()          # the dialog's own buttons
+        act_row.addStretch()
         if editable:
+            act_row.addWidget(self._make_reset_button())
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
-            btn_row.addWidget(cancel)
+            act_row.addWidget(cancel)
             save = QPushButton("Save")
             save.clicked.connect(self._on_save)
-            btn_row.addWidget(save)
+            act_row.addWidget(save)
         else:
             dismiss = QPushButton("Dismiss")
             dismiss.clicked.connect(self.close)
-            btn_row.addWidget(dismiss)
-        layout.addLayout(btn_row)
+            act_row.addWidget(dismiss)
+        tc_layout.addLayout(act_row)
 
         self._vp.schedule_load(self._do_initial_load)
 

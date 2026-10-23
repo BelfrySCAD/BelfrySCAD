@@ -81,7 +81,7 @@ class MatrixViewer(QDialog, _UndoableViewerMixin):
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
             btn_row.addWidget(reset_id)
-            btn_row.addLayout(self._make_reset_button_row())
+            btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
