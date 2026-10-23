@@ -5,6 +5,12 @@ name: Linux display servers
 # a stock desktop has libGL.so.1/libEGL.so.1 and not the unversioned names,
 # and moderngl's own loader asked for the unversioned ones. Nothing else in
 # CI runs a real display server, so nothing else would notice either break.
+#
+# Skipped for a release's version bump, which touches pyproject.toml and
+# uv.lock and nothing GL loading reads. Weston drags in ~97 MB of packages
+# (FreeRDP, PipeWire, FFmpeg, speech synthesis...) through libweston's
+# hard dependencies, and the Azure mirror can take 10-30 minutes to serve
+# them, so the downloaded .debs are cached.
 
 on:
   pull_request:
@@ -15,6 +21,7 @@ on:
       - .github/workflows/linux-display.yml
       - pyproject.toml
       - uv.lock
+      - .github/scripts/version_only_change.py
   push:
     branches: [main]
     paths:
@@ -32,50 +39,82 @@ jobs:
       fail-fast: false
       matrix:
         display: [x11, wayland]
-        # The control: with -dev packages installed, a failure is the
-        # display server; without, it may be the library names.
-        dev_libs: [removed, installed]
+        # ponytail: the -dev packages are always removed, as on a stock
+        # desktop. A second column with them installed was the control that
+        # told a display-server failure from a library-name one (#552);
+        # bring it back to diagnose a failure, not to run on every PR.
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"      # no GPU on the runner: Mesa llvmpipe
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0    # the version-only check diffs against the base
+
+      - name: Is this only a version bump?
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=$(git merge-base "$PR_BASE" "$PR_HEAD"); HEAD="$PR_HEAD" ;;
+            push)         BASE="$PUSH_BEFORE"; HEAD="$GITHUB_SHA" ;;
+          esac
+          if python3 .github/scripts/version_only_change.py "$BASE" "$HEAD"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only BelfrySCAD's own version changed; GL loading has nothing new to probe."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore downloaded packages
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/linux-display.yml') }}
 
       - name: Install runtime libraries only
+        if: steps.gate.outputs.skip != 'true'
         run: |
+          # apt fetches into, and installs from, the cached directory.
+          mkdir -p ~/apt-archives/partial
+          APT="-o Dir::Cache::archives=$HOME/apt-archives"
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libopengl0 libgl1-mesa-dri \
+          sudo apt-get install -y $APT libegl1 libgl1 libopengl0 libgl1-mesa-dri \
             libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 \
             libxcb-render-util0 libxcb-image0 libdbus-1-3 libfontconfig1 \
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             xvfb weston
-          if [ "${{ matrix.dev_libs }}" = removed ]; then
-            sudo apt-get remove -y libegl-dev libgl-dev libgles-dev libglx-dev \
-              libopengl-dev libglvnd-dev libegl1-mesa-dev libgl1-mesa-dev || true
-            # The point of this column: prove the unversioned names are gone.
-            if ldconfig -p | grep -E 'lib(EGL|GL)\.so '; then
-              echo "unversioned GL library still present"; exit 1
-            fi
-          else
-            sudo apt-get install -y libegl-dev libgl-dev
+          sudo chown -R "$USER" ~/apt-archives    # so the cache can save it
+          sudo apt-get remove -y libegl-dev libgl-dev libgles-dev libglx-dev \
+            libopengl-dev libglvnd-dev libegl1-mesa-dev libgl1-mesa-dev || true
+          # The point of the probe: prove the unversioned names are gone.
+          if ldconfig -p | grep -E 'lib(EGL|GL)\.so '; then
+            echo "unversioned GL library still present"; exit 1
           fi
           ldconfig -p | grep -E 'lib(EGL|GL)\.so' || true
 
       - uses: astral-sh/setup-uv@v7
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: "3.14"   # pinned: uv otherwise picks any Python on the image (Homebrew 3.15 had no manifold3d wheel)
           enable-cache: true
 
       - run: uv sync --frozen
+        if: steps.gate.outputs.skip != 'true'
 
       - name: Probe under X11 (xvfb)
-        if: matrix.display == 'x11'
+        if: matrix.display == 'x11' && steps.gate.outputs.skip != 'true'
         env:
           QT_QPA_PLATFORM: xcb
         run: xvfb-run -a -s "-screen 0 1280x1024x24" uv run --no-sync python -X faulthandler scripts/gl_context_probe.py
 
       - name: Probe under Wayland (headless Weston)
-        if: matrix.display == 'wayland'
+        if: matrix.display == 'wayland' && steps.gate.outputs.skip != 'true'
         env:
           QT_QPA_PLATFORM: wayland
           WAYLAND_DISPLAY: wayland-probe

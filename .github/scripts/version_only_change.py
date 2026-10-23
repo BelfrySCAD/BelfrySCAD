@@ -14,7 +14,10 @@ import sys
 import tomllib
 
 SELF = "belfryscad"
-ALLOWED = {"pyproject.toml", "uv.lock", "src/belfryscad/release.py"}
+# The AppStream metainfo gains a <release> entry with every bump, and is read
+# by software centres, never by the app.
+ALLOWED = {"pyproject.toml", "uv.lock", "src/belfryscad/release.py",
+           "resources/com.belfrydw.belfryscad.metainfo.xml"}
 
 
 def show(rev, path):
