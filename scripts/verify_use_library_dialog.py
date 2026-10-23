@@ -32,9 +32,13 @@ def check(label, cond, detail=""):
 
 def main():
     app = QApplication.instance() or QApplication(sys.argv)
+    # Never the real settings: a probe once wiped them.
+    import tempfile
+    from belfryscad.settings import use_scratch_settings
+    use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-verify-"), seed=False)
     from belfryscad.window.main_window import MainWindow
     from belfryscad.window.library_manager import (
-        UseLibraryDialog, _library_dir, _load_catalog)
+        UseLibraryDialog, _library_dir, _load_catalog, _uncatalogued_libraries)
 
     w = MainWindow()
     w.skip_unsaved_prompts = True
@@ -43,18 +47,21 @@ def main():
     app.processEvents()
 
     lib_dir = _library_dir()
-    installed = [e for e in _load_catalog()
+    catalog = _load_catalog()
+    # Catalogued libraries first, then any installed by hand (#887).
+    installed = [e for e in catalog
                  if (lib_dir / e["install_as"]).is_dir() and e.get("includes")]
+    installed += _uncatalogued_libraries(lib_dir, catalog)
     check("at least one catalogued library is installed to test against",
           bool(installed), str(lib_dir))
 
     # --- the menu item opens the window ----------------------------------
     # Bound to a name, not chained off the generator: PySide frees the
     # temporary and the QMenu goes with it.
-    design_action = next(a for a in w.menuBar().actions() if a.text() == "Design")
+    design_action = next(a for a in w.menuBar().actions() if a.text().replace("&", "") == "Design")
     design = design_action.menu()
     actions = list(design.actions())
-    act = next((a for a in actions if a.text().startswith("Use Library")), None)
+    act = next((a for a in actions if a.text().replace("&", "").startswith("Use Library")), None)
     check("Design has a Use Library item", act is not None)
     check("and it is a plain item, not a menu of submenus",
           act is not None and act.menu() is None)
@@ -168,13 +175,14 @@ def main():
                 popup.close()
 
         QTimer.singleShot(80, grab)
-        ev = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5))
+        ev = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5),
+                               ed.mapToGlobal(QPoint(5, 5)))
         ed.contextMenuEvent(ev)
         app.processEvents()
         return grabbed.get("actions", [])
 
     items = context_items(editor)
-    entry = next((a for a in items if a.text().startswith("Use Library")), None)
+    entry = next((a for a in items if a.text().replace("&", "").startswith("Use Library")), None)
     check("the editor's right-click menu offers Use Library", entry is not None,
           str([a.text() for a in items if a.text()][:8]))
     if entry is not None:
@@ -187,7 +195,7 @@ def main():
     editor.setReadOnly(True)
     ro_items = context_items(editor)
     check("a read-only tab is not offered it",
-          not any(a.text().startswith("Use Library") for a in ro_items))
+          not any(a.text().replace("&", "").startswith("Use Library") for a in ro_items))
     editor.setReadOnly(False)
 
     # --- every statement names a real file -------------------------------
@@ -202,4 +210,14 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # As the app itself leaves (main.hard_exit): Qt's normal teardown
+    # aborts on a thread still running, and macOS logs that as a crash.
+    from belfryscad.main import hard_exit
+    try:
+        code = main()
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        code = 1
+    sys.stdout.flush()
+    hard_exit(code)
