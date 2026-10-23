@@ -1072,5 +1072,9 @@ def build_new_literal_menu(menu: QMenu, name: str, on_commit, parent=None):
     assignment, since only it knows the span being replaced.
     """
     for label, _shape, opener, seed in _NEW_LITERAL_SEEDS:
-        menu.addAction(f"{label}...", lambda opener=opener, seed=seed, label=label:
-                       opener(name or label, copy.deepcopy(seed), on_commit, parent))
+        # Titled as "Edit as..." will title the same literal -- by its name,
+        # or by nothing -- not by this menu's label: the title is the key a
+        # background image is kept under, so a "Turtle Path" title filed the
+        # image where reopening the saved turtle never looked (#861).
+        menu.addAction(f"{label}...", lambda opener=opener, seed=seed:
+                       opener(name, copy.deepcopy(seed), on_commit, parent))

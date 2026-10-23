@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
-from PySide6.QtGui import QAction, QBrush, QColor, QImage, QPainter, QPen
+from PySide6.QtGui import QAction, QBrush, QColor, QImage, QPainter, QPen, QUndoCommand
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QInputDialog, QMessageBox, QPushButton,
                                QWidget)
@@ -141,6 +141,26 @@ void main() {
 """
 
 
+class _BackgroundCmd(QUndoCommand):
+    """One change to the image, on the editor's own undo stack beside its
+    edits to the shape (#861). Pushed after the change is made, so the first
+    redo() -- which QUndoStack.push runs -- has nothing to do."""
+
+    def __init__(self, viewport, before, after):
+        super().__init__("Background Image")
+        self._vp, self._before, self._after = viewport, before, after
+        self._done = True
+
+    def undo(self):
+        self._vp._apply_background(self._before)
+
+    def redo(self):
+        if self._done:
+            self._done = False
+            return
+        self._vp._apply_background(self._after)
+
+
 class BackgroundImageViewportMixin:
     """For a top-down 2D viewport: draws `self.background` under the shape,
     and can hand the next plain clicks' model points to a callback."""
@@ -157,10 +177,24 @@ class BackgroundImageViewportMixin:
     _bg_overlay = None         # handles and the Done button, while adjusting
     _bg_drag = None            # (mode, handle anchor, image at press, model point at press)
     _bg_markers_were_shown = True
+    _bg_committed = None       # the image as the last undo step left it
 
     def set_background(self, bg: BackgroundImage | None):
         self.background = bg
+        self._bg_committed = None if bg is None else replace(bg)
         self.update()
+
+    def _apply_background(self, bg: BackgroundImage | None):
+        """Undo/Redo: put the image back as it was, without a new step."""
+        if bg is None:
+            self.cancel_pick()
+            self.end_adjust()
+        self.set_background(None if bg is None else replace(bg))
+        if self.background_key:
+            if bg is None:
+                _session.pop(self.background_key, None)
+            else:
+                _session[self.background_key] = replace(bg)
 
     def _paint_under(self, mvp: np.ndarray):
         """Draw the image, before the shape: from `extra_paint` it covered
@@ -215,6 +249,15 @@ class BackgroundImageViewportMixin:
     def background_edited(self):
         if self.background is not None and self.background_key:
             _session[self.background_key] = replace(self.background)
+        # One undo step per change; a drag's is pushed on release, for the
+        # whole drag.
+        if self._bg_drag is None:
+            before = self._bg_committed
+            after = None if self.background is None else replace(self.background)
+            self._bg_committed = after
+            stack = getattr(self.window(), "_undo_stack", None)   # editors only
+            if stack is not None and before != after:
+                stack.push(_BackgroundCmd(self, before, after))
         self.update()
 
     def _model_point(self, pos) -> tuple[float, float] | None:
