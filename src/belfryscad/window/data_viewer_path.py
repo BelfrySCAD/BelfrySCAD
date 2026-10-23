@@ -411,6 +411,10 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._sync_degree_spin()
         if preset.get("degree"):
             self._degree_spin.setValue(preset["degree"])
+        # Hidden unless NURBS Interpolated has corners. Synced here because
+        # the first load does not rebuild, and a widget starts out visible:
+        # the button sat in every mode until the mode was changed (#861).
+        self._sync_corners_label()
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
             restore_session_background(self.windowTitle(), self._vp)
