@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.86.1" date="2026-10-22">
+      <description>
+        <p>The Preview toolbar button gets its icon, which failed to load in 1.86.0, and the Preview and Render icons are easier to tell apart.</p>
+      </description>
+    </release>
     <release version="1.86.0" date="2026-10-22">
       <description>
         <p>Separate Preview (F5) and Render (F6) modes as in OpenSCAD, theme-coloured difference() cuts, a Degree setting for Bezier paths, hand-installed libraries in Use Library, and arrow keys in the view returning to the editor.</p>
