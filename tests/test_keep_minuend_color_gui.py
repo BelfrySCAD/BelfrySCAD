@@ -40,14 +40,17 @@ def colours(bodies):
     cols = set()
     for b in bodies:
         if b.tri_colors is not None:
-            cols |= {tuple(int(round(v * 255)) for v in c[:3]) for c in b.tri_colors}
+            # A negative red is the evaluator's "theme colour" stand-in:
+            # -2 a cut face, -1 the body (renderer.buffer_color).
+            cols |= {tuple(int(round(v * 255)) for v in c[:3]) if c[0] >= 0 else (int(c[0]),)
+                     for c in b.tri_colors}
         elif b.color is not None:
             cols.add(tuple(int(round(v * 255)) for v in b.color[:3]))
     return sorted(cols)
 
 w.open_file_by_path(main)                          # renders on open, preference off
 pump(lambda: len(renders) == 1 and not w._render_busy())
-out["default_colours"] = colours(renders[-1])      # orange faces, green cut
+out["default_colours"] = colours(renders[-1])      # orange faces, a theme-shaded cut
 
 save_preferences({"viewport/keepMinuendColor": True})
 w._apply_preferences()                             # what the Preferences checkbox does
@@ -79,7 +82,7 @@ def test_cut_faces_preference_rerenders_with_the_minuend_colour():
                           env=dict(os.environ, QT_QPA_PLATFORM="offscreen"), timeout=180)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["default_colours"] == [[157, 203, 81], [255, 165, 0]]
+    assert out["default_colours"] == [[-2], [255, 165, 0]]
     assert out["rerendered_on_toggle"]
     assert out["kept_colours"] == [[255, 165, 0]]
     assert out["no_rerender_without_change"]

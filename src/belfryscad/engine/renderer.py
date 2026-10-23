@@ -202,6 +202,10 @@ EXTRUDE_GIZMOS = (3, 4)
 #: interactive viewport asks for this.
 FLAT_PREVIEW_HEIGHT = 0.01
 
+#: How much darker than the theme's object colour a face cut by an
+#: uncoloured difference() tool is drawn (SceneRenderer.buffer_color).
+CUT_FACE_SHADE = 0.6
+
 
 _GIZMO_VERT = """
 #version 330 core
@@ -1056,6 +1060,9 @@ class MeshBuffer:
         # the buf.color bucketing value (a dummy opaque/translucent marker,
         # see _upload_body) leak into the actual blend.
         self.uses_vertex_color = uses_vertex_color
+        #: Faces a difference() cut, from an uncoloured tool: drawn in a
+        #: shade of the live theme's colour (SceneRenderer.buffer_color).
+        self.theme_cut = False
 
 
 class LineBuffer:
@@ -1310,16 +1317,30 @@ class SceneRenderer:
             return [self._make_mesh_buffer(v0, v1, v2, tri_ids, None, cb.color,
                                            cb.flat_preview, cb.role, uses_vertex_color=False)]
 
-        alpha = cb.tri_colors[:, 3]
-        opaque_mask = alpha >= 1.0
+        # The evaluator marks a run with no colour of its own with a stand-in
+        # (negative RGB), not a baked colour, so it can follow the live
+        # theme: -1 is the body colour, -2 a cut face. Those go in buffers of
+        # their own with no colour, resolved at draw time like any
+        # uncoloured body; only real colours use the vertex stream.
+        red = cb.tri_colors[:, 0]
         buffers = []
+        for mark in (-1.0, -2.0):
+            m = red == mark
+            if m.any():
+                buf = self._make_mesh_buffer(v0[m], v1[m], v2[m], tri_ids[m], None, None,
+                                             cb.flat_preview, cb.role, uses_vertex_color=False)
+                buf.theme_cut = mark == -2.0
+                buffers.append(buf)
+        real = red >= 0.0
+        alpha = cb.tri_colors[:, 3]
+        opaque_mask = real & (alpha >= 1.0)
         if opaque_mask.any():
             m = opaque_mask
             buffers.append(self._make_mesh_buffer(
                 v0[m], v1[m], v2[m], tri_ids[m], cb.tri_colors[m],
                 (1.0, 1.0, 1.0, 1.0), cb.flat_preview, cb.role, uses_vertex_color=True))
-        if (~opaque_mask).any():
-            m = ~opaque_mask
+        if (real & ~opaque_mask).any():
+            m = real & ~opaque_mask
             buffers.append(self._make_mesh_buffer(
                 v0[m], v1[m], v2[m], tri_ids[m], cb.tri_colors[m],
                 (1.0, 1.0, 1.0, 0.5), cb.flat_preview, cb.role, uses_vertex_color=True))
@@ -1335,6 +1356,18 @@ class SceneRenderer:
             for buf in buffers:
                 buf.original_ids = full_ids
         return buffers
+
+    def buffer_color(self, buf) -> tuple:
+        """The colour `buf` is drawn in: its own, or the live theme's -- and
+        for faces an uncoloured difference() tool cut, a darker shade of it,
+        so the cut reads as a cut in every theme (the reference paints its
+        scheme's back-face colour there)."""
+        if buf.color is not None:
+            return buf.color
+        if getattr(buf, "theme_cut", False):
+            r, g, b, a = self._default_color
+            return (r * CUT_FACE_SHADE, g * CUT_FACE_SHADE, b * CUT_FACE_SHADE, a)
+        return self._default_color
 
     def _make_mesh_buffer(self, v0: np.ndarray, v1: np.ndarray, v2: np.ndarray,
                           tri_ids: np.ndarray, tri_colors: Optional[np.ndarray],
@@ -1554,8 +1587,7 @@ class SceneRenderer:
         tri1.v0, ...). Pass `tri_ids` (one id per triangle) to make the mesh
         participate in `ray_cast` picking. `color=None` (the default) tracks
         the live color theme's object color (`self._default_color`,
-        resolved fresh every draw -- see `base_color = buf.color if
-        buf.color is not None else self._default_color` below); pass an
+        resolved fresh every draw -- see `buffer_color`); pass an
         explicit RGBA tuple only to pin a fixed color regardless of theme."""
         interleaved = np.concatenate([positions, normals], axis=1).astype(np.float32)
         vbo = self._ctx.buffer(interleaved.tobytes())
@@ -1884,7 +1916,7 @@ class SceneRenderer:
                 self._mesh_prog["mvp"].write((proj @ view).T.astype(np.float32).tobytes())
                 self._mesh_prog["light_dir"].value = tuple(L_world)
                 self._mesh_prog["eye_pos"].value = tuple(eye_pos)
-                color = buf.color if buf.color is not None else self._default_color
+                color = self.buffer_color(buf)
                 self._mesh_prog["object_color"].value = color
                 self._mesh_prog["backface_color"].value = buf.backface_color or (1.0, 0.0, 1.0, 1.0)
                 # See-through when asked: a region's fill over its
@@ -1905,7 +1937,7 @@ class SceneRenderer:
                 continue
 
             is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
-            base_color = buf.color if buf.color is not None else self._default_color
+            base_color = self.buffer_color(buf)
             color = _highlight_color(base_color) if is_selected else base_color
 
             if is_selected and has_drag:
@@ -2056,7 +2088,7 @@ class SceneRenderer:
 
             for far_wall in (True, False):
                 for buf, buf_model in lit:
-                    base = buf.color if buf.color is not None else self._default_color
+                    base = self.buffer_color(buf)
                     self._prog["model"].write(buf_model.T.tobytes())
                     self._prog["mvp"].write(
                         (proj @ view @ buf_model).T.astype(np.float32).tobytes())
@@ -2131,7 +2163,7 @@ class SceneRenderer:
                         # a few pixels across, so the wireframe covered the
                         # glyphs completely and every number came out black
                         # instead of the blue and red it colours them.
-                        base = buf.color if buf.color is not None else self._default_color
+                        base = self.buffer_color(buf)
                         self._edge_prog["edge_color"].value = (
                             0.5 + 0.5 * float(base[0]),
                             0.5 + 0.5 * float(base[1]),
