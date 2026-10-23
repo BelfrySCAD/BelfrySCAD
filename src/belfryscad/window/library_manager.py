@@ -86,6 +86,61 @@ def _load_catalog() -> list[dict]:
         return json.load(f)
 
 
+_SKIPPED_DIRS = {"tests", "test", "examples", "example", "docs", "tutorials"}
+
+
+def _leading_comment(path: Path, limit: int = 140) -> str:
+    """A file's opening `//` comment, as one line: what the catalogue's
+    descriptions are drawn from for the libraries it knows."""
+    words = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("//"):
+                    if words or line:
+                        break
+                    continue
+                words.extend(line.lstrip("/").split())
+    except OSError:
+        return ""
+    text = " ".join(words)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def _uncatalogued_libraries(lib_dir: Path, catalog: list[dict]) -> list[dict]:
+    """Libraries put in the libraries folder by hand, in the catalogue's
+    shape, so Use Library offers them too (#887). Every .scad file is
+    listed -- nothing says which are meant to be pulled in -- except under
+    hidden, test, example and doc folders, and as `include`, which works
+    for a module or function library either way and, unlike `use`, keeps
+    its variables."""
+    known = {lib.get("install_as", lib["name"]) for lib in catalog}
+    libs = []
+    try:
+        dirs = sorted((d for d in lib_dir.iterdir() if d.is_dir()),
+                      key=lambda d: d.name.lower())
+    except OSError:
+        return []
+    for d in dirs:
+        if d.name in known or d.name.startswith("."):
+            continue
+        files = [p for p in d.rglob("*.scad")
+                 if not any(part.startswith(".") or part.lower() in _SKIPPED_DIRS
+                            for part in p.relative_to(d).parts[:-1])]
+        # Top-level files first: they are the ones a library means to be reached.
+        files.sort(key=lambda p: (len(p.relative_to(d).parts), str(p).lower()))
+        entry = {f"{d.name}.scad", "std.scad", "main.scad"}
+        includes = [{"statement": f"include <{d.name}/{p.relative_to(d).as_posix()}>",
+                     "description": _leading_comment(p),
+                     **({"primary": True} if p.parent == d and p.name in entry else {})}
+                    for p in files]
+        includes.sort(key=lambda r: not r.get("primary"))
+        if includes:
+            libs.append({"name": d.name, "install_as": d.name, "includes": includes})
+    return libs
+
+
 def _parse_repo(download_url: str) -> tuple[str, str, str]:
     parsed = urlparse(download_url.rstrip("/"))
     parts = parsed.path.strip("/").split("/")
@@ -906,9 +961,10 @@ class UseLibraryDialog(QDialog):
 
     def _populate(self):
         lib_dir = _library_dir()
-        self._libs = [lib for lib in _load_catalog()
+        catalog = _load_catalog()
+        self._libs = [lib for lib in catalog
                       if (lib_dir / lib.get("install_as", lib["name"])).is_dir()
-                      and lib.get("includes")]
+                      and lib.get("includes")] + _uncatalogued_libraries(lib_dir, catalog)
         self._library.clear()
         for lib in self._libs:
             self._library.addItem(lib["name"])
