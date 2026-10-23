@@ -854,7 +854,7 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
                                   "keeping the shape of the field.")
             normalize.clicked.connect(self._on_normalize)
             btn_row.addWidget(normalize)
-            btn_row.addLayout(self._make_reset_button_row())
+            btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")

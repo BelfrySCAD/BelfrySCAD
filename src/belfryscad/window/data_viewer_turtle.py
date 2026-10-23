@@ -496,7 +496,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
             add = QPushButton("Add Command")
             add.clicked.connect(lambda: self._insert(len(self._rows())))
             btn_row.addWidget(add)
-            btn_row.addLayout(self._make_reset_button_row())
+            btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")

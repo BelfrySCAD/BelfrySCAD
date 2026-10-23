@@ -230,6 +230,60 @@ def _bezier_linked_moves(path_pts: np.ndarray, closed: bool, dragged_idx: int,
     return [(dragged_idx, new_pos), (partner_idx, partner_new)]
 
 
+def _collinear_moves(path_pts: np.ndarray, closed: bool, dragged_idx: int, new_pos: np.ndarray,
+                     deg: int, locked: set) -> list[tuple[int, np.ndarray]]:
+    """A non-cubic Bezier's drag: points 0, deg, 2*deg... are on the curve,
+    and one in `locked` keeps the control points either side of it
+    collinear with it, so the curve's tangent runs straight through.
+
+    - Dragging a locked on-curve point carries both its neighbours along.
+    - Dragging a control point turns its partner (across each locked
+      on-curve neighbour) onto the new tangent. Above degree 2 the partner
+      keeps its distance. At degree 2 the partner is also the NEXT on-curve
+      point's handle, so if that one is locked too, the partner slides
+      along the new tangent to where it meets that point's own tangent,
+      leaving its lock intact -- falling back to keeping its distance when
+      the two lines don't meet ahead of both points."""
+    n = len(path_pts)
+    moves = [(dragged_idx, new_pos)]
+
+    def wrap(i):
+        return i % n if closed else (i if 0 <= i < n else None)
+
+    if dragged_idx % deg == 0:
+        if dragged_idx in locked:
+            delta = new_pos - path_pts[dragged_idx]
+            for h in (wrap(dragged_idx - 1), wrap(dragged_idx + 1)):
+                if h is not None and h != dragged_idx:
+                    moves.append((h, path_pts[h] + delta))
+        return moves
+
+    for step in (-1, 1):
+        v, p = wrap(dragged_idx + step), wrap(dragged_idx + 2 * step)
+        if v is None or p is None or p == dragged_idx or v % deg or v not in locked:
+            continue
+        d = path_pts[v] - new_pos
+        dn = float(np.linalg.norm(d))
+        if dn < 1e-9:
+            continue
+        d = d / dn
+        new_p = path_pts[v] + d * float(np.linalg.norm(path_pts[p] - path_pts[v]))
+        beyond, q = wrap(dragged_idx + 3 * step), wrap(dragged_idx + 4 * step)
+        if deg == 2 and beyond in locked and q is not None and q != p:
+            d2 = path_pts[beyond] - path_pts[q]      # beyond's tangent, toward p
+            d2n = float(np.linalg.norm(d2))
+            if d2n > 1e-9:
+                d2 = d2 / d2n
+                a = np.stack([d, -d2], axis=1).astype(np.float64)
+                rhs = (path_pts[beyond] - path_pts[v]).astype(np.float64)
+                (s_, u_), *_ = np.linalg.lstsq(a, rhs, rcond=None)
+                hit = path_pts[v] + d * s_
+                if s_ > 1e-6 and u_ > 1e-6 and np.allclose(hit, path_pts[beyond] + d2 * u_, atol=1e-4):
+                    new_p = hit
+        moves.append((p, new_p))
+    return moves
+
+
 def _decasteljau_split(p0: np.ndarray, c1: np.ndarray, c2: np.ndarray, p3: np.ndarray,
                         t: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Standard cubic De Casteljau split of one bezier segment (p0, c1, c2,
@@ -321,7 +375,13 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._corners = set(corners or ())
         self._vp.corners = self._corners
         _sync_viewport_to_main_window(self._vp)
-        splitter.addWidget(self._vp)
+        # The view's own controls sit under it, and the dialog's buttons
+        # under the table, so the table runs down beside the controls.
+        vp_container = QWidget()
+        vp_layout = QVBoxLayout(vp_container)
+        vp_layout.setContentsMargins(0, 0, 0, 0)
+        vp_layout.addWidget(self._vp, 1)
+        splitter.addWidget(vp_container)
 
         self._vert_table = self._make_vert_table(path_value, self._is_2d, editable)
         self._vert_table.itemSelectionChanged.connect(self._on_vert_table_selection)
@@ -358,8 +418,10 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row = QHBoxLayout()          # view options
+        btn_row.setContentsMargins(20, 0, 0, 0)
+        nurbs_row = QHBoxLayout()        # NURBS Interpolated's corners
+        nurbs_row.setContentsMargins(20, 0, 0, 0)
         # Checked by default here, unlike VNFViewer's opt-in: these
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
@@ -397,11 +459,15 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._corners_label = QLabel()
         self._corners_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._corners_label.setStyleSheet("QLabel { padding-left: 12px; }")
-        btn_row.addWidget(self._corners_label)
+        nurbs_row.addWidget(self._corners_label)
         self._corners_copy = QPushButton("Copy")
+        self._corners_copy.setToolTip(
+            "Copy the corners argument to the clipboard, ready to paste into a\n"
+            "nurbs_interp() call: the points marked as corners (right-click a point\n"
+            "> Corner), where the curve may turn sharply instead of passing smoothly.")
         self._corners_copy.clicked.connect(
             lambda: QGuiApplication.clipboard().setText(self._corners_label.text()))
-        btn_row.addWidget(self._corners_copy)
+        nurbs_row.addWidget(self._corners_copy)
         # Opened on nurbs_interp()'s points: show them as that call does.
         preset = preset or {}
         if preset.get("mode"):
@@ -411,27 +477,36 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._sync_degree_spin()
         if preset.get("degree"):
             self._degree_spin.setValue(preset["degree"])
+        # Hidden unless NURBS Interpolated has corners. Synced here because
+        # the first load does not rebuild, and a widget starts out visible:
+        # the button sat in every mode until the mode was changed (#861).
+        self._sync_corners_label()
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
             restore_session_background(self.windowTitle(), self._vp)
         else:
             # Images on any plane and a model to trace over in 3D (#836).
             self._vp.restore_references(self.windowTitle())
-        if editable:
-            btn_row.addLayout(self._make_reset_button_row())
         btn_row.addStretch()
+        nurbs_row.addStretch()
+        vp_layout.addLayout(btn_row)
+        vp_layout.addLayout(nurbs_row)
+
+        act_row = QHBoxLayout()          # the dialog's own buttons
+        act_row.addStretch()
         if editable:
+            act_row.addWidget(self._make_reset_button())
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
-            btn_row.addWidget(cancel)
+            act_row.addWidget(cancel)
             save = QPushButton("Save")
             save.clicked.connect(self._on_save)
-            btn_row.addWidget(save)
+            act_row.addWidget(save)
         else:
             dismiss = QPushButton("Dismiss")
             dismiss.clicked.connect(self.close)
-            btn_row.addWidget(dismiss)
-        layout.addLayout(btn_row)
+            act_row.addWidget(dismiss)
+        tc_layout.addLayout(act_row)
 
         self._vp.schedule_load(self._do_initial_load)
 
@@ -509,7 +584,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             rows = sorted((r.row() for r in self._vert_table.selectionModel().selectedRows()), reverse=True)
         if not rows:
             return
-        if (self._mode() == "bezier" and len(rows) == 1
+        if (self._vp._bezier and len(rows) == 1
                 and rows[0] % 3 == 0 and len(self._path) >= 4):
             self._delete_bezier_v0(rows[0])
             return
@@ -703,7 +778,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._commit_value(new_path, "Add Vertex")
         last = len(new_path) - 1
         self._vert_table.selectRow(last)
-        if self._mode() == "bezier" and last % 3 == 0:
+        if self._vp._bezier and last % 3 == 0:
             self._vp.classify_single_node(last)
             self._vp.refresh_markers()
 
@@ -756,12 +831,14 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._corners_copy.setVisible(show)
 
     def _sync_degree_spin(self):
-        """Show the degree only in the NURBS modes, and cap it at what the
-        point count supports (BOSL2 asserts degree+1 points; interpolation
-        also needs degree >= 2), so the curve never silently degrades to
-        the straight-line fallback just because a point was deleted."""
+        """Show the degree only in the NURBS and Bezier modes (Bezier's is
+        bezier_path()'s N; only cubic gets Bezier editing), and cap it at
+        what the point count supports (BOSL2 asserts degree+1 points;
+        interpolation also needs degree >= 2), so the curve never silently
+        degrades to the straight-line fallback just because a point was
+        deleted."""
         mode = self._mode()
-        nurbs = mode in ("nurbs", "nurbs_interp")
+        nurbs = mode in ("nurbs", "nurbs_interp", "bezier")
         self._degree_label.setVisible(nurbs)
         self._degree_spin.setVisible(nurbs)
         low = 2 if mode == "nurbs_interp" else 1
@@ -849,6 +926,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._path_pts: np.ndarray = np.zeros((0, 3), dtype=np.float32)
         self._closed = False
         self._bezier = False
+        # A non-cubic Bezier: drawn over its control polygon and edited like
+        # a path, but with Collinear locks at points 0, deg, 2*deg...
+        self._bezier_n = False
+        self._deg = 3
         # NURBS Interpolated: the points the curve has a corner at, shared
         # with (and owned by) PathViewer; and the mode last loaded.
         self.corners: set = set()
@@ -893,39 +974,26 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
 
     @staticmethod
     def _tessellate_bezier(pts: np.ndarray, closed: bool,
-                           steps: int = 32) -> list[np.ndarray]:
-        """Return list of line-segment endpoint pairs for cubic Bezier curves.
+                           steps: int = 32, deg: int = 3) -> list[np.ndarray]:
+        """Return list of line-segment endpoint pairs for Bezier curves of
+        degree `deg` (bezier_path()'s N).
 
-        Each group of 4 points (P0, C1, C2, P3) is one cubic segment, with
-        shared endpoints between consecutive segments (P3 of one = P0 of next).
-        Open path: needs 3k+1 points for k segments.
-        Closed path: needs 3k points (last segment wraps to pts[0]).
+        Each group of deg+1 points is one segment, with shared endpoints
+        between consecutive segments. Open path: deg*k+1 points make k
+        segments; closed: deg*k, the last wrapping to pts[0]. Points that
+        don't complete a segment are left out.
         """
+        from math import comb
         n = len(pts)
-        segments: list[tuple[int, int, int, int]] = []
         if closed:
-            num_segs = n // 3
-            for s in range(num_segs):
-                i0 = (s * 3) % n
-                i1 = (s * 3 + 1) % n
-                i2 = (s * 3 + 2) % n
-                i3 = (s * 3 + 3) % n
-                segments.append((i0, i1, i2, i3))
+            segments = [[(s * deg + k) % n for k in range(deg + 1)] for s in range(n // deg)]
         else:
-            num_segs = (n - 1) // 3
-            for s in range(num_segs):
-                i0 = s * 3
-                segments.append((i0, i0 + 1, i0 + 2, i0 + 3))
-
+            segments = [[s * deg + k for k in range(deg + 1)] for s in range((n - 1) // deg)]
+        t = np.linspace(0.0, 1.0, steps + 1)
+        basis = [comb(deg, i) * (1 - t) ** (deg - i) * t ** i for i in range(deg + 1)]
         pairs: list[np.ndarray] = []
-        t_vals = np.linspace(0.0, 1.0, steps + 1, dtype=np.float32)
-        for i0, i1, i2, i3 in segments:
-            p0, p1, p2, p3 = pts[i0], pts[i1], pts[i2], pts[i3]
-            omt = 1.0 - t_vals
-            curve = (omt**3)[:, None] * p0 + \
-                    (3 * omt**2 * t_vals)[:, None] * p1 + \
-                    (3 * omt * t_vals**2)[:, None] * p2 + \
-                    (t_vals**3)[:, None] * p3
+        for seg in segments:
+            curve = sum(np.outer(b, pts[i]) for b, i in zip(basis, seg)).astype(np.float32)
             for j in range(steps):
                 pairs.append(curve[j])
                 pairs.append(curve[j + 1])
@@ -953,10 +1021,17 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # NOT reclassify, or it would clobber explicit context-menu
         # overrides (and the type the user is actively dragging toward).
         self._mode_now = mode
-        bezier = mode == "bezier"
-        if bezier and not self._bezier:
+        # Bezier *editing* (node types, linked handles, splitting a segment)
+        # is cubic only; any other degree draws its curve over the plain
+        # control polygon and is edited like a path.
+        other_bezier = mode == "bezier" and degree != 3
+        bezier = mode == "bezier" and not other_bezier
+        bezier_n = other_bezier and degree >= 2
+        fresh = (bezier and not self._bezier) or (bezier_n and (not self._bezier_n or degree != self._deg))
+        self._bezier, self._bezier_n = bezier, bezier_n
+        self._deg = degree if bezier_n else 3
+        if fresh:
             self._classify_all_node_types()
-        self._bezier = bezier
 
         bb_min, bb_max = _bounds(pts)
         self.frame_scene(bb_min, bb_max, reframe=reframe)
@@ -996,6 +1071,18 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 for i, pt in enumerate(handle_pairs):
                     hdata[i] = np.concatenate([pt, handle_color])
                 self._renderer.upload_lines(hdata)
+        elif other_bezier and len(pts) >= degree + 1:
+            curve_pairs = self._tessellate_bezier(pts, closed, deg=degree)
+            ring = np.vstack([pts, pts[:1]]) if closed else pts
+            line_data = np.empty((len(curve_pairs), 6), dtype=np.float32)
+            line_data[:, :3] = curve_pairs
+            line_data[:, 3:] = line_color
+            self._renderer.upload_lines(line_data)
+            hdata = np.empty((2 * (len(ring) - 1), 6), dtype=np.float32)
+            hdata[0::2, :3] = ring[:-1]
+            hdata[1::2, :3] = ring[1:]
+            hdata[:, 3:] = 0.6   # the control polygon, lighter, as for NURBS
+            self._renderer.upload_lines(hdata)
         elif mode in ("nurbs", "nurbs_interp") and (curve := self._nurbs_curve(pts, closed, mode, degree,
                                                                                 self.valid_corners())) is not None:
             if closed:
@@ -1061,7 +1148,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         context-menu override or a type the user is actively dragging
         toward."""
         self._node_types = {}
-        for i0 in range(0, len(self._path_pts), 3):
+        for i0 in range(0, len(self._path_pts), self._deg):
             self.classify_single_node(i0)
 
     def classify_single_node(self, v0_idx: int):
@@ -1074,7 +1161,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         prev_idx, fwd_idx = _v0_handle_indices(v0_idx, len(pts), self._closed)
         handle_a = pts[prev_idx] if prev_idx is not None else None
         handle_b = pts[fwd_idx] if fwd_idx is not None else None
-        self._node_types[v0_idx] = _classify_node_type(pts[v0_idx], handle_a, handle_b)
+        kind = _classify_node_type(pts[v0_idx], handle_a, handle_b)
+        if self._bezier_n:   # a non-cubic offers only Collinear (#861 follow-up)
+            kind = "disjointed" if kind == "disjointed" else "same_angle"
+        self._node_types[v0_idx] = kind
 
     def remap_node_types(self, index_map: dict[int, int]):
         """Called by PathViewer right before a structural point-list change
@@ -1127,6 +1217,9 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         (if anything) needs to move with it." Bezier off, or too few
         points to have a real bezier structure: today's plain single-point
         behavior, unchanged."""
+        if self._bezier_n:
+            locked = {i for i, t in self._node_types.items() if t != "disjointed"}
+            return _collinear_moves(self._path_pts, self._closed, dragged_idx, new_pos, self._deg, locked)
         if not self._bezier or len(self._path_pts) < 4:
             return [(dragged_idx, new_pos)]
         v0_idx = _owning_v0_index(dragged_idx, len(self._path_pts), self._closed)
@@ -1139,7 +1232,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
     def _unit_faces_for_point(self, idx: int) -> list:
         if self._mode_now == "nurbs_interp" and idx in self.valid_corners():
             return _diamond_faces(1.0, self._is_2d)
-        if self._bezier and idx % 3 == 0:
+        if (self._bezier and idx % 3 == 0) or (self._bezier_n and idx % self._deg == 0):
             shape_fn = _NODE_TYPE_SHAPE_FN.get(
                 self._node_types.get(idx, "disjointed"), _dodecahedron_faces)
             return shape_fn(1.0, self._is_2d)
@@ -1428,6 +1521,16 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                     action = type_menu.addAction(label, lambda k=key: self._set_node_type(vi, k))
                     action.setCheckable(True)
                     action.setChecked(key == current)
+                menu.addSeparator()
+            if self._bezier_n and vi % self._deg == 0:
+                locked = self._node_types.get(vi, "disjointed") != "disjointed"
+                lock = menu.addAction(
+                    "Collinear Handles",
+                    lambda: self._set_node_type(vi, "disjointed" if locked else "same_angle"))
+                lock.setCheckable(True)
+                lock.setChecked(locked)
+                lock.setToolTip("Keep the control points either side of this point in line "
+                                "with it, so the curve passes through it smoothly")
                 menu.addSeparator()
             if self._mode_now == "nurbs_interp":
                 corner = menu.addAction("Corner", lambda: self.corner_toggled.emit(vi))
