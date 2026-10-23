@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
@@ -191,6 +191,8 @@ class OrientationCube(QWidget):
 
     view_requested = Signal(float, float)   # azimuth, elevation (degrees)
     orbit_requested = Signal(float, float)  # drag delta in pixels (dx, dy)
+    preset_requested = Signal(str)          # a named view: double-click is "iso"
+    menu_requested = Signal(QPoint)         # right-click, at this global position
 
     SIZE = 58          # widget is square, in logical pixels; snug around the cube
     MARGIN = 6         # closest the cube comes to the viewport's top/right edges
@@ -462,6 +464,12 @@ class OrientationCube(QWidget):
             self.update()
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            # The cube's own: its menu follows. Ignored, it reached the
+            # viewport, which began a right-drag pan whose release the menu
+            # then took -- so the view panned on every later move.
+            event.accept()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             event.ignore()
             return
@@ -477,6 +485,21 @@ class OrientationCube(QWidget):
         self._press_pos = event.position()
         self._drag_pos = event.position()
         self._dragging = False
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        """Isometric. The first click of the pair has already swung to the
+        face under it; this swing takes over from that one. Not passed to
+        mousePressEvent, as QWidget would, or the second click would snap
+        to the face again."""
+        if event.button() == Qt.MouseButton.LeftButton and self._region_at(event.position()) >= 0:
+            self.preset_requested.emit("iso")
+            event.accept()
+            return
+        event.ignore()
+
+    def contextMenuEvent(self, event):
+        self.menu_requested.emit(event.globalPos())
         event.accept()
 
     def mouseReleaseEvent(self, event):

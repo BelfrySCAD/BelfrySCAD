@@ -1793,6 +1793,7 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("&View")
+        self._view_preset_actions = {}
         for label, preset, key in (
             ("&Top",       "top",    "Ctrl+4"),
             ("&Bottom",    "bottom", "Ctrl+5"),
@@ -1807,6 +1808,9 @@ class MainWindow(QMainWindow):
             act = self._add_action(view_menu, label,
                              lambda p=preset: self._set_view(p),
                              QKeySequence(key))
+            # Read by the orientation cube's right-click menu, which shows
+            # these shortcuts beside the same views.
+            self._view_preset_actions[preset] = act
             # ApplicationShortcut, not the default WindowShortcut: these must
             # fire while a data-viewer dialog (incl. a modal "Edit as..."
             # editor) is the active window, not just the main window — Qt's

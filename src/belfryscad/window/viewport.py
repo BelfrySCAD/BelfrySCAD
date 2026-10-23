@@ -7,7 +7,7 @@ import numpy as np
 from dataclasses import dataclass
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QMenu, QPushButton
 from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation,
                              QEasingCurve, QEvent)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
@@ -469,6 +469,8 @@ class Viewport(QOpenGLWidget):
             self._orientation_cube = OrientationCube(self)
             self._orientation_cube.view_requested.connect(self._on_orientation_cube_view)
             self._orientation_cube.orbit_requested.connect(self._on_orientation_cube_orbit)
+            self._orientation_cube.preset_requested.connect(self.set_view_preset)
+            self._orientation_cube.menu_requested.connect(self._show_view_menu)
             self._axis_indicator = AxisIndicator(
                 self, label_color=lambda: self._renderer.axes_color)
             self.camera_changed.connect(self._sync_orientation_cube)
@@ -1126,6 +1128,38 @@ class Viewport(QOpenGLWidget):
         if self._orientation_cube is not None:
             self._orientation_cube.setVisible(mode in ("cube", "both"))
             self._axis_indicator.setVisible(mode in ("axes", "both"))
+
+    # The orientation cube's right-click menu: the View menu's named views,
+    # in its order and with its labels.
+    VIEW_MENU = (("&Top", "top"), ("&Bottom", "bottom"), ("&Left", "left"),
+                 ("&Right", "right"), ("&Front", "front"), ("Bac&k", "back"),
+                 None, ("Is&ometric", "iso"), None,
+                 ("View &All", "all"), ("Ce&nter", "center"))
+
+    def _show_view_menu(self, global_pos):
+        """The named views, each showing the View menu's shortcut for it as
+        it stands (shortcuts can be rebound) -- read from the nearest window
+        up the parent chain that keeps them, so a 3D data viewer's cube
+        shows the main window's. Chosen here, the view is set on THIS
+        viewport, whichever window is active."""
+        shortcuts = {}
+        w = self
+        while w is not None and not shortcuts:
+            shortcuts = {p: a.shortcut() for p, a in getattr(w, "_view_preset_actions", {}).items()}
+            w = w.parentWidget()
+        menu = QMenu(self)
+        for item in self.VIEW_MENU:
+            if item is None:
+                menu.addSeparator()
+                continue
+            label, preset = item
+            act = menu.addAction(label)
+            act.triggered.connect(lambda _=False, p=preset: self.set_view_preset(p))
+            if preset in shortcuts:
+                # Shown, not bound: the View menu's own action is the binding.
+                act.setShortcut(shortcuts[preset])
+                act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        menu.exec(global_pos)
 
     def _on_orientation_cube_view(self, azimuth: float, elevation: float):
         self.animate_camera_to(azimuth, elevation)
