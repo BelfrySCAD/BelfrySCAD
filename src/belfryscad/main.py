@@ -305,7 +305,10 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # The Welcome window, when it shows, comes up INSTEAD of the main
     # window, which appears once it is dismissed or bypassed. Not under
     # --testing: its launches are scripted, and a test expects the window.
-    if not files_to_open and not testing and app_settings().value("app/showWelcome", True, type=bool):
+    reopened = (not files_to_open and not testing
+                and app_settings().value("app/reopenFiles", False, type=bool)
+                and window.restore_session())
+    if not files_to_open and not reopened and not testing and app_settings().value("app/showWelcome", True, type=bool):
         window.show_welcome(startup=True)
     else:
         window.show()

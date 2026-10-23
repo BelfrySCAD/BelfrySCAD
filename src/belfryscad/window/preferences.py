@@ -123,6 +123,9 @@ _DEFAULTS = {
     "app/checkForUpdates": True,
     # The Welcome window at startup, when no file was named to open.
     "app/showWelcome": True,
+    # Reopen the files that were open at the last quit, when none was named
+    # on the command line (#880).
+    "app/reopenFiles": False,
     # The Customizer's "Automatic update" box (#397): a field change renders
     # 2s later. Off keeps the write-back and leaves rendering to F6.
     "customizer/autoUpdate": True,
@@ -348,6 +351,16 @@ class PreferencesDialog(QDialog):
         self._show_welcome.toggled.connect(
             lambda v: self._emit("app/showWelcome", bool(v)))
         form.addRow("Startup:", self._show_welcome)
+
+        self._reopen_files = QCheckBox("Reopen the files that were open when BelfrySCAD last quit")
+        self._reopen_files.setChecked(
+            s.value("app/reopenFiles", _DEFAULTS["app/reopenFiles"], type=bool))
+        self._reopen_files.setToolTip(
+            "Only when BelfrySCAD starts without a file to open. Untitled tabs\n"
+            "and files that no longer exist are not reopened.")
+        self._reopen_files.toggled.connect(
+            lambda v: self._emit("app/reopenFiles", bool(v)))
+        form.addRow("", self._reopen_files)
 
         self._tint_covered = QCheckBox("Coverage overlay also tints covered spans green")
         self._tint_covered.setChecked(
