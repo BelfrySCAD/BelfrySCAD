@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.88.0" date="2026-10-23">
+      <description>
+        <p>Double-click the model to centre the view on it, OpenSCAD-style reference axes beside the orientation cube, a right-click menu of views on the cube, and an option to reopen the files open at the last quit.</p>
+      </description>
+    </release>
     <release version="1.87.0" date="2026-10-23">
       <description>
         <p>Running belfryscad --render or --preview with a file now renders or previews it in the window, including a BelfrySCAD that is already running, for working from an external editor.</p>
