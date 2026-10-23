@@ -30,13 +30,14 @@ out["handoff_with_nobody_listening"] = hand_off(["a.scad"], name=name, timeout_m
 server = InstanceServer(name=name, backend=backend)
 out["listening"] = server.is_listening()
 got = []
-server.paths_received.connect(lambda paths: got.extend(paths))
+modes = []
+server.paths_received.connect(lambda paths, mode: (got.extend(paths), modes.append(mode)))
 # The client is a second PROCESS, as it is for real. In-process, Windows'
 # named pipes never complete the write until the server side reads, and
 # the server side is this same thread waiting for the write.
 client = subprocess.Popen([sys.executable, "-c",
     "import sys; from belfryscad.single_instance import hand_off; "
-    "print(hand_off(['rel.scad', '/abs/two.scad'], name=sys.argv[1], backend=sys.argv[2]))",
+    "print(hand_off(['rel.scad', '/abs/two.scad'], name=sys.argv[1], backend=sys.argv[2], mode='render'))",
     name, backend],
     stdout=subprocess.PIPE, text=True)
 deadline = QTimer(); deadline.setSingleShot(True); deadline.start(10000)
@@ -45,6 +46,7 @@ while (not got or client.poll() is None) and deadline.isActive():
 client.wait(timeout=10)
 out["handoff_with_server"] = client.stdout.read().strip() == "True"
 out["received"] = got
+out["modes"] = modes
 out["first_is_absolute"] = os.path.isabs(got[0]) if got else None
 # A stale socket from a crashed run must not block a fresh listener. D-Bus
 # has no such state: the bus drops a dead process's name itself.
@@ -93,5 +95,6 @@ def test_hand_off_reaches_a_listener_and_fails_cleanly_without_one(backend, tmp_
     assert out["first_is_absolute"] is True
     assert out["received"][0].endswith("rel.scad")
     assert out["received"][1].endswith("two.scad")   # abspath differs per OS (drive letter on Windows)
+    assert out["modes"] == ["render"]   # --render rides along with the paths (#898)
     if backend == "local":
         assert out["relisten_after_stale"] is True

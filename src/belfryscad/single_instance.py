@@ -18,7 +18,11 @@ Two transports, one interface:
   does not ship, so importing it killed the Flatpak at startup (#805).
 * **Elsewhere: a QLocalServer** named for the current user. Wire protocol:
   one absolute path per line, UTF-8, then the client disconnects. Nothing
-  comes back.
+  comes back. A first line of `--render` or `--preview` asks for that once
+  the files are open (#898); no path starts with `--`.
+
+The mode travels in D-Bus's `platform_data` under `MODE_KEY`, which an
+instance that predates it ignores.
 
 Each backend imports its Qt module only when used.
 """
@@ -32,6 +36,8 @@ from PySide6.QtCore import ClassInfo, QObject, QUrl, Signal, Slot
 
 APP_ID = "com.belfrydw.belfryscad"
 _DBUS_INTERFACE = "org.freedesktop.Application"
+MODE_KEY = "belfryscad-mode"
+MODES = ("render", "preview")
 
 
 def default_backend() -> str:
@@ -50,34 +56,37 @@ def _object_path(name: str) -> str:
 
 
 def hand_off(paths: list[str], name: str | None = None, timeout_ms: int = 1500,
-             backend: str | None = None) -> bool:
-    """Send `paths` to a running instance. True if one took them."""
+             backend: str | None = None, mode: str = "") -> bool:
+    """Send `paths` to a running instance. True if one took them. `mode`,
+    "render" or "preview", asks it to do that once they are open."""
     backend = backend or default_backend()
     name = name or server_name(backend)
     paths = [os.path.abspath(p) for p in paths]
     if backend == "dbus":
-        return _dbus_hand_off(paths, name, timeout_ms)
-    return _local_hand_off(paths, name, timeout_ms)
+        return _dbus_hand_off(paths, name, timeout_ms, mode)
+    return _local_hand_off(paths, name, timeout_ms, mode)
 
 
-def _dbus_hand_off(paths, name, timeout_ms) -> bool:
+def _dbus_hand_off(paths, name, timeout_ms, mode="") -> bool:
     from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage
     bus = QDBusConnection.sessionBus()
     if not bus.isConnected() or not bus.interface().isServiceRegistered(name).value():
         return False
     msg = QDBusMessage.createMethodCall(name, _object_path(name), _DBUS_INTERFACE, "Open")
-    msg.setArguments([[QUrl.fromLocalFile(p).toString() for p in paths], {}])
+    msg.setArguments([[QUrl.fromLocalFile(p).toString() for p in paths],
+                      {MODE_KEY: mode} if mode else {}])
     reply = bus.call(msg, QDBus.CallMode.Block, timeout_ms)
     return reply.type() == QDBusMessage.MessageType.ReplyMessage
 
 
-def _local_hand_off(paths, name, timeout_ms) -> bool:
+def _local_hand_off(paths, name, timeout_ms, mode="") -> bool:
     from PySide6.QtNetwork import QLocalSocket
     sock = QLocalSocket()
     sock.connectToServer(name)
     if not sock.waitForConnected(timeout_ms):
         return False
-    sock.write("".join(p + "\n" for p in paths).encode("utf-8"))
+    lines = ([f"--{mode}"] if mode else []) + paths
+    sock.write("".join(p + "\n" for p in lines).encode("utf-8"))
     ok = sock.waitForBytesWritten(timeout_ms)
     sock.disconnectFromServer()
     if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
@@ -96,12 +105,13 @@ class _ApplicationAdaptor(QObject):
 
     @Slot("QVariantMap")
     def Activate(self, platform_data):
-        self._server.paths_received.emit([])
+        self._server.paths_received.emit([], "")
 
     @Slot("QStringList", "QVariantMap")
     def Open(self, uris, platform_data):
         paths = [QUrl(u).toLocalFile() for u in uris]
-        self._server.paths_received.emit([p for p in paths if p])
+        mode = str(platform_data.get(MODE_KEY, ""))
+        self._server.paths_received.emit([p for p in paths if p], mode if mode in MODES else "")
 
     @Slot(str, "QVariantList", "QVariantMap")
     def ActivateAction(self, action, parameter, platform_data):
@@ -110,9 +120,10 @@ class _ApplicationAdaptor(QObject):
 
 class InstanceServer(QObject):
     """The listening side. Emits `paths_received` with a list of absolute
-    paths -- empty when the instance should only come to the front."""
+    paths -- empty when the instance should only come to the front -- and
+    the mode asked for ("render", "preview" or "")."""
 
-    paths_received = Signal(list)
+    paths_received = Signal(list, str)
 
     def __init__(self, name: str | None = None, parent: QObject | None = None,
                  backend: str | None = None):
@@ -164,9 +175,12 @@ class InstanceServer(QObject):
             def on_done(s=sock, b=buf):
                 on_ready(s, b)
                 paths = [line for line in b.decode("utf-8", "replace").split("\n") if line.strip()]
+                mode = ""
+                if paths and paths[0].startswith("--"):
+                    mode = paths.pop(0)[2:]
                 s.deleteLater()
                 if paths:
-                    self.paths_received.emit(paths)
+                    self.paths_received.emit(paths, mode if mode in MODES else "")
 
             sock.readyRead.connect(on_ready)
             sock.disconnected.connect(on_done)
