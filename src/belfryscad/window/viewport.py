@@ -458,15 +458,23 @@ class Viewport(QOpenGLWidget):
         # Orientation cube: the main window and every 3D data viewer; not a
         # 2D one, whose view is locked top-down and must not be turned.
         # A plain child QWidget, so it never touches the GL context.
+        # Beside it, OpenSCAD's small reference axes in the lower-left
+        # corner (#881); Preferences > Viewport chooses either or both.
         self._orientation_cube = None
+        self._axis_indicator = None
         self._view_anim = None      # in-flight orientation-cube view swing
         if orientation_cube:
             from .orientation_cube import OrientationCube
+            from .axis_indicator import AxisIndicator
             self._orientation_cube = OrientationCube(self)
             self._orientation_cube.view_requested.connect(self._on_orientation_cube_view)
             self._orientation_cube.orbit_requested.connect(self._on_orientation_cube_orbit)
+            self._axis_indicator = AxisIndicator(
+                self, label_color=lambda: self._renderer.axes_color)
             self.camera_changed.connect(self._sync_orientation_cube)
             self._sync_orientation_cube()
+            from .preferences import load_preference
+            self.set_orientation_indicator(load_preference("viewport/orientationIndicator"))
 
         # Gizmo drag state
         self._gizmo_drag_axis: int = -1
@@ -598,6 +606,7 @@ class Viewport(QOpenGLWidget):
             self._renderer.set_viewport(w, h)
         if self._orientation_cube is not None:
             self._orientation_cube.place_in(self.width())
+            self._axis_indicator.place_in(self.height())
         if self._debug_paused or self._render_busy or self._debug_busy:
             self._position_busy_label()
         self.size_changed.emit(w, h)
@@ -1108,7 +1117,15 @@ class Viewport(QOpenGLWidget):
         on every camera_changed (it is a 3x3 compare, then a repaint only if
         the rotation actually moved)."""
         if self._orientation_cube is not None:
-            self._orientation_cube.set_orientation(self._renderer.camera.view_matrix())
+            view = self._renderer.camera.view_matrix()
+            self._orientation_cube.set_orientation(view)
+            self._axis_indicator.set_orientation(view)
+
+    def set_orientation_indicator(self, mode: str) -> None:
+        """Preferences > Viewport > Orientation: "cube", "axes" or "both"."""
+        if self._orientation_cube is not None:
+            self._orientation_cube.setVisible(mode in ("cube", "both"))
+            self._axis_indicator.setVisible(mode in ("axes", "both"))
 
     def _on_orientation_cube_view(self, azimuth: float, elevation: float):
         self.animate_camera_to(azimuth, elevation)
@@ -1412,6 +1429,28 @@ class Viewport(QOpenGLWidget):
 
         self._last_mouse = pos
         self._mouse_button = event.button()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """OpenSCAD's double-click (#881): the point of the model under the
+        cursor becomes the centre of the view, which keeps its angle and
+        distance. Over empty space, nothing. The main viewport only: the
+        data viewers' editors give plain clicks on points their own
+        meanings."""
+        if (event.button() != Qt.MouseButton.LeftButton or not self._selectable
+                or self._measure_mode is not None):
+            super().mouseDoubleClickEvent(event)
+            return
+        pos = event.position()
+        origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        hit = self._renderer.ray_cast_point(origin, ray_dir)
+        if hit is None:
+            return
+        self.stop_view_animation()
+        self._renderer.camera.target = np.asarray(hit[0], dtype=np.float32)
+        if self._measurements:
+            self._refresh_measure_labels()
+        self.camera_changed.emit()
+        self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self._gizmo_drag_axis >= 0:

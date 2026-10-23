@@ -77,6 +77,10 @@ _DEFAULTS = {
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "viewport/keepMinuendColor": False,  # difference() cut faces keep the minuend's colour
+    # The 3D views' orientation aids (#881): the clickable cube in the
+    # top-right corner, OpenSCAD's small reference axes in the lower-left,
+    # or both.
+    "viewport/orientationIndicator": "both",
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
     "ai/claudeCliPath": "",   # empty -> look on PATH
@@ -123,6 +127,9 @@ _DEFAULTS = {
     "app/checkForUpdates": True,
     # The Welcome window at startup, when no file was named to open.
     "app/showWelcome": True,
+    # Reopen the files that were open at the last quit, when none was named
+    # on the command line (#880).
+    "app/reopenFiles": False,
     # The Customizer's "Automatic update" box (#397): a field change renders
     # 2s later. Off keeps the write-back and leaves rendering to F6.
     "customizer/autoUpdate": True,
@@ -349,6 +356,16 @@ class PreferencesDialog(QDialog):
             lambda v: self._emit("app/showWelcome", bool(v)))
         form.addRow("Startup:", self._show_welcome)
 
+        self._reopen_files = QCheckBox("Reopen the files that were open when BelfrySCAD last quit")
+        self._reopen_files.setChecked(
+            s.value("app/reopenFiles", _DEFAULTS["app/reopenFiles"], type=bool))
+        self._reopen_files.setToolTip(
+            "Only when BelfrySCAD starts without a file to open. Untitled tabs\n"
+            "and files that no longer exist are not reopened.")
+        self._reopen_files.toggled.connect(
+            lambda v: self._emit("app/reopenFiles", bool(v)))
+        form.addRow("", self._reopen_files)
+
         self._tint_covered = QCheckBox("Coverage overlay also tints covered spans green")
         self._tint_covered.setChecked(
             s.value("coverage/tintCovered", _DEFAULTS["coverage/tintCovered"], type=bool))
@@ -461,6 +478,20 @@ class PreferencesDialog(QDialog):
             "when it has none, as OpenSCAD does. On re-renders the current design.")
         self._keep_minuend_color.toggled.connect(lambda v: self._emit("viewport/keepMinuendColor", bool(v)))
         vp_form.addRow("Cut faces:", self._keep_minuend_color)
+
+        self._orientation_indicator = QComboBox()
+        for label, value in (("Orientation cube and reference axes", "both"),
+                             ("Orientation cube", "cube"),
+                             ("Reference axes, as in OpenSCAD", "axes")):
+            self._orientation_indicator.addItem(label, value)
+        self._orientation_indicator.setCurrentIndex(max(0, self._orientation_indicator.findData(
+            s.value("viewport/orientationIndicator", _DEFAULTS["viewport/orientationIndicator"]))))
+        self._orientation_indicator.setToolTip(
+            "The cube sits in the top-right corner, and clicking a face looks from that side.\n"
+            "The reference axes sit in the lower-left corner, as OpenSCAD draws them.")
+        self._orientation_indicator.currentIndexChanged.connect(
+            lambda _: self._emit("viewport/orientationIndicator", self._orientation_indicator.currentData()))
+        vp_form.addRow("Orientation:", self._orientation_indicator)
 
         tabs.addTab(viewport_tab, "Viewport")
 
