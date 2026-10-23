@@ -30,11 +30,13 @@ def _parse_args(argv):
     parser.add_argument("--render", action="store_true",
                          help="For -o x.png: render rather than preview, as OpenSCAD's --render -- $preview "
                               "is false and # and %% objects are drawn as an export writes them. Mesh "
-                              "exports are always a render")
+                              "exports are always a render. Without -o: render the file once it is open, "
+                              "in the BelfrySCAD already running if there is one")
     parser.add_argument("--preview", action="store_true",
                          help="For -o x.png, the default: $preview is true and # and %% objects are shown, "
                               "as OpenSCAD's --preview. --preview=throwntogether also shows faces' backsides "
-                              "(open surfaces, inverted normals), like --view backfaces")
+                              "(open surfaces, inverted normals), like --view backfaces. Without -o: preview "
+                              "the file once it is open, in the BelfrySCAD already running if there is one")
     parser.add_argument("--animate", type=int, metavar="N",
                          help="Export N animated frames ($t = i/N) instead of a single render. "
                               "Only applies together with -o; frames are named {stem}{00000..N-1}{ext}")
@@ -237,7 +239,7 @@ def _isolate_settings():
 
 def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None,
-             testing: bool = False):
+             testing: bool = False, mode: str = ""):
     from PySide6.QtCore import QEvent, Signal
     from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
@@ -282,7 +284,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     from belfryscad.settings import app_settings
     from belfryscad.single_instance import InstanceServer, hand_off
     single = app_settings().value("app/openInRunningInstance", True, type=bool) and not testing
-    if single and files_to_open and hand_off(files_to_open):
+    if single and files_to_open and hand_off(files_to_open, mode=mode):
         return 0
     window = MainWindow()
     # Reaches the escape hatch _confirm_unsaved already honours, so both
@@ -290,9 +292,9 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # consulted.
     window.skip_unsaved_prompts = no_save_prompts
     if single:
-        def _open_handed_off(paths):
+        def _open_handed_off(paths, mode):
             for p in paths:
-                window.open_file_by_path(p)
+                window.open_file_by_path(p, mode=mode)
             window.raise_()
             window.activateWindow()
         instance_server = InstanceServer(parent=app)   # kept alive by `app`
@@ -308,7 +310,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     else:
         window.show()
     for path in files_to_open:
-        window.open_file_by_path(path)
+        window.open_file_by_path(path, mode=mode)
     if not testing:
         # Never under --testing: a test launch must not reach the network.
         from PySide6.QtCore import QTimer
@@ -798,7 +800,8 @@ def main():
 
     _run_gui([args.file, *args.more_files] if args.file else [],
              no_save_prompts=args.no_save_prompts or args.testing,
-             ai_echo=args.ai_echo, ai_prompt=args.ai, testing=args.testing)
+             ai_echo=args.ai_echo, ai_prompt=args.ai, testing=args.testing,
+             mode="render" if args.render else "preview" if args.preview else "")
 
 
 if __name__ == "__main__":

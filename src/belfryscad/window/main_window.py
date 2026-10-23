@@ -2514,12 +2514,17 @@ class MainWindow(QMainWindow):
         for path in self._choose_files():
             self.open_file_by_path(path)
 
-    def open_file_by_path(self, path: str, render: bool = True):
+    def open_file_by_path(self, path: str, render: bool = True, mode: str = ""):
         """Open a .scad file by path. If already open, switch to its tab.
 
         `render=False` opens it without rendering, for revealing a file
         rather than working on it -- stepping the selection into a library
         must not replace the geometry the selection belongs to.
+
+        `mode` is the command line's `--render` or `--preview` (#898): once
+        the file is open -- or switched to, picking up what changed on disk
+        -- it is rendered or previewed, whatever Render a file when it is
+        opened says.
         """
         # A file arriving any other way (Finder, a second launch handing its
         # file over) bypasses the startup Welcome window.
@@ -2536,6 +2541,8 @@ class MainWindow(QMainWindow):
             tab = self._tabs.widget(i)
             if tab and tab.file_path and str(Path(tab.file_path).resolve()) == resolved:
                 self._tabs.setCurrentIndex(i)
+                if mode:
+                    self._render_from_command_line(tab, mode)
                 return
         # Use in-memory text if another window has unsaved changes to this file
         in_memory = get_document_manager().get_current_text(resolved)
@@ -2562,8 +2569,26 @@ class MainWindow(QMainWindow):
         self._refresh_watched_files()
         # Off lets a file that hangs or floods the renderer be opened to fix
         # it -- with it on, reopening such a file just hung again (#554).
-        if render and load_preference("render/onOpen", bool):
+        if mode:
+            self._render(tab, reframe=True, preview=mode == "preview")
+        elif render and load_preference("render/onOpen", bool):
             self._render(tab, reframe=True)      # a new tab from a file
+
+    def _render_from_command_line(self, tab, mode: str):
+        """`belfryscad --render FILE` for a file this window already has open:
+        typically an external editor that just saved it, then asked for a
+        Render. Pick the save up now, and settle what Automatic Reload and
+        Preview has queued or would yet notice about this file and what it
+        includes -- otherwise that Preview lands after, and replaces, the
+        Render just asked for."""
+        path = str(tab.file_path)
+        self._reload_one(path)
+        self._pending_reloads.discard(path)
+        for dep, owners in self._dep_owners.items():
+            if path in owners:
+                self._pending_reloads.discard(dep)
+                self._dep_stamps[dep] = self._stamp(dep)
+        self._render(tab, preview=mode == "preview")
 
     def _save_file(self):
         tab = self._current_tab()
