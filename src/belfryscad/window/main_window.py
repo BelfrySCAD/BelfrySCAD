@@ -5897,6 +5897,7 @@ class MainWindow(QMainWindow):
             vp._renderer._default_color = theme["object"]
             vp._renderer.axes_color = theme["axes"]
             vp._renderer.unselected_vertex_color = theme["unselected_vertex"]
+            vp.set_orientation_indicator(load_preference("viewport/orientationIndicator"))
             vp.update()
         if hasattr(self, "_act_stereo"):
             self._apply_stereo()

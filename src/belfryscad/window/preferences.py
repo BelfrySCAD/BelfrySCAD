@@ -77,6 +77,10 @@ _DEFAULTS = {
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "viewport/keepMinuendColor": False,  # difference() cut faces keep the minuend's colour
+    # The 3D views' orientation aids (#881): the clickable cube in the
+    # top-right corner, OpenSCAD's small reference axes in the lower-left,
+    # or both.
+    "viewport/orientationIndicator": "both",
     "colorThemes/custom": "{}",  # JSON-encoded {name: {background, object, axes, unselected_vertex}}
     "ai/activeProvider": "openai",
     "ai/claudeCliPath": "",   # empty -> look on PATH
@@ -461,6 +465,20 @@ class PreferencesDialog(QDialog):
             "when it has none, as OpenSCAD does. On re-renders the current design.")
         self._keep_minuend_color.toggled.connect(lambda v: self._emit("viewport/keepMinuendColor", bool(v)))
         vp_form.addRow("Cut faces:", self._keep_minuend_color)
+
+        self._orientation_indicator = QComboBox()
+        for label, value in (("Orientation cube and reference axes", "both"),
+                             ("Orientation cube", "cube"),
+                             ("Reference axes, as in OpenSCAD", "axes")):
+            self._orientation_indicator.addItem(label, value)
+        self._orientation_indicator.setCurrentIndex(max(0, self._orientation_indicator.findData(
+            s.value("viewport/orientationIndicator", _DEFAULTS["viewport/orientationIndicator"]))))
+        self._orientation_indicator.setToolTip(
+            "The cube sits in the top-right corner, and clicking a face looks from that side.\n"
+            "The reference axes sit in the lower-left corner, as OpenSCAD draws them.")
+        self._orientation_indicator.currentIndexChanged.connect(
+            lambda _: self._emit("viewport/orientationIndicator", self._orientation_indicator.currentData()))
+        vp_form.addRow("Orientation:", self._orientation_indicator)
 
         tabs.addTab(viewport_tab, "Viewport")
 
