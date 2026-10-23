@@ -2590,6 +2590,28 @@ class MainWindow(QMainWindow):
                 self._dep_stamps[dep] = self._stamp(dep)
         self._render(tab, preview=mode == "preview")
 
+    def restore_session(self) -> bool:
+        """Reopen the files open at the last quit (#880), in their order,
+        with the one that was current brought forward. Only that one is
+        rendered: a session of slow models should not render them all
+        before the window can be used. True if anything was opened."""
+        s = app_settings()
+        files = [f for f in s.value("session/openFiles", [], type=list) if os.path.isfile(f)]
+        if not files:
+            return False
+        for f in files:
+            self.open_file_by_path(f, render=False)
+        current = s.value("session/currentFile", "", type=str)
+        current = current if current in files else files[-1]
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            if tab and tab.file_path and str(tab.file_path) == current:
+                self._tabs.setCurrentIndex(i)
+                if load_preference("render/onOpen", bool):
+                    self._render(tab, reframe=True)
+                break
+        return True
+
     def _save_file(self):
         tab = self._current_tab()
         if not tab:
@@ -6091,6 +6113,14 @@ class MainWindow(QMainWindow):
             s.setValue("perspective", self._act_perspective.isChecked())
             s.setValue("stereo", self._stereo_on)
             s.setValue("wordWrap", self._act_word_wrap.isChecked())
+            # For Reopen the files... (#880), recorded whether or not it is
+            # on, so turning it on picks up the session just ended.
+            # ponytail: one list for the app, so with several windows the
+            # last one closed wins; per-window sessions if anyone needs them.
+            tabs = [self._tabs.widget(i) for i in range(self._tabs.count())]
+            s.setValue("session/openFiles", [str(t.file_path) for t in tabs if t and t.file_path])
+            current = self._current_tab()
+            s.setValue("session/currentFile", str(current.file_path) if current and current.file_path else "")
             # Flush settings to disk now: the app exits via os._exit() (see
             # main.py), which skips QSettings' normal sync-on-destruction.
             s.sync()
