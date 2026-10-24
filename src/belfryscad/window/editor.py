@@ -2668,10 +2668,15 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(start + len(text[:at].encode("utf-16-le")) // 2)
         self.setTextCursor(cursor)
 
-    def show_template_menu(self):
+    def show_template_menu(self, at=None, cursor=None):
         """Edit > Insert Template: every template by name, in a popup at the
         caret. A template file that would not load is reported on the
-        console, as OpenSCAD logs it, rather than silently missing."""
+        console, as OpenSCAD logs it, rather than silently missing.
+
+        From the right-click menu, `at` is the click's global position and
+        `cursor` where that menu acts: the popup opens there and the
+        template goes in there, not at a caret the click may not have
+        moved (#911)."""
         if self.isReadOnly():
             return
         from belfryscad.scad_templates import load
@@ -2682,10 +2687,15 @@ class CodeEditor(QPlainTextEdit):
         for key in sorted(templates, key=str.casefold):
             act = menu.addAction(key)
             act.triggered.connect(
-                lambda checked=False, c=templates[key].content: self.insert_template(c))
+                lambda checked=False, c=templates[key].content: self._insert_template_at(c, cursor))
         if not templates:
             menu.addAction("(No templates)").setEnabled(False)
-        menu.exec(self.viewport().mapToGlobal(self.cursorRect().bottomLeft()))
+        menu.exec(at if at is not None else self.viewport().mapToGlobal(self.cursorRect().bottomLeft()))
+
+    def _insert_template_at(self, content: str, cursor=None):
+        if cursor is not None:
+            self.setTextCursor(cursor)
+        self.insert_template(content)
 
     def _unindent_lines(self):
         # Mirror of _indent_lines: back to the previous stop, so an off-grid
@@ -3492,7 +3502,11 @@ class CodeEditor(QPlainTextEdit):
                 lambda checked=False: self.use_library_requested.emit())
             menu.addAction(use_act)
             tpl_act = QAction("Insert Template…", self)
-            tpl_act.triggered.connect(lambda checked=False: self.show_template_menu())
+            # At the click, and inserted where this menu acts (sel_cursor,
+            # below); captured now, as the event is gone once the menu is.
+            click_at = event.globalPos()
+            tpl_act.triggered.connect(lambda checked=False: self.show_template_menu(
+                at=click_at, cursor=QTextCursor(sel_cursor)))
             menu.addAction(tpl_act)
 
         # What the menu acts on is WHERE YOU CLICKED, not where the caret
