@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.89.0" date="2026-10-23">
+      <description>
+        <p>Design &gt; Preview After Drag can be turned off, so a drag edits the code without starting a preview, for models that are slow to preview.</p>
+      </description>
+    </release>
     <release version="1.88.2" date="2026-10-23">
       <description>
         <p>A # object inside a ! subtree previews in red as in OpenSCAD, and Insert Template from the right-click menu opens where you clicked.</p>
