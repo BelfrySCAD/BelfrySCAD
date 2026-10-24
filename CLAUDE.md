@@ -133,7 +133,7 @@ Triggers:
 
 - The user selects **Preview** or **Render** (toolbar or Design menu)
 - The user selects **Design ▸ Reload and Preview** (F4, as OpenSCAD's): reloads the tab only if its file changed on disk (asking first about unsaved edits), then previews even if nothing reloaded, since an included file may be what changed (#770)
-- A **gizmo drag commits** (mouse-up)
+- A **gizmo drag commits** (mouse-up), unless **Design ▸ Preview After Drag** is off (#838): then the code is edited and the moved part stays held on screen until F5/F6, for a model slow to preview. Only the drag's own preview is skipped; Undo and Redo of it still preview (`_render_after_drag`)
 - An **"Edit as..." literal edit is saved** (Save button in the editable Path/Grid/Matrix/Affine viewers, opened from the code editor's right-click menu)
 - A **file is opened** (`open_file_by_path` triggers `_render` after the tab is created), unless **Preferences ▸ Render ▸ Render a file when it is opened** is off -- so a file that hangs or floods the renderer can still be opened and fixed (#554)
 - **`belfryscad --render FILE`** or **`--preview FILE`** without `-o` (#898): the file is rendered or previewed once open, whatever that preference says -- and handed to the BelfrySCAD already running, if any, which reloads it from disk first (the single-instance hand-off carries the mode). For an external editor that saves and then asks: `_render_from_command_line` also settles what Automatic Reload and Preview has queued or would yet notice about the file and its includes, or that Preview would land after, and replace, the Render asked for

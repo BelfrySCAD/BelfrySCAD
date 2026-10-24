@@ -1748,6 +1748,12 @@ class MainWindow(QMainWindow):
             app_settings().value(
                 "autoReload", False, type=bool),
             self._set_auto_reload)
+        # Off, a drag edits the code and leaves the moved part held on
+        # screen until F5/F6: for a model slow to preview (#838).
+        self._act_preview_after_drag = self._add_checkable(
+            design_menu, "Preview After &Drag",
+            app_settings().value("previewAfterDrag", True, type=bool),
+            lambda on: app_settings().setValue("previewAfterDrag", bool(on)))
         design_menu.addSeparator()
         # OpenSCAD's Reload and Preview, Preview and Render, and their keys.
         # Preview is the norm -- every automatic render is one -- and Render
@@ -6645,7 +6651,7 @@ class MainWindow(QMainWindow):
         new_source, new_node_start = edit
         self._stack_for(self._rendered_tab).push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
-            self._render, new_node_start, self._restore_selection_after_gizmo,
+            self._render_after_drag(), new_node_start, self._restore_selection_after_gizmo,
             merge_id=1005, label="Extrude", viewport=self._viewport,
         ))
 
@@ -6687,9 +6693,28 @@ class MainWindow(QMainWindow):
 
         self._stack_for(self._rendered_tab).push(_GizmoCmd(
             self._rendered_tab, self._rendered_tab.editor, source, new_source,
-            self._render, new_node_start, self._restore_selection_after_gizmo,
+            self._render_after_drag(), new_node_start, self._restore_selection_after_gizmo,
             merge_id=merge_id, label=label, viewport=self._viewport,
         ))
+
+    def _render_after_drag(self):
+        """The render a drag's undo step runs. Its first run is the drag
+        itself: with Design > Preview After Drag off, that one is skipped
+        and the moved part stays held on screen (#838) -- consecutive drags
+        already find the part where the last edit left it, render or no
+        render (_gizmo_followup). Undo and Redo always preview, so the view
+        never shows a part where the code no longer puts it."""
+        first = [True]
+
+        def render():
+            if first[0] and not self._act_preview_after_drag.isChecked():
+                first[0] = False
+                self.statusBar().showMessage(
+                    "Drag applied. Press F5 to preview (Design > Preview After Drag is off).")
+                return
+            first[0] = False
+            self._render()
+        return render
 
     def _restore_selection_after_gizmo(self, edit_start: int):
         """Ask for the edited statement's body back once the render lands.
