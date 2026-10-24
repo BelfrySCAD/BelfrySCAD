@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.88.2" date="2026-10-23">
+      <description>
+        <p>A # object inside a ! subtree previews in red as in OpenSCAD, and Insert Template from the right-click menu opens where you clicked.</p>
+      </description>
+    </release>
     <release version="1.88.1" date="2026-10-23">
       <description>
         <p>Background image changes in the path, region and turtle editors can be undone, and a turtle made with New keeps its background image when reopened.</p>
