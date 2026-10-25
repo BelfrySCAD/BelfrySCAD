@@ -1787,13 +1787,6 @@ class MainWindow(QMainWindow):
         design_menu.addSeparator()
         self._add_action(design_menu, "&Flush Caches", self._flush_caches)
         design_menu.addSeparator()
-        insert_menu = design_menu.addMenu("&Insert Primitive")
-        for prim in ("&Cube", "&Sphere", "C&ylinder", "C&one"):
-            insert_menu.addAction(prim)
-        bool_menu = design_menu.addMenu("&Boolean Operation")
-        for op in ("&Union", "&Difference", "&Intersection"):
-            bool_menu.addAction(op)
-        design_menu.addSeparator()
         self._add_action(design_menu, "Use &Library…", self._open_use_library)
         self._add_action(design_menu, "Mana&ge Libraries…", self._open_library_manager)
 
