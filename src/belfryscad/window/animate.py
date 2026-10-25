@@ -94,16 +94,6 @@ class AnimatePane(QWidget):
 
         layout.addLayout(form)
 
-        play_row = QHBoxLayout()
-        play_row.addStretch()
-        self._btn_play_big = QPushButton()
-        self._btn_play_big.setFixedSize(48, 48)
-        self._btn_play_big.setToolTip("Play/Pause")
-        self._btn_play_big.clicked.connect(self.toggle_play)
-        play_row.addWidget(self._btn_play_big)
-        play_row.addStretch()
-        layout.addLayout(play_row)
-
         self._dump_check = QCheckBox("Dump Pictures")
         layout.addWidget(self._dump_check)
 
@@ -143,6 +133,11 @@ class AnimatePane(QWidget):
             b.setFixedSize(32, 32)
             b.setFlat(True)
             transport.addWidget(b)
+        # Play and Pause stay down to show which one is in effect: once a
+        # big Play/Pause button above them did that, and read as a second
+        # Play (#922).
+        for b in (self._btn_play, self._btn_pause):
+            b.setCheckable(True)
         layout.addLayout(transport)
 
         layout.addStretch()
@@ -176,6 +171,7 @@ class AnimatePane(QWidget):
 
     def play(self):
         if self._playing:
+            self._update_play_icons()   # a click unchecks it; put it back
             return
         self._playing = True
         self._dumping = self._dump_check.isChecked()
@@ -200,6 +196,7 @@ class AnimatePane(QWidget):
 
     def pause(self):
         if not self._playing:
+            self._update_play_icons()
             return
         self._playing = False
         self._pending_advance = None
@@ -209,9 +206,6 @@ class AnimatePane(QWidget):
         self._update_play_icons()
         if was_dumping:
             self.dump_finished.emit()
-
-    def toggle_play(self):
-        self.pause() if self._playing else self.play()
 
     def go_first(self):
         self.pause()
@@ -334,10 +328,15 @@ class AnimatePane(QWidget):
         """
         next_step = (self._step + 1) % self._steps
         if self._dumping and next_step == 0:
-            # One full cycle (0..steps-1) has been rendered/dumped — stop
-            # before repeating frame 0.
-            self.pause()
-            return
+            # One full cycle (0..steps-1) is dumped. As OpenSCAD does, untick
+            # Dump Pictures and play on at the FPS set: stopping here left
+            # Dump ticked, so every Play after it dumped one more cycle at
+            # render speed and stopped again, which looked like an animation
+            # that would no longer run (#922).
+            self._dumping = False
+            self._dump_check.setChecked(False)
+            self.dump_finished.emit()
+            self._timer.start()
         self._step = next_step
         self._update_time_display()
         self.frame_changed.emit(self.current_t())
@@ -383,4 +382,5 @@ class AnimatePane(QWidget):
         self._time_edit.setText(f"{self.current_t():.6f}")
 
     def _update_play_icons(self):
-        _set_anim_icon(self._btn_play_big, "pause" if self._playing else "play")
+        self._btn_play.setChecked(self._playing)
+        self._btn_pause.setChecked(not self._playing)
