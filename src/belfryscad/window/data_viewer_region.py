@@ -16,7 +16,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import Viewport, _key_nudge_delta, _key_nudge_magnitude
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (open_large, _UndoableViewerMixin,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces, _format_value,
                                                   _grid_flat_to_rc, _grid_row_offsets,
@@ -99,7 +99,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         super().__init__(parent)
         label = "Region Editor" if editable else "Region Viewer"
         self.setWindowTitle(f"{label}: {title}" if title else label)
-        self.resize(900, 520)
+        open_large(self)
 
         self._editable = editable
         self._region = region_value
