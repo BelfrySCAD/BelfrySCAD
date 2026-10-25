@@ -1,11 +1,39 @@
+import re
 from html import escape
 
 from PySide6.QtWidgets import QTextBrowser
-from PySide6.QtGui import QColor, QTextBlockFormat, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtCore import QUrl, Qt
 
 from belfryscad.window.ui_colors import (console_severity_colors, on_appearance_change,
                                           text_color)
+
+# The evaluator's failed assert: ERROR: Assertion '<cond>' failed: "<message>"
+# in file F, line N -- the message optional, and free to span lines (BOSL2's
+# all start with a newline). The condition can hold no ' (OpenSCAD has no
+# single-quoted strings), so it ends at the first one.
+_ASSERT_RE = re.compile(
+    r"ERROR: Assertion '([^']*)' failed(?:: \"(.*?)\")? in file .+?, line \d+",
+    re.DOTALL)
+
+
+def _assert_spans(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, role) in *text* for each failed assert's parts: "error"
+    for the whole message, "condition" and "message" for those parts."""
+    spans = []
+    for m in _ASSERT_RE.finditer(text):
+        spans.append((*m.span(), "error"))
+        spans.append((*m.span(1), "condition"))
+        if m.group(2) is not None:
+            spans.append((*m.span(2), "message"))
+    return spans
+
+
+def _blend(a: str, b: str, t: float) -> str:
+    ca, cb = QColor(a), QColor(b)
+    return QColor(round(ca.red() + (cb.red() - ca.red()) * t),
+                  round(ca.green() + (cb.green() - ca.green()) * t),
+                  round(ca.blue() + (cb.blue() - ca.blue()) * t)).name()
 
 
 def _severity_of(text: str) -> str | None:
@@ -76,6 +104,9 @@ class ConsoleWidget(QTextBrowser):
         # fold_id → (name, value) for blocks appended via append_value()
         self._fold_values: dict[int, tuple[str, object]] = {}
         self._severity: dict[int, str] = {}
+        # block number -> [(start, end, role)] within it, for a failed
+        # assert's condition and message (see _mark_asserts).
+        self._assert_parts: dict[int, list[tuple[int, int, str]]] = {}
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self._on_anchor_clicked)
@@ -128,6 +159,51 @@ class ConsoleWidget(QTextBrowser):
         # the band backgrounds are the wrong theme's now -- repaint them.
         for bn, kind in list(self._severity.items()):
             self._band(bn, bn, kind)
+        self._paint_assert_parts(self._assert_parts)
+
+    def _mark_asserts(self, first_bn: int, last_bn: int):
+        """Emphasise each failed assert in blocks first_bn..last_bn (#934):
+        the message is what a library's user can act on, the condition is
+        library internals, so the message goes bold and the condition is
+        muted toward the band. Every line the assert spans is banded too --
+        a message starting with a newline, as all of BOSL2's do, otherwise
+        left the message itself as the one unbanded line."""
+        doc = self.document()
+        blocks = [doc.findBlockByNumber(bn) for bn in range(first_bn, last_bn + 1)]
+        starts, pos = [], 0
+        for b in blocks:
+            starts.append(pos)
+            pos += len(b.text()) + 1
+        parts: dict[int, list[tuple[int, int, str]]] = {}
+        for start, end, role in _assert_spans("\n".join(b.text() for b in blocks)):
+            for b, b_start in zip(blocks, starts):
+                s = max(start, b_start) - b_start
+                e = min(end, b_start + len(b.text())) - b_start
+                if s > e or (s == e and role != "error"):
+                    continue
+                if role == "error":
+                    if b.blockNumber() not in self._severity:
+                        self._band(b.blockNumber(), b.blockNumber(), "error")
+                else:
+                    parts.setdefault(b.blockNumber(), []).append((s, e, role))
+        self._assert_parts.update(parts)
+        self._paint_assert_parts(parts)
+
+    def _paint_assert_parts(self, parts: dict[int, list[tuple[int, int, str]]]):
+        bg, fg = console_severity_colors("error")
+        doc = self.document()
+        for bn, spans in parts.items():
+            block = doc.findBlockByNumber(bn)
+            for start, end, role in spans:
+                cf = QTextCharFormat()
+                if role == "condition":
+                    cf.setForeground(QColor(_blend(fg, bg, 0.45)))
+                else:
+                    cf.setFontWeight(QFont.Weight.Bold)
+                cursor = QTextCursor(block)
+                cursor.setPosition(block.position() + start)
+                cursor.setPosition(block.position() + end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(cf)
 
     def append_output(self, text: str):
         """Append text. Multi-line output gets a fold toggle on the first line."""
@@ -193,10 +269,11 @@ class ConsoleWidget(QTextBrowser):
         if cursor.position() > 0:
             cursor.insertBlock(QTextBlockFormat())
         cursor.insertText(text, _plain_fmt())
+        bn = doc.blockCount() - 1
         kind = _severity_of(text)
         if kind:
-            bn = doc.blockCount() - 1
             self._band(bn, bn, kind)
+        self._mark_asserts(bn, bn)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _append_foldable(self, summary: str, detail: str):
@@ -233,6 +310,7 @@ class ConsoleWidget(QTextBrowser):
                 line_kind = _severity_of(line)
                 if line_kind:
                     self._band(bn, bn, line_kind)
+        self._mark_asserts(header_bn, last_body_bn)
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def mouseMoveEvent(self, event):
@@ -283,3 +361,4 @@ class ConsoleWidget(QTextBrowser):
         self._folded.clear()
         self._fold_values.clear()
         self._severity.clear()
+        self._assert_parts.clear()
