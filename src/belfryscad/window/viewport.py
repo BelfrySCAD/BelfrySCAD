@@ -12,7 +12,7 @@ from PySide6.QtCore import (Qt, QPoint, QSize, Signal, QTimer, QVariantAnimation
                              QEasingCurve, QEvent)
 from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent,
-                            QContextMenuEvent, QGuiApplication, QKeyEvent)
+                            QContextMenuEvent, QGuiApplication, QKeyEvent, QImage)
 
 from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
@@ -375,6 +375,28 @@ def _attach_moderngl(require: int = 330):
 
 #: Every tool that draws a gizmo and takes a drag.
 _GIZMO_TOOLS = (0, 1, 2) + EXTRUDE_GIZMOS
+
+
+# A grabbed frame's formats with alpha, and the same bytes read as opaque.
+_OPAQUE_FORMATS = {
+    QImage.Format.Format_ARGB32: QImage.Format.Format_RGB32,
+    QImage.Format.Format_ARGB32_Premultiplied: QImage.Format.Format_RGB32,
+    QImage.Format.Format_RGBA8888: QImage.Format.Format_RGBX8888,
+    QImage.Format.Format_RGBA8888_Premultiplied: QImage.Format.Format_RGBX8888,
+}
+
+
+def opaque_image(image: QImage) -> QImage:
+    """The image with its alpha ignored, RGB untouched: what the viewport
+    shows. Its background clears to alpha 0 (moderngl's clear() is given
+    three components) and blending writes partial alpha, while the RGB
+    already holds the scene blended over the background colour; so where a
+    grab keeps alpha (Windows) the background came out transparent (#921).
+    headless_render.paint_rgba does the same for -o out.png."""
+    opaque = _OPAQUE_FORMATS.get(image.format())
+    if opaque is not None:
+        image.reinterpretAsFormat(opaque)
+    return image
 
 
 class Viewport(QOpenGLWidget):
@@ -937,6 +959,11 @@ class Viewport(QOpenGLWidget):
             "target": cam.target.tolist(),
             "fov": cam.fov,
         }
+
+    def grabFramebuffer(self) -> QImage:
+        """Opaque, as OpenSCAD's: frame dumps, Export as Image, Copy Image
+        and the AI's view all come through here (`opaque_image`)."""
+        return opaque_image(super().grabFramebuffer())
 
     def set_render_busy(self, busy: bool):
         self._render_busy = busy
