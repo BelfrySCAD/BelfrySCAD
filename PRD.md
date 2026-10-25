@@ -344,7 +344,7 @@ The code editor, console, and debugger panels are dockable `QDockWidget` instanc
 
 **Edit**: Undo / Redo / — / Cut / Copy / Paste / Select All / — / Expand Selection / Contract Selection / — / Indent / Undent / Comment / Uncomment / — / Find… / Find & Replace…
 
-**Design**: Render / — / Insert Primitive ▶ (Cube, Sphere, Cylinder, Cone, …) / Boolean Operation ▶ (Union, Difference, Intersection) *(behavior of Insert Primitive and Boolean Operation deferred)*
+**Design**: Render
 
 **View**:
 * Show Toolbar / Show Tab Bar / Show Code Editor / Show Tools Strip / Show Console
