@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayou
 from belfryscad import turtle, turtle3d
 from belfryscad.engine.renderer import _axis_extent, _drawn_spacings
 from belfryscad.window.background_image import restore_session_background
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (open_large, _UndoableViewerMixin,
                                                   _lit_marker_triangles,
                                                   _marker_radius_for_point,
                                                   place_on_reference,
@@ -418,7 +418,7 @@ class TurtleViewer(QDialog, _UndoableViewerMixin):
         super().__init__(parent)
         label = f"{self._NAME} {'Editor' if editable else 'Viewer'}"
         self.setWindowTitle(f"{label}: {title}" if title else label)
-        self.resize(900, 520)
+        open_large(self)
         self._editable = editable
         self._commands = commands
         self._start = [float(v) for v in (start or (0.0,) * self._DIMS)]
@@ -971,7 +971,6 @@ class Turtle3DViewer(TurtleViewer):
         # Room for a direction vector, which most 3D rows carry.
         fm = self._table.fontMetrics()
         self._table.setColumnWidth(1, fm.horizontalAdvance("[-0.0000, -0.0000, -0.0000]") + 16)
-        self.resize(1040, 560)
 
     def _make_viewport(self):
         return _Turtle3DViewport([], False, self, editable=False)

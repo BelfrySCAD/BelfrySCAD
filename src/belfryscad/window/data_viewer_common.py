@@ -19,6 +19,21 @@ from belfryscad.window.viewport import Viewport
 from belfryscad.window.ui_colors import header_colors, on_appearance_change
 
 
+def open_large(dialog):
+    """Size a drawing editor to most of the screen, centred, with a
+    maximize button: at a fixed 900 x 520 every tracing session began by
+    dragging a corner out (#861). Windows gives a dialog no maximize
+    button unless asked; macOS already offers Zoom."""
+    dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+    screen = (dialog.parentWidget() or dialog).screen()
+    if screen is None:
+        dialog.resize(900, 520)
+        return
+    area = screen.availableGeometry()
+    w, h = int(area.width() * 0.9), int(area.height() * 0.9)
+    dialog.setGeometry(area.x() + (area.width() - w) // 2, area.y() + (area.height() - h) // 2, w, h)
+
+
 def _fmt_short(v) -> str:
     from belfryscad.window.debugger import _fmt
     return _fmt(v)
