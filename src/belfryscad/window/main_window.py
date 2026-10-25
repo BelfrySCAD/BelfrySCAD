@@ -1730,6 +1730,11 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Ne&xt Bookmark", lambda: self._jump_to_bookmark(True), QKeySequence("F2"))
         self._add_action(edit_menu, "Pre&vious Bookmark", lambda: self._jump_to_bookmark(False), QKeySequence("Shift+F2"))
         edit_menu.addSeparator()
+        # OpenSCAD's Fold/Unfold All, with no key, as there (#928); both can
+        # be given one in Preferences > Keyboard.
+        self._add_action(edit_menu, "Fold/&Unfold", self._fold_unfold)
+        self._add_action(edit_menu, "Fold/Unfold &All", self._fold_unfold_all)
+        edit_menu.addSeparator()
         self._act_word_wrap = QAction("&Word Wrap", self, checkable=True)
         self._act_word_wrap.triggered.connect(self._toggle_word_wrap)
         edit_menu.addAction(self._act_word_wrap)
@@ -4262,6 +4267,14 @@ class MainWindow(QMainWindow):
     def _undent(self):
         if e := self._current_editor():
             e._unindent_lines()
+
+    def _fold_unfold(self):
+        if e := self._current_editor():
+            e.toggle_fold_at(e.textCursor().blockNumber())
+
+    def _fold_unfold_all(self):
+        if e := self._current_editor():
+            e.fold_all()
 
     def _toggle_comment(self):
         if e := self._current_editor():

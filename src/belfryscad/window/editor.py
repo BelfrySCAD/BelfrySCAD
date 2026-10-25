@@ -1751,10 +1751,63 @@ class CodeEditor(QPlainTextEdit):
         self._line_number_area.update()
         self.viewport().update()
 
-    def toggle_fold(self, block_number: int):
+    def _current_fold_regions(self) -> dict[int, int]:
         if self._fold_dirty:
             self._recompute_fold_regions()
             self._fold_dirty = False
+        return self._fold_regions
+
+    def fold_at(self, block_number: int) -> int | None:
+        """The innermost foldable block holding line `block_number`: its
+        first line, or None."""
+        inner = [s for s, e in self._current_fold_regions().items() if s <= block_number <= e]
+        return max(inner) if inner else None
+
+    def toggle_fold_at(self, block_number: int):
+        """Edit > Fold/Unfold (#928): the innermost block around the line."""
+        start = self.fold_at(block_number)
+        if start is not None:
+            self.toggle_fold(start)
+            self._caret_out_of_folds()
+
+    def fold_all(self):
+        """Edit > Fold/Unfold All, as OpenSCAD's (QScintilla's foldAll): fold
+        every outermost block if the first one is open, else unfold them all."""
+        regions = self._current_fold_regions()
+        tops, end = [], -1
+        for start in sorted(regions):
+            if start > end:
+                tops.append(start)
+                end = regions[start]
+        if not tops:
+            return
+        self._fold_busy = True
+        if tops[0] not in self._folded:
+            for start in tops:
+                if start not in self._folded:
+                    self._folded.add(start)
+                    self._set_range_visible(start, regions[start], False)
+        else:
+            for start in sorted(self._folded):
+                self._folded.discard(start)
+                self._set_range_visible(start, regions.get(start), True)
+        self._fold_busy = False
+        self._caret_out_of_folds()
+
+    def _caret_out_of_folds(self):
+        """A caret left on a line just folded away goes to the fold's
+        first line, which is still shown."""
+        block = self.textCursor().block()
+        if block.isVisible():
+            return
+        while block.isValid() and not block.isVisible():
+            block = block.previous()
+        if block.isValid():
+            cursor = QTextCursor(block)
+            self.setTextCursor(cursor)
+
+    def toggle_fold(self, block_number: int):
+        self._current_fold_regions()
         if block_number not in self._fold_regions:
             return
         end_bn = self._fold_regions[block_number]
@@ -3508,6 +3561,14 @@ class CodeEditor(QPlainTextEdit):
             tpl_act.triggered.connect(lambda checked=False: self.show_template_menu(
                 at=click_at, cursor=QTextCursor(sel_cursor)))
             menu.addAction(tpl_act)
+
+        # OpenSCAD's Fold/Unfold All, and Fold/Unfold for the block clicked
+        # in (#928). Folding edits nothing, so read-only tabs get them too.
+        menu.addSeparator()
+        click_bn = self.cursorForPosition(event.pos()).blockNumber()
+        fold_act = menu.addAction("Fold/Unfold", lambda: self.toggle_fold_at(click_bn))
+        fold_act.setEnabled(self.fold_at(click_bn) is not None)
+        menu.addAction("Fold/Unfold All", self.fold_all).setEnabled(bool(self._current_fold_regions()))
 
         # What the menu acts on is WHERE YOU CLICKED, not where the caret
         # happens to be. macOS moves the caret to a right-click and Windows
