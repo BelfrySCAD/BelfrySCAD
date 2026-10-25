@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QUndoCommand
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QInputDialog,
                                QMessageBox, QWidget)
@@ -286,6 +287,39 @@ def current_render_triangles() -> np.ndarray | None:
 _session: dict[str, tuple] = {}
 
 
+def _same_refs(a, b) -> bool:
+    """Two ([RefImage], RefModel | None) snapshots alike. A model's
+    triangles are compared by identity: copies share the array, which
+    nothing changes once read, and == on it is no single bool."""
+    (ia, ma), (ib, mb) = a, b
+    if ia != ib:
+        return False
+    if ma is None or mb is None:
+        return ma is mb
+    return ma.tris is mb.tris and replace(ma, tris=None) == replace(mb, tris=None)
+
+
+class _ReferencesCmd(QUndoCommand):
+    """One change to the references, on the editor's own undo stack beside
+    its edits to the path, as the 2D background image's _BackgroundCmd.
+    Pushed after the change is made, so the first redo() -- which
+    QUndoStack.push runs -- has nothing to do."""
+
+    def __init__(self, viewport, before, after):
+        super().__init__("Reference")
+        self._vp, self._before, self._after = viewport, before, after
+        self._done = True
+
+    def undo(self):
+        self._vp._apply_references(self._before)
+
+    def redo(self):
+        if self._done:
+            self._done = False
+            return
+        self._vp._apply_references(self._after)
+
+
 _IMAGE_VERT = """
 #version 330 core
 in vec2 in_position;
@@ -349,17 +383,47 @@ class Reference3DViewportMixin:
     _ref_model_vao = None
     _ref_model_key = None
 
+    _ref_committed = ([], None)     # the references as the last undo step left them
+
     def restore_references(self, key: str):
         self.ref_key = key
         images, model = _session.get(key, ([], None))
         self.ref_images = [replace(i) for i in images]
         self.ref_model = replace(model) if model is not None else None
         self._ref_textures = {}
+        self._ref_committed = self._ref_snapshot()
+
+    def _ref_snapshot(self):
+        return ([replace(i) for i in self.ref_images],
+                replace(self.ref_model) if self.ref_model else None)
 
     def references_edited(self):
         if self.ref_key:
-            _session[self.ref_key] = ([replace(i) for i in self.ref_images],
-                                      replace(self.ref_model) if self.ref_model else None)
+            _session[self.ref_key] = self._ref_snapshot()
+        # One undo step per change; a Move Image drag's is pushed on
+        # release, for the whole drag.
+        if self._ref_drag is None:
+            before, after = self._ref_committed, self._ref_snapshot()
+            self._ref_committed = after
+            stack = getattr(self.window(), "_undo_stack", None)   # editors only
+            if stack is not None and not _same_refs(before, after):
+                stack.push(_ReferencesCmd(self, before, after))
+        self._extend_scene_bounds()
+        self.update()
+
+    def _apply_references(self, snap):
+        """Undo/Redo: put the references back as they were, without a new
+        step, leaving any Move Image or second-point pick under way."""
+        if self._ref_moving is not None or self._ref_pick is not None:
+            self._ref_moving = self._ref_drag = self._ref_pick = None
+            self._delta_label.hide()
+            self.unsetCursor()
+        images, model = snap
+        self.ref_images = [replace(i) for i in images]
+        self.ref_model = replace(model) if model is not None else None
+        self._ref_committed = snap
+        if self.ref_key:
+            _session[self.ref_key] = self._ref_snapshot()
         self._extend_scene_bounds()
         self.update()
 
@@ -617,6 +681,7 @@ class Reference3DViewportMixin:
         if t == QEvent.Type.MouseButtonRelease and self._ref_drag is not None:
             self._ref_drag = None
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.references_edited()        # the drag's one undo step
             return True
         return t != QEvent.Type.MouseMove     # a left click off the image does nothing else
 

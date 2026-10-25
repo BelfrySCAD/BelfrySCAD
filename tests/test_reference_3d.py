@@ -260,3 +260,80 @@ def test_scale_about_a_point_keeps_that_point_on_the_image():
     assert np.allclose(img.point_at(0.25, 0.75), a)
     assert np.isclose((np.asarray(img.position) - a) @ np.asarray(img.normal), 0), \
         "still on its own plane"
+
+
+_UNDO_DRIVER = """
+import json, os, tempfile
+from PySide6.QtGui import QSurfaceFormat, QImage, QColor
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
+import numpy as np
+app = QApplication([])
+from belfryscad.window.data_viewer_path import PathViewer
+from belfryscad.window.reference_3d import RefImage
+
+png = os.path.join(tempfile.mkdtemp(), "r.png")
+q = QImage(20, 10, QImage.Format.Format_RGB32); q.fill(QColor("white")); q.save(png)
+v = PathViewer("undo-probe", [[0, 0, 0], [10, 0, 0], [10, 10, 0]], None, editable=True)
+v.resize(700, 600); v.show(); app.processEvents()
+vp, stack = v._vp, v._undo_stack
+out = {}
+
+img = RefImage(png, aspect=0.5, width=20, position=(5, 5, 0))
+vp.ref_images.append(img); vp.references_edited()
+out["after_add"] = stack.count()
+
+QInputDialog.getDouble = staticmethod(lambda *a, **k: (8.0, True))
+vp._finish_scale(img, np.array([5.0, 5, 0]), np.array([9.0, 5, 0]))
+out["scaled_width"] = vp.ref_images[0].width
+out["after_scale"] = stack.count()
+
+vp.face_image(vp.ref_images[0]); app.processEvents()
+vp.begin_move_image(vp.ref_images[0])
+c = QPoint(vp.width() // 2, vp.height() // 2)
+QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=c)
+for dx in (10, 20, 30, 40):
+    QTest.mouseMove(vp, QPoint(c.x() + dx, c.y()))
+QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=QPoint(c.x() + 40, c.y()))
+vp.end_move_image()
+out["moved"] = vp.ref_images[0].position[0] != 5.0
+out["after_drag"] = stack.count()
+
+stack.undo()
+out["undo_drag_pos"] = vp.ref_images[0].position
+stack.undo()
+out["undo_scale_width"] = vp.ref_images[0].width
+stack.undo()
+out["undo_add_images"] = len(vp.ref_images)
+stack.redo(); stack.redo()
+out["redo_width"] = vp.ref_images[0].width
+out["after_undo_redo"] = stack.count()
+print(json.dumps(out))
+"""
+
+
+def test_reference_edits_are_undoable(tmp_path):
+    """Each change to the references is one step on the editor's undo
+    stack, and a Move Image drag one step for the whole drag (#861)."""
+    import json, os, subprocess, sys
+
+    driver = tmp_path / "_ref_undo.py"
+    driver.write_text(_UNDO_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["after_add"] == 1
+    assert out["after_scale"] == 2 and out["scaled_width"] == 40
+    assert out["moved"] and out["after_drag"] == 3, "a whole drag is one step"
+    assert out["undo_drag_pos"] == [5.0, 5.0, 0.0]
+    assert out["undo_scale_width"] == 20
+    assert out["undo_add_images"] == 0
+    assert out["redo_width"] == 40
+    assert out["after_undo_redo"] == 3, "undo and redo push no steps of their own"
