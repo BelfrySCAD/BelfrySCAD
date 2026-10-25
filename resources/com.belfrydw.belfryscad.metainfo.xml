@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.89.1" date="2026-10-25">
+      <description>
+        <p>Animation controls show their state and Dump Pictures plays on; saved frames and images keep the background; drawing editors open larger</p>
+      </description>
+    </release>
     <release version="1.89.0" date="2026-10-23">
       <description>
         <p>Design &gt; Preview After Drag can be turned off, so a drag edits the code without starting a preview, for models that are slow to preview.</p>
