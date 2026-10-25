@@ -2949,6 +2949,61 @@ def test_a_heightfield_draws_no_skeleton_over_its_surface(tmp_path):
     assert out["grid_line_buffers"] > 0
 
 
+_GRID_EDIT_ROW_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QAbstractItemView
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+app = QApplication([])
+from belfryscad.window.data_viewer_grid import GridViewer
+
+grid = GridViewer("g", [[[c, r, 0] for c in range(4)] for r in range(4)],
+                  None, editable=True)
+grid.show(); app.processEvents()
+grid._row_combo.setCurrentIndex(2); app.processEvents()
+t = grid._vert_table
+t.setFocus(); t.setCurrentCell(1, 0)
+t.editItem(t.item(1, 0)); app.processEvents()
+editor = QApplication.focusWidget()
+editor.selectAll()
+QTest.keyClicks(editor, "9")
+QTest.keyClick(editor, Qt.Key.Key_Tab); app.processEvents()
+
+print(json.dumps({
+    "row": grid._row_combo.currentIndex(),
+    "point": grid._grid[2][1],
+    "shown_x": t.item(1, 0).text(),
+    "cell": [t.currentRow(), t.currentColumn()],
+    "editing": t.state() == QAbstractItemView.State.EditingState,
+}))
+"""
+
+
+def test_editing_a_grid_cell_stays_on_its_row(tmp_path):
+    """#930: refilling the Row combo after an edit reset it to row 0, so
+    the table jumped to row 0 -- and the editor Tab opened next was on row
+    0's table, putting the next value typed into the wrong row."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_grid_edit_row.py"
+    driver.write_text(_GRID_EDIT_ROW_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["point"] == [9, 2, 0]
+    assert out["row"] == 2, "the Row combo stays on the edited row"
+    assert out["shown_x"] == "9", "and the table still shows that row"
+    assert out["cell"] == [1, 1] and out["editing"], "Tab edits the next cell"
+
+
 _ROW_ORDER_DRIVER = """
 import json
 import numpy as np
