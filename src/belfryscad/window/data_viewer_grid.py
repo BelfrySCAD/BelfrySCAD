@@ -710,9 +710,12 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         self._grid = value
         self._sync_face_mode_combo()
         self._vp.sync_row_bookkeeping(self._grid)
+        # Read the shown row before the combo is refilled: clearing it
+        # resets it to row 0, which sent every cell edit back there (#930).
+        shown = self._row_combo.currentIndex()
         self._refresh_row_bookkeeping()
         self._refresh_row_combo_items()
-        row_idx = max(0, min(self._row_combo.currentIndex(), self._rows - 1))
+        row_idx = max(0, min(shown, self._rows - 1))
         self._row_combo.blockSignals(True)
         self._row_combo.setCurrentIndex(row_idx)
         self._row_combo.blockSignals(False)
