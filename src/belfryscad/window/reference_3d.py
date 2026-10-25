@@ -22,8 +22,10 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QUndoCommand
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFileDialog, QFormLayout, QHBoxLayout, QMessageBox, QWidget)
+                               QFileDialog, QFormLayout, QHBoxLayout, QInputDialog,
+                               QMessageBox, QWidget)
 
 from belfryscad.window.background_image import (ANCHORS, _IMAGE_FILTER, ImageSizeDialog,
                                                   anchor_name, load_image)
@@ -119,6 +121,12 @@ class RefImage:
         if abs((p - c) @ right) <= self.width / 2 and abs((p - c) @ up) <= self.height / 2:
             return p
         return None
+
+    def scale_about(self, p, k: float):
+        """Grow by `k` about the point `p` on the image, which stays put."""
+        p = np.asarray(p, dtype=np.float64)
+        self.width *= k
+        self.position = tuple(float(v) for v in p + (np.asarray(self.position) - p) * k)
 
     def _box_in_plane(self, lo, hi):
         """The box (lo, hi)'s extent along the image's right and up."""
@@ -279,6 +287,39 @@ def current_render_triangles() -> np.ndarray | None:
 _session: dict[str, tuple] = {}
 
 
+def _same_refs(a, b) -> bool:
+    """Two ([RefImage], RefModel | None) snapshots alike. A model's
+    triangles are compared by identity: copies share the array, which
+    nothing changes once read, and == on it is no single bool."""
+    (ia, ma), (ib, mb) = a, b
+    if ia != ib:
+        return False
+    if ma is None or mb is None:
+        return ma is mb
+    return ma.tris is mb.tris and replace(ma, tris=None) == replace(mb, tris=None)
+
+
+class _ReferencesCmd(QUndoCommand):
+    """One change to the references, on the editor's own undo stack beside
+    its edits to the path, as the 2D background image's _BackgroundCmd.
+    Pushed after the change is made, so the first redo() -- which
+    QUndoStack.push runs -- has nothing to do."""
+
+    def __init__(self, viewport, before, after):
+        super().__init__("Reference")
+        self._vp, self._before, self._after = viewport, before, after
+        self._done = True
+
+    def undo(self):
+        self._vp._apply_references(self._before)
+
+    def redo(self):
+        if self._done:
+            self._done = False
+            return
+        self._vp._apply_references(self._after)
+
+
 _IMAGE_VERT = """
 #version 330 core
 in vec2 in_position;
@@ -342,17 +383,47 @@ class Reference3DViewportMixin:
     _ref_model_vao = None
     _ref_model_key = None
 
+    _ref_committed = ([], None)     # the references as the last undo step left them
+
     def restore_references(self, key: str):
         self.ref_key = key
         images, model = _session.get(key, ([], None))
         self.ref_images = [replace(i) for i in images]
         self.ref_model = replace(model) if model is not None else None
         self._ref_textures = {}
+        self._ref_committed = self._ref_snapshot()
+
+    def _ref_snapshot(self):
+        return ([replace(i) for i in self.ref_images],
+                replace(self.ref_model) if self.ref_model else None)
 
     def references_edited(self):
         if self.ref_key:
-            _session[self.ref_key] = ([replace(i) for i in self.ref_images],
-                                      replace(self.ref_model) if self.ref_model else None)
+            _session[self.ref_key] = self._ref_snapshot()
+        # One undo step per change; a Move Image drag's is pushed on
+        # release, for the whole drag.
+        if self._ref_drag is None:
+            before, after = self._ref_committed, self._ref_snapshot()
+            self._ref_committed = after
+            stack = getattr(self.window(), "_undo_stack", None)   # editors only
+            if stack is not None and not _same_refs(before, after):
+                stack.push(_ReferencesCmd(self, before, after))
+        self._extend_scene_bounds()
+        self.update()
+
+    def _apply_references(self, snap):
+        """Undo/Redo: put the references back as they were, without a new
+        step, leaving any Move Image or second-point pick under way."""
+        if self._ref_moving is not None or self._ref_pick is not None:
+            self._ref_moving = self._ref_drag = self._ref_pick = None
+            self._delta_label.hide()
+            self.unsetCursor()
+        images, model = snap
+        self.ref_images = [replace(i) for i in images]
+        self.ref_model = replace(model) if model is not None else None
+        self._ref_committed = snap
+        if self.ref_key:
+            _session[self.ref_key] = self._ref_snapshot()
         self._extend_scene_bounds()
         self.update()
 
@@ -490,6 +561,7 @@ class Reference3DViewportMixin:
 
     _ref_moving = None          # the RefImage being moved, while in Move Image
     _ref_drag = None            # (mode, image at press, press point, press ray)
+    _ref_pick = None            # (image, first point), while Scale from This Point waits
 
     def begin_move_image(self, img: RefImage):
         """Drags move `img` until Esc or Return: in its plane; with Shift
@@ -513,6 +585,18 @@ class Reference3DViewportMixin:
     def event(self, ev):
         # Ahead of the editor's own handlers, which would select or drag
         # the vertices underneath.
+        if self._ref_pick is not None:
+            if ev.type() == QEvent.Type.KeyPress and ev.key() == Qt.Key.Key_Escape:
+                self._end_pick()
+                return True
+            if (ev.type() == QEvent.Type.MouseButtonPress
+                    and ev.button() == Qt.MouseButton.LeftButton):
+                img, a = self._ref_pick
+                self._end_pick()
+                b = _plane_point(img, a, *self._ray(ev.position()))
+                if b is not None:
+                    self._finish_scale(img, a, b)
+                return True
         if self._ref_moving is not None and ev.type() in (
                 QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove,
                 QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
@@ -523,6 +607,49 @@ class Reference3DViewportMixin:
             self.end_move_image()
             return True
         return super().event(ev)
+
+    def _ray(self, pos):
+        o, d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        return np.asarray(o, dtype=np.float64), np.asarray(d, dtype=np.float64)
+
+    def _image_under(self, pos):
+        """(image, point) for the nearest shown image under `pos`, or None."""
+        o, d = self._ray(pos)
+        hits = [(float((p - o) @ d), img, p) for img in self.ref_images
+                if img.visible and (p := img.hit(o, d)) is not None]
+        return min(hits, key=lambda h: h[0])[1:] if hits else None
+
+    # As the 2D background image's tools of the same names.
+
+    def _move_image_point(self, img: RefImage, p):
+        dlg = _PlacementDialog("Move Point To", self, [("Move the point clicked to:", p, 3)])
+        if dlg.exec():
+            img.position = tuple(float(v) for v in
+                                 np.asarray(img.position) + np.asarray(dlg.values()[0]) - p)
+            self.references_edited()
+
+    def _scale_image_from(self, img: RefImage, a):
+        self._ref_pick = (img, a)
+        self._show_delta("Click a second point on the image (Esc cancels)")
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setFocus()
+
+    def _end_pick(self):
+        self._ref_pick = None
+        self._delta_label.hide()
+        self.unsetCursor()
+
+    def _finish_scale(self, img: RefImage, a, b):
+        measured = float(np.linalg.norm(b - a))
+        if measured <= 0:
+            return
+        real, ok = QInputDialog.getDouble(
+            self, "Scale from Two Points",
+            f"The points are {measured:.4g} apart now. Real distance:",
+            measured, 1e-6, 1e6, 4)
+        if ok and real > 0:
+            img.scale_about(a, real / measured)
+            self.references_edited()
 
     def _move_image_mouse(self, ev) -> bool:
         img = self._ref_moving
@@ -554,6 +681,7 @@ class Reference3DViewportMixin:
         if t == QEvent.Type.MouseButtonRelease and self._ref_drag is not None:
             self._ref_drag = None
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.references_edited()        # the drag's one undo step
             return True
         return t != QEvent.Type.MouseMove     # a left click off the image does nothing else
 
@@ -562,6 +690,7 @@ class Reference3DViewportMixin:
     def _exec_menu(self, menu, event):
         ref = menu.addMenu("Reference")
         ref.addAction("Add Image…", self.add_reference_image)
+        under = self._image_under(event.pos())
         for k, img in enumerate(self.ref_images):
             sub = ref.addMenu(f"Image {k + 1}: {os.path.basename(img.path)}")
             sub.addAction("Face This Image", lambda img=img: self.face_image(img))
@@ -572,7 +701,12 @@ class Reference3DViewportMixin:
                 self.end_move_image() if self._ref_moving is img else self.begin_move_image(img)))
             move.setCheckable(True)
             move.setChecked(self._ref_moving is img)
+            if under is not None and under[0] is img:
+                p = under[1]
+                sub.addAction("Move This Point To…", lambda img=img: self._move_image_point(img, p))
             sub.addAction("Move Anchor To…", lambda img=img: self._move_anchor(img))
+            if under is not None and under[0] is img:
+                sub.addAction("Scale from This Point…", lambda img=img: self._scale_image_from(img, p))
             sub.addAction("Set Image Size…", lambda img=img: self._image_size(img))
             sub.addAction("Placement…", lambda img=img: self._image_placement(img))
             sub.addSeparator()
