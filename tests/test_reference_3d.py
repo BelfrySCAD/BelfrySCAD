@@ -247,3 +247,16 @@ def test_a_model_turns_and_scales_about_its_anchor():
 ])
 def test_model_anchor_names(anchor, name):
     assert model_anchor_name(anchor) == name
+
+
+def test_scale_about_a_point_keeps_that_point_on_the_image():
+    """Scale from This Point (#861): the first point clicked stays where it
+    is, as in the 2D background image's calibration."""
+    img = RefImage("x.png", aspect=0.5, width=10, position=(1, 2, 5), anchor=(0, 0),
+                   rotation=30)
+    a = img.point_at(0.25, 0.75)
+    img.scale_about(a, 3.0)
+    assert img.width == 30
+    assert np.allclose(img.point_at(0.25, 0.75), a)
+    assert np.isclose((np.asarray(img.position) - a) @ np.asarray(img.normal), 0), \
+        "still on its own plane"
