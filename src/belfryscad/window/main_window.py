@@ -3602,12 +3602,21 @@ class MainWindow(QMainWindow):
     def _on_dump_finished(self):
         self.log("Animation frame dump complete.")
 
+    _wait_cursor = False
+
     def _set_render_busy(self, busy: bool):
         self._viewport.set_render_busy(busy)
-        if busy:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        else:
-            QApplication.restoreOverrideCursor()
+        # Not while an animation plays: it renders without a break, so the
+        # wait cursor never left, even over the controls to stop it (#922).
+        # A flag rather than Qt's cursor stack, which overlapping renders
+        # and a cancel (which clears busy early) left unbalanced.
+        want = busy and not self._animate_pane.is_playing()
+        if want != self._wait_cursor:
+            self._wait_cursor = want
+            if want:
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            else:
+                QApplication.restoreOverrideCursor()
 
     def _on_render_done(self, file_tab, bodies, id_to_node, elapsed_ms: float, render_id: int,
                         final_vp: dict | None = None, csg_tree: list | None = None, profile_result=None,
