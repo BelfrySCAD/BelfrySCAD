@@ -3590,7 +3590,12 @@ class MainWindow(QMainWindow):
 
     def _on_dump_started(self):
         if self._dump_dir is None:
-            path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To")
+            # Never Qt's own fallback, the cwd: System32 for a Windows
+            # Start-menu launch (#938). See file_dialog_dir.
+            tab = self._current_tab()
+            start = (os.path.dirname(tab.file_path) if tab and tab.file_path
+                     else file_dialog_dir())
+            path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To", start)
             if not path:
                 self._animate_pane.pause()
                 return
@@ -3829,7 +3834,7 @@ class MainWindow(QMainWindow):
         if directory is None:
             directory = QFileDialog.getExistingDirectory(
                 self, "Choose a directory of .scadtest files",
-                self._testing_pane.directory() or "")
+                self._testing_pane.directory() or file_dialog_dir())
         if not directory:
             return
         files = find_test_files(directory)

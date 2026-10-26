@@ -84,3 +84,37 @@ def test_exporting_a_design_again_starts_where_its_last_export_went(tmp_path, mo
     tab.file_path = design
     os.rmdir(out)
     assert offered() == os.path.join(str(tmp_path / "src"), "part")
+
+
+PICKER_DRIVER = '''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication, QFileDialog
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)  # never touch the real store
+from belfryscad.window.main_window import MainWindow, file_dialog_dir, remember_file_dir
+w = MainWindow(); w.skip_unsaved_prompts = True
+w._render = lambda *a, **k: None
+asked = []
+QFileDialog.getExistingDirectory = staticmethod(lambda parent, title, start="", *a: (asked.append(start), "")[1])
+last = os.path.realpath(tempfile.mkdtemp(prefix="last"))
+remember_file_dir(os.path.join(last, "x.scad"))
+w._dump_dir = None; w._on_dump_started()          # untitled tab: the remembered folder
+w._open_testing_pane()                             # no suite chosen yet: the same
+d = os.path.realpath(tempfile.mkdtemp(prefix="work"))
+path = os.path.join(d, "t.scad"); open(path, "w").write("cube(1);")
+w.open_file_by_path(path, render=False)
+w._dump_dir = None; w._on_dump_started()          # a saved script: its own folder
+print(json.dumps({"asked": asked, "last": last, "work": d}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_folder_pickers_never_start_in_the_cwd():
+    # Given no start folder, Qt falls back to the cwd: System32 for a
+    # Windows Start-menu launch, where Dump Pictures opened (#938).
+    import json, subprocess, sys
+    r = subprocess.run([sys.executable, "-c", PICKER_DRIVER], capture_output=True, text=True, timeout=60)
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["asked"] == [out["last"], out["last"], out["work"]], r.stderr
