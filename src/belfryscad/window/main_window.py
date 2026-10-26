@@ -1235,6 +1235,7 @@ class MainWindow(QMainWindow):
         self._viewport.typing_target = self._current_editor   # #841
         self._viewport.selection_changed.connect(self._on_selection_changed)
         self._viewport.selection_level_step.connect(self._step_selection_level)
+        self._viewport.context_menu_requested.connect(self._viewport_context_menu)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
         self._viewport.measurement_dismissed.connect(self._on_measurement_dismissed)
@@ -6432,6 +6433,11 @@ class MainWindow(QMainWindow):
         target = max(0, min(self._selection_level + delta, len(levels) - 1))
         if target == self._selection_level:
             return
+        self._select_at_level(orig_id, levels, target)
+
+    def _select_at_level(self, orig_id, levels, target: int):
+        """Select `orig_id` at frame `target` of its call chain `levels`
+        and show that line, opening its file (unrendered) if need be."""
         span = levels[target]
         if self._tab_for_origin(span.origin) is None:
             self.open_file_by_path(span.origin, render=False)
@@ -6447,6 +6453,47 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(idx)
             self.log(f"Selection: {os.path.basename(span.origin)}:{span.line}"
                      f"  (level {target + 1} of {len(levels)})")
+
+    def _viewport_context_menu(self, pos, global_pos):
+        """OpenSCAD's right-click in the view (#927): the call trace of the
+        shape under the pointer, outermost call first. Choosing a line
+        selects the shape at that level and shows the line, as stepping
+        with Ctrl+Cmd+Up/Down does."""
+        orig_id = self._viewport.pick_id_at(pos)
+        levels = self._selection_levels(orig_id) if orig_id is not None else []
+        if not levels:
+            return
+        menu = QMenu(self)
+        for i in reversed(range(len(levels))):
+            act = menu.addAction(self._call_trace_label(levels[i]))
+            act.triggered.connect(lambda _=False, i=i: self._pick_at_level(orig_id, levels, i))
+        menu.exec(global_pos)
+
+    def _pick_at_level(self, orig_id, levels, target: int):
+        self._viewport.set_selection(orig_id)
+        self._selection_level_id = orig_id
+        self._select_at_level(orig_id, levels, target)
+
+    def _call_trace_label(self, span) -> str:
+        """`name (where:line)`, as OpenSCAD labels a trace entry: the name
+        read from the source at the span, a library file by its path in the
+        libraries folder, the rendered script by its tab's name."""
+        tab = self._tab_for_origin(span.origin)
+        try:
+            text = tab.editor.toPlainText() if tab is not None else Path(span.origin).read_text()
+        except OSError:
+            text = ""
+        m = re.match(r"[$A-Za-z_][\w$]*", text[span.start_offset:span.start_offset + 200])
+        name = m.group(0) if m else "?"
+        from belfryscad.window.library_manager import _library_dir
+        real, lib = Path(os.path.realpath(span.origin)), Path(os.path.realpath(_library_dir()))
+        if real.is_relative_to(lib):
+            where = f"library {real.relative_to(lib).as_posix()}"
+        elif tab is not None:
+            where = tab.display_name().rstrip("*").strip()
+        else:
+            where = real.name
+        return f"{name} ({where}:{span.line})"
 
     def _selection_levels(self, orig_id):
         """The frames a pick can be stepped through, innermost first.

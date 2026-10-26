@@ -126,6 +126,15 @@ copy the worker parsed, the same pair the coverage overlay matches on).
 innermost first, library frames included. A single `cuboid()` is 24 of them,
 most inside BOSL2's own `attachable`/`_attach_transform` layers.
 
+**Right-clicking the view lists that chain** (#927), as OpenSCAD's right-click after F5 does:
+the shape under the pointer, its frames **outermost first**, each `name (where:line)` -- the name
+read from the source at the frame's span (frames carry no name), a library file as `library
+BOSL2/shapes3d.scad`, the rendered script by its tab name. Choosing one selects the shape at that
+level and shows the line (`_viewport_context_menu` -> `_select_at_level`, shared with Ctrl+Cmd+Up/Down
+stepping). Only a right-click that did not pan opens it: the viewport holds a right-press menu event
+until the release (`Viewport.event`), and the data viewers' viewports keep their own menus.
+OpenSCAD also highlights an entry's line while the pointer is over it; this does not.
+
 `_selectable_span_for_id` picks the level and returns it with the tab that owns
 it. The default is **the last frame in the rendered script** -- an ordinary user
 wants their own line, not BOSL2's insides, even when a library file happens to
