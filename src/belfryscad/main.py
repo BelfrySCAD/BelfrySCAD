@@ -542,32 +542,113 @@ def _describe_qt_state(app) -> str:
         f"{s.geometry().width()}x{s.geometry().height()})" for s in app.screens()))
     log = getattr(app, "_state_log", None)
     if log is not None:
-        lines.append(f"last input event: {log.last_input or 'none'}")
+        lines.append("recent input events:")
+        lines += [f"  {e}" for e in log.inputs] or ["  none"]
         lines.append("recent window events:")
         lines += [f"  {e}" for e in log.events]
+    if sys.platform == "darwin":
+        lines += _describe_macos_state()
     return "\n".join(lines) + "\n"
 
 
+def _describe_macos_state() -> list:
+    """What AppKit thinks, beneath Qt. Two #703 dumps ended on a click in
+    the 3D view, then the app never became active again although its loop
+    still ran and Qt saw no modal or grab. That fits AppKit taking input
+    first: a native tracking or modal loop (the main run loop in a mode
+    other than the default), or a window ignoring the mouse, so a click on
+    it lands on whatever is behind. Read through the Objective-C runtime
+    with ctypes, since PyObjC is not a dependency."""
+    import ctypes
+    import ctypes.util
+    from ctypes import CFUNCTYPE, c_bool, c_char_p, c_long, c_ulong, c_void_p
+    try:
+        objc = ctypes.CDLL(ctypes.util.find_library("objc"))
+        cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+        objc.objc_getClass.restype = c_void_p
+        objc.objc_getClass.argtypes = [c_char_p]
+        objc.sel_registerName.restype = c_void_p
+        objc.sel_registerName.argtypes = [c_char_p]
+        addr = ctypes.cast(objc.objc_msgSend, c_void_p).value
+        # objc_msgSend must be called through a prototype of the method's
+        # own signature (arm64 passes variadic arguments differently).
+        obj = CFUNCTYPE(c_void_p, c_void_p, c_void_p)(addr)
+        obj_at = CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_ulong)(addr)
+        flag = CFUNCTYPE(c_bool, c_void_p, c_void_p)(addr)
+        num = CFUNCTYPE(c_long, c_void_p, c_void_p)(addr)
+        cstr = CFUNCTYPE(c_char_p, c_void_p, c_void_p)(addr)
+
+        def sel(name):
+            return objc.sel_registerName(name.encode())
+
+        def text(nsstring):
+            if not nsstring:
+                return "nil"
+            raw = cstr(nsstring, sel("UTF8String"))
+            return repr(raw.decode("utf-8", "replace")) if raw else "?"
+
+        def window(w):
+            if not w:
+                return "nil"
+            return (f"{text(obj(w, sel('title')))} visible={flag(w, sel('isVisible'))} "
+                    f"key={flag(w, sel('isKeyWindow'))} main={flag(w, sel('isMainWindow'))} "
+                    f"ignoresMouse={flag(w, sel('ignoresMouseEvents'))} "
+                    f"level={num(w, sel('level'))} occlusion={num(w, sel('occlusionState'))}")
+
+        ns_app = obj(objc.objc_getClass(b"NSApplication"), sel("sharedApplication"))
+        cf.CFRunLoopGetMain.restype = c_void_p
+        cf.CFRunLoopCopyCurrentMode.restype = c_void_p
+        cf.CFRunLoopCopyCurrentMode.argtypes = [c_void_p]
+        cf.CFRelease.argtypes = [c_void_p]
+        mode = cf.CFRunLoopCopyCurrentMode(cf.CFRunLoopGetMain())
+        mode_name = text(mode)      # a CFString is toll-free an NSString
+        if mode:
+            cf.CFRelease(mode)
+        event = obj(ns_app, sel("currentEvent"))
+        lines = ["AppKit:",
+                 f"  isActive={flag(ns_app, sel('isActive'))} isRunning={flag(ns_app, sel('isRunning'))}",
+                 f"  main run loop mode={mode_name}",
+                 f"  currentEvent type={num(event, sel('type')) if event else 'nil'}",
+                 f"  modalWindow={window(obj(ns_app, sel('modalWindow')))}",
+                 f"  keyWindow={window(obj(ns_app, sel('keyWindow')))}",
+                 "  windows:"]
+        windows = obj(ns_app, sel("windows"))
+        for i in range(num(windows, sel("count")) if windows else 0):
+            w = obj_at(windows, sel("objectAtIndex:"), i)
+            if flag(w, sel("isVisible")):
+                lines.append(f"    {window(w)}")
+        return lines
+    except Exception as e:     # a diagnostic must never be what fails
+        return [f"AppKit: unavailable ({type(e).__name__}: {e})"]
+
+
 class _StateLog:
-    """Times of the last input event and of recent exposure/activation
-    changes, for the SIGUSR1 dump: whether a frozen window is not getting
-    input, or is getting it and no longer drawing it (#703)."""
+    """Recent input events and exposure/activation changes, for the
+    SIGUSR1 dump: whether a frozen window is not getting input, or is
+    getting it and no longer drawing it (#703). Releases are logged as
+    well as presses, so a press whose release never arrived shows."""
     def __init__(self, app):
         import collections
         from PySide6.QtCore import QEvent, QObject
         T = QEvent.Type
-        inputs = {T.MouseButtonPress, T.KeyPress, T.Wheel}
+        inputs = {T.MouseButtonPress, T.MouseButtonRelease, T.MouseButtonDblClick,
+                  T.KeyPress, T.KeyRelease, T.Wheel, T.ContextMenu}
+        mouse = {T.MouseButtonPress, T.MouseButtonRelease, T.MouseButtonDblClick}
         changes = {T.Expose, T.ApplicationStateChange, T.WindowActivate,
                    T.WindowDeactivate, T.Show, T.Hide}
-        self.last_input = None
+        self.inputs = collections.deque(maxlen=20)
         self.events = collections.deque(maxlen=40)
         log = self
 
         class Filter(QObject):
             def eventFilter(self, obj, event):
                 t = event.type()
-                if t in inputs:
-                    log.last_input = f"{_now()} {t.name} on {type(obj).__name__}"
+                if t in inputs and not obj.isWindowType():
+                    # Logged at the widget, not again at its QWindow.
+                    # Never the key itself: this lands in the crash log,
+                    # and keys typed are the user's text.
+                    detail = f" {event.button().name}" if t in mouse else ""
+                    log.inputs.append(f"{_now()} {t.name}{detail} on {type(obj).__name__}")
                 elif t in changes and obj.isWindowType():
                     extra = f" exposed={obj.isExposed()}" if t == T.Expose else ""
                     log.events.append(f"{_now()} {t.name} {type(obj).__name__} "
