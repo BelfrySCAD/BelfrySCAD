@@ -1346,7 +1346,8 @@ class MainWindow(QMainWindow):
         self._animate_pane = AnimatePane()
         self._animate_pane.render_busy_check = lambda: bool(self._render_jobs)
         self._animate_pane.frame_changed.connect(self._on_animate_frame)
-        self._animate_pane.dump_started.connect(self._on_dump_started, Qt.ConnectionType.QueuedConnection)
+        # Direct: the folder must be known before play() renders frame 0 (#922).
+        self._animate_pane.dump_started.connect(self._on_dump_started)
         self._animate_pane.dump_finished.connect(self._on_dump_finished)
 
         self._animate_dock = QDockWidget("Animate", self)
@@ -3597,7 +3598,7 @@ class MainWindow(QMainWindow):
                      else file_dialog_dir())
             path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To", start)
             if not path:
-                self._animate_pane.pause()
+                self._animate_pane.cancel_dump()
                 return
             self._dump_dir = path
         self.log(f"Dumping animation frames to {self._dump_dir}")
