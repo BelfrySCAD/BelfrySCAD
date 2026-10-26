@@ -529,14 +529,26 @@ class Camera:
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
         self.screen_dpi = 96.0           # physical DPI, updated from QScreen at pref-apply
 
+    def _natural_up(self) -> np.ndarray:
+        """Screen-up with no roll: the direction the eye moves as elevation
+        rises. World up projected onto the view plane for |elevation| < 90,
+        but defined at the poles too (it follows the azimuth there, so a
+        $vpr of [0, 0, 45] turns the top view as OpenSCAD's does) and
+        pointing DOWN once elevation passes a pole -- dragging over the top
+        leaves the model upside down rather than flipping it upright, as
+        OpenSCAD's unclamped $vpr does (#953)."""
+        az = math.radians(self.azimuth)
+        el = math.radians(self.elevation)
+        return np.array([-math.sin(el) * math.cos(az),
+                         -math.sin(el) * math.sin(az),
+                         math.cos(el)], dtype=np.float32)
+
     def _rolled_up(self, forward: np.ndarray) -> np.ndarray:
-        """World-up ([0,0,1]) rotated by self.roll (degrees) around the
-        current view direction -- lets the "Orbit" drag mode tilt the
-        horizon freely, unlike the default "Turntable" mode which always
-        keeps Z level. Eye position stays purely spherical (azimuth/
-        elevation/distance); roll only ever affects the up vector fed
-        into _look_at."""
-        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        """_natural_up() rotated by self.roll (degrees) around the current
+        view direction -- lets the "Orbit" drag mode tilt the horizon
+        freely. Eye position stays purely spherical (azimuth/elevation/
+        distance); roll only ever affects the up vector fed into _look_at."""
+        up = self._natural_up()
         if not self.roll:
             return up
         norm = np.linalg.norm(forward)
@@ -598,13 +610,7 @@ class Camera:
         self.azimuth = math.degrees(math.atan2(float(d[1]), float(d[0])))
 
         forward = -d
-        right_natural = np.cross(forward, np.array([0.0, 0.0, 1.0], dtype=np.float32))
-        rn_len = np.linalg.norm(right_natural)
-        if rn_len < 1e-8:
-            right_natural = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        else:
-            right_natural = right_natural / rn_len
-        natural_up = np.cross(right_natural, forward)
+        natural_up = self._natural_up()
 
         up_len = np.linalg.norm(up)
         if up_len < 1e-9:

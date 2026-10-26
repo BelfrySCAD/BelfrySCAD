@@ -1089,16 +1089,11 @@ class Viewport(QOpenGLWidget):
     # Camera view presets
     # ------------------------------------------------------------------
 
-    # Where each named view puts the camera. Top and bottom are not exactly
-    # +-90: _look_at's world-up ([0,0,1]) becomes parallel to the forward
-    # vector at precisely elevation=+-90 (gimbal lock), so it falls back to a
-    # hardcoded +X "right" vector -- which doesn't match the
-    # azimuth-dependent basis the drag-orbit math continuously converges to
-    # as elevation moves away from the pole. Starting a drag from exactly
-    # elevation=90 therefore snapped the view to whatever direction that
-    # arbitrary +X fallback happened to imply. Landing just shy of the pole
-    # keeps the view visually identical (sin/cos differ by ~1e-6) while
-    # keeping the basis on the continuous (non-fallback) branch.
+    # Where each named view puts the camera. Top and bottom stop a
+    # ten-thousandth of a degree short of +-90, a leftover from when the
+    # look-at basis fell back to a fixed +X at the pole; the camera's up
+    # vector now follows the azimuth there too (#953), so the dodge is
+    # harmless but no longer needed. The azimuth is what fixes their turn.
     #
     # The orientation cube derives the same numbers from its face normals
     # (orientation_cube.azimuth_elevation_for), including this same dodge, so
@@ -1603,12 +1598,15 @@ class Viewport(QOpenGLWidget):
 
     def _orbit_turntable(self, dx: float, dy: float):
         """The default (non-Shift) drag rule: azimuth follows horizontal
-        travel, elevation vertical, clamped short of the poles so the
-        horizon stays level. Shared with the orientation cube so dragging
-        the cube turns the model exactly as dragging the model does."""
+        travel, elevation vertical. Shared with the orientation cube so
+        dragging the cube turns the model exactly as dragging the model does.
+
+        Elevation is not clamped: dragging past a pole carries on over it
+        and leaves the model upside down, as OpenSCAD's drag does (#953).
+        It is kept in [-180, 180) so it cannot grow without bound."""
         cam = self._renderer.camera
         cam.azimuth -= dx * 0.5
-        cam.elevation = max(-89, min(89, cam.elevation + dy * 0.5))
+        cam.elevation = (cam.elevation + dy * 0.5 + 180.0) % 360.0 - 180.0
 
     def _pan_by(self, dx: float, dy: float):
         """Slide the camera target so on-screen content follows a drag of
