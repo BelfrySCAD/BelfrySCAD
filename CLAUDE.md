@@ -89,6 +89,13 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   quietly produces different geometry; no warning we can emit changes that.
   Implemented entirely in openscad_cpp_evaluator (`Evaluator::expandChildStatements` +
   `Op::CsgGroupChildren`); no parser or GUI change.
+- **Language extension — `alpha_wrap()`**: `alpha_wrap(alpha, offset) { ... }` shrink-wraps the
+  children in one closed, manifold skin that bridges gaps and holes narrower than `alpha` and sits
+  `offset` outside the input (defaults: alpha 1/20 of the bounding diagonal, offset alpha/30, as
+  CGAL suggests). It wraps an open `polyhedron()`'s raw triangles too, so it doubles as a repair and
+  a robust rounded outward offset. Our own implementation of Portaneri et al.'s algorithm, written
+  from the paper and **not** from CGAL's GPL code; it lives in openscad_cpp_evaluator ≥1.50.0
+  (`src/builtins/alpha_wrap.cpp`, see its `CLAUDE.md`), with no GUI change. #941.
 - **Language extension — `profile_time()`**: `profile_time("label") { ... }` prints
   `PROFILE: label: T ms (script S ms, geometry G ms)` -- the children's script code is timed in
   the resolve pass and their geometry in the generate pass, so the line arrives once geometry is
@@ -111,7 +118,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `[major, minor, patch]`, and `supported_feature("name")` returns the level at which this build
   implements a named feature (`render-expr`, `polyhedron-vnf`, `separate-children`,
   `minkowski-diff`, `sphere-styles`, `export-name`, `simplify-op`, `expr-import`,
-  `object-function`, `roof-op`, `discretization-by-error`, `profile-time` — one for every documented extension) or **0** for one it
+  `object-function`, `roof-op`, `discretization-by-error`, `profile-time`, `alpha-wrap` — one for every documented extension) or **0** for one it
   does not — including names it has never heard of, so probing for a future feature is safe.
   Both are `undef` in OpenSCAD, so the guard is portable. They exist because OpenSCAD silently
   ignores unknown *arguments*: `children(separate=true)` runs there and renders the wrong shape
