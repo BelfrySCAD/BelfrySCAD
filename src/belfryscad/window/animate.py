@@ -1,12 +1,12 @@
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QTimer, Qt, Signal
-from PySide6.QtGui import QIcon, QIntValidator
+from PySide6.QtGui import QIcon, QIntValidator, QPalette
 from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
+from belfryscad.window.ui_colors import apply_themed_icon, on_appearance_change, themed_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
@@ -128,20 +128,37 @@ class AnimatePane(QWidget):
         self._btn_last.setToolTip("Last Frame")
         self._btn_last.clicked.connect(self.go_last)
 
-        for b in (self._btn_first, self._btn_prev, self._btn_play,
-                  self._btn_pause, self._btn_next, self._btn_last):
+        self._transport = (self._btn_first, self._btn_prev, self._btn_play,
+                           self._btn_pause, self._btn_next, self._btn_last)
+        for b in self._transport:
             b.setFixedSize(32, 32)
-            b.setFlat(True)
             transport.addWidget(b)
         # Play and Pause stay down to show which one is in effect: once a
         # big Play/Pause button above them did that, and read as a second
         # Play (#922).
         for b in (self._btn_play, self._btn_pause):
             b.setCheckable(True)
+        self._style_transport()
+        on_appearance_change(self, self._style_transport)
         layout.addLayout(transport)
 
         layout.addStretch()
         self._update_play_icons()
+
+    def _style_transport(self):
+        """Drawn by us, not the platform style: a flat checked button is
+        drawn down in Fusion and on macOS, but Windows' own styles left it
+        looking like the rest, so nothing said which of Play and Pause was
+        in effect (#922)."""
+        h = self.palette().color(QPalette.ColorRole.Highlight)
+        rgb = f"{h.red()}, {h.green()}, {h.blue()}"
+        css = ("QPushButton { border: 1px solid transparent; border-radius: 4px;"
+               " background: transparent; }"
+               f"QPushButton:hover {{ background: rgba({rgb}, 40); }}"
+               "QPushButton:checked, QPushButton:pressed {"
+               f" background: rgba({rgb}, 90); border-color: rgba({rgb}, 170); }}")
+        for b in self._transport:
+            b.setStyleSheet(css)
 
     # ------------------------------------------------------------------
     # State queries
@@ -175,10 +192,17 @@ class AnimatePane(QWidget):
             return
         self._playing = True
         self._dumping = self._dump_check.isChecked()
+        self._update_play_icons()
         if self._dumping:
             self._step = 0
+            # Answered before the first frame is rendered: the host asks for
+            # the folder here, and pauses if it is refused. Frame 0 used to
+            # start first, finish while the folder dialog was still open,
+            # and with nowhere to save it, never ask for frame 1 -- a dump
+            # that did nothing and then reported itself complete (#922).
             self.dump_started.emit()
-        self._update_play_icons()
+            if not self._playing:
+                return
         self._update_time_display()
         if not self._dumping:
             # While dumping, frames are paced by render completion (see
@@ -206,6 +230,12 @@ class AnimatePane(QWidget):
         self._update_play_icons()
         if was_dumping:
             self.dump_finished.emit()
+
+    def cancel_dump(self):
+        """Stop a dump that never started -- its folder was not given --
+        without reporting it finished."""
+        self._dumping = False
+        self.pause()
 
     def go_first(self):
         self.pause()
