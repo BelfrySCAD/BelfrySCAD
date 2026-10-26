@@ -641,6 +641,7 @@ Standard platform conventions apply throughout. Custom shortcuts:
 | Tab | Indent line/selection |
 | Shift+Tab | Unindent line/selection |
 | Option+Up / Option+Down | Move line/selected lines up or down (Edit ▸ Move Line Up / Move Line Down) |
+| Ctrl+Up / Ctrl+Down | Scroll the view one line, moving the cursor only to keep it on screen (#951). The physical Ctrl key on macOS too, where ⌘↑/⌘↓ still go to the start/end of the file -- though macOS takes ⌃↑/⌃↓ for Mission Control unless that shortcut is turned off |
 | Cmd+F | Find |
 | Shift+Cmd+F | Find & Replace (Ctrl+H also, off macOS) |
 | Cmd+E | Export… |
