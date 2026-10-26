@@ -168,10 +168,10 @@ def azimuth_elevation_for(normal: np.ndarray) -> tuple[float, float]:
     """The camera azimuth/elevation that looks straight down `normal`.
 
     Straight up and straight down are special-cased to the same values
-    set_view_preset uses: at exactly +-90 elevation the look-at basis hits
-    gimbal lock and falls back to a hardcoded +X right vector, so the presets
-    stop a ten-thousandth of a degree short and pin a matching azimuth. Doing
-    anything else here would make the cube's Top disagree with Ctrl+4's.
+    set_view_preset uses: a pole has no azimuth of its own (atan2 of two
+    zeros), and the azimuth is what sets which way up the view is turned
+    there. Doing anything else here would make the cube's Top disagree with
+    Ctrl+4's.
     """
     nx, ny, nz = (float(c) for c in normal)
     if abs(nz) > 0.9999:

@@ -126,13 +126,10 @@ class TestNearestSegmentIndex:
 
 
 class TestCameraViewMatrixContinuity:
-    """Regression test: `_look_at`'s gimbal-lock fallback (used whenever the
-    forward vector is parallel to world-up, i.e. exactly elevation +-90)
-    hardcodes an arbitrary +X "right" vector, which doesn't match the
-    azimuth-dependent basis the camera continuously converges to just off
-    the pole. Landing exactly on elevation=90 (the old "Top" view preset)
-    made the very first orbit-drag frame snap to whatever that arbitrary
-    fallback implied — up to a 90-degree jump."""
+    """The view basis must not jump at or across a pole. `_look_at`'s
+    world-up fallback once made exactly elevation=90 snap the first drag
+    frame by up to 90 degrees; the camera's up vector now follows the
+    azimuth at the pole and carries on over it (#953)."""
 
     def test_right_vector_is_continuous_approaching_the_pole(self):
         cam = Camera()
@@ -146,20 +143,28 @@ class TestCameraViewMatrixContinuity:
 
         assert np.linalg.norm(near_pole - after_drag) < 0.02
 
-    def test_exact_pole_fallback_does_not_match_the_continuous_limit(self):
-        # Documents *why* the fix avoids landing on exactly elevation=90:
-        # the degenerate fallback used there disagrees with the value the
-        # continuous formula converges to from either side.
+    def test_the_exact_pole_matches_the_continuous_limit(self):
         cam = Camera()
         cam.azimuth, cam.distance = 0, 50.0
-
         cam.elevation = 90.0
-        exact_pole = cam.view_matrix()[0, :3]
+        exact_pole = cam.view_matrix()[:3, :3]
+        cam.elevation = 89.9999
+        assert np.abs(exact_pole - cam.view_matrix()[:3, :3]).max() < 1e-4
 
-        cam.elevation = 89.0
-        just_off_pole = cam.view_matrix()[0, :3]
-
-        assert np.linalg.norm(exact_pole - just_off_pole) > 1.0
+    def test_dragging_over_the_pole_turns_the_view_upside_down(self):
+        # OpenSCAD's drag adds to $vpr's x with no clamp, so carrying on
+        # over the top leaves the model upside down, with no jump on the way.
+        cam = Camera()
+        cam.azimuth, cam.distance = 270.0, 50.0
+        prev = None
+        for el in np.arange(80.0, 100.01, 0.5):
+            cam.elevation = float(el)
+            rot = cam.view_matrix()[:3, :3]
+            if prev is not None:
+                assert np.abs(rot - prev).max() < 0.02, f"jump at elevation={el}"
+            prev = rot
+        cam.elevation = 180.0      # $vpr = [270, 0, 0]: behind, upside down
+        assert cam.view_matrix()[1, :3] == approx([0, 0, -1], abs=1e-6)
 
     def test_continuity_holds_at_other_azimuths_too(self):
         cam = Camera()
