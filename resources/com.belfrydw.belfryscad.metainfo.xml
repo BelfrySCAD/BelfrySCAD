@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.90.0" date="2026-10-25">
+      <description>
+        <p>Fold/Unfold commands in the editor; 3D reference images get Scale from This Point and undo; failed asserts show their message in bold; Dump Pictures works the first time</p>
+      </description>
+    </release>
     <release version="1.89.1" date="2026-10-25">
       <description>
         <p>Animation controls show their state and Dump Pictures plays on; saved frames and images keep the background; drawing editors open larger</p>
