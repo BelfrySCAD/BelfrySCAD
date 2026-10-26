@@ -20,7 +20,7 @@ app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.editor import CodeEditor
-KEYS = {"BS": Qt.Key.Key_Backspace, "RET": Qt.Key.Key_Return, "TAB": Qt.Key.Key_Tab, "STAB": Qt.Key.Key_Backtab}
+KEYS = {"BS": Qt.Key.Key_Backspace, "RET": Qt.Key.Key_Return, "TAB": Qt.Key.Key_Tab, "STAB": Qt.Key.Key_Backtab, "SRET": Qt.Key.Key_Return}
 def run(on, start, keys):
     e = CodeEditor(); e.set_indent_with_tabs(on)
     a, b = (start.index("<"), start.index(">") - 1) if "<" in start else (start.index("|"),) * 2
@@ -28,7 +28,7 @@ def run(on, start, keys):
     c = e.textCursor(); c.setPosition(a); c.setPosition(b, QTextCursor.MoveMode.KeepAnchor); e.setTextCursor(c)
     for k in keys:
         if k in KEYS:
-            QTest.keyClick(e, KEYS[k], Qt.KeyboardModifier.ShiftModifier if k == "STAB" else Qt.KeyboardModifier.NoModifier)
+            QTest.keyClick(e, KEYS[k], Qt.KeyboardModifier.ShiftModifier if k in ("STAB", "SRET") else Qt.KeyboardModifier.NoModifier)
         else:
             QTest.keyClicks(e, k)
     c = e.textCursor(); t = e.toPlainText()
@@ -45,6 +45,9 @@ CASES = [
     (True, "\tx;|", ["RET"], "\tx;\n\t|"),
     (False, "\tf(|", ["RET"], "\tf(\n\t    |"),
     (True, "\tf(|", ["RET"], "\tf(\n\t\t|"),
+    # Shift+Enter is a plain Enter: Qt's own typed a U+2028 line separator,
+    # which looks like a line break and is a syntax error to the parser (#949)
+    (False, "  x;|", ["SRET"], "  x;\n  |"),
     # Tab types a real tab, mid-line too
     (True, "|x", ["TAB"], "\t|x"),
     (True, "x = 1;|", ["TAB"], "x = 1;\t|"),

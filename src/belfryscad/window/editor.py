@@ -2325,8 +2325,11 @@ class CodeEditor(QPlainTextEdit):
             before = block_text[:to_index(block_text, cursor.positionInBlock())]
             if unmatched_open_brackets(before):
                 indent += self._indent_text(self._indent_size)
-            super().keyPressEvent(event)
-            self.insertPlainText(indent)
+            # Typed here rather than by QPlainTextEdit, whose Shift+Enter
+            # inserts a U+2028 line separator: it looks like a line break,
+            # and the parser rejects it as an unexpected character (#949).
+            self.insertPlainText("\n" + indent)
+            self.ensureCursorVisible()
             return
         if event.key() == Qt.Key.Key_Backspace:
             cursor = self.textCursor()
