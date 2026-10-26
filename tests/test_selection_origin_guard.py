@@ -536,3 +536,75 @@ def test_an_edit_after_every_body_clears(tmp_path):
     mw._pending_reselect = (1, 500)
     MainWindow._apply_pending_reselect(mw, render_id=1)
     assert got.get("cleared") is True and got.get("id") is None
+
+
+# -- the right-click call trace (#927) ----------------------------------------
+
+class _TraceWindow(_FakeWindow):
+    _call_trace_label = MainWindow._call_trace_label
+    _viewport_context_menu = MainWindow._viewport_context_menu
+    _pick_at_level = MainWindow._pick_at_level
+
+    def __init__(self, *a, pick=None, **k):
+        super().__init__(*a, **k)
+        self.chosen = []
+        self._viewport = SimpleNamespace(pick_id_at=lambda pos: pick, set_selection=lambda oid: None)
+
+    def _select_at_level(self, orig_id, levels, target):
+        self.chosen.append((orig_id, target))
+
+
+class _RecordingMenu:
+    made = []
+
+    def __init__(self, parent=None):
+        self.actions = []
+        _RecordingMenu.made.append(self)
+
+    def addAction(self, text):
+        act = SimpleNamespace(text=text, slots=[])
+        act.triggered = SimpleNamespace(connect=act.slots.append)
+        self.actions.append(act)
+        return act
+
+    def exec(self, pos):
+        pass
+
+
+def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch):
+    import belfryscad.window.main_window as mwmod
+    import belfryscad.window.library_manager as libmgr
+    libroot = tmp_path / "libraries"
+    (libroot / "BOSL2").mkdir(parents=True)
+    lib = libroot / "BOSL2" / "shapes3d.scad"
+    lib.write_text("module cuboid(size) {\n    attachable() cube(size);\n}\n")
+    monkeypatch.setattr(libmgr, "_library_dir", lambda: libroot)
+    script = tmp_path / "part.scad"
+    script.write_text("include <BOSL2/std.scad>\ncuboid(10);\n")
+
+    chain = (SimpleNamespace(origin=str(lib), start_offset=26, end_offset=40, line=2),
+             SimpleNamespace(origin=str(script), start_offset=25, end_offset=36, line=2))
+    node = SimpleNamespace(position=chain[0], call_sites=chain)
+    tab = _tab(str(script), str(script))
+    tab.editor.toPlainText = lambda: script.read_text()
+    tab.display_name = lambda: "part.scad"
+    monkeypatch.setattr(mwmod, "QMenu", _RecordingMenu)
+    _RecordingMenu.made.clear()
+    mw = _TraceWindow({7: node}, tab, pick=7)
+
+    mw._viewport_context_menu(None, None)
+    menu = _RecordingMenu.made[-1]
+    # Outermost first, as OpenSCAD lists it: the user's call, then the library.
+    assert [a.text for a in menu.actions] == ["cuboid (part.scad:2)",
+                                              "attachable (library BOSL2/shapes3d.scad:2)"]
+    # Choosing the library line selects at that level -- the innermost, 0.
+    menu.actions[1].slots[0]()
+    assert mw.chosen == [(7, 0)]
+
+
+def test_right_click_on_nothing_opens_no_menu(monkeypatch):
+    import belfryscad.window.main_window as mwmod
+    monkeypatch.setattr(mwmod, "QMenu", _RecordingMenu)
+    _RecordingMenu.made.clear()
+    _TraceWindow({}, None, pick=None)._viewport_context_menu(None, None)
+    assert _RecordingMenu.made == []

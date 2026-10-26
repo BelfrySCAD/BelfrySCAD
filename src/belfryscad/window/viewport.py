@@ -403,6 +403,7 @@ class Viewport(QOpenGLWidget):
     selection_changed   = Signal(int)                    # originalID or -1
     translate_committed = Signal(float, float, float)    # world-space delta
     selection_level_step = Signal(int)  # -1 deeper into the callee, +1 out toward top level
+    context_menu_requested = Signal(QPoint, QPoint)      # a right-click, not a pan: (pos, global pos)
     rotate_committed    = Signal(int, float)             # axis (0/1/2), degrees
     extrude_committed   = Signal(float, bool)            # height delta, centred
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
@@ -1809,10 +1810,18 @@ class Viewport(QOpenGLWidget):
     # Selection
     # ------------------------------------------------------------------
 
+    def contextMenuEvent(self, event):
+        # Only a right-click that did not pan gets here (see event()). The
+        # data viewers' viewports override this with their own menus.
+        self.context_menu_requested.emit(event.pos(), event.globalPos())
+
+    def pick_id_at(self, pos: QPoint):
+        """The originalID of the shape under `pos`, or None."""
+        ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
+        return self._renderer.ray_cast(ray_origin, ray_dir)
+
     def _do_selection(self, pos: QPoint):
-        w, h = self.width(), self.height()
-        ray_origin, ray_dir = self._renderer.camera_ray(pos.x(), pos.y(), w, h)
-        orig_id = self._renderer.ray_cast(ray_origin, ray_dir)
+        orig_id = self.pick_id_at(pos)
         self.set_selection(orig_id)
         self.selection_changed.emit(orig_id if orig_id is not None else -1)
 
