@@ -1,4 +1,5 @@
 import re
+import sys
 
 from belfryscad.qt_positions import byte_column_to_qt, qt_length, to_index, to_qt
 from belfryscad.scad_templates import expand as expand_template
@@ -7,6 +8,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QWidget, QTextEdit,
     QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout,
     QMenu, QCompleter, QApplication, QMessageBox, QStyle, QToolTip, QFrame,
+    QAbstractSlider,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
@@ -2269,6 +2271,35 @@ class CodeEditor(QPlainTextEdit):
             '&nbsp;&nbsp;&nbsp;&nbsp;</td>'
             f'<td>&nbsp;{describe(color)}</td></tr></table>'), self)
 
+    def _handle_line_scroll(self, event) -> bool:
+        """Ctrl+Up/Down scrolls the view a line, as OpenSCAD's editor and
+        most others do (#951), moving the caret only as far as it takes to
+        stay on screen (Scintilla's LineScrollUp/Down). The physical Ctrl
+        key, which Qt reports as Meta on macOS, where Cmd+Up/Down keep their
+        start/end-of-document meaning. True if consumed."""
+        ctrl = (Qt.KeyboardModifier.MetaModifier if sys.platform == "darwin"
+                else Qt.KeyboardModifier.ControlModifier)
+        # Masked: macOS reports arrow keys with KeypadModifier set as well.
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if mods != ctrl or event.key() not in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            return False
+        up = event.key() == Qt.Key.Key_Up
+        self.verticalScrollBar().triggerAction(
+            QAbstractSlider.SliderAction.SliderSingleStepSub if up
+            else QAbstractSlider.SliderAction.SliderSingleStepAdd)
+        # Scrolling up pushes the caret toward the bottom edge, so it steps
+        # up to stay in view, and the other way round.
+        cursor = self.textCursor()
+        step = QTextCursor.MoveOperation.Up if up else QTextCursor.MoveOperation.Down
+        while True:
+            rect = self.cursorRect(cursor)
+            if (rect.bottom() <= self.viewport().height() if up else rect.top() >= 0):
+                break
+            if not cursor.movePosition(step):
+                break
+        self.setTextCursor(cursor)
+        return True
+
     def keyPressEvent(self, event):
         if self._handle_value_nudge(event):
             event.accept()
@@ -2291,6 +2322,8 @@ class CodeEditor(QPlainTextEdit):
             event.ignore()
             return
         if self._handle_auto_close(event):
+            return
+        if self._handle_line_scroll(event):
             return
         # Before the Key_Down handling below, which appends a line at the
         # end of the document -- Option-Down on the last line must not do
