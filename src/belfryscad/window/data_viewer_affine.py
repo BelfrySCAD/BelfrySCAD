@@ -169,7 +169,7 @@ class _AffineViewport(Viewport):
             # continuously converges to just off the pole -- see the
             # matching fix/comment in viewport.py's "top" view preset.
             cam.elevation = 89.9999
-            cam.orthographic = True
+            self.lock_orthographic()
         else:
             cam.orthographic = False
         self.schedule_load(lambda: self.load_matrix(matrix))

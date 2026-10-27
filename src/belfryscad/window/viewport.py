@@ -1035,7 +1035,21 @@ class Viewport(QOpenGLWidget):
         self._busy_label.move(x, y)
         self._busy_cancel.move(x + self._busy_label.width() + gap, y)
 
+    #: Set by lock_orthographic(): a 2D editor, whose view never leaves
+    #: square-on top-down, where perspective only distorts what is traced.
+    _ortho_locked = False
+
+    def lock_orthographic(self):
+        """Make this viewport orthographic for good: no perspective button,
+        and View > Perspective leaves it alone (#882)."""
+        self._ortho_locked = True
+        self._renderer.camera.orthographic = True
+        self._persp_btn.hide()
+        self.refresh_perspective_icon()
+
     def _on_perspective_button_clicked(self):
+        if self._ortho_locked:
+            return
         cam = self._renderer.camera
         cam.orthographic = not cam.orthographic
         self.refresh_perspective_icon()
