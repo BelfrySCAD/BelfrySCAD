@@ -1666,3 +1666,38 @@ def _break_function_bodies(text: str, width: int, indent_size: int) -> str:
         out.extend(pieces if pieces else [line])
     joined = "\n".join(out)
     return joined if _same_shape(text, joined) else text
+
+
+_LITERAL_KINDS = {"NumberLiteral", "StringLiteral", "BooleanLiteral", "UndefinedLiteral"}
+
+
+def _is_literal_expr(node: dict) -> bool:
+    kind = node.get("kind")
+    if kind in _LITERAL_KINDS:
+        return True
+    if kind == "UnaryMinusOp":
+        return node["expr"].get("kind") == "NumberLiteral"
+    if kind == "ListComprehension":   # what the parser calls a plain [a, b] too
+        return all(_is_literal_expr(e) for e in node["elements"])
+    return False
+
+
+def find_computed_assignment(text: str, offset: int) -> tuple[str, int, int] | None:
+    """(name, start, end) of the expression in the top-level `name = expr;`
+    that `offset` falls in, when `expr` is computed rather than already a
+    literal -- what Replace with Value can turn into one (#932). Top level
+    only, since that is the one scope a variable's value can be read from
+    after a run. None when the text does not parse."""
+    from belfryscad.qt_positions import parse_ast_string
+    try:
+        nodes = parse_ast_string(text)
+    except Exception:
+        return None
+    for node in nodes:
+        pos = node["position"]
+        if (node["kind"] == "Assignment"
+                and pos["start_offset"] <= offset <= pos["end_offset"]
+                and not _is_literal_expr(node["expr"])):
+            ep = node["expr"]["position"]
+            return node["name"]["name"], ep["start_offset"], ep["end_offset"]
+    return None
