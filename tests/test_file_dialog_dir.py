@@ -106,6 +106,7 @@ d = os.path.realpath(tempfile.mkdtemp(prefix="work"))
 path = os.path.join(d, "t.scad"); open(path, "w").write("cube(1);")
 w.open_file_by_path(path, render=False)
 w._dump_dir = None; w._on_dump_started()          # a saved script: its own folder
+w._dump_dir = last; w._on_dump_started()          # a second dump: asked again, at the last one's folder
 print(json.dumps({"asked": asked, "last": last, "work": d}), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
@@ -117,4 +118,4 @@ def test_folder_pickers_never_start_in_the_cwd():
     import json, subprocess, sys
     r = subprocess.run([sys.executable, "-c", PICKER_DRIVER], capture_output=True, text=True, timeout=60)
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert out["asked"] == [out["last"], out["last"], out["work"]], r.stderr
+    assert out["asked"] == [out["last"], out["last"], out["work"], out["last"]], r.stderr

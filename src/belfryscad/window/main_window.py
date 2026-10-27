@@ -3591,17 +3591,19 @@ class MainWindow(QMainWindow):
         self._render()
 
     def _on_dump_started(self):
-        if self._dump_dir is None:
-            # Never Qt's own fallback, the cwd: System32 for a Windows
-            # Start-menu launch (#938). See file_dialog_dir.
+        # Asked on every dump, starting in the last one's folder, so the
+        # folder can be changed (#938). Never Qt's own fallback, the cwd:
+        # System32 for a Windows Start-menu launch. See file_dialog_dir.
+        start = self._dump_dir
+        if start is None:
             tab = self._current_tab()
             start = (os.path.dirname(tab.file_path) if tab and tab.file_path
                      else file_dialog_dir())
-            path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To", start)
-            if not path:
-                self._animate_pane.cancel_dump()
-                return
-            self._dump_dir = path
+        path = QFileDialog.getExistingDirectory(self, "Dump Animation Frames To", start)
+        if not path:
+            self._animate_pane.cancel_dump()
+            return
+        self._dump_dir = path
         self.log(f"Dumping animation frames to {self._dump_dir}")
 
     def _on_dump_finished(self):
