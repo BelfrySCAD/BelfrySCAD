@@ -6269,6 +6269,11 @@ class MainWindow(QMainWindow):
 
     def _toggle_perspective(self, perspective: bool):
         vp = self._target_viewport()
+        if vp._ortho_locked:      # a 2D editor stays orthographic (#882)
+            self._act_perspective.blockSignals(True)
+            self._act_perspective.setChecked(not perspective)
+            self._act_perspective.blockSignals(False)
+            return
         vp._renderer.camera.orthographic = not perspective
         vp.refresh_perspective_icon()
         vp.update()

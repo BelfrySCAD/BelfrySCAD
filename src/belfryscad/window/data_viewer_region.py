@@ -495,7 +495,7 @@ class _RegionViewport(BackgroundImageViewportMixin, Viewport):
         cam.fov = 45.0
         cam.azimuth = 270.0
         cam.elevation = 89.9999   # see _PathViewport's matching comment re: gimbal lock
-        cam.orthographic = True
+        self.lock_orthographic()
         self._orbit_enabled = False   # a region has no "other side" to orbit to -- always top-down
         self._renderer.line_width = 2.0   # device px; drawn wide by the renderer, not GL
         self._renderer.show_edges = True   # polygon-offsets the fill mesh back so outlines win the depth tie
