@@ -90,7 +90,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   Implemented entirely in openscad_cpp_evaluator (`Evaluator::expandChildStatements` +
   `Op::CsgGroupChildren`); no parser or GUI change.
 - **Language extension — `alpha_wrap()`**: `alpha_wrap(alpha, offset) { ... }` shrink-wraps the
-  children in one closed, manifold skin that bridges gaps and holes narrower than `alpha` and sits
+  children in one closed, manifold skin that bridges gaps and holes narrower than about `2*alpha` (a ball of radius `alpha` cannot pass) and sits
   `offset` outside the input (defaults: alpha 1/20 of the bounding diagonal, offset alpha/30, as
   CGAL suggests). It wraps an open `polyhedron()`'s raw triangles too, so it doubles as a repair and
   a robust rounded outward offset. Our own implementation of Portaneri et al.'s algorithm, written
