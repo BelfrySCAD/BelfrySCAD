@@ -184,6 +184,28 @@ def header_colors() -> tuple[str, str, str]:
     return ("#E8E8E8", "#C0C0C0", "#202020")
 
 
+def document_tab_style() -> str:
+    """Stylesheet for the editor's file tabs (#965).
+
+    The native macOS document-mode tabs mark the current one only by darker
+    text, which is easy to miss. Here the current tab gets its own background
+    (the editor's, so it reads as joined to the page below) and bold text,
+    and the others sit flat on the bar.
+    """
+    pal = QApplication.instance().palette()
+    sel = pal.color(QPalette.ColorRole.Base).name()
+    text = pal.color(QPalette.ColorRole.Text).name()
+    dim = pal.color(QPalette.ColorRole.PlaceholderText).name()
+    hover = "#454545" if is_dark() else "#E4E4E4"
+    border = "#555555" if is_dark() else "#C0C0C0"
+    return (
+        "QTabBar::tab { background: transparent; padding: 4px 10px;"
+        f" border: none; border-right: 1px solid {border}; color: {dim}; }}"
+        f"QTabBar::tab:hover:!selected {{ background: {hover}; }}"
+        f"QTabBar::tab:selected {{ background: {sel}; color: {text}; font-weight: bold; }}"
+    )
+
+
 def console_severity_colors(kind: str) -> tuple[str, str]:
     """(background, foreground) for a console line banded by severity.
 

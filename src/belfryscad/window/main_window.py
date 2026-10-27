@@ -22,7 +22,8 @@ from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
-from belfryscad.window.ui_colors import apply_themed_icon, themed_icon
+from belfryscad.window.ui_colors import (apply_themed_icon, document_tab_style,
+                                         on_appearance_change, themed_icon)
 from belfryscad.engine.renderer import FLAT_PREVIEW_HEIGHT, as_rendered
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.scad_format import (comment_lines, extrude_edit, extrude_is_centered,
@@ -942,6 +943,9 @@ class _DetachedTabBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.tab_bar = QTabBar()
+        self.tab_bar.setStyleSheet(document_tab_style())
+        on_appearance_change(self.tab_bar,
+                             lambda: self.tab_bar.setStyleSheet(document_tab_style()))
         self._stack = QStackedWidget()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
