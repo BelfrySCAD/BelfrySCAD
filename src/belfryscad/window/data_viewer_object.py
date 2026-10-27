@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
+from belfryscad.scad_literals import (is_literal_value as _is_scad_literal_value,
+                                      scad_literal as _python_value_to_scad)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, _fmt_short,
                                                   _is_oscobject,
                                                   _scad_literal_to_python,
@@ -232,40 +234,6 @@ def _scad_type_name(v) -> str:
     if isinstance(v, (list, tuple)):
         return "vector"
     return "unknown"
-
-
-def _is_scad_literal_value(v) -> bool:
-    """True when `v` round-trips through OpenSCAD source text, i.e. is safe
-    to show in an editable cell. A live OscObject does not."""
-    if v is None or isinstance(v, (bool, int, float, str)):
-        return True
-    if isinstance(v, (list, tuple)):
-        return all(_is_scad_literal_value(x) for x in v)
-    return False
-
-
-def _python_value_to_scad(v) -> str:
-    """Render a Python value back as OpenSCAD source. Inverse of
-    `_scad_literal_to_python` for the value shapes an object can hold."""
-    if v is None:
-        return "undef"
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
-    if isinstance(v, str):
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    if isinstance(v, float):
-        # Trim the ".0" a whole number would otherwise carry: OpenSCAD has
-        # one number type, so `42` and `42.0` are the same value and the
-        # shorter form is what a human would have written.
-        return str(int(v)) if v == int(v) else repr(v)
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, (list, tuple)):
-        return "[" + ", ".join(_python_value_to_scad(x) for x in v) + "]"
-    return str(v)
 
 
 def _render_object_call(entries) -> str:

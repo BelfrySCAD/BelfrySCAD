@@ -52,6 +52,70 @@ def format_value(v: Any) -> str:
     return str(v)
 
 
+def scad_literal(v) -> str:
+    """Render a Python value back as OpenSCAD source, losing nothing: a
+    float is written at full round-trip precision, unlike format_value's
+    `:g` (6 significant digits)."""
+    if v is None:
+        return "undef"
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    if isinstance(v, str):
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    if isinstance(v, float):
+        if v != v:
+            return "0/0"            # OpenSCAD has no literal for nan or inf
+        if v in (float("inf"), float("-inf")):
+            return "1/0" if v > 0 else "-1/0"
+        # Trim the ".0" a whole number would otherwise carry: OpenSCAD has
+        # one number type, so `42` and `42.0` are the same value and the
+        # shorter form is what a human would have written.
+        return str(int(v)) if v.is_integer() else repr(v)
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(scad_literal(x) for x in v) + "]"
+    return str(v)
+
+
+def is_literal_value(v) -> bool:
+    """True when scad_literal(v) is a plain literal: no function, object
+    or range anywhere inside it."""
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return True
+    if isinstance(v, (list, tuple)):
+        return all(is_literal_value(x) for x in v)
+    return False
+
+
+def rounded(v, digits: int = 6):
+    """`v` with every number rounded to `digits` significant digits --
+    what echo() shows and what Edit as... writes back."""
+    if isinstance(v, float):
+        return float(f"{v:.{digits}g}")
+    if isinstance(v, (list, tuple)):
+        return [rounded(x, digits) for x in v]
+    return v
+
+
+def scad_literal_block(v, indent: str = "") -> str:
+    """scad_literal(v), with a list of lists of lists -- a grid of points,
+    a list of paths -- broken one element per line, so each row reads on
+    a line of its own (#932). Anything shallower stays on one line."""
+    def deep(x):
+        return isinstance(x, (list, tuple)) and any(
+            isinstance(y, (list, tuple)) and any(isinstance(z, (list, tuple)) for z in y)
+            for y in x)
+    if not deep(v):
+        return scad_literal(v)
+    inner = indent + "    "
+    return ("[\n" + ",\n".join(inner + scad_literal_block(x, inner) for x in v)
+            + "\n" + indent + "]")
+
+
 def preset_path_for(scad_path: str) -> str:
     """The sidecar JSON file OpenSCAD-style presets for *scad_path* live in."""
     return str(Path(scad_path).with_suffix('.json'))

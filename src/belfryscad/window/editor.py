@@ -1442,6 +1442,7 @@ class CodeEditor(QPlainTextEdit):
     value_nudged = Signal(int, int, str)       # (start, end, replacement) from an armed nudge
     value_nudge_status = Signal(str)           # status-bar text while armed, "" when not
     use_library_requested = Signal()           # emits to open the Use Library picker
+    replace_with_value_requested = Signal(str, int, int)  # (name, start, end) of a computed assignment
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3764,6 +3765,19 @@ class CodeEditor(QPlainTextEdit):
             build_editor_menu(edit_sub, text, edit_literals, on_commit, self)
             if not edit_sub.isEmpty():
                 menu.addMenu(edit_sub)
+
+        # A computed top-level value turned into the literal it evaluates to,
+        # so Edit as... can work on it (#932). MainWindow runs the script.
+        if not self.isReadOnly():
+            from belfryscad.window.scad_format import find_computed_assignment
+            computed = find_computed_assignment(text, offset)
+            if computed is not None:
+                name = computed[0]
+                if not menu.actions() or not menu.actions()[-1].isSeparator():
+                    menu.addSeparator()
+                menu.addAction(
+                    f"Replace '{name}' with Its Value",
+                    lambda c=computed: self.replace_with_value_requested.emit(*c))
 
         # A font= argument is a string in an argument position, not a
         # bracket literal, so it has its own finder and its own top-level

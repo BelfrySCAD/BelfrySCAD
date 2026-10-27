@@ -2047,6 +2047,8 @@ class MainWindow(QMainWindow):
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         tab.editor.choose_color_requested.connect(self._choose_color)
+        tab.editor.replace_with_value_requested.connect(
+            lambda name, a, b, t=tab: self._replace_with_value(t, name, a, b))
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
@@ -2494,6 +2496,8 @@ class MainWindow(QMainWindow):
         tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
         tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
         tab.editor.choose_color_requested.connect(self._choose_color)
+        tab.editor.replace_with_value_requested.connect(
+            lambda name, a, b, t=tab: self._replace_with_value(t, name, a, b))
         tab.editor.value_nudged.connect(
             lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
         tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
@@ -6652,6 +6656,64 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(text)
         else:
             self.statusBar().clearMessage()
+
+    _VALUE_EVAL_TIMEOUT_S = 60
+
+    def _replace_with_value(self, tab, name: str, start: int, end: int):
+        """Replace a top-level assignment's computed expression with the
+        literal it evaluates to, so Edit as... can work on it (#932).
+
+        The value is read by running the script once more with
+        `$<probe> = name;` appended and reading it back from
+        Evaluator.dyn, as Python values rather than echo() text, which
+        does not escape strings. Numbers are rounded to 6 significant
+        digits, as Edit as... writes them. No geometry is built. Runs on the UI thread, which also keeps a
+        render from starting alongside it.
+        """
+        if self._render_busy():
+            self.statusBar().showMessage("Wait for the render to finish, then try again.", 5000)
+            return
+        from openscad_cpp_evaluator import CancelSignal, Evaluator
+        from belfryscad.export_name import seed_params
+        from belfryscad.scad_literals import is_literal_value, rounded, scad_literal_block
+        probe = "$__belfryscad_value__"
+        text = tab.editor.toPlainText()
+        out: list[str] = []
+        cancel = CancelSignal()
+        timer = threading.Timer(self._VALUE_EVAL_TIMEOUT_S, cancel.request)
+        tmp = None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            tmp = scad_temp.write_temp_scad(f"{text}\n{probe} = {name};\n",
+                                            near=tab.resolve_near or tab.file_path)
+            ev = Evaluator(echo_fn=out.append, cancel_signal=cancel)
+            timer.start()
+            ev.evaluate(tmp, seed_params(self._viewport_params(), tab.file_path), generate=False)
+            value = ev.dyn.get(probe)
+        except Exception as e:      # noqa: BLE001 -- reported, not raised
+            self.log(f"Replace with Value: '{name}' could not be evaluated: {e}")
+            return
+        finally:
+            timer.cancel()
+            QApplication.restoreOverrideCursor()
+            scad_temp.remove(tmp)
+        if value is None:
+            self.log(f"Replace with Value: '{name}' is undef; left as it is.")
+            return
+        if not is_literal_value(value):
+            self.log(f"Replace with Value: '{name}' holds a function, object or range, "
+                     "which has no literal form; left as it is.")
+            return
+        indent = re.match(r"[ \t]*", text[text.rfind("\n", 0, start) + 1:]).group()
+        tab.editor.replace_text(start, end, scad_literal_block(rounded(value), indent))
+        # An unknown function or bad index only warns, and leaves an undef
+        # in the value; say so, rather than let it pass as the real thing.
+        warnings = [m for m in out if m.startswith(("WARNING", "ERROR"))]
+        if warnings:
+            for m in warnings:
+                self.log(m.replace(tmp, str(tab.file_path or "the unsaved script")))
+            self.log(f"Replace with Value: the run warned, so check the new value of "
+                     f"'{name}'. Undo puts the expression back.")
 
     def _on_value_nudged(self, tab, start: int, end: int, new_text: str):
         """Apply one armed-nudge step: rewrite the span, then re-render.
