@@ -551,41 +551,114 @@ def _describe_qt_state(app) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _objc_runtime():
+    """Just enough of the Objective-C runtime, through ctypes, to read
+    AppKit's state: PyObjC is not a dependency. Each objc_msgSend use is
+    called through a prototype of the method's own signature (arm64 passes
+    variadic arguments differently)."""
+    import ctypes
+    import ctypes.util
+    import types
+    from ctypes import CFUNCTYPE, c_bool, c_char_p, c_double, c_long, c_ulong, c_void_p
+    objc = ctypes.CDLL(ctypes.util.find_library("objc"))
+    objc.objc_getClass.restype = c_void_p
+    objc.objc_getClass.argtypes = [c_char_p]
+    objc.sel_registerName.restype = c_void_p
+    objc.sel_registerName.argtypes = [c_char_p]
+    addr = ctypes.cast(objc.objc_msgSend, c_void_p).value
+    rt = types.SimpleNamespace(
+        obj=CFUNCTYPE(c_void_p, c_void_p, c_void_p)(addr),
+        obj_at=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_ulong)(addr),
+        obj_for=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_void_p)(addr),
+        obj_str=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_char_p)(addr),
+        flag=CFUNCTYPE(c_bool, c_void_p, c_void_p)(addr),
+        num=CFUNCTYPE(c_long, c_void_p, c_void_p)(addr),
+        dbl=CFUNCTYPE(c_double, c_void_p, c_void_p)(addr),
+        cstr=CFUNCTYPE(c_char_p, c_void_p, c_void_p)(addr),
+        cls=lambda name: objc.objc_getClass(name.encode()),
+        sel=lambda name: objc.sel_registerName(name.encode()))
+
+    def text(nsstring):
+        if not nsstring:
+            return "nil"
+        raw = rt.cstr(nsstring, rt.sel("UTF8String"))
+        return repr(raw.decode("utf-8", "replace")) if raw else "?"
+    rt.text = text
+    rt.nsstr = lambda s: rt.obj_str(rt.cls("NSString"), rt.sel("stringWithUTF8String:"), s.encode())
+    return rt
+
+
+def _frontmost_app(rt) -> str:
+    """The app macOS has in front, by name and pid: who took the focus."""
+    ws = rt.obj(rt.cls("NSWorkspace"), rt.sel("sharedWorkspace"))
+    front = rt.obj(ws, rt.sel("frontmostApplication"))
+    if not front:
+        return "nil"
+    return f"{rt.text(rt.obj(front, rt.sel('localizedName')))} pid={rt.num(front, rt.sel('processIdentifier'))}"
+
+
+def _windows_above(rt, window_number: int) -> list:
+    """Other on-screen windows stacked above ours that overlap it, from the
+    window server: a window whose click never reaches us, though nothing of
+    ours ignores the mouse, may be landing on one of these instead. Owner
+    and bounds only -- window titles need Screen Recording permission."""
+    import ctypes
+    from ctypes import c_uint32, c_void_p
+    cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    cg.CGWindowListCopyWindowInfo.restype = c_void_p
+    cg.CGWindowListCopyWindowInfo.argtypes = [c_uint32, c_uint32]
+    cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+    cf.CFRelease.argtypes = [c_void_p]
+    key = {k: rt.nsstr(k) for k in ("kCGWindowOwnerName", "kCGWindowOwnerPID", "kCGWindowLayer",
+                                     "kCGWindowAlpha", "kCGWindowBounds", "X", "Y", "Width", "Height")}
+
+    def get(d, k):
+        return rt.obj_for(d, rt.sel("objectForKey:"), key[k])
+
+    def rect(d):
+        b = get(d, "kCGWindowBounds")
+        return tuple(rt.dbl(get(b, k), rt.sel("doubleValue")) for k in ("X", "Y", "Width", "Height"))
+
+    def entries(option):
+        arr = cg.CGWindowListCopyWindowInfo(option, window_number)
+        if not arr:
+            return []
+        out = [rt.obj_at(arr, rt.sel("objectAtIndex:"), i) for i in range(rt.num(arr, rt.sel("count")))]
+        return arr, out
+
+    own = entries(8)            # kCGWindowListOptionIncludingWindow
+    if not own or not own[1]:
+        return ["  windows above ours: our window is not on screen"]
+    ox, oy, ow, oh = rect(own[1][0])
+    cf.CFRelease(own[0])
+    above = entries(2 | 16)     # OnScreenAboveWindow | ExcludeDesktopElements
+    lines = []
+    for d in (above[1] if above else []):
+        x, y, w, h = rect(d)
+        if x < ox + ow and ox < x + w and y < oy + oh and oy < y + h:
+            lines.append(f"    {rt.text(get(d, 'kCGWindowOwnerName'))} "
+                         f"pid={rt.num(get(d, 'kCGWindowOwnerPID'), rt.sel('longValue'))} "
+                         f"layer={rt.num(get(d, 'kCGWindowLayer'), rt.sel('longValue'))} "
+                         f"alpha={rt.dbl(get(d, 'kCGWindowAlpha'), rt.sel('doubleValue')):.2f} "
+                         f"bounds=({x:.0f},{y:.0f} {w:.0f}x{h:.0f})")
+    if above:
+        cf.CFRelease(above[0])
+    return [f"  windows above ours that overlap it ({len(lines)}):"] + (lines or ["    none"])
+
+
 def _describe_macos_state() -> list:
     """What AppKit thinks, beneath Qt. Two #703 dumps ended on a click in
     the 3D view, then the app never became active again although its loop
-    still ran and Qt saw no modal or grab. That fits AppKit taking input
-    first: a native tracking or modal loop (the main run loop in a mode
-    other than the default), or a window ignoring the mouse, so a click on
-    it lands on whatever is behind. Read through the Objective-C runtime
-    with ctypes, since PyObjC is not a dependency."""
+    still ran and Qt saw no modal or grab. A third (1.91.3) ruled out a
+    native tracking loop and a window ignoring the mouse, so this also says
+    which app is in front and which other windows sit over ours."""
     import ctypes
     import ctypes.util
-    from ctypes import CFUNCTYPE, c_bool, c_char_p, c_long, c_ulong, c_void_p
+    from ctypes import c_void_p
     try:
-        objc = ctypes.CDLL(ctypes.util.find_library("objc"))
+        rt = _objc_runtime()
+        sel, obj, flag, num, text = rt.sel, rt.obj, rt.flag, rt.num, rt.text
         cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
-        objc.objc_getClass.restype = c_void_p
-        objc.objc_getClass.argtypes = [c_char_p]
-        objc.sel_registerName.restype = c_void_p
-        objc.sel_registerName.argtypes = [c_char_p]
-        addr = ctypes.cast(objc.objc_msgSend, c_void_p).value
-        # objc_msgSend must be called through a prototype of the method's
-        # own signature (arm64 passes variadic arguments differently).
-        obj = CFUNCTYPE(c_void_p, c_void_p, c_void_p)(addr)
-        obj_at = CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_ulong)(addr)
-        flag = CFUNCTYPE(c_bool, c_void_p, c_void_p)(addr)
-        num = CFUNCTYPE(c_long, c_void_p, c_void_p)(addr)
-        cstr = CFUNCTYPE(c_char_p, c_void_p, c_void_p)(addr)
-
-        def sel(name):
-            return objc.sel_registerName(name.encode())
-
-        def text(nsstring):
-            if not nsstring:
-                return "nil"
-            raw = cstr(nsstring, sel("UTF8String"))
-            return repr(raw.decode("utf-8", "replace")) if raw else "?"
 
         def window(w):
             if not w:
@@ -595,7 +668,7 @@ def _describe_macos_state() -> list:
                     f"ignoresMouse={flag(w, sel('ignoresMouseEvents'))} "
                     f"level={num(w, sel('level'))} occlusion={num(w, sel('occlusionState'))}")
 
-        ns_app = obj(objc.objc_getClass(b"NSApplication"), sel("sharedApplication"))
+        ns_app = obj(rt.cls("NSApplication"), sel("sharedApplication"))
         cf.CFRunLoopGetMain.restype = c_void_p
         cf.CFRunLoopCopyCurrentMode.restype = c_void_p
         cf.CFRunLoopCopyCurrentMode.argtypes = [c_void_p]
@@ -607,16 +680,24 @@ def _describe_macos_state() -> list:
         event = obj(ns_app, sel("currentEvent"))
         lines = ["AppKit:",
                  f"  isActive={flag(ns_app, sel('isActive'))} isRunning={flag(ns_app, sel('isRunning'))}",
+                 f"  frontmost app={_frontmost_app(rt)}",
                  f"  main run loop mode={mode_name}",
                  f"  currentEvent type={num(event, sel('type')) if event else 'nil'}",
                  f"  modalWindow={window(obj(ns_app, sel('modalWindow')))}",
                  f"  keyWindow={window(obj(ns_app, sel('keyWindow')))}",
                  "  windows:"]
         windows = obj(ns_app, sel("windows"))
+        main = None
         for i in range(num(windows, sel("count")) if windows else 0):
-            w = obj_at(windows, sel("objectAtIndex:"), i)
+            w = rt.obj_at(windows, sel("objectAtIndex:"), i)
             if flag(w, sel("isVisible")):
                 lines.append(f"    {window(w)}")
+                main = main or w
+        if main:
+            try:
+                lines += _windows_above(rt, num(main, sel("windowNumber")))
+            except Exception as e:     # noqa: BLE001
+                lines.append(f"  windows above ours: unavailable ({type(e).__name__}: {e})")
         return lines
     except Exception as e:     # a diagnostic must never be what fails
         return [f"AppKit: unavailable ({type(e).__name__}: {e})"]
@@ -636,6 +717,7 @@ class _StateLog:
         mouse = {T.MouseButtonPress, T.MouseButtonRelease, T.MouseButtonDblClick}
         changes = {T.Expose, T.ApplicationStateChange, T.WindowActivate,
                    T.WindowDeactivate, T.Show, T.Hide}
+        from PySide6.QtCore import QTimer
         self.inputs = collections.deque(maxlen=20)
         self.events = collections.deque(maxlen=40)
         log = self
@@ -654,12 +736,23 @@ class _StateLog:
                     log.events.append(f"{_now()} {t.name} {type(obj).__name__} "
                                       f"{obj.title()!r}{extra}")
                 elif t == T.ApplicationStateChange and obj is app:
-                    log.events.append(f"{_now()} {app.applicationState().name}")
+                    state = app.applicationState().name
+                    log.events.append(f"{_now()} {state}")
+                    if sys.platform == "darwin" and state == "ApplicationInactive":
+                        # Which app took the focus, read once macOS has
+                        # caught up. Nothing in the dump could say so later.
+                        QTimer.singleShot(250, log.note_frontmost)
                 return False
         self._filter = Filter()
         app.installEventFilter(self._filter)
         for sig, what in ((app.screenAdded, "screen added"), (app.screenRemoved, "screen removed")):
             sig.connect(lambda s, what=what: log.events.append(f"{_now()} {what}: {s.name()}"))
+
+    def note_frontmost(self):
+        try:
+            self.events.append(f"{_now()}   frontmost app now {_frontmost_app(_objc_runtime())}")
+        except Exception as e:     # noqa: BLE001 -- a diagnostic must never be what fails
+            self.events.append(f"{_now()}   frontmost app unavailable ({type(e).__name__})")
 
 
 def _now() -> str:
