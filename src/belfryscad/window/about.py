@@ -125,12 +125,13 @@ def show_about_dialog(parent=None):
     return dlg
 
 
-def open_documentation():
-    """Help ▸ Documentation -- the wiki, in the user's browser."""
+def open_documentation(page: str = ""):
+    """Help ▸ Documentation -- the wiki, or one `page` of it, in the
+    user's browser."""
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QDesktopServices
 
-    QDesktopServices.openUrl(QUrl(DOCS_URL))
+    QDesktopServices.openUrl(QUrl(f"{DOCS_URL}/{page}" if page else DOCS_URL))
 
 
 def open_issue_tracker():
