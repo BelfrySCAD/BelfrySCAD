@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.93.0" date="2026-10-29">
+      <description>
+        <p>export_as() names the parts of an exported 3MF, OBJ or AMF file</p>
+      </description>
+    </release>
     <release version="1.92.1" date="2026-10-28">
       <description>
         <p>Hovering a viewport call trace entry highlights its call in the editor</p>
