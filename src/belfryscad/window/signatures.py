@@ -61,6 +61,7 @@ BUILTIN_SIGNATURES: dict[str, str] = {
     "minkowski": "minkowski(convexity) { ... }",
     "render": "render(convexity=1) { ... }",
     "profile_time": "profile_time(label) { ... }  |  x = profile_time(label) expr;",
+    "export_as": "export_as(name) { ... }",
     # extrusion / import
     "linear_extrude": ("linear_extrude(height=100, v=[0,0,1], scale=1, center=false, "
                        "twist=0, slices, segments, convexity, $fn)"),

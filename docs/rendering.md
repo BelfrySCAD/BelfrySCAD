@@ -156,6 +156,13 @@ colour with the later shape winning an overlap, the connected-component
 split, per-triangle colour, and the sliver-strip/mesh-check repair policy --
 are documented in openscad_cpp_evaluator's own `CLAUDE.md`.
 
+**`export_as("name") { ... }` names a part** (#918): it becomes its own object
+under that name in 3MF, OBJ and AMF, whatever its colour and however it
+touches the rest. A named part is always split into its connected pieces, and
+a name that comes out as several objects is numbered `name_1`, `name_2`, ... Nothing on this side reads it:
+the name rides on the evaluator's bodies to its export split. See that
+package's `CLAUDE.md` for the rules and warnings.
+
 **SVG, PDF and DXF are the 2D formats, and the ones that can refuse.** Each writes a
 model that is all 2D at 1:1 in millimetres -- so a print of it measures
 what the script says, which is what the format was asked for (BelfrySCAD
