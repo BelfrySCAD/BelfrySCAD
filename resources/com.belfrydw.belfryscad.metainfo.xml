@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.92.0" date="2026-10-28">
+      <description>
+        <p>Fixed Length path editing with pins, Replace with Value in the editor, a Help menu Cheat Sheet, and a bold active editor tab</p>
+      </description>
+    </release>
     <release version="1.91.4" date="2026-10-26">
       <description>
         <p>2D editors stay orthographic, Dump Pictures asks for its folder every time, and alpha_wrap() makes far fewer triangles</p>
