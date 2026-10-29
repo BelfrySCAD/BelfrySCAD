@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QSpinBox, QAbstractItemView, QCheckBox,
                                QMenu, QLabel, QPushButton, QSplitter, QWidget,
-                               QComboBox)
+                               QComboBox, QDoubleSpinBox)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 
@@ -347,6 +347,136 @@ def _fit_merged_segment(p0: np.ndarray, c1: np.ndarray, c2: np.ndarray, v0: np.n
     return new_c1, new_c2
 
 
+def _segment_lengths(pts) -> np.ndarray:
+    pts = np.asarray(pts, dtype=float)
+    return np.linalg.norm(np.diff(pts, axis=0), axis=1)
+
+
+def _toward(frm: np.ndarray, to: np.ndarray, length: float) -> np.ndarray:
+    """The point `length` from `frm` in the direction of `to`."""
+    d = to - frm
+    n = float(np.linalg.norm(d))
+    return frm + (d / n if n > 1e-12 else np.array([1.0, 0.0, 0.0])) * length
+
+
+def _reach(chain: np.ndarray, lengths, target: np.ndarray, iters: int = 64) -> np.ndarray:
+    """FABRIK: `chain[0]` stays put and every link keeps its length, with
+    `chain[-1]` as near `target` as the links allow. Ends on a pass out
+    from the fixed end, so the lengths are exact whether or not it got
+    there."""
+    p = chain.copy()
+    root = p[0].copy()
+    for _ in range(iters):
+        p[-1] = target
+        for k in range(len(p) - 2, -1, -1):
+            p[k] = _toward(p[k + 1], p[k], lengths[k])
+        p[0] = root
+        for k in range(1, len(p)):
+            p[k] = _toward(p[k - 1], p[k], lengths[k - 1])
+        if np.linalg.norm(p[-1] - target) < 1e-9:
+            break
+    return p
+
+
+def _into_both_discs(t, a, ra, b, rb):
+    """The point nearest `t` within `ra` of `a` and within `rb` of `b`
+    (XY; the discs are known to overlap)."""
+    def into(p, c, r):
+        n = float(np.linalg.norm(p - c))
+        return p if n <= r else c + (p - c) * (r / n)
+    for c, r, oc, orr in ((a, ra, b, rb), (b, rb, a, ra)):
+        p = into(t, c, r)
+        if np.linalg.norm(p - oc) <= orr + 1e-9:
+            return p
+    return _circles_meet(a, ra, b, rb, t)
+
+
+def _circles_meet(a, ra, b, rb, near):
+    """Where the circles about `a` and `b` meet (XY), the meeting point
+    nearer `near`."""
+    d = float(np.linalg.norm(b - a))
+    if d < 1e-12:
+        return a.copy()
+    u = (b - a) / d
+    x = (d * d + ra * ra - rb * rb) / (2 * d)
+    base = a + u * x
+    perp = np.array([-u[1], u[0], 0.0]) * np.sqrt(max(ra * ra - x * x, 0.0))
+    return min((base + perp, base - perp), key=lambda p: np.linalg.norm(p - near))
+
+
+def _slide_moves(path_pts, lengths, pins: set, dragged: int, target) -> list[tuple[int, np.ndarray]]:
+    """Fixed Length's Option-drag (#947): move a point along the path,
+    changing how far along it the point is. Only that point moves; its two
+    segments trade length, so the total stays the same. It therefore runs
+    on an ellipse about its two neighbours, which is the path itself where
+    the path is straight."""
+    pts = np.asarray(path_pts, dtype=float)
+    if dragged in pins | {0} or dragged >= len(pts) - 1:
+        return []
+    t = np.asarray(target, dtype=float)
+    a, b = pts[dragged - 1], pts[dragged + 1]
+    major = float(lengths[dragged - 1] + lengths[dragged]) / 2
+    focal = float(np.linalg.norm(b - a)) / 2
+    u = (b - a) / (2 * focal) if focal > 1e-12 else np.array([1.0, 0.0, 0.0])
+    v = np.array([-u[1], u[0], 0.0]) * np.sqrt(max(major * major - focal * focal, 0.0))
+    mid, u = (a + b) / 2, u * major
+
+    def at(th):
+        return mid + np.multiply.outer(np.cos(th), u) + np.multiply.outer(np.sin(th), v)
+
+    # The ellipse's point nearest the cursor: sampled, then narrowed.
+    th = np.linspace(0, 2 * np.pi, 721)
+    best = th[np.argmin(np.linalg.norm(at(th) - t, axis=-1))]
+    lo, hi = best - np.pi / 360, best + np.pi / 360
+    for _ in range(40):
+        m1, m2 = lo + (hi - lo) / 3, hi - (hi - lo) / 3
+        if np.linalg.norm(at(m1) - t) < np.linalg.norm(at(m2) - t):
+            hi = m2
+        else:
+            lo = m1
+    return [(dragged, at((lo + hi) / 2))]
+
+
+def _rope_moves(path_pts, lengths, pins: set, dragged: int, target) -> list[tuple[int, np.ndarray]]:
+    """Fixed Length's drag (#947): every segment keeps its length, point 0
+    and the pinned points never move. The points between the dragged one
+    and the pins either side of it bend to let it go where it is dragged
+    (stopping once the span is pulled straight), and with no pin after it,
+    the rest of the path trails behind it."""
+    pts = np.asarray(path_pts, dtype=float)
+    t = np.asarray(target, dtype=float)
+    fixed = pins | {0}
+    if dragged in fixed:
+        return []
+    a = max(i for i in fixed if i < dragged)
+    after = [i for i in fixed if i > dragged]
+    new = pts.copy()
+    if after:
+        b = min(after)
+        t = _into_both_discs(t, pts[a], float(sum(lengths[a:dragged])),
+                             pts[b], float(sum(lengths[dragged:b])))
+        # The discs ignore the hole a long link leaves near its pin (one
+        # link can only reach a circle), so the two halves take turns
+        # reaching for each other's end until they meet.
+        for _ in range(32):
+            fwd = _reach(pts[a:dragged + 1], lengths[a:dragged], t)
+            back = _reach(pts[dragged:b + 1][::-1], lengths[dragged:b][::-1], fwd[-1])
+            if np.linalg.norm(back[-1] - fwd[-1]) < 1e-7:
+                break
+            t = back[-1]
+        else:
+            return []      # they never met: leave the path as it was
+        new[a:dragged + 1] = fwd
+        new[dragged + 1:b + 1] = back[::-1][1:]
+        changed = range(a + 1, b)
+    else:
+        new[a:dragged + 1] = _reach(pts[a:dragged + 1], lengths[a:dragged], t)
+        for k in range(dragged + 1, len(pts)):
+            new[k] = _toward(new[k - 1], pts[k], lengths[k - 1])
+        changed = range(a + 1, len(pts))
+    return [(k, new[k]) for k in changed]
+
+
 class PathViewer(QDialog, _UndoableViewerMixin):
     """2D/3D path viewer with vertex table, selectable markers, and hover
     tooltips. Read-only by default; pass `editable=True` for a Save/Cancel
@@ -374,6 +504,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             path_value, self._is_2d, self, editable=editable)
         self._corners = set(corners or ())
         self._vp.corners = self._corners
+        self._pins: set = set()
+        self._vp.pins = self._pins
         _sync_viewport_to_main_window(self._vp)
         # The view's own controls sit under it, and the dialog's buttons
         # under the table, so the table runs down beside the controls.
@@ -397,6 +529,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._vp.vertices_appended.connect(self._on_viewport_vertices_appended)
             self._vp.delete_vertex_requested.connect(self._delete_vertex)
             self._vp.corner_toggled.connect(self._toggle_corner)
+            self._vp.vertices_moved.connect(self._on_viewport_vertices_moved)
+            self._vp.pin_toggled.connect(self._toggle_pin)
             self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
         table_container = QWidget()
@@ -434,6 +568,28 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._closed_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._closed_cb.toggled.connect(self._rebuild)
         btn_row.addWidget(self._closed_cb)
+        # Fixed Length (#947): 2D plain paths, editable only.
+        self._rope_cb = QCheckBox("Fixed Length")
+        self._rope_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
+        self._rope_cb.setToolTip(
+            "Keep every segment's length while dragging: the rest of the path\n"
+            "follows the dragged point, and the first point and any pinned points\n"
+            "(right-click a point > Pin) stay where they are.")
+        self._rope_cb.toggled.connect(self._toggle_rope)
+        btn_row.addWidget(self._rope_cb)
+        self._length_label = QLabel("Length")
+        btn_row.addWidget(self._length_label)
+        self._length_spin = QDoubleSpinBox()
+        self._length_spin.setRange(0.0, 1e9)
+        self._length_spin.setDecimals(3)
+        self._length_spin.setKeyboardTracking(False)
+        self._length_spin.setToolTip("The path's total length. Type a new one to scale\n"
+                                     "the path to it about its first point.")
+        self._length_spin.valueChanged.connect(self._set_length)
+        btn_row.addWidget(self._length_spin)
+        self._length_spin.setStyleSheet("QDoubleSpinBox { margin-right: 20px; }")
+        for w in (self._rope_cb, self._length_label, self._length_spin):
+            w.setVisible(editable and self._is_2d)
         # How the points are read: a plain polyline, cubic Bezier segments,
         # NURBS control points, or points a NURBS interpolates. View-only,
         # like Close Path -- the literal is the same list of points in all
@@ -481,6 +637,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         # the first load does not rebuild, and a widget starts out visible:
         # the button sat in every mode until the mode was changed (#861).
         self._sync_corners_label()
+        self._sync_rope()
         if self._is_2d:
             # A reference image to trace over (#788), 2D only: it lies in XY.
             restore_session_background(self.windowTitle(), self._vp)
@@ -690,28 +847,29 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         return self._path
 
     def _apply_value(self, value):
-        self._shift_corners(self._path, value)
+        self._shift_marks(self._path, value)
         self._path = value
         self._populate_vert_table()
         # Not refitted: an edit happens where the user is looking, and a
         # path built point by point would otherwise jump on every click.
         self._rebuild(reframe=False)
 
-    def _shift_corners(self, old: list, new: list):
-        """Keep each corner on its point when one point is inserted or
-        deleted (and so when that is undone), by finding where the two
+    def _shift_marks(self, old: list, new: list):
+        """Keep each corner and pin on its point when one point is inserted
+        or deleted (and so when that is undone), by finding where the two
         lists first differ."""
         # ponytail: a single insert/delete is all the editor makes; any
         # other length change leaves the indices as they are.
-        if not self._corners or abs(len(new) - len(old)) != 1:
+        if abs(len(new) - len(old)) != 1:
             return
         at = next((i for i, (a, b) in enumerate(zip(old, new)) if a != b), min(len(old), len(new)))
-        if len(new) > len(old):
-            moved = {c + 1 if c >= at else c for c in self._corners}
-        else:
-            moved = {c - 1 if c > at else c for c in self._corners if c != at}
-        self._corners.clear()
-        self._corners.update(moved)
+        for marks in (self._corners, self._pins):
+            if len(new) > len(old):
+                moved = {c + 1 if c >= at else c for c in marks}
+            else:
+                moved = {c - 1 if c > at else c for c in marks if c != at}
+            marks.clear()
+            marks.update(moved)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         i, j = item.row(), item.column()
@@ -819,6 +977,47 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         lo, hi = (0, n - 1) if closed else (1, n - 2)
         return sorted(c for c in self._corners if lo <= c <= hi)
 
+    def _on_viewport_vertices_moved(self, moves: list):
+        """A Fixed Length drag: every point it moved, with one rebuild."""
+        self._vert_table.blockSignals(True)
+        for vi, x, y, _z in moves:
+            self._path[vi][0] = x
+            self._path[vi][1] = y
+            self._vert_table.item(vi, 0).setText(f"{x:g}")
+            self._vert_table.item(vi, 1).setText(f"{y:g}")
+        self._vert_table.blockSignals(False)
+        self._rebuild(reframe=False)
+
+    def _toggle_rope(self, on: bool):
+        self._vp.rope = on
+        self._rebuild(reframe=False)
+
+    def _toggle_pin(self, vi: int):
+        self._pins ^= {vi}
+        self._rebuild(reframe=False)
+
+    def _set_length(self, total: float):
+        old = float(_segment_lengths(self._path).sum()) if len(self._path) > 1 else 0.0
+        if old <= 0 or abs(total - old) < 5e-4:
+            return
+        p0 = np.asarray(self._path[0], dtype=float)
+        k = total / old
+        self._commit_value([(p0 + (np.asarray(p, dtype=float) - p0) * k).tolist()
+                            for p in self._path], "Set Length")
+
+    def _sync_rope(self):
+        """Fixed Length is for an open plain path; the Length field shows
+        the total, and scales the path when typed into."""
+        n = len(self._path)
+        ok = self._mode() == "path" and not self._closed_cb.isChecked() and n > 1
+        if not ok and self._rope_cb.isChecked():
+            self._rope_cb.setChecked(False)
+        self._rope_cb.setEnabled(ok)
+        self._length_spin.setEnabled(n > 1)
+        self._length_spin.blockSignals(True)
+        self._length_spin.setValue(float(_segment_lengths(self._path).sum()) if n > 1 else 0.0)
+        self._length_spin.blockSignals(False)
+
     def _toggle_corner(self, vi: int):
         self._corners ^= {vi}
         self._rebuild(reframe=False)
@@ -853,6 +1052,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
     def _rebuild(self, _=None, reframe: bool = True):
         self._sync_degree_spin()
         self._sync_corners_label()
+        self._sync_rope()
         if self._vp._ctx is not None:
             self._vp.load_path(self._path, self._closed_cb.isChecked(),
                                self._mode(), self._degree_spin.value(), reframe=reframe)
@@ -905,6 +1105,9 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
     # _decasteljau_split_points/PathViewer._on_viewport_bezier_vertex_added)
     bezier_vertex_added = Signal(int, object)
     vertices_appended = Signal(object)  # [[x, y, z], ...] -- right-click off the path, editable only
+    # [(index, x, y, z), ...] -- a Fixed Length drag, all its points at once (#947)
+    vertices_moved = Signal(object)
+    pin_toggled = Signal(int)  # (vertex_idx) -- right-click > Pin, Fixed Length only (#947)
 
     def __init__(self, path_value: list, is_2d: bool, parent=None, editable: bool = False):
         super().__init__(parent, selectable=False, pan_speed=2.0, orientation_cube=not is_2d)
@@ -934,6 +1137,12 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # with (and owned by) PathViewer; and the mode last loaded.
         self.corners: set = set()
         self._mode_now = "path"
+        # Fixed Length (#947): set by PathViewer, which owns the pins too.
+        # The lengths are measured as each drag starts and held through it.
+        self.rope = False
+        self.pins: set = set()
+        self._rope_lengths = None
+        self._drag_slide = False
         # v0 index -> "disjointed"/"same_angle"/"symmetric" (see
         # _classify_node_type) -- transient, viewer-only state, never
         # serialized. Auto-(re)classified from scratch whenever bezier mode
@@ -1217,6 +1426,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         (if anything) needs to move with it." Bezier off, or too few
         points to have a real bezier structure: today's plain single-point
         behavior, unchanged."""
+        if self.rope and self._rope_lengths is not None:
+            if self._drag_slide and dragged_idx == self._drag_vertex_idx:
+                return _slide_moves(self._path_pts, self._rope_lengths, self.pins, dragged_idx, new_pos)
+            return _rope_moves(self._path_pts, self._rope_lengths, self.pins, dragged_idx, new_pos)
         if self._bezier_n:
             locked = {i for i, t in self._node_types.items() if t != "disjointed"}
             return _collinear_moves(self._path_pts, self._closed, dragged_idx, new_pos, self._deg, locked)
@@ -1226,10 +1439,33 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         node_type = self._node_types.get(v0_idx, "disjointed")
         return _bezier_linked_moves(self._path_pts, self._closed, dragged_idx, new_pos, node_type)
 
+    def _show_along(self, vi: int, pos):
+        """How far along the path an Option-dragged point is."""
+        lengths = self._rope_lengths
+        along = float(lengths[:vi - 1].sum() + np.linalg.norm(pos - self._path_pts[vi - 1]))
+        total = float(lengths.sum())
+        self._show_delta(f"Along: {along:g} of {total:g} ({100 * along / total:.1f}%)")
+
+    def _measure_rope(self):
+        self._rope_lengths = _segment_lengths(self._path_pts) if self.rope else None
+
+    def _emit_moves(self, moves):
+        if self.rope:
+            # Unrounded, and as one batch: rounding each point to 0.001
+            # would stretch the segments, and rebuilding once per point
+            # would crawl (#947).
+            self.vertices_moved.emit([(i, *map(float, p)) for i, p in moves])
+            return
+        for idx, p in moves:
+            self.vertex_moved.emit(idx, round(float(p[0]), 3),
+                                   round(float(p[1]), 3), round(float(p[2]), 3))
+
     def _marker_faces(self, r):
         return _dodecahedron_faces(r, self._is_2d)
 
     def _unit_faces_for_point(self, idx: int) -> list:
+        if self.rope and (idx == 0 or idx in self.pins):
+            return _diamond_faces(1.0, self._is_2d)
         if self._mode_now == "nurbs_interp" and idx in self.valid_corners():
             return _diamond_faces(1.0, self._is_2d)
         if (self._bezier and idx % 3 == 0) or (self._bezier_n and idx % self._deg == 0):
@@ -1415,12 +1651,16 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # hasn't happened yet to update the flag by the time contextMenuEvent
         # runs for it).
         self._context_menu_suppressed = False
+        alt = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        # Option turns the light, except on a Fixed Length point, where it
+        # slides the point along the path instead (#947).
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
-                and not (event.modifiers() & Qt.KeyboardModifier.AltModifier)):
+                and (self.rope or not alt)):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
                 self._drag_vertex_idx = vi
+                self._drag_slide = alt
                 if self._is_2d:
                     self._drag_lock_axis = 2
                     self._drag_plane_point = np.zeros(3, dtype=np.float32)
@@ -1431,6 +1671,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 self._show_delta("Plane: the faced image's" if faced is not None
                                  else f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
                 self.vertex_drag_started.emit()
+                self._measure_rope()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
 
@@ -1449,9 +1690,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             else:
                 hit = place_on_reference(self, pos, self._drag_plane_point)
             if hit is not None:
-                for idx, new_pos in self._resolve_bezier_moves(self._drag_vertex_idx, hit):
-                    self.vertex_moved.emit(idx, round(float(new_pos[0]), 3),
-                                            round(float(new_pos[1]), 3), round(float(new_pos[2]), 3))
+                moves = self._resolve_bezier_moves(self._drag_vertex_idx, hit)
+                self._emit_moves(moves)
+                if self.rope and self._drag_slide and moves:
+                    self._show_along(*moves[0])
             return
         if self._last_mouse is None:
             pos = event.position().toPoint()
@@ -1540,6 +1782,15 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 corner.setEnabled(self._closed or 0 < vi < n - 1)
                 if not corner.isEnabled():
                     corner.setToolTip("An open curve's ends are corners already")
+                menu.addSeparator()
+            if self.rope:
+                pin = menu.addAction("Pin", lambda: self.pin_toggled.emit(vi))
+                pin.setCheckable(True)
+                pin.setChecked(vi == 0 or vi in self.pins)
+                pin.setEnabled(vi != 0)
+                pin.setToolTip("The first point never moves" if vi == 0 else
+                               "Keep this point where it is; the segments either side\n"
+                               "of it keep their own lengths")
                 menu.addSeparator()
             menu.addAction("Delete Vertex", lambda: self.delete_vertex_requested.emit(vi))
             self._exec_menu(menu, event)
@@ -1660,12 +1911,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 # earlier one's link already moved it (last-write-wins for
                 # that one key event); a minor, acceptable edge case.
                 self.vertex_drag_started.emit()
+                self._measure_rope()
                 for vi in self._selected_indices:
                     if 0 <= vi < len(self._path_pts):
                         new_pt = self._path_pts[vi] + delta
-                        for idx, moved_pt in self._resolve_bezier_moves(vi, new_pt):
-                            self.vertex_moved.emit(idx, round(float(moved_pt[0]), 3),
-                                                    round(float(moved_pt[1]), 3), round(float(moved_pt[2]), 3))
+                        self._emit_moves(self._resolve_bezier_moves(vi, new_pt))
                 self.vertex_drag_finished.emit()
                 event.accept()
                 return
