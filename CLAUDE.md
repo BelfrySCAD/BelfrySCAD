@@ -131,7 +131,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   always split into its connected pieces, and a name that comes out as several objects is numbered
   `jar_1`, `jar_2`, ...; unnamed geometry is split and named as before. Transforms, `color()` and modules carry the name; an `export_as()`
   inside a boolean/hull/extrude loses it and warns, as does one name used twice. Implemented
-  entirely in openscad_cpp_evaluator (`src/builtins/export_as.cpp`, `splitBodiesForExport`); no
+  entirely in openscad_cpp_evaluator ≥1.51.0 (`src/builtins/export_as.cpp`, `splitBodiesForExport`); no
   GUI change beyond the editor's completion and signature tables. Not part of upstream OpenSCAD,
   which drops an unknown module's children, so a portable script guards it with
   `supported_feature("export-as")`.
