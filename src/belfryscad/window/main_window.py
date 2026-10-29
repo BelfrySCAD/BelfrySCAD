@@ -1969,6 +1969,8 @@ class MainWindow(QMainWindow):
         about_act = self._add_action(help_menu, "&About BelfrySCAD", lambda: show_about_dialog(self))
         about_act.setMenuRole(QAction.MenuRole.AboutRole)
         self._add_action(help_menu, "&Documentation", open_documentation)
+        # Ours rather than OpenSCAD's, which cannot list the extensions (#968).
+        self._add_action(help_menu, "C&heat Sheet", lambda: open_documentation("Cheat-Sheet"))
         from belfryscad.window.ai_setup import open_guide
         self._add_action(help_menu, "A&I Chat Setup Guide", open_guide)
         self._add_action(help_menu, "&Report an Issue…", open_issue_tracker)
