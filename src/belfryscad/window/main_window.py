@@ -6484,7 +6484,20 @@ class MainWindow(QMainWindow):
         for i in reversed(range(len(levels))):
             act = menu.addAction(self._call_trace_label(levels[i]))
             act.triggered.connect(lambda _=False, i=i: self._pick_at_level(orig_id, levels, i))
-        menu.exec(global_pos)
+            act.hovered.connect(lambda span=levels[i]: self._preview_trace_line(span))
+        if menu.exec(global_pos) is None:
+            # Dismissed: put back what the hovering replaced.
+            selected = self._viewport._renderer.selected_id
+            self._on_selection_changed(selected if selected is not None else -1)
+
+    def _preview_trace_line(self, span):
+        """Hovering a call trace entry highlights its call in the rendered
+        tab, as OpenSCAD's does; a call in any other file shows nothing."""
+        rendered = self._rendered_tab
+        if rendered is not None and self._tab_for_origin(span.origin) is rendered:
+            rendered.editor.set_selection(span.start_offset, span.end_offset)
+        elif rendered is not None:
+            rendered.editor.clear_selection()
 
     def _pick_at_level(self, orig_id, levels, target: int):
         self._viewport.set_selection(orig_id)

@@ -133,7 +133,8 @@ BOSL2/shapes3d.scad`, the rendered script by its tab name. Choosing one selects 
 level and shows the line (`_viewport_context_menu` -> `_select_at_level`, shared with Ctrl+Cmd+Up/Down
 stepping). Only a right-click that did not pan opens it: the viewport holds a right-press menu event
 until the release (`Viewport.event`), and the data viewers' viewports keep their own menus.
-OpenSCAD also highlights an entry's line while the pointer is over it; this does not.
+Hovering an entry highlights its call in the rendered tab, as OpenSCAD's does (`_preview_trace_line`);
+a call in any other file highlights nothing, and dismissing the menu puts back the selection's own highlight.
 
 `_selectable_span_for_id` picks the level and returns it with the tab that owns
 it. The default is **the last frame in the rendered script** -- an ordinary user
