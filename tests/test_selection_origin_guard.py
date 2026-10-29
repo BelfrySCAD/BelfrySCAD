@@ -548,7 +548,12 @@ class _TraceWindow(_FakeWindow):
     def __init__(self, *a, pick=None, **k):
         super().__init__(*a, **k)
         self.chosen = []
-        self._viewport = SimpleNamespace(pick_id_at=lambda pos: pick, set_selection=lambda oid: None)
+        self.restored = []
+        self._viewport = SimpleNamespace(pick_id_at=lambda pos: pick, set_selection=lambda oid: None,
+                                         _renderer=SimpleNamespace(selected_id=None))
+
+    def _on_selection_changed(self, orig_id):
+        self.restored.append(orig_id)
 
     def _select_at_level(self, orig_id, levels, target):
         self.chosen.append((orig_id, target))
@@ -562,8 +567,9 @@ class _RecordingMenu:
         _RecordingMenu.made.append(self)
 
     def addAction(self, text):
-        act = SimpleNamespace(text=text, slots=[])
+        act = SimpleNamespace(text=text, slots=[], hover_slots=[])
         act.triggered = SimpleNamespace(connect=act.slots.append)
+        act.hovered = SimpleNamespace(connect=act.hover_slots.append)
         self.actions.append(act)
         return act
 
@@ -600,6 +606,8 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     # Choosing the library line selects at that level -- the innermost, 0.
     menu.actions[1].slots[0]()
     assert mw.chosen == [(7, 0)]
+    # Dismissed (exec returned no action): the hover highlight is undone.
+    assert mw.restored == [-1]
 
 
 def test_right_click_on_nothing_opens_no_menu(monkeypatch):
@@ -608,3 +616,20 @@ def test_right_click_on_nothing_opens_no_menu(monkeypatch):
     _RecordingMenu.made.clear()
     _TraceWindow({}, None, pick=None)._viewport_context_menu(None, None)
     assert _RecordingMenu.made == []
+
+
+def test_hovering_a_trace_entry_highlights_only_in_the_rendered_tab(tmp_path):
+    main, lib = str(tmp_path / "main.scad"), str(tmp_path / "lib.scad")
+    calls = []
+
+    def tab_for(path):
+        t = _tab(file_path=path)
+        t.editor.set_selection = lambda s, e: calls.append((path, s, e))
+        t.editor.clear_selection = lambda: calls.append((path, "clear"))
+        return t
+
+    rendered, other = tab_for(main), tab_for(lib)
+    mw = _build({}, rendered, [other])
+    MainWindow._preview_trace_line(mw, _pos(main, 3, 9))
+    MainWindow._preview_trace_line(mw, _pos(lib, 1, 2))     # open, but not the rendered tab
+    assert calls == [(main, 3, 9), (main, "clear")]
