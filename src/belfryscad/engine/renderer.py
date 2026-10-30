@@ -649,7 +649,7 @@ class Camera:
             return near, far
         # With the scene known, bracket what is actually there, as OpenSCAD
         # does: the model's bounding sphere, and the axes, which run
-        # _axis_extent() from the origin. Fixed floors (near >= 0.1) clipped
+        # _axis_extent() past the target (_axis_halves). Fixed floors (near >= 0.1) clipped
         # everything once the camera came closer than that, which is what
         # stopped zooming at ~0.0005 (#568); the ratio is also far tighter
         # than 1e5 at ordinary zoom, which only helps depth precision.
@@ -658,7 +658,7 @@ class Camera:
         center, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo)) / 2
         to_center = float(np.linalg.norm(eye - center))
         far = 1.05 * max(to_center + radius,
-                         float(np.linalg.norm(eye)) + _axis_extent(self),
+                         self.distance + float(np.linalg.norm(self.target)) + _axis_extent(self),
                          self.distance * 3.0)
         # Inside the scene's bounding sphere the bracket gives nothing, so the
         # floor decides. It follows the orbit distance, as OpenSCAD's does
@@ -964,8 +964,25 @@ def _axis_density(camera: Camera) -> tuple[list[bool], list[int]]:
     return end_on, stride
 
 
-def _axis_spans(L: float, seg: float) -> list[tuple[float, float]]:
-    """One axis half, 0..L, as consecutive (start, end) spans of at most
+def _axis_halves(camera: Camera, L: float, ai: int) -> list[tuple[float, float, float]]:
+    """(sign, start, end) for each half of axis `ai` worth drawing: the
+    stretch within L of the camera's target along that axis, as distances
+    from the origin. Drawn from the origin out to L instead, an axis ended
+    short of a view zoomed in far along it -- zooming toward the pointer
+    moves the target -- and the view showed nothing at all (#984). With the
+    target at the origin this is 0..L each way, as it always was."""
+    c = float(camera.target[ai])
+    lo, hi = c - L, c + L
+    halves = []
+    if hi > 0.0:
+        halves.append((1.0, max(0.0, lo), hi))
+    if lo < 0.0:
+        halves.append((-1.0, max(0.0, -hi), -lo))
+    return halves
+
+
+def _axis_spans(L: float, seg: float, start: float = 0.0) -> list[tuple[float, float]]:
+    """One axis half, start..L, as consecutive (start, end) spans of at most
     `seg` -- the pieces `_render_axes` draws instead of a single long line.
 
     A single 0..L line is what the geometry is, and a GPU draws it. Apple's
@@ -987,10 +1004,10 @@ def _axis_spans(L: float, seg: float) -> list[tuple[float, float]]:
     seg <= 0 (no sensible tick spacing to divide by) yields the single
     0..L span, i.e. exactly the old behaviour.
     """
-    if not (seg > 0.0) or L <= 0.0:
-        return [(0.0, L)] if L > 0.0 else []
+    if not (seg > 0.0) or L <= start:
+        return [(start, L)] if L > start else []
     spans = []
-    t = 0.0
+    t = start
     while t < L * (1 - 1e-9):   # relative: an absolute 1e-9 drew no axis at L < 1e-9 (#568)
         t_next = min(t + seg, L)
         spans.append((t, t_next))
@@ -2337,8 +2354,9 @@ class SceneRenderer:
         # the axis colour, negative in light gray. See _axis_spans for why
         # it is not one line.
         for i in range(3):
-            for sign, color in ((1.0, axis_colors[i]), (-1.0, gray)):
-                for t0, t1 in _axis_spans(L, minor_spacing):
+            for sign, start, end in _axis_halves(self.camera, L, i):
+                color = axis_colors[i] if sign > 0.0 else gray
+                for t0, t1 in _axis_spans(end, minor_spacing, start):
                     p0 = np.zeros(3, dtype=np.float32)
                     p1 = np.zeros(3, dtype=np.float32)
                     p0[i] = sign * t0
@@ -2361,18 +2379,16 @@ class SceneRenderer:
 
         # Ticks are scale markers, like the labels: NoScales / View ▸ Show
         # Scale Markers hides both, leaving the bare axes (#777).
-        k = 1
-        while self.show_scale_markers:
-            t = k * minor_spacing
-            if t > L * (1 + 1e-9):
+        for ai in range(3):
+            if not (self.show_scale_markers and minor_spacing > 0):
                 break
-            is_major = (k % major_steps == 0)
-            length = tick_len if is_major else minor_len_actual
-            for sign in (1.0, -1.0):
-                pos = sign * t
-                for ai in range(3):
+            for sign, start, end in _axis_halves(self.camera, L, ai):
+                for k in range(max(1, math.ceil(start / minor_spacing - 1e-9)),
+                               math.floor(end / minor_spacing * (1 + 1e-9)) + 1):
                     if not _tick_is_drawn(k, major_steps, end_on_axis[ai], tick_stride[ai]):
                         continue
+                    pos = sign * k * minor_spacing
+                    length = tick_len if k % major_steps == 0 else minor_len_actual
                     pi = perp_axis[ai]
                     p0 = np.zeros(3, dtype=np.float32)
                     p1 = np.zeros(3, dtype=np.float32)
@@ -2383,7 +2399,6 @@ class SceneRenderer:
                     color = axis_colors[ai] if sign > 0.0 else gray
                     rows.append(np.concatenate([p0, color]))
                     rows.append(np.concatenate([p1, color]))
-            k += 1
 
         # XY-plane grid, one line per minor tick, into its OWN buffer --
         # it has to be a separate draw, not more rows appended to the axes.
@@ -2400,19 +2415,22 @@ class SceneRenderer:
         # correctly hidden behind solid geometry.
         grid = np.array(self.grid_color, dtype=np.float32)
         grid_rows: list[np.ndarray] = []
-        steps = int(L / minor_spacing) if (self.show_grid and minor_spacing > 0) else 0
-        for j in range(1, steps + 1):
-            t = j * minor_spacing
-            for sign in (1.0, -1.0):
-                pos = sign * t
+        if self.show_grid and minor_spacing > 0:
+            # Round the target, as the axes are, so the grid follows a view
+            # zoomed in away from the origin (#984).
+            c = [float(self.camera.target[i]) for i in range(2)]
+            for ai in range(2):
+                other = 1 - ai
                 # One line each way: parallel to Y at x=pos, and to X at y=pos.
-                for ai in range(2):
+                for j in range(math.ceil((c[ai] - L) / minor_spacing),
+                               math.floor((c[ai] + L) / minor_spacing) + 1):
+                    if j == 0:
+                        continue          # the axis itself
                     p0 = np.zeros(3, dtype=np.float32)
                     p1 = np.zeros(3, dtype=np.float32)
-                    other = 1 - ai
-                    p0[ai] = p1[ai] = float(pos)
-                    p0[other] = -float(L)
-                    p1[other] = float(L)
+                    p0[ai] = p1[ai] = float(j * minor_spacing)
+                    p0[other] = c[other] - float(L)
+                    p1[other] = c[other] + float(L)
                     grid_rows.append(np.concatenate([p0, grid]))
                     grid_rows.append(np.concatenate([p1, grid]))
 
@@ -2499,20 +2517,20 @@ class SceneRenderer:
         end_on_axis, stride = _axis_density(self.camera)
 
         result = []
-        n = 1
-        t = spacing
-        while t <= L * (1 + 1e-9):
-            for sign in (1.0, -1.0):
-                pos = sign * t
-                lbl = _fmt_tick(pos, spacing)
-                for ai in range(3):
-                    if end_on_axis[ai] or n % stride[ai] != 0:
+        if not spacing > 0:
+            return result
+        for ai in range(3):
+            if end_on_axis[ai]:
+                continue
+            for sign, start, end in _axis_halves(self.camera, L, ai):
+                for n in range(max(1, math.ceil(start / spacing - 1e-9)),
+                               math.floor(end / spacing * (1 + 1e-9)) + 1):
+                    if n % stride[ai] != 0:
                         continue
+                    pos = sign * n * spacing
                     world = np.zeros(3, dtype=np.float64)
                     world[ai] = pos
-                    result.append((world, lbl, ai))
-            t += spacing
-            n += 1
+                    result.append((world, _fmt_tick(pos, spacing), ai))
         return result
 
     def _get_label_texture(self, text: str, font_px: int) -> tuple[mgl.Texture, int, int]:

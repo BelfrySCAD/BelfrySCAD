@@ -14,7 +14,7 @@ from pytest import approx
 
 from belfryscad.engine.renderer import (
     nearest_point_index, nearest_segment_index, _closest_point_on_segment_to_ray, Camera,
-    _axis_density, _tick_is_drawn, _axis_extent, _axis_spans,
+    _axis_density, _tick_is_drawn, _axis_extent, _axis_spans, _axis_halves,
 )
 
 
@@ -737,6 +737,34 @@ class TestAxisSpans:
 
     def test_a_degenerate_axis_draws_nothing(self):
         assert _axis_spans(0.0, 10.0) == []
+
+
+    def test_spans_can_start_away_from_the_origin(self):
+        spans = _axis_spans(70.0, 10.0, 30.0)
+        assert spans[0] == approx((30.0, 40.0)) and spans[-1][1] == approx(70.0)
+
+
+class TestAxisHalves:
+    """#984: an axis runs L either side of the view's target, not just L
+    from the origin, so zooming in far along it still shows it."""
+
+    def _cam(self, target):
+        cam = Camera()
+        cam.target = np.array(target, dtype=np.float32)
+        return cam
+
+    def test_at_the_origin_each_half_runs_zero_to_l(self):
+        assert _axis_halves(self._cam((0, 0, 0)), 20.0, 2) == [(1.0, 0.0, 20.0), (-1.0, 0.0, 20.0)]
+
+    def test_a_target_far_up_an_axis_reaches_it(self):
+        # Zoomed in at z = 50 with L = 20: only the stretch 30..70 is drawn.
+        assert _axis_halves(self._cam((0, 0, 50)), 20.0, 2) == [(1.0, 30.0, 70.0)]
+
+    def test_a_target_far_down_an_axis_draws_its_negative_half(self):
+        assert _axis_halves(self._cam((0, -50, 0)), 20.0, 1) == [(-1.0, 30.0, 70.0)]
+
+    def test_a_target_near_the_origin_draws_both_halves(self):
+        assert _axis_halves(self._cam((5, 0, 0)), 20.0, 0) == [(1.0, 0.0, 25.0), (-1.0, 0.0, 15.0)]
 
 
 # --- #518: View All fits the projection, not the bounding sphere ----------
