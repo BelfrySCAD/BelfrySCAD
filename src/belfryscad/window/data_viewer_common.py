@@ -386,13 +386,17 @@ def _ray_plane(ray_origin: np.ndarray, ray_dir: np.ndarray,
 
 
 def place_on_reference(vp, pos, through: np.ndarray):
-    """Where a click at widget point `pos` lands in a 3D editor: on the
-    reference model's surface when its ray hits it; else on the plane
-    through `through` parallel to the reference image the view faces;
-    else on the axis plane the view is nearest square-on to. None if the
-    ray misses every candidate."""
+    """Where a click at widget point `pos` lands in a 3D editor: on the work
+    plane, whenever one is set; else on the reference model's surface when
+    its ray hits it; else on the plane through `through` parallel to the
+    reference image the view faces; else on the axis plane the view is
+    nearest square-on to. None if the ray misses every candidate."""
     from belfryscad.window.viewport import _view_locked_axis
     ray_o, ray_d = vp._renderer.camera_ray(pos.x(), pos.y(), vp.width(), vp.height())
+    plane = getattr(vp, "ref_plane", None)
+    if plane is not None:
+        hit = plane.hit(ray_o, ray_d)
+        return None if hit is None else np.asarray(hit, dtype=np.float32)
     hit = vp._reference_hit(ray_o, ray_d)
     if hit is not None:
         return np.asarray(hit, dtype=np.float32)

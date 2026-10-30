@@ -583,8 +583,7 @@ class _VNFViewport(Reference3DViewportMixin, Viewport):
                 self._drag_vertex_idx = vi
                 self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                 self._drag_plane_point = self._verts_3d[vi].copy()
-                self._show_delta("Plane: the faced image's" if self._pick_plane_normal() is not None
-                                 else f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                self._show_delta(f"Plane: {self._plane_label() or _unlocked_plane_name(self._drag_lock_axis)}")
                 self.vertex_drag_started.emit()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
         super().mousePressEvent(event)
@@ -673,6 +672,13 @@ class _VNFViewport(Reference3DViewportMixin, Viewport):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+    def _move_points(self, moves):
+        """Move vertices as one edit (Flatten Selection onto Plane)."""
+        self.vertex_drag_started.emit()
+        for vi, p in moves:
+            self.vertex_moved.emit(vi, round(float(p[0]), 3), round(float(p[1]), 3), round(float(p[2]), 3))
+        self.vertex_drag_finished.emit()
 
     def _pick_face(self, px: float, py: float) -> int:
         if len(self._cpu_positions) == 0:

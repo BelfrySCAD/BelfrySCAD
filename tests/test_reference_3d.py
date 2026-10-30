@@ -337,3 +337,58 @@ def test_reference_edits_are_undoable(tmp_path):
     assert out["undo_add_images"] == 0
     assert out["redo_width"] == 40
     assert out["after_undo_redo"] == 3, "undo and redo push no steps of their own"
+
+
+# -- the work plane (#882) -----------------------------------------------------
+
+def test_a_work_plane_wins_over_the_model_and_the_faced_image():
+    from belfryscad.window.reference_3d import WorkPlane
+    cube = RefModel("cube", _cube_tris(), scale=4, anchor=(0, 0, 0))   # 0..4 on each axis
+    vp = _FakeVP([0, 0, 50], normal=np.array([0, 1.0, 0]), model=cube)
+    vp.ref_plane = WorkPlane((0, 0, 2), (0, 0, 1))
+    # Over the cube, which would otherwise catch the click on its top at z=4.
+    assert np.allclose(place_on_reference(vp, _Pos(1, 1), np.zeros(3)), [1, 1, 2])
+    vp.ref_plane = WorkPlane((0, 0, 0), (0, 0, -1))
+    assert np.allclose(place_on_reference(vp, _Pos(9, 9), np.ones(3)), [9, 9, 0])
+
+
+def test_a_ray_along_the_work_plane_lands_nowhere():
+    from belfryscad.window.reference_3d import WorkPlane
+    assert WorkPlane((0, 0, 0), (0, 0, 1)).hit((0, 0, 1), (1, 0, 0)) is None
+
+
+def test_the_section_of_a_cube_is_its_square_outline():
+    from belfryscad.window.reference_3d import WorkPlane
+    tris = RefModel("cube", _cube_tris(), scale=4, anchor=(0, 0, 0)).world_tris()
+    seg = WorkPlane((0, 2, 0), (0, 1, 0)).section(tris)
+    assert len(seg) == 8                                    # two per side face
+    assert np.allclose(seg[:, :, 1], 2)
+    assert np.isclose(np.linalg.norm(seg[:, 1] - seg[:, 0], axis=1).sum(), 16)   # the perimeter
+    assert len(WorkPlane((0, 9, 0), (0, 1, 0)).section(tris)) == 0
+    # Through a face and a ring of vertices: still the whole outline, not every other edge.
+    seg = WorkPlane((0, 0, 0), (0, 1, 0)).section(tris)
+    assert np.isclose(np.linalg.norm(seg[:, 1] - seg[:, 0], axis=1).sum(), 16)
+
+
+def test_the_plane_through_points_fits_them():
+    from belfryscad.window.reference_3d import plane_through
+    p = plane_through([(0, 5, 0), (3, 5, 1), (1, 5, 7), (2, 5, 2)])
+    assert np.allclose(np.abs(p.normal), [0, 1, 0]) and np.isclose(p.point[1], 5)
+    assert plane_through([(0, 0, 0), (1, 1, 1), (2, 2, 2)]) is None      # a line
+    assert plane_through([(0, 0, 0), (1, 0, 0)]) is None
+
+
+def test_projecting_onto_the_work_plane_and_its_label():
+    from belfryscad.window.reference_3d import WorkPlane
+    plane = WorkPlane((0, 3, 0), (0, -1, 0))
+    assert np.allclose(plane.project((4, 9, -2)), [4, 3, -2])
+    assert plane.label() == "XZ at Y = 3"
+    assert WorkPlane((0, 0, 0), (1, 1, 0)).label() == "work plane"
+
+
+def test_the_work_plane_is_part_of_an_undo_snapshot():
+    from belfryscad.window.reference_3d import WorkPlane, _same_refs
+    a = ([], None, None)
+    assert _same_refs(a, ([], None, None))
+    assert not _same_refs(a, ([], None, WorkPlane()))
+    assert _same_refs(([], None, WorkPlane()), ([], None, WorkPlane()))

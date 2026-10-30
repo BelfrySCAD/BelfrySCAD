@@ -12,6 +12,11 @@ background image is:
   STL, OBJ, OFF, 3MF, AMF or X3D -- or the main window's last render,
   placed by an anchor, a rotation and a uniform scale. A click whose ray hits
   it lands on its surface.
+
+And a **work plane** (#882): while one is set, every click and drag lands on
+it -- ahead of the model's surface and of any faced image -- and the model's
+outline where the plane cuts it is drawn on it, for tracing the inside of a
+model, such as a tube's centre line.
 """
 from __future__ import annotations
 
@@ -161,6 +166,73 @@ class RefImage:
 
 #: A model's anchors: a point of its bounding box, as fractions along X, Y
 #: and Z -- the 2D image's nine at each of three heights.
+@dataclass
+class WorkPlane:
+    """The plane through `point` with normal `normal`."""
+    point: tuple = (0.0, 0.0, 0.0)
+    normal: tuple = (0.0, 0.0, 1.0)
+
+    def hit(self, o, d):
+        """Where the ray (o, d) meets the plane, or None if it runs parallel."""
+        n = _unit(self.normal)
+        o, d = np.asarray(o, dtype=np.float64), np.asarray(d, dtype=np.float64)
+        denom = float(n @ d)
+        if abs(denom) < 1e-12:
+            return None
+        return o + float(n @ (np.asarray(self.point, dtype=np.float64) - o)) / denom * d
+
+    def project(self, p) -> np.ndarray:
+        """`p` moved straight onto the plane."""
+        n = _unit(self.normal)
+        p = np.asarray(p, dtype=np.float64)
+        return p - float(n @ (p - np.asarray(self.point, dtype=np.float64))) * n
+
+    def label(self) -> str:
+        """"XZ at Y = 5" for an axis plane, else "work plane"."""
+        n = _unit(self.normal)
+        axis = int(np.argmax(np.abs(n)))
+        if abs(abs(n[axis]) - 1.0) > 1e-9:
+            return "work plane"
+        name = "".join("XYZ"[i] for i in range(3) if i != axis)
+        return f"{name} at {'XYZ'[axis]} = {self.point[axis]:.4g}"
+
+    def section(self, tris) -> np.ndarray:
+        """The (k, 2, 3) segments where the triangles `tris` (n, 3, 3) cross
+        the plane. Cut a hair above it: a plane through a ring of vertices
+        (z = 0 through a model centred on the origin) would otherwise find
+        only every other triangle crossing it, and draw a dashed line."""
+        tris = np.asarray(tris, dtype=np.float64)
+        if not len(tris):
+            return np.zeros((0, 2, 3))
+        n = _unit(self.normal)
+        dist = (tris - np.asarray(self.point, dtype=np.float64)) @ n          # (n, 3)
+        dist -= 1e-9 * max(float(np.ptp(tris.reshape(-1, 3), axis=0).max()), 1.0)
+        above = dist >= 0
+        crossing = above.any(axis=1) & ~above.all(axis=1)
+        tris, dist, above = tris[crossing], dist[crossing], above[crossing]
+        pts = []
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            da, db = dist[:, a], dist[:, b]
+            t = np.where(above[:, a] != above[:, b], da / np.where(da == db, 1.0, da - db), np.nan)
+            pts.append(tris[:, a] + t[:, None] * (tris[:, b] - tris[:, a]))
+        pts = np.stack(pts, axis=1)                                            # (k, 3 edges, 3)
+        keep = ~np.isnan(pts[:, :, 0])
+        return pts[keep].reshape(-1, 2, 3)
+
+
+def plane_through(points) -> WorkPlane | None:
+    """The plane best fitting `points` (three or more, not all in a line),
+    or None."""
+    pts = np.asarray(points, dtype=np.float64)
+    if len(pts) < 3:
+        return None
+    c = pts.mean(axis=0)
+    _, sv, vt = np.linalg.svd(pts - c)
+    if sv[1] <= 1e-9 * max(sv[0], 1.0):
+        return None
+    return WorkPlane(tuple(float(v) for v in c), tuple(float(v) for v in vt[2]))
+
+
 MODEL_LEVELS = {"Top": 1.0, "Center": 0.5, "Bottom": 0.0}
 _FLAT = {"Top Left": "Back Left", "Top": "Back", "Top Right": "Back Right",
          "Bottom Left": "Front Left", "Bottom": "Front", "Bottom Right": "Front Right"}
@@ -283,16 +355,17 @@ def current_render_triangles() -> np.ndarray | None:
     return None
 
 
-#: Each editor title's references, for the session: ([RefImage], RefModel | None).
+#: Each editor title's references, for the session:
+#: ([RefImage], RefModel | None, WorkPlane | None).
 _session: dict[str, tuple] = {}
 
 
 def _same_refs(a, b) -> bool:
-    """Two ([RefImage], RefModel | None) snapshots alike. A model's
-    triangles are compared by identity: copies share the array, which
-    nothing changes once read, and == on it is no single bool."""
-    (ia, ma), (ib, mb) = a, b
-    if ia != ib:
+    """Two ([RefImage], RefModel | None, WorkPlane | None) snapshots alike.
+    A model's triangles are compared by identity: copies share the array,
+    which nothing changes once read, and == on it is no single bool."""
+    (ia, ma, pa), (ib, mb, pb) = a, b
+    if ia != ib or pa != pb:
         return False
     if ma is None or mb is None:
         return ma is mb
@@ -368,6 +441,7 @@ void main() {
 }
 """
 _MODEL_COLOR = (0.45, 0.6, 0.9)
+_PLANE_COLOR = (1.0, 0.55, 0.15)
 
 
 class Reference3DViewportMixin:
@@ -377,25 +451,28 @@ class Reference3DViewportMixin:
 
     ref_images: list = []
     ref_model: RefModel | None = None
+    ref_plane: WorkPlane | None = None
     ref_key = ""
     _ref_progs = None
     _ref_textures: dict = {}
     _ref_model_vao = None
     _ref_model_key = None
 
-    _ref_committed = ([], None)     # the references as the last undo step left them
+    _ref_committed = ([], None, None)     # the references as the last undo step left them
+    _ref_section = (None, None, None)     # (key, VAO, buffer) of the model's outline on the plane
 
     def restore_references(self, key: str):
         self.ref_key = key
-        images, model = _session.get(key, ([], None))
+        images, model, plane = _session.get(key, ([], None, None))
         self.ref_images = [replace(i) for i in images]
         self.ref_model = replace(model) if model is not None else None
+        self.ref_plane = plane
         self._ref_textures = {}
         self._ref_committed = self._ref_snapshot()
 
     def _ref_snapshot(self):
         return ([replace(i) for i in self.ref_images],
-                replace(self.ref_model) if self.ref_model else None)
+                replace(self.ref_model) if self.ref_model else None, self.ref_plane)
 
     def references_edited(self):
         if self.ref_key:
@@ -418,9 +495,10 @@ class Reference3DViewportMixin:
             self._ref_moving = self._ref_drag = self._ref_pick = None
             self._delta_label.hide()
             self.unsetCursor()
-        images, model = snap
+        images, model, plane = snap
         self.ref_images = [replace(i) for i in images]
         self.ref_model = replace(model) if model is not None else None
+        self.ref_plane = plane
         self._ref_committed = snap
         if self.ref_key:
             _session[self.ref_key] = self._ref_snapshot()
@@ -443,18 +521,26 @@ class Reference3DViewportMixin:
         return best
 
     def _pick_plane_normal(self):
+        if self.ref_plane is not None:
+            return _unit(self.ref_plane.normal)
         img = self.faced_image()
         return None if img is None else _unit(img.normal)
 
+    def _plane_label(self) -> str | None:
+        """What a drag's "Plane:" note names, when it is not an axis plane."""
+        if self.ref_plane is not None:
+            return self.ref_plane.label()
+        return None if self.faced_image() is None else "the faced image's"
+
     def _reference_nudge(self, key, magnitude: float):
-        """An arrow key's step along a faced image's plane: screen-right and
-        screen-up projected onto it, so a press moves along the image as it
-        is seen. None when no image is faced (the axis-plane nudge then)."""
-        img = self.faced_image()
-        if img is None:
+        """An arrow key's step along the work plane or a faced image's plane:
+        screen-right and screen-up projected onto it, so a press moves along
+        it as it is seen. None when there is neither (the axis-plane nudge
+        then)."""
+        n = self._pick_plane_normal()
+        if n is None:
             return None
         view = self._renderer.camera.view_matrix()
-        n = _unit(img.normal)
         row = {Qt.Key.Key_Right: (0, 1), Qt.Key.Key_Left: (0, -1),
                Qt.Key.Key_Up: (1, 1), Qt.Key.Key_Down: (1, -1)}.get(key)
         if row is None:
@@ -495,7 +581,7 @@ class Reference3DViewportMixin:
         under = getattr(super(), "_paint_under", None)   # the 2D background image, where there is one
         if under is not None:
             under(mvp)
-        if not self.ref_images and self.ref_model is None:
+        if not self.ref_images and self.ref_model is None and self.ref_plane is None:
             return
         import moderngl as mgl
         ctx = self._ctx
@@ -554,8 +640,58 @@ class Reference3DViewportMixin:
             tex.use(0)
             img_prog["tex"].value = 0
             img_vao.render(mgl.TRIANGLE_STRIP)
+        if self.ref_plane is not None:
+            self._paint_work_plane(model_prog, mvp32)
         fbo.depth_mask = True
         ctx.disable(mgl.BLEND)
+
+    def _paint_work_plane(self, prog, mvp32):
+        """A faint square on the plane, about the scene's size, and the
+        model's outline where the plane cuts it."""
+        import moderngl as mgl
+        ctx, plane = self._ctx, self.ref_plane
+        n = _unit(plane.normal)
+        lo, hi = (np.asarray(b, dtype=np.float64) for b in
+                  (self._renderer.camera.scene_bounds or ((-10, -10, -10), (10, 10, 10))))
+        half = max(0.6 * float(np.linalg.norm(hi - lo)), 10.0)
+        c = plane.project((lo + hi) / 2)
+        right = _unit(np.cross(n, (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)))
+        up = np.cross(n, right)
+        quad = np.array([c + half * (sx * right + sy * up) for sx, sy in
+                         ((-1, -1), (1, -1), (-1, 1), (1, 1))])
+        normals = np.repeat(n[None, :], 4, axis=0)
+        buf = ctx.buffer(np.concatenate([quad, normals], axis=1).astype(np.float32).tobytes())
+        vao = ctx.vertex_array(prog, [(buf, "3f 3f", "in_position", "in_normal")])
+        prog["mvp"].write(mvp32)
+        prog["view_dir"].value = tuple(float(v) for v in n)       # lit evenly
+        prog["color"].value = (*_PLANE_COLOR, 0.12)
+        vao.render(mgl.TRIANGLE_STRIP)
+        vao.release()
+        buf.release()
+        m = self.ref_model
+        if m is None or not m.visible:
+            return
+        key = (self._ref_model_key, plane)
+        if self._ref_section[0] != key:
+            for old in self._ref_section[1:]:
+                if old is not None:
+                    old.release()
+            seg = plane.section(m.world_tris()).reshape(-1, 3)
+            line_vao = line_buf = None
+            if len(seg):
+                # The renderer's wide lines: plain GL lines are one pixel,
+                # and broke up into dashes over the model.
+                color = np.repeat(np.asarray(_PLANE_COLOR)[None, :], len(seg), axis=0)
+                line_buf = ctx.buffer(np.concatenate([seg, color], axis=1).astype(np.float32).tobytes())
+                line_vao = ctx.vertex_array(self._renderer._wide_line_prog,
+                                            [(line_buf, "3f 3f", "in_position", "in_color")])
+            self._ref_section = (key, line_vao, line_buf)
+        if self._ref_section[1] is not None:
+            wide = self._renderer._wide_line_prog
+            wide["mvp"].write(mvp32)
+            wide["viewport"].value = tuple(float(v) for v in ctx.viewport[2:])
+            wide["width"].value = 2.0 * self.devicePixelRatioF()
+            self._ref_section[1].render(mgl.LINES)
 
     # -- moving an image with the mouse ----------------------------------------------
 
@@ -747,6 +883,8 @@ class Reference3DViewportMixin:
             sub.addAction("Show" if not m.visible else "Hide",
                           lambda: self._edit(lambda: setattr(m, "visible", not m.visible)))
             sub.addAction("Remove", lambda: self._edit(lambda: setattr(self, "ref_model", None)))
+        ref.addSeparator()
+        self._work_plane_menu(ref)
         base = getattr(super(), "_exec_menu", None)
         if base is not None:
             base(menu, event)
@@ -756,6 +894,75 @@ class Reference3DViewportMixin:
         self._last_mouse = None
         self._mouse_button = None
         menu.exec(event.globalPos())
+
+    def _work_plane_menu(self, parent):
+        """Work Plane ▸: set, place or clear the plane every click lands on."""
+        wp = parent.addMenu("Work Plane")
+        plane = self.ref_plane
+        none = wp.addAction("None", lambda: self._set_plane(None))
+        none.setCheckable(True)
+        none.setChecked(plane is None)
+        point = plane.point if plane is not None else (0.0, 0.0, 0.0)
+        for name, (normal, _) in PLANES.items():
+            act = wp.addAction(name, lambda normal=normal: self._set_plane(WorkPlane(point, normal)))
+            act.setCheckable(True)
+            act.setChecked(plane is not None and np.allclose(np.abs(_unit(plane.normal)), np.abs(normal)))
+        wp.addSeparator()
+        _, sel = self._selected_points()
+        through = wp.addAction("Through Selected Points", lambda: self._plane_through_selection())
+        through.setEnabled(len(sel) == 1 or plane_through(sel) is not None)
+        faced = self.faced_image()
+        like = wp.addAction("Same as Faced Image", lambda: self._set_plane(
+            WorkPlane(tuple(faced.position), tuple(faced.normal))))
+        like.setEnabled(faced is not None)
+        wp.addAction("Placement…", self._plane_placement)
+        wp.addSeparator()
+        flat = wp.addAction("Flatten Selection onto Plane", self._flatten_selection)
+        flat.setEnabled(plane is not None and len(sel) > 0 and self._move_points is not None)
+
+    def _set_plane(self, plane):
+        self.ref_plane = plane
+        self.references_edited()
+
+    def _selected_points(self):
+        """(indices, points) of the selected vertices -- a path's or a VNF's;
+        none in an editor with no vertices to select."""
+        for idx_name, pts_name in (("_selected_indices", "_path_pts"), ("_vert_indices", "_verts_3d")):
+            idx, pts = getattr(self, idx_name, None), getattr(self, pts_name, None)
+            if idx is not None and pts is not None:
+                idx = [i for i in sorted(idx) if 0 <= i < len(pts)]
+                return idx, np.asarray(pts, dtype=np.float64)[idx].reshape(-1, 3)
+        return [], np.zeros((0, 3))
+
+    #: The editor's method moving vertices as one edit, given [(index, point)];
+    #: None in an editor whose points are not vertices (turtle3d).
+    _move_points = None
+
+    def _plane_through_selection(self):
+        _, sel = self._selected_points()
+        if len(sel) == 1:
+            # One point: the plane keeps its turn, or faces the view's nearest axis.
+            normal = self.ref_plane.normal if self.ref_plane is not None else None
+            if normal is None:
+                from belfryscad.window.viewport import _view_locked_axis
+                normal = tuple(float(i == _view_locked_axis(self._renderer.camera)) for i in range(3))
+            self._set_plane(WorkPlane(tuple(float(v) for v in sel[0]), tuple(normal)))
+        elif (plane := plane_through(sel)) is not None:
+            self._set_plane(plane)
+
+    def _plane_placement(self):
+        plane = self.ref_plane or WorkPlane()
+        dlg = _PlacementDialog("Work Plane Placement", self, [
+            ("Through:", plane.point, 3), ("Normal:", plane.normal, 4)])
+        if dlg.exec():
+            point, normal = dlg.values()
+            if any(normal):
+                self._set_plane(WorkPlane(tuple(point), tuple(normal)))
+
+    def _flatten_selection(self):
+        idx, sel = self._selected_points()
+        if self.ref_plane is not None and idx and self._move_points is not None:
+            self._move_points([(i, self.ref_plane.project(p)) for i, p in zip(idx, sel)])
 
     def _align_menu(self, parent, title, ref, anchor_label):
         """Align ▸ as the 2D image has it: the anchor to the origin or to the
