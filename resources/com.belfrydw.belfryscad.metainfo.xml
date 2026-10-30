@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.95.1" date="2026-10-30">
+      <description>
+        <p>The Windows Start Menu shortcut takes its icon from the program, so a copy of it keeps its icon after an upgrade</p>
+      </description>
+    </release>
     <release version="1.95.0" date="2026-10-30">
       <description>
         <p>A 3D model behind the 2D path, region and turtle editors, sliced and drawn as an outline to trace over</p>
