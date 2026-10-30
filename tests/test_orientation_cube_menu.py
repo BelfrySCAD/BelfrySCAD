@@ -25,6 +25,14 @@ def spin(seconds):
     while time.monotonic() < end:
         app.processEvents(); time.sleep(0.02)
 
+def settle(timeout=10.0):
+    """Until the view swing has landed: a fixed wait was too short on the
+    slow macOS runner, which read the camera 0.3 degrees short of Right."""
+    spin(0.1)
+    end = time.monotonic() + timeout
+    while vp._view_anim is not None and time.monotonic() < end:
+        app.processEvents(); time.sleep(0.02)
+
 w = MainWindow(); w.skip_unsaved_prompts = True; w.resize(1000, 700); w.show()
 spin(0.3)
 vp = w._viewport
@@ -45,7 +53,7 @@ def grab():
 QTimer.singleShot(100, grab)
 c = QPoint(cube.width() // 2, cube.height() // 2)
 cube.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, c, cube.mapToGlobal(c)))
-spin(0.6)
+settle()
 out["items"] = seen.get("items")
 out["after_right"] = [round(cam.azimuth, 3), round(cam.elevation, 3)]
 
@@ -58,7 +66,7 @@ QTest.mouseRelease(cube, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModif
 
 # Double-click on the cube: isometric, after the first click's snap.
 QTest.mouseDClick(cube, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, c)
-spin(0.8)
+settle()
 out["after_double"] = [round(cam.azimuth, 3), round(cam.elevation, 3)]
 print(json.dumps(out)); sys.stdout.flush()
 hard_exit(0)
