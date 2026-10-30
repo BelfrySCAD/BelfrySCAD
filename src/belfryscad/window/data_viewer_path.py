@@ -1630,6 +1630,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         """A surface a 3D click lands on before any plane. None here."""
         return None
 
+    def _plane_label(self):
+        """The drag plane's name when it is not an axis plane. None here."""
+        return None
+
     def _reference_nudge(self, key, magnitude):
         """An arrow key's step along a faced reference image. None here."""
         return None
@@ -1667,9 +1671,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 else:
                     self._drag_lock_axis = _view_locked_axis(self._renderer.camera)
                     self._drag_plane_point = self._path_pts[vi].copy()
-                faced = None if self._is_2d else self._pick_plane_normal()
-                self._show_delta("Plane: the faced image's" if faced is not None
-                                 else f"Plane: {_unlocked_plane_name(self._drag_lock_axis)}")
+                named = None if self._is_2d else self._plane_label()
+                self._show_delta(f"Plane: {named or _unlocked_plane_name(self._drag_lock_axis)}")
                 self.vertex_drag_started.emit()
                 self._measure_rope()
                 return   # don't arm orbit/pan -- this press starts a vertex drag
@@ -1925,3 +1928,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
 class _Path3DViewport(Reference3DViewportMixin, _PathViewport):
     """The 3D path editor's viewport, with reference images and a model to
     trace over (#836)."""
+
+    def _move_points(self, moves):
+        """Move points as one edit (Flatten Selection onto Plane)."""
+        self.vertex_drag_started.emit()
+        self._measure_rope()
+        self._emit_moves(moves)
+        self.vertex_drag_finished.emit()
