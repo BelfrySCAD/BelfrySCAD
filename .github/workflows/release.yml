@@ -63,8 +63,38 @@ jobs:
           PIP_FIND_LINKS: ${{ matrix.arch == 'arm64' && format('{0}\wheelhouse', github.workspace) || '' }}
         run: |
           uv run --python 3.14 briefcase create windows app
+          # The Start Menu shortcut takes its icon from the exe, not from the
+          # template's Icon="ProductIcon": that one is cached under
+          # C:\Windows\Installer\{ProductCode}, a folder every in-place
+          # upgrade deletes, so a copy of the shortcut on the desktop lost
+          # its icon at the next upgrade (#975). The exe has the same icon
+          # built in. Fails if the template stops matching, rather than
+          # quietly shipping the old shortcut.
+          $wxs = Get-ChildItem build -Recurse -Filter *.wxs | Select-Object -First 1
+          $text = Get-Content $wxs.FullName -Raw
+          if ($text -cnotmatch '\s+Icon="ProductIcon"') { throw "no Icon=`"ProductIcon`" in $($wxs.FullName)" }
+          $text -creplace '\s+Icon="ProductIcon"', '' | Set-Content $wxs.FullName -NoNewline
           uv run --python 3.14 briefcase build windows app
           uv run --python 3.14 briefcase package windows app
+
+      # What the installer itself says, read through Windows Installer: every
+      # shortcut must name no Icon (#975).
+      - name: Check the shortcuts take the exe's icon
+        run: |
+          $msi = (Get-ChildItem dist -Filter *.msi | Select-Object -First 1).FullName
+          $wi = New-Object -ComObject WindowsInstaller.Installer
+          $db = $wi.GetType().InvokeMember("OpenDatabase", "InvokeMethod", $null, $wi, @($msi, 0))
+          $view = $db.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $db, @("SELECT Shortcut, Icon_ FROM Shortcut"))
+          $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null)
+          $n = 0
+          while ($rec = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)) {
+            $name = $rec.GetType().InvokeMember("StringData", "GetProperty", $null, $rec, 1)
+            $icon = $rec.GetType().InvokeMember("StringData", "GetProperty", $null, $rec, 2)
+            "shortcut $name icon '$icon'"
+            if ($icon) { throw "shortcut $name still names icon $icon" }
+            $n++
+          }
+          if ($n -eq 0) { throw "no shortcuts in $msi" }
 
       # briefcase names the msi without the architecture, so both legs
       # produce BelfrySCAD-<version>.msi. The release job downloads every
@@ -124,6 +154,17 @@ jobs:
           PIP_FIND_LINKS: ${{ github.workspace }}\wheelhouse
         run: |
           uv run --python 3.14 briefcase create windows app
+          # The Start Menu shortcut takes its icon from the exe, not from the
+          # template's Icon="ProductIcon": that one is cached under
+          # C:\Windows\Installer\{ProductCode}, a folder every in-place
+          # upgrade deletes, so a copy of the shortcut on the desktop lost
+          # its icon at the next upgrade (#975). The exe has the same icon
+          # built in. Fails if the template stops matching, rather than
+          # quietly shipping the old shortcut.
+          $wxs = Get-ChildItem build -Recurse -Filter *.wxs | Select-Object -First 1
+          $text = Get-Content $wxs.FullName -Raw
+          if ($text -cnotmatch '\s+Icon="ProductIcon"') { throw "no Icon=`"ProductIcon`" in $($wxs.FullName)" }
+          $text -creplace '\s+Icon="ProductIcon"', '' | Set-Content $wxs.FullName -NoNewline
           uv run --python 3.14 briefcase build windows app
           uv run --python 3.14 briefcase package windows app
 
