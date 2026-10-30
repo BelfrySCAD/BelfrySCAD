@@ -7,7 +7,7 @@ and reopening an editor on the same literal finds it where it was left.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
@@ -99,6 +99,72 @@ class BackgroundImage:
 #: The session's images, by editor window title.
 _session: dict[str, BackgroundImage] = {}
 
+#: How each 2D view sees a model: its plane (as the 3D editors' presets,
+#: reference_3d.PLANES) and the axis cut along.
+MODEL_VIEWS = {"XY": "Above", "XZ": "Front", "YZ": "Right"}
+
+
+@dataclass
+class BackgroundModel:
+    """A mesh behind a 2D shape, to trace over (#882): seen square-on to
+    `plane`, its right and up becoming the editor's X and Y, scaled by
+    `scale` and shifted by (x, y). `depth` is where it is cut, along the
+    plane's own axis (Y for XZ), in the mesh's units; the cut is drawn as an
+    outline over the faint silhouette of the whole mesh."""
+    name: str
+    tris: np.ndarray = field(repr=False, compare=False)   # (n, 3, 3), as read
+    plane: str = "XY"
+    depth: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    scale: float = 1.0
+    opacity: float = 0.35
+    visible: bool = True
+
+    @property
+    def axis(self) -> int:
+        return "XYZ".index(next(a for a in "XYZ" if a not in self.plane))
+
+    def centre_cut(self):
+        """Cut through the middle of the mesh along the plane's axis."""
+        col = self.tris[..., self.axis]
+        self.depth = float((col.min() + col.max()) / 2)
+
+    def flat_tris(self) -> np.ndarray:
+        """The triangles in the editor's frame: X and Y as drawn, Z the
+        height above the cut."""
+        from belfryscad.window.reference_3d import PLANES
+        n, up = (np.asarray(v, dtype=np.float64) for v in PLANES[self.plane])
+        p = self.tris.reshape(-1, 3)
+        out = np.stack([p @ np.cross(up, n), p @ up, (p[:, self.axis] - self.depth) * n[self.axis]], axis=1)
+        out *= self.scale
+        out[:, :2] += (self.x, self.y)
+        return out.reshape(-1, 3, 3)
+
+    def outline(self, flat=None) -> np.ndarray:
+        """The (k, 2, 3) segments of the cut, at Z = 0."""
+        from belfryscad.window.reference_3d import WorkPlane
+        seg = WorkPlane().section(self.flat_tris() if flat is None else flat)
+        seg[..., 2] = 0.0
+        return seg
+
+    def bounds(self):
+        """(min_x, min_y, max_x, max_y) as drawn."""
+        f = self.flat_tris().reshape(-1, 3)
+        return (*map(float, f[:, :2].min(axis=0)), *map(float, f[:, :2].max(axis=0)))
+
+
+def _same_model(a, b) -> bool:
+    """Two BackgroundModel | None alike; the triangles by identity (copies
+    share the array, which nothing changes once read)."""
+    if a is None or b is None:
+        return a is b
+    return a.tris is b.tris and a == b
+
+
+#: The session's models, by editor window title.
+_model_session: dict[str, BackgroundModel] = {}
+
 
 def load_image(path: str) -> QImage | None:
     img = QImage(path)
@@ -146,19 +212,20 @@ class _BackgroundCmd(QUndoCommand):
     edits to the shape (#861). Pushed after the change is made, so the first
     redo() -- which QUndoStack.push runs -- has nothing to do."""
 
-    def __init__(self, viewport, before, after):
-        super().__init__("Background Image")
+    def __init__(self, viewport, before, after, label="Background Image", apply="_apply_background"):
+        super().__init__(label)
         self._vp, self._before, self._after = viewport, before, after
+        self._apply = apply
         self._done = True
 
     def undo(self):
-        self._vp._apply_background(self._before)
+        getattr(self._vp, self._apply)(self._before)
 
     def redo(self):
         if self._done:
             self._done = False
             return
-        self._vp._apply_background(self._after)
+        getattr(self._vp, self._apply)(self._after)
 
 
 class BackgroundImageViewportMixin:
@@ -178,6 +245,10 @@ class BackgroundImageViewportMixin:
     _bg_drag = None            # (mode, handle anchor, image at press, model point at press)
     _bg_markers_were_shown = True
     _bg_committed = None       # the image as the last undo step left it
+    bg_model: BackgroundModel | None = None
+    _bg_model_committed = None   # the model as the last undo step left it
+    _bg_model_prog = None
+    _bg_model_gl = (None, None, None, None, None)   # (key, model VAO, its buffer, outline VAO, its buffer)
 
     def set_background(self, bg: BackgroundImage | None):
         self.background = bg
@@ -197,8 +268,13 @@ class BackgroundImageViewportMixin:
                 _session[self.background_key] = replace(bg)
 
     def _paint_under(self, mvp: np.ndarray):
-        """Draw the image, before the shape: from `extra_paint` it covered
-        the path's lines and markers (#802)."""
+        """Draw the image and the model, before the shape: from
+        `extra_paint` the image covered the path's lines and markers (#802)."""
+        self._paint_image(mvp)
+        if self.bg_model is not None and self.bg_model.visible:
+            self._paint_model(mvp)
+
+    def _paint_image(self, mvp: np.ndarray):
         if self._bg_overlay is not None:
             self._bg_overlay.setGeometry(self.rect())
             self._bg_overlay.update()
@@ -260,6 +336,166 @@ class BackgroundImageViewportMixin:
                 stack.push(_BackgroundCmd(self, before, after))
         self.update()
 
+    # -- a model to trace over (#882) -------------------------------------------
+
+    def set_bg_model(self, m: BackgroundModel | None):
+        self.bg_model = m
+        self._bg_model_committed = None if m is None else replace(m)
+        self.update()
+
+    def _apply_bg_model(self, m: BackgroundModel | None):
+        """Undo/Redo: put the model back as it was, without a new step."""
+        self.set_bg_model(None if m is None else replace(m))
+        if self.background_key:
+            if m is None:
+                _model_session.pop(self.background_key, None)
+            else:
+                _model_session[self.background_key] = replace(m)
+
+    def bg_model_edited(self):
+        m = self.bg_model
+        if self.background_key:
+            if m is None:
+                _model_session.pop(self.background_key, None)
+            else:
+                _model_session[self.background_key] = replace(m)
+        before, after = self._bg_model_committed, None if m is None else replace(m)
+        self._bg_model_committed = after
+        stack = getattr(self.window(), "_undo_stack", None)   # editors only
+        if stack is not None and not _same_model(before, after):
+            stack.push(_BackgroundCmd(self, before, after, "Background Model", "_apply_bg_model"))
+        self.update()
+
+    def _paint_model(self, mvp: np.ndarray):
+        """The mesh flattened onto the view, faint and lit by its slope, and
+        the cut's outline over it in the renderer's wide lines. Both write no
+        depth, so the shape always shows over them."""
+        import moderngl as mgl
+        from belfryscad.window.reference_3d import (_MODEL_COLOR, _MODEL_FRAG, _MODEL_VERT,
+                                                    _PLANE_COLOR)
+        ctx, m = self._ctx, self.bg_model
+        if self._bg_model_prog is None:
+            self._bg_model_prog = ctx.program(vertex_shader=_MODEL_VERT, fragment_shader=_MODEL_FRAG)
+        prog, wide = self._bg_model_prog, self._renderer._wide_line_prog
+        key = (id(m.tris), m.plane, m.depth, m.x, m.y, m.scale)
+        if self._bg_model_gl[0] != key:
+            for old in self._bg_model_gl[1:]:
+                if old is not None:
+                    old.release()
+            flat = m.flat_tris()
+            n = np.cross(flat[:, 1] - flat[:, 0], flat[:, 2] - flat[:, 0])
+            n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+            drawn = flat.copy()
+            drawn[..., 2] = 0.0
+            buf = ctx.buffer(np.concatenate([drawn, np.repeat(n[:, None, :], 3, axis=1)], axis=2)
+                             .astype(np.float32).tobytes())
+            vao = ctx.vertex_array(prog, [(buf, "3f 3f", "in_position", "in_normal")])
+            seg = m.outline(flat).reshape(-1, 3)
+            line_vao = line_buf = None
+            if len(seg):
+                color = np.repeat(np.asarray(_PLANE_COLOR)[None, :], len(seg), axis=0)
+                line_buf = ctx.buffer(np.concatenate([seg, color], axis=1).astype(np.float32).tobytes())
+                line_vao = ctx.vertex_array(wide, [(line_buf, "3f 3f", "in_position", "in_color")])
+            self._bg_model_gl = (key, vao, buf, line_vao, line_buf)
+        mvp32 = mvp.T.astype(np.float32).tobytes()
+        ctx.enable(mgl.BLEND)
+        ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA, mgl.ZERO, mgl.ONE
+        fbo = self._renderer._active_fbo
+        fbo.depth_mask = False
+        prog["mvp"].write(mvp32)
+        prog["view_dir"].value = (0.0, 0.0, 1.0)
+        prog["color"].value = (*_MODEL_COLOR, m.opacity)
+        self._bg_model_gl[1].render(mgl.TRIANGLES)
+        if self._bg_model_gl[3] is not None:
+            wide["mvp"].write(mvp32)
+            wide["viewport"].value = tuple(float(v) for v in ctx.viewport[2:])
+            wide["width"].value = 2.0 * self.devicePixelRatioF()
+            self._bg_model_gl[3].render(mgl.LINES)
+        fbo.depth_mask = True
+        ctx.disable(mgl.BLEND)
+
+    def _bg_model_menu(self, menu):
+        m = self.bg_model
+        sub = menu.addMenu(f"BG Model: {m.name}")
+        seen = sub.addMenu("Seen From")
+        for plane, side in MODEL_VIEWS.items():
+            act = seen.addAction(f"{side} ({plane})", lambda plane=plane: self._set_model_plane(plane))
+            act.setCheckable(True)
+            act.setChecked(m.plane == plane)
+        axis = "XYZ"[m.axis]
+        sub.addAction(f"Cut at {axis} = {m.depth:.4g}…", self._set_model_cut)
+        sub.addAction("Placement…", self._model_placement)
+        sub.addSeparator()
+        sub.addAction("Show" if not m.visible else "Hide", self._toggle_bg_model)
+        sub.addAction("Remove", self._remove_bg_model)
+
+    def _remove_bg_model(self):
+        self.bg_model = None
+        self.bg_model_edited()
+
+    def _set_model_plane(self, plane):
+        self.bg_model.plane = plane
+        self.bg_model.centre_cut()
+        self.bg_model_edited()
+
+    def _set_model_cut(self):
+        m = self.bg_model
+        col = m.tris[..., m.axis]
+        depth, ok = QInputDialog.getDouble(
+            self, "Cut Model", f"Cut at {'XYZ'[m.axis]} = (the model spans "
+            f"{float(col.min()):.4g} to {float(col.max()):.4g})", m.depth, -1e7, 1e7, 4)
+        if ok:
+            m.depth = depth
+            self.bg_model_edited()
+
+    def _model_placement(self):
+        from belfryscad.window.reference_3d import _PlacementDialog
+        m = self.bg_model
+        dlg = _PlacementDialog("Model Placement", self, [
+            ("Model origin at:", (m.x, m.y), 3), ("Scale:", [m.scale], 4)])
+        if dlg.exec():
+            (x, y), (s,) = dlg.values()
+            if s > 0:
+                m.x, m.y, m.scale = x, y, s
+                self.bg_model_edited()
+
+    def _toggle_bg_model(self):
+        self.bg_model.visible = not self.bg_model.visible
+        self.bg_model_edited()
+
+    def _set_bg_model_tris(self, name, tris, warnings=()):
+        old = self.bg_model
+        m = BackgroundModel(name, tris)
+        if old is not None:
+            # A replacement keeps the old one's view and placement.
+            m.plane, m.x, m.y, m.scale = old.plane, old.x, old.y, old.scale
+        m.centre_cut()
+        self.bg_model = m
+        self.bg_model_edited()
+        if warnings:
+            QMessageBox.information(self, "Background Model", "\n".join(warnings[:10]))
+
+    def choose_bg_model(self):
+        import os
+        from belfryscad.window.reference_3d import _MODEL_FILTER, load_model_triangles
+        path, _ = QFileDialog.getOpenFileName(self, "Background Model", "", _MODEL_FILTER)
+        if not path:
+            return
+        try:
+            tris, warnings = load_model_triangles(path)
+        except Exception as e:     # whatever import() raises: say so, never crash
+            QMessageBox.warning(self, "Background Model", f"Could not read {os.path.basename(path)}:\n{e}")
+            return
+        self._set_bg_model_tris(os.path.basename(path), tris, warnings)
+
+    def use_current_render_as_bg_model(self):
+        from belfryscad.window.reference_3d import current_render_triangles
+        tris = current_render_triangles()
+        if tris is None:
+            QMessageBox.information(self, "Background Model", "Nothing is rendered yet.")
+            return
+        self._set_bg_model_tris("Current Render", tris)
+
     def _model_point(self, pos) -> tuple[float, float] | None:
         o, d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
         if abs(d[2]) < 1e-9:
@@ -291,8 +527,16 @@ class BackgroundImageViewportMixin:
             choose = QAction("Choose BG Image…", menu)
             choose.triggered.connect(self.choose_background)
             menu.insertAction(first, choose)
+            for text, fn in (("Choose BG Model…", self.choose_bg_model),
+                             ("Use Current Render as BG Model", self.use_current_render_as_bg_model)):
+                act = QAction(text, menu)
+                act.triggered.connect(fn)
+                menu.insertAction(first, act)
             if first is not None:
                 menu.insertSeparator(first)
+        if self.bg_model is not None:
+            menu.addSeparator()
+            self._bg_model_menu(menu)
         bg = self.background
         if bg is not None and bg.path:
             if not menu.isEmpty():
@@ -758,3 +1002,6 @@ def restore_session_background(key: str, viewport):
     bg = _session.get(key)
     if bg is not None:
         viewport.set_background(replace(bg))
+    m = _model_session.get(key)
+    if m is not None:
+        viewport.set_bg_model(replace(m))
