@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.94.0" date="2026-10-29">
+      <description>
+        <p>A work plane in the 3D editors that every click lands on, with the reference model's outline drawn on it</p>
+      </description>
+    </release>
     <release version="1.93.0" date="2026-10-29">
       <description>
         <p>export_as() names the parts of an exported 3MF, OBJ or AMF file</p>
