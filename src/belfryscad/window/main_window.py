@@ -1084,7 +1084,10 @@ class MainWindow(QMainWindow):
         self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
-        self._dump_frame: int = 0
+        # The step the next dumped PNG is of; None until a dump's own frame
+        # is asked for, so a render already in flight when a dump starts
+        # (#938) is not saved as one of its frames.
+        self._dump_frame: Optional[int] = None
         self._first_show = True
         # Testing-only escape hatch: set True to make _confirm_unsaved()
         # treat every tab as if it had no unsaved changes, so a script
@@ -3604,6 +3607,7 @@ class MainWindow(QMainWindow):
         # Asked on every dump, starting in the last one's folder, so the
         # folder can be changed (#938). Never Qt's own fallback, the cwd:
         # System32 for a Windows Start-menu launch. See file_dialog_dir.
+        self._dump_frame = None
         start = self._dump_dir
         if start is None:
             tab = self._current_tab()
@@ -3616,8 +3620,9 @@ class MainWindow(QMainWindow):
         self._dump_dir = path
         self.log(f"Dumping animation frames to {self._dump_dir}")
 
-    def _on_dump_finished(self):
-        self.log("Animation frame dump complete.")
+    def _on_dump_finished(self, complete: bool):
+        self.log("Animation frame dump complete." if complete
+                 else "Animation frame dump stopped.")
 
     _wait_cursor = False
 
@@ -3737,9 +3742,10 @@ class MainWindow(QMainWindow):
         # takes will reflect this render.
         self._ai_chat_pane.on_render_finished()
 
-        if self._animate_pane.is_dumping() and self._dump_dir:
+        if (self._animate_pane.is_dumping() and self._dump_dir
+                and self._dump_frame is not None):
             try:
-                frame = self._dump_frame
+                frame, self._dump_frame = self._dump_frame, None
                 image = self._viewport.grabFramebuffer()
                 filename = f"frame{frame:04d}.png"
                 image.save(str(Path(self._dump_dir) / filename))

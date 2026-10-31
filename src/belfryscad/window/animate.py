@@ -40,7 +40,7 @@ class AnimatePane(QWidget):
 
     frame_changed = Signal(float)
     dump_started = Signal()
-    dump_finished = Signal()
+    dump_finished = Signal(bool)    # True: a whole cycle was saved
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +49,10 @@ class AnimatePane(QWidget):
         self._step = 0
         self._playing = False
         self._dumping = False
+        # The frame a dump started on, and ends on reaching again: 0 from
+        # Play, wherever the animation was when the box is ticked mid-play.
+        self._dump_start = 0
+        self._dump_mid_play = False
 
         # Set by the host (MainWindow) to `lambda: bool(self._render_jobs)` --
         # lets a tick that lands while the previous frame's render is still
@@ -95,6 +99,7 @@ class AnimatePane(QWidget):
         layout.addLayout(form)
 
         self._dump_check = QCheckBox("Dump Pictures")
+        self._dump_check.toggled.connect(self._on_dump_toggled)
         layout.addWidget(self._dump_check)
 
         transport = QHBoxLayout()
@@ -195,6 +200,8 @@ class AnimatePane(QWidget):
         self._update_play_icons()
         if self._dumping:
             self._step = 0
+            self._dump_start = 0
+            self._dump_mid_play = False
             # Answered before the first frame is rendered: the host asks for
             # the folder here, and pauses if it is refused. Frame 0 used to
             # start first, finish while the folder dialog was still open,
@@ -210,13 +217,11 @@ class AnimatePane(QWidget):
             # grabFramebuffer() can pump the event loop, and an overlapping
             # timer-driven render can reenter the GL context mid-grab.
             self._timer.start()
-            # Route through the same busy-check as every later tick (see
-            # _try_render_now's own doc comment) -- Play can land while a
-            # render triggered by something else entirely (opening the file,
-            # an edit) is still in flight.
-            self._try_render_now()
-        else:
-            self.frame_changed.emit(self.current_t())
+        # Route through the same busy-check as every later tick (see
+        # _try_render_now's own doc comment) -- Play can land while a
+        # render triggered by something else entirely (opening the file,
+        # an edit) is still in flight.
+        self._try_render_now()
 
     def pause(self):
         if not self._playing:
@@ -229,13 +234,42 @@ class AnimatePane(QWidget):
         self._dumping = False
         self._update_play_icons()
         if was_dumping:
-            self.dump_finished.emit()
+            self.dump_finished.emit(False)
 
     def cancel_dump(self):
         """Stop a dump that never started -- its folder was not given --
-        without reporting it finished."""
+        without reporting it finished. One started from Play pauses; one
+        started by ticking the box mid-play unticks it and plays on."""
         self._dumping = False
-        self.pause()
+        if self._dump_mid_play:
+            self._dump_mid_play = False
+            self._dump_check.setChecked(False)
+            self._timer.start()
+        else:
+            self.pause()
+
+    def _on_dump_toggled(self, checked):
+        """Ticking Dump Pictures while playing dumps one cycle from the
+        current frame, as OpenSCAD does; unticking it mid-dump stops the
+        dump and plays on (#938). While paused, the box is only read by
+        play()."""
+        if not self._playing:
+            return
+        if checked and not self._dumping:
+            # Frames are paced by render completion from here on (see
+            # play()), and the host asks for the folder first.
+            self._timer.stop()
+            self._pending_advance = None
+            self._dumping = True
+            self._dump_start = self._step
+            self._dump_mid_play = True
+            self.dump_started.emit()
+            if self._dumping:
+                self._try_render_now()
+        elif not checked and self._dumping:
+            self._dumping = False
+            self.dump_finished.emit(False)
+            self._timer.start()
 
     def go_first(self):
         self.pause()
@@ -335,13 +369,13 @@ class AnimatePane(QWidget):
         performs whichever frame trigger (_try_advance/_try_render_now) got
         deferred while it was running, if any.
 
-        Only relevant to ordinary (non-dumping) playback: dumping already
-        paces itself by render completion (MainWindow calls advance_frame()
-        directly from _on_render_thread_done, never via the timer -- see
-        play()'s own `if not self._dumping: self._timer.start()`), so this
-        is a no-op whenever _dumping is set.
+        A dump paces itself by render completion (MainWindow calls
+        advance_frame() directly from _on_render_thread_done, never via the
+        timer), so while dumping the only request deferred here is its
+        FIRST frame ("current"), started while some other render was still
+        in flight.
         """
-        if not self._playing or self._dumping or not self._pending_advance:
+        if not self._playing or not self._pending_advance:
             return
         pending, self._pending_advance = self._pending_advance, None
         if pending == "next":
@@ -357,15 +391,15 @@ class AnimatePane(QWidget):
         (and PNG save) has completed, instead of from the timer.
         """
         next_step = (self._step + 1) % self._steps
-        if self._dumping and next_step == 0:
-            # One full cycle (0..steps-1) is dumped. As OpenSCAD does, untick
+        if self._dumping and next_step == self._dump_start:
+            # One full cycle is dumped, from wherever it started. As OpenSCAD does, untick
             # Dump Pictures and play on at the FPS set: stopping here left
             # Dump ticked, so every Play after it dumped one more cycle at
             # render speed and stopped again, which looked like an animation
             # that would no longer run (#922).
             self._dumping = False
             self._dump_check.setChecked(False)
-            self.dump_finished.emit()
+            self.dump_finished.emit(True)
             self._timer.start()
         self._step = next_step
         self._update_time_display()
