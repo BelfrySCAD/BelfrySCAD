@@ -326,6 +326,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
         # window.
         QTimer.singleShot(1500, lambda: _send_ai_prompt(window, ai_prompt))
     _install_state_dump(app)
+    _install_activation_repair(app, window)
     code = app.exec()
     # Skip normal interpreter finalization: its GC pass can crash inside
     # manifold3d's nanobind bindings if a background render thread was
@@ -571,6 +572,7 @@ def _objc_runtime():
         obj_at=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_ulong)(addr),
         obj_for=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_void_p)(addr),
         obj_str=CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_char_p)(addr),
+        send_bool=CFUNCTYPE(None, c_void_p, c_void_p, c_bool)(addr),
         flag=CFUNCTYPE(c_bool, c_void_p, c_void_p)(addr),
         num=CFUNCTYPE(c_long, c_void_p, c_void_p)(addr),
         dbl=CFUNCTYPE(c_double, c_void_p, c_void_p)(addr),
@@ -789,6 +791,55 @@ def _install_state_dump(app):
     app._state_dump_tick = QTimer(app)
     app._state_dump_tick.timeout.connect(lambda: None)
     app._state_dump_tick.start(1000)
+
+
+def _install_activation_repair(app, window):
+    """Re-activate BelfrySCAD when macOS has it in front but it never heard
+    so (#703). Every frozen-window dump ends the same way: the app went
+    inactive, and then no input or activation reached it again, though its
+    loop ran and its menu bar still worked -- which needs macOS to have it
+    frontmost. Checked once a second, and only acted on once that has
+    lasted 2 s, once per episode; each repair writes the state dump first,
+    so a report says whether this is what happened."""
+    if sys.platform != "darwin":
+        return
+    from PySide6.QtCore import Qt, QTimer
+    try:
+        rt = _objc_runtime()
+        ns_app = rt.obj(rt.cls("NSApplication"), rt.sel("sharedApplication"))
+        ws = rt.obj(rt.cls("NSWorkspace"), rt.sel("sharedWorkspace"))
+    except Exception:     # noqa: BLE001 -- a repair must never be what fails
+        return
+    pid = os.getpid()
+    seconds = [0]
+
+    def check():
+        try:
+            front = rt.obj(ws, rt.sel("frontmostApplication"))
+            ours = bool(front) and rt.num(front, rt.sel("processIdentifier")) == pid
+            ns_active = rt.flag(ns_app, rt.sel("isActive"))
+            qt_active = app.applicationState() == Qt.ApplicationState.ApplicationActive
+            if not ours or (ns_active and qt_active):
+                seconds[0] = 0
+                return
+            seconds[0] += 1
+            if seconds[0] != 2:
+                return
+            text = (f"\n=== activation repair {_now()}: frontmost but "
+                    f"isActive={ns_active} qtActive={qt_active} ===\n" + _describe_qt_state(app))
+            for stream in (sys.stderr, _crash_stream):
+                if stream is not None:
+                    stream.write(text)
+                    stream.flush()
+            rt.send_bool(ns_app, rt.sel("activateIgnoringOtherApps:"), True)
+            window.raise_()
+            window.activateWindow()
+        except Exception:     # noqa: BLE001
+            pass
+
+    app._activation_repair = QTimer(app)
+    app._activation_repair.timeout.connect(check)
+    app._activation_repair.start(1000)
 
 
 #: The GUI's process name. Batch modes get their own suffixed name below,
