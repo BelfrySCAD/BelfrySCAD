@@ -56,7 +56,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
 - **File format**: `.scad` (OpenSCAD-compatible plain text)
 - **Language**: Full OpenSCAD language (variables, functions, modules, loops, conditionals, all built-in primitives and transforms)
 - **Language extension — `$export_name`**: seeded with the input file's basename before
-  the script runs, assignable by the script, and used (sanitised to `[A-Za-z0-9_+.-]`,
+  the script runs, assignable by the script, and used (sanitised to `[A-Za-z0-9 _+.-]`, edge spaces stripped,
   everything else becoming one underscore each) as the Export dialog's default filename.
   Needed **no evaluator change**: `viewport_params` seeds arbitrary `$`-names and
   `Evaluator.dyn` returns them all. Seeded in the CLI and debugger too, so a script
