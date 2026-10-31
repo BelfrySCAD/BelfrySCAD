@@ -477,6 +477,132 @@ def _rope_moves(path_pts, lengths, pins: set, dragged: int, target) -> list[tupl
     return [(k, new[k]) for k in changed]
 
 
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(16)
+
+
+def _cubic_arc_length(p0, c1, c2, p3) -> float:
+    """One cubic Bezier segment's arc length (16-point Gauss-Legendre)."""
+    t = (_GL_X + 1) / 2
+    omt = 1 - t
+    d = 3 * (np.outer(omt ** 2, c1 - p0) + np.outer(2 * omt * t, c2 - c1) + np.outer(t ** 2, p3 - c2))
+    return float(np.linalg.norm(d, axis=1) @ _GL_W) / 2
+
+
+def _bezier_arc_lengths(pts) -> np.ndarray:
+    """Each segment's arc length, for an open cubic path of 3k+1 points."""
+    pts = np.asarray(pts, dtype=float)
+    return np.array([_cubic_arc_length(*pts[i:i + 4]) for i in range(0, len(pts) - 3, 3)])
+
+
+def _fit_handles_to_length(p0, c1, c2, p3, length):
+    """(c1, c2) scaled about their own ends, keeping their directions, so
+    the segment is `length` long. The ends stay put; at scale 0 it is the
+    chord, which is never longer than `length` here, so a scale exists."""
+    h1, h2 = c1 - p0, c2 - p3
+
+    def at(k):
+        return _cubic_arc_length(p0, p0 + h1 * k, p3 + h2 * k, p3)
+    if abs(at(1.0) - length) < 1e-9:
+        return c1, c2
+    if at(1.0) > length:
+        lo, hi = 0.0, 1.0
+    else:
+        lo, hi = 1.0, 2.0
+        while at(hi) < length and hi < 1e6:
+            lo, hi = hi, hi * 2
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if at(mid) < length else (lo, mid)
+    k = (lo + hi) / 2
+    return p0 + h1 * k, p3 + h2 * k
+
+
+def _rotate_xy(v, cos_a, sin_a):
+    return np.array([v[0] * cos_a - v[1] * sin_a, v[0] * sin_a + v[1] * cos_a, v[2]])
+
+
+def _smooth_and_refit(new, old, arcs, smooth: set, segs) -> None:
+    """In place: at each smooth on-curve point, turn its two handles onto
+    their average direction, then rescale every segment in `segs` so it
+    is its old arc length again. Rescaling keeps handle directions, so the
+    first step's smoothness survives the second."""
+    n = len(new)
+    for v in smooth:
+        if not 0 < v < n - 1:
+            continue
+        a, b = new[v - 1], new[v + 1]
+        t_in, t_out = new[v] - a, b - new[v]
+        n_in, n_out = float(np.linalg.norm(t_in)), float(np.linalg.norm(t_out))
+        if n_in < 1e-12 or n_out < 1e-12:
+            continue
+        avg = t_in / n_in + t_out / n_out
+        na = float(np.linalg.norm(avg))
+        if na < 1e-12:
+            continue
+        avg /= na
+        new[v - 1], new[v + 1] = new[v] - avg * n_in, new[v] + avg * n_out
+    for sg in segs:
+        i = 3 * sg
+        new[i + 1], new[i + 2] = _fit_handles_to_length(new[i], new[i + 1], new[i + 2], new[i + 3], arcs[sg])
+
+
+def _changed(new, old) -> list[tuple[int, np.ndarray]]:
+    return [(k, new[k]) for k in range(len(new)) if not np.allclose(new[k], old[k], atol=1e-12)]
+
+
+def _bezier_rope_moves(path_pts, chords, arcs, pins: set, smooth: set,
+                       dragged: int, target) -> list[tuple[int, np.ndarray]]:
+    """Fixed Length in cubic Bezier mode (#947): every segment keeps its arc
+    length. Dragging an on-curve point solves the on-curve points as a
+    plain Fixed Length path whose links are the segments' chords
+    (_rope_moves), carries each segment's shape rigidly onto its new chord
+    (which keeps its length), then evens out the handles at each smooth
+    point and rescales them back to length. Dragging a handle turns it
+    (and, across a smooth point, its partner) and rescales the segments it
+    belongs to; no on-curve point moves."""
+    pts = np.asarray(path_pts, dtype=float)
+    t = np.asarray(target, dtype=float)
+    n = len(pts)
+    segs = range(len(arcs))
+    if dragged % 3:
+        sg = dragged // 3
+        v = 3 * sg if dragged % 3 == 1 else 3 * sg + 3
+        partner = v - 1 if dragged % 3 == 1 else v + 1
+        new = pts.copy()
+        new[dragged] = t
+        touched = {sg}
+        if v in smooth and 0 <= partner < n and 0 < v < n - 1:
+            d = pts[v] - t
+            dn = float(np.linalg.norm(d))
+            if dn > 1e-12:
+                new[partner] = pts[v] + d / dn * float(np.linalg.norm(pts[partner] - pts[v]))
+                touched.add(partner // 3)
+        _smooth_and_refit(new, pts, arcs, set(), sorted(touched))
+        return _changed(new, pts)
+    chain = pts[0::3]
+    chain_pins = {p // 3 for p in pins if p % 3 == 0}
+    moves = _rope_moves(chain, chords, chain_pins, dragged // 3, t)
+    if not moves:
+        return []
+    new_chain = chain.copy()
+    for k, q in moves:
+        new_chain[k] = q
+    new = pts.copy()
+    for sg in segs:
+        i = 3 * sg
+        o0, o3, q0, q3 = chain[sg], chain[sg + 1], new_chain[sg], new_chain[sg + 1]
+        if np.allclose(o0, q0) and np.allclose(o3, q3):
+            continue
+        do, dq = o3 - o0, q3 - q0
+        ang = np.arctan2(dq[1], dq[0]) - np.arctan2(do[1], do[0])
+        ca, sa = np.cos(ang), np.sin(ang)
+        new[i], new[i + 3] = q0, q3
+        new[i + 1] = q0 + _rotate_xy(pts[i + 1] - o0, ca, sa)
+        new[i + 2] = q3 + _rotate_xy(pts[i + 2] - o3, ca, sa)
+    _smooth_and_refit(new, pts, arcs, smooth, segs)
+    return _changed(new, pts)
+
+
 class PathViewer(QDialog, _UndoableViewerMixin):
     """2D/3D path viewer with vertex table, selectable markers, and hover
     tooltips. Read-only by default; pass `editable=True` for a Save/Cancel
@@ -996,8 +1122,24 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._pins ^= {vi}
         self._rebuild(reframe=False)
 
+    def _bezier_rope_ok(self) -> bool:
+        """A cubic Bezier path whose points make whole segments."""
+        n = len(self._path)
+        return (self._mode() == "bezier" and self._degree_spin.value() == 3
+                and n >= 4 and (n - 1) % 3 == 0)
+
+    def _total_length(self) -> float:
+        """The path's length: its curve's, in a Bezier mode Fixed Length
+        can edit, else its segments'."""
+        if len(self._path) < 2:
+            return 0.0
+        pts = [list(p) + [0.0] * (3 - len(p)) for p in self._path]
+        if self._bezier_rope_ok():
+            return float(_bezier_arc_lengths(pts).sum())
+        return float(_segment_lengths(pts).sum())
+
     def _set_length(self, total: float):
-        old = float(_segment_lengths(self._path).sum()) if len(self._path) > 1 else 0.0
+        old = self._total_length()
         if old <= 0 or abs(total - old) < 5e-4:
             return
         p0 = np.asarray(self._path[0], dtype=float)
@@ -1006,16 +1148,18 @@ class PathViewer(QDialog, _UndoableViewerMixin):
                             for p in self._path], "Set Length")
 
     def _sync_rope(self):
-        """Fixed Length is for an open plain path; the Length field shows
-        the total, and scales the path when typed into."""
+        """Fixed Length is for an open plain path, or an open cubic Bezier
+        one; the Length field shows the total, and scales the path when
+        typed into."""
         n = len(self._path)
-        ok = self._mode() == "path" and not self._closed_cb.isChecked() and n > 1
+        ok = ((self._mode() == "path" or self._bezier_rope_ok())
+              and not self._closed_cb.isChecked() and n > 1)
         if not ok and self._rope_cb.isChecked():
             self._rope_cb.setChecked(False)
         self._rope_cb.setEnabled(ok)
         self._length_spin.setEnabled(n > 1)
         self._length_spin.blockSignals(True)
-        self._length_spin.setValue(float(_segment_lengths(self._path).sum()) if n > 1 else 0.0)
+        self._length_spin.setValue(self._total_length())
         self._length_spin.blockSignals(False)
 
     def _toggle_corner(self, vi: int):
@@ -1142,6 +1286,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self.rope = False
         self.pins: set = set()
         self._rope_lengths = None
+        self._rope_arcs = None
         self._drag_slide = False
         # v0 index -> "disjointed"/"same_angle"/"symmetric" (see
         # _classify_node_type) -- transient, viewer-only state, never
@@ -1426,6 +1571,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         (if anything) needs to move with it." Bezier off, or too few
         points to have a real bezier structure: today's plain single-point
         behavior, unchanged."""
+        if self.rope and self._rope_lengths is not None and self._bezier:
+            smooth = {i for i, t in self._node_types.items() if t != "disjointed"}
+            return _bezier_rope_moves(self._path_pts, self._rope_lengths, self._rope_arcs,
+                                      self.pins, smooth, dragged_idx, new_pos)
         if self.rope and self._rope_lengths is not None:
             if self._drag_slide and dragged_idx == self._drag_vertex_idx:
                 return _slide_moves(self._path_pts, self._rope_lengths, self.pins, dragged_idx, new_pos)
@@ -1447,7 +1596,16 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._show_delta(f"Along: {along:g} of {total:g} ({100 * along / total:.1f}%)")
 
     def _measure_rope(self):
-        self._rope_lengths = _segment_lengths(self._path_pts) if self.rope else None
+        """Lengths held through a drag: each segment's, or in Bezier mode
+        each segment's chord and arc length."""
+        self._rope_lengths = self._rope_arcs = None
+        if not self.rope:
+            return
+        if self._bezier:
+            self._rope_lengths = _segment_lengths(self._path_pts[0::3])
+            self._rope_arcs = _bezier_arc_lengths(self._path_pts)
+        else:
+            self._rope_lengths = _segment_lengths(self._path_pts)
 
     def _emit_moves(self, moves):
         if self.rope:
@@ -1657,10 +1815,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         self._context_menu_suppressed = False
         alt = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
         # Option turns the light, except on a Fixed Length point, where it
-        # slides the point along the path instead (#947).
+        # slides the point along the path instead (#947) -- not yet in
+        # Bezier mode, where it still turns the light.
         if (self._editable
                 and event.button() == Qt.MouseButton.LeftButton
-                and (self.rope or not alt)):
+                and ((self.rope and not self._bezier) or not alt)):
             vi = self._pick_vertex(self._press_pos.x(), self._press_pos.y())
             if vi >= 0:
                 self._drag_vertex_idx = vi
@@ -1695,7 +1854,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             if hit is not None:
                 moves = self._resolve_bezier_moves(self._drag_vertex_idx, hit)
                 self._emit_moves(moves)
-                if self.rope and self._drag_slide and moves:
+                if self.rope and self._drag_slide and moves and not self._bezier:
                     self._show_along(*moves[0])
             return
         if self._last_mouse is None:
@@ -1786,7 +1945,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
                 if not corner.isEnabled():
                     corner.setToolTip("An open curve's ends are corners already")
                 menu.addSeparator()
-            if self.rope:
+            if self.rope and not (self._bezier and vi % 3):     # never a handle
                 pin = menu.addAction("Pin", lambda: self.pin_toggled.emit(vi))
                 pin.setCheckable(True)
                 pin.setChecked(vi == 0 or vi in self.pins)

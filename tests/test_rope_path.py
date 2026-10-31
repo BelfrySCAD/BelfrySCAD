@@ -67,3 +67,79 @@ def test_slide_leaves_ends_and_pins_alone():
     assert _slide_moves(ZIGZAG, L, set(), 0, [1, 1, 0]) == []
     assert _slide_moves(ZIGZAG, L, set(), 4, [1, 1, 0]) == []
     assert _slide_moves(ZIGZAG, L, {2}, 2, [1, 1, 0]) == []
+
+
+# --- Bezier mode: every segment keeps its ARC length -------------------------
+
+from belfryscad.window.data_viewer_path import (  # noqa: E402
+    _bezier_arc_lengths, _bezier_rope_moves, _cubic_arc_length, _fit_handles_to_length)
+
+# Three curved cubic segments, open; on-curve points 0, 3, 6, 9.
+BEZ = np.array([[0, 0, 0], [4, 3, 0], [8, 3, 0], [12, 0, 0],
+                [16, -3, 0], [20, -3, 0], [24, 0, 0],
+                [28, 3, 0], [32, 3, 0], [36, 0, 0]], float)
+ARCS = _bezier_arc_lengths(BEZ)
+CHORDS = _segment_lengths(BEZ[0::3])
+SMOOTH = {3, 6}
+
+
+def bez_drag(pins, i, target, smooth=SMOOTH):
+    out = BEZ.copy()
+    for k, p in _bezier_rope_moves(BEZ, CHORDS, ARCS, pins, smooth, i, np.array(target, float)):
+        out[k] = p
+    assert np.allclose(_bezier_arc_lengths(out), ARCS, atol=1e-7)
+    return out
+
+
+def tangent_turn(pts, v):
+    a, b = pts[v] - pts[v - 1], pts[v + 1] - pts[v]
+    return abs(a[0] * b[1] - a[1] * b[0]) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def test_arc_length_of_a_straight_cubic_is_its_chord():
+    p = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], float)
+    assert np.isclose(_cubic_arc_length(*p), 3)
+
+
+def test_fit_handles_reaches_a_longer_and_a_shorter_length():
+    p0, c1, c2, p3 = BEZ[:4]
+    for want in (ARCS[0] * 1.2, (ARCS[0] + 12) / 2):
+        a, b = _fit_handles_to_length(p0, c1, c2, p3, want)
+        assert np.isclose(_cubic_arc_length(p0, a, b, p3), want)
+
+
+def test_on_curve_drag_keeps_every_arc_length_and_stays_smooth():
+    out = bez_drag(set(), 6, [20, 6, 0])
+    assert np.allclose(out[0], BEZ[0])                       # point 0 never moves
+    assert np.allclose(out[6], [20, 6, 0], atol=1e-6)
+    for v in SMOOTH:
+        assert tangent_turn(out, v) < 1e-9
+
+
+def test_beyond_a_pin_stays_put():
+    out = bez_drag({6}, 3, [12, 4, 0])
+    assert np.allclose(out[6], BEZ[6])
+    assert np.allclose(out[8:], BEZ[8:])
+
+
+def test_a_corner_may_kink():
+    out = bez_drag(set(), 6, [20, 6, 0], smooth=set())
+    assert tangent_turn(out, 3) > 1e-3
+
+
+def test_handle_drag_turns_it_and_its_partner_without_moving_points():
+    out = bez_drag(set(), 4, [16, 0, 0])
+    assert np.allclose(out[0::3], BEZ[0::3])                 # on-curve points stay
+    assert tangent_turn(out, 3) < 1e-9                       # partner followed
+    d = out[4] - out[3]
+    assert np.allclose(d / np.linalg.norm(d), [1, 0, 0])     # the cursor's direction
+
+
+def test_handle_drag_at_a_corner_leaves_the_partner():
+    out = bez_drag(set(), 4, [16, 0, 0], smooth=set())
+    assert np.allclose(out[2], BEZ[2])
+
+
+def test_pinned_and_first_points_do_not_drag_in_bezier_mode():
+    assert _bezier_rope_moves(BEZ, CHORDS, ARCS, {6}, SMOOTH, 6, [1, 1, 0]) == []
+    assert _bezier_rope_moves(BEZ, CHORDS, ARCS, set(), SMOOTH, 0, [1, 1, 0]) == []
