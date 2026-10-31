@@ -136,7 +136,7 @@ The Export dialog's default filename. `belfryscad/export_name.py` holds the whol
 
 Read back **unconditionally**, unlike the `$vp*` values immediately above it, which are filtered through `dyn_explicit`. Those are pre-seeded from the live camera and go stale if the user orbits mid-render; `$export_name` is seeded from a file path that cannot change under it, and the seeded value *is* the wanted default when the script leaves it alone.
 
-Sanitising keeps `[A-Za-z0-9_+.-]` and replaces every other character with one underscore — per character, not per run, so length stays recognisable. Path separators are in the replaced set, so a script cannot steer the dialog out of its directory.
+Sanitising keeps `[A-Za-z0-9 _+.-]` and replaces every other character with one underscore — per character, not per run, so length stays recognisable — then strips leading and trailing spaces. Both path separators, `/` and `\`, are in the replaced set, so a script cannot steer the dialog out of its directory. Spaces were replaced too until #988; nothing about a space is unsafe in a filename.
 
 ## Export
 

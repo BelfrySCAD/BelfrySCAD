@@ -40,7 +40,7 @@ class TestDefaultFromPath:
 
 
 class TestSanitize:
-    """Valid: letters, digits, underscore, dash, plus, period. All else
+    """Valid: letters, digits, space, underscore, dash, plus, period. All else
     becomes an underscore -- one per character, so length is preserved and
     `a//b` reads as `a__b` rather than collapsing."""
 
@@ -49,13 +49,22 @@ class TestSanitize:
         assert sanitize_export_name("ABCxyz089") == "ABCxyz089"
 
     @pytest.mark.parametrize("raw,want", [
-        ("spaces here", "spaces_here"),
         ("sl/ash", "sl_ash"),
+        ("back\\slash", "back_slash"),
         ("a:b*c?d", "a_b_c_d"),
-        ("Lid / Rev 3 (final)", "Lid___Rev_3__final_"),
+        ('<a>"b|c', "_a__b_c"),
+        ("Lid / Rev 3 (final)", "Lid _ Rev 3 _final_"),
     ])
     def test_invalid_characters_become_underscores(self, raw, want):
         assert sanitize_export_name(raw) == want
+
+    def test_spaces_are_kept(self):
+        # #988: "Red Letter" must not come back as "Red_Letter".
+        assert sanitize_export_name("Red Letter") == "Red Letter"
+
+    def test_edge_spaces_are_dropped(self):
+        assert sanitize_export_name("  Red Letter  ") == "Red Letter"
+        assert sanitize_export_name("   ") == ""
 
     def test_one_underscore_per_character_not_per_run(self):
         assert sanitize_export_name("a///b") == "a___b"
@@ -65,6 +74,9 @@ class TestSanitize:
         got = sanitize_export_name("../../etc/passwd")
         assert "/" not in got and "\\" not in got
         assert got == ".._.._etc_passwd"
+        got = sanitize_export_name("..\\..\\Windows\\win.ini")
+        assert "/" not in got and "\\" not in got
+        assert got == ".._.._Windows_win.ini"
 
     def test_non_ascii_is_replaced(self):
         assert sanitize_export_name("Ünïcödé") == "_n_c_d_"
@@ -87,9 +99,9 @@ class TestSanitize:
 
 class TestResolve:
     def test_a_usable_name_is_kept(self):
-        assert resolve_export_name("My Part", "/a/widget.scad") == "My_Part"
+        assert resolve_export_name("My Part", "/a/widget.scad") == "My Part"
 
-    @pytest.mark.parametrize("value", ["", None])
+    @pytest.mark.parametrize("value", ["", None, "  "])
     def test_nothing_usable_falls_back_to_the_file(self, value):
         assert resolve_export_name(value, "/a/widget.scad") == "widget"
 
@@ -147,7 +159,7 @@ class TestRoundTrip:
         assert self._run(tmp_path, '$export_name = "custom";\ncube(1);') == "custom"
 
     def test_the_change_is_sanitised(self, tmp_path):
-        assert self._run(tmp_path, '$export_name = "Lid / Rev 3";\ncube(1);') == "Lid___Rev_3"
+        assert self._run(tmp_path, '$export_name = "Lid / Rev 3";\ncube(1);') == "Lid _ Rev 3"
 
     def test_a_computed_name_works(self, tmp_path):
         body = 'w=30; h=20;\n$export_name = str("plate_", w, "x", h);\ncube(1);'

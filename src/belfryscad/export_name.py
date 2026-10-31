@@ -16,14 +16,15 @@ hands every `$`-variable back after evaluate().
 import os
 
 #: Characters kept as-is in an export filename. Everything else becomes "_".
-#: Letters, digits, underscore, dash, plus, period -- deliberately no space
-#: and no path separator, so the result is safe to drop straight into a save
-#: dialog on any platform.
+#: Letters, digits, space, underscore, dash, plus, period -- deliberately no
+#: path separator (`/` or `\\`), so the result can never name another
+#: directory, and none of Windows' reserved `<>:"|?*`. Spaces are kept
+#: because "Red Letter" is what the author meant (#988).
 _VALID = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "0123456789"
-    "_-+."
+    " _-+."
 )
 
 #: What an unsaved buffer is called, matching the tab title.
@@ -55,7 +56,9 @@ def sanitize_export_name(value) -> str:
     first rather than rejected; the script asked for something and a
     usable name is friendlier than silently falling back.
 
-    Returns "" for an empty or all-empty input, which callers treat as
+    Leading and trailing spaces are dropped.
+
+    Returns "" for an empty or all-space input, which callers treat as
     "no opinion" and fall back to their own default.
     """
     if value is None:
@@ -67,7 +70,9 @@ def sanitize_export_name(value) -> str:
             value = str(int(value))
         else:
             value = str(value)
-    return "".join(c if c in _VALID else "_" for c in value)
+    # Strip edge spaces: Windows silently drops trailing ones, and a leading
+    # one is never what was meant.
+    return "".join(c if c in _VALID else "_" for c in value).strip(" ")
 
 
 #: OpenSCAD's own starting viewport, which it defines for EVERY run --
