@@ -6,5 +6,5 @@ version it belongs to, in the release's own bump commit (see CLAUDE.md's
 Versioning). test_release.py fails when pyproject.toml's version moves on
 without VERSION, so the date cannot be left behind silently.
 """
-VERSION = "1.95.3"
+VERSION = "1.95.4"
 DATE = "2026-10-30"
