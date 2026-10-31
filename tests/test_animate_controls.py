@@ -45,6 +45,34 @@ out["after_dump"] = {"playing": a.is_playing(), "dumping": a.is_dumping(),
                      "dump_ticked": a._dump_check.isChecked(), "timer": a._timer.isActive()}
 a.pause()
 
+# Ticked mid-play (#938): one cycle from the current frame, then plays on.
+b = AnimatePane(); b._steps = 4
+bf = []
+b.frame_changed.connect(lambda t: bf.append(round(t, 3)))
+b.play(); b._step = 2; del bf[:]
+b._dump_check.setChecked(True)
+for _ in range(4):
+    b.advance_frame()
+out["mid_frames"] = list(bf)
+out["after_mid"] = {"playing": b.is_playing(), "dumping": b.is_dumping(),
+                    "dump_ticked": b._dump_check.isChecked(), "timer": b._timer.isActive()}
+# Unticked mid-dump: the dump stops, playback goes on.
+ends = []
+b.dump_finished.connect(ends.append)
+b._dump_check.setChecked(True); b.advance_frame()
+b._dump_check.setChecked(False)
+out["untick"] = {"playing": b.is_playing(), "dumping": b.is_dumping(),
+                 "timer": b._timer.isActive(), "ends": ends}
+# Folder refused mid-play: box unticked, still playing.
+b.dump_started.connect(b.cancel_dump)
+b._dump_check.setChecked(True)
+out["refused_mid"] = {"playing": b.is_playing(), "dumping": b.is_dumping(),
+                      "dump_ticked": b._dump_check.isChecked(), "timer": b._timer.isActive()}
+b.pause()
+# Ticked while paused: nothing until Play.
+b._dump_check.setChecked(True)
+out["paused_tick"] = {"playing": b.is_playing(), "dumping": b.is_dumping()}
+
 w = MainWindow(); w.skip_unsaved_prompts = True
 w._set_render_busy(True)
 out["cursor_render"] = QApplication.overrideCursor() is not None
@@ -72,6 +100,11 @@ def test_animation_controls_show_state_dump_plays_on_and_no_wait_cursor():
     assert out["paused"] == [False, True]
     assert out["dump_frames"] == [0.0, 0.25, 0.5, 0.75, 0.0]
     assert out["after_dump"] == {"playing": True, "dumping": False, "dump_ticked": False, "timer": True}
+    assert out["mid_frames"] == [0.5, 0.75, 0.0, 0.25, 0.5]
+    assert out["after_mid"] == {"playing": True, "dumping": False, "dump_ticked": False, "timer": True}
+    assert out["untick"] == {"playing": True, "dumping": False, "timer": True, "ends": [False]}
+    assert out["refused_mid"] == {"playing": True, "dumping": False, "dump_ticked": False, "timer": True}
+    assert out["paused_tick"] == {"playing": False, "dumping": False}
     assert out["cursor_render"] is True
     assert out["cursor_playing"] is False
     assert out["cursor_end"] is False
@@ -124,6 +157,27 @@ while pane.is_dumping() and time.time() < deadline:
     app.processEvents(); time.sleep(0.01)
 pane.pause()
 out["files"] = sorted(os.listdir(dump))
+
+# Ticked while playing (#938): asks, then saves one cycle from that frame.
+dump2 = tempfile.mkdtemp()
+dump = dump2
+pane._dump_check.setChecked(False)
+pane.play()
+deadline = time.time() + 2
+while time.time() < deadline:       # let ordinary playback run a little
+    app.processEvents(); time.sleep(0.01)
+del logged[:]
+pane._dump_check.setChecked(True)
+start = pane._dump_start
+deadline = time.time() + 60
+while pane.is_dumping() and time.time() < deadline:
+    app.processEvents(); time.sleep(0.01)
+out["mid_files"] = sorted(os.listdir(dump2))
+out["mid_order"] = [t.split()[1] for t in logged if t.startswith("Dumped ")]
+out["mid_start"] = start
+out["mid_after"] = {"playing": pane.is_playing(), "ticked": pane._dump_check.isChecked(),
+                    "complete": any("complete" in t for t in logged)}
+pane.pause()
 print(json.dumps(out), flush=True)
 hard_exit(0)
 '''
@@ -141,3 +195,8 @@ def test_dump_pictures_asks_for_the_folder_before_the_first_frame():
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["refused"] == {"playing": False, "renders": 0, "complete": False}
     assert out["files"] == ["frame0000.png", "frame0001.png", "frame0002.png"]
+    # Ticked mid-play: every frame once, the first being where it was ticked.
+    assert out["mid_files"] == ["frame0000.png", "frame0001.png", "frame0002.png"]
+    k = out["mid_start"]
+    assert out["mid_order"] == [f"frame{(k + i) % 3:04d}.png" for i in range(3)]
+    assert out["mid_after"] == {"playing": True, "ticked": False, "complete": True}
