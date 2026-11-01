@@ -18,6 +18,7 @@ import time
 
 from belfryscad import exporters
 from belfryscad.window import cursors
+from belfryscad.window.aspect_frame import AspectFrame, RATIOS as ASPECT_RATIOS
 from belfryscad.window.editor import CodeEditor
 from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
@@ -1256,7 +1257,9 @@ class MainWindow(QMainWindow):
         # The busy overlay's close box; Escape does the same thing (#530).
         self._viewport.busy_cancel_requested.connect(self._cancel_busy)
         self._viewport.perspective_toggled.connect(self._on_viewport_perspective_toggled)
-        self.setCentralWidget(self._viewport)
+        # In a frame that can hold it at a fixed aspect ratio (View menu).
+        self._viewport_frame = AspectFrame(self._viewport)
+        self.setCentralWidget(self._viewport_frame)
 
         # Corner ownership and nesting must be set before any addDockWidget calls
         # so Qt builds the splitter tree with the correct structure from the start.
@@ -1834,6 +1837,15 @@ class MainWindow(QMainWindow):
             # WindowModal.
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
+        aspect_menu = view_menu.addMenu("Aspect &Ratio")
+        from PySide6.QtGui import QActionGroup
+        aspect_group = QActionGroup(self)
+        for label, ratio in ASPECT_RATIOS:
+            act = aspect_group.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(ratio is None)
+            act.triggered.connect(lambda _=False, r=ratio: self._viewport_frame.set_ratio(r))
+            aspect_menu.addAction(act)
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
         view_menu.addSeparator()
