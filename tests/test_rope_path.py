@@ -143,3 +143,56 @@ def test_handle_drag_at_a_corner_leaves_the_partner():
 def test_pinned_and_first_points_do_not_drag_in_bezier_mode():
     assert _bezier_rope_moves(BEZ, CHORDS, ARCS, {6}, SMOOTH, 6, [1, 1, 0]) == []
     assert _bezier_rope_moves(BEZ, CHORDS, ARCS, set(), SMOOTH, 0, [1, 1, 0]) == []
+
+
+# --- Bezier mode: pulled past straight chords, and Option-drag slides ---------
+
+from belfryscad.window.data_viewer_path import _bezier_slide_moves  # noqa: E402
+
+
+def test_pulled_past_straight_chords_the_curves_straighten():
+    # The chords alone reach 36 along X; the arcs reach further.
+    far = [ARCS.sum() + 5, 0, 0]
+    out = bez_drag(set(), 9, far)
+    reach = float(np.linalg.norm(out[9] - out[0]))
+    assert reach > CHORDS.sum() + 1                       # past chord reach
+    assert reach < ARCS.sum() + 1e-6                      # never past the arcs
+    assert np.allclose(out[0::3, 1], 0, atol=1e-3)        # in a line
+
+
+def test_straightening_only_takes_what_reaching_needs():
+    want = (CHORDS.sum() + ARCS.sum()) / 2
+    out = bez_drag(set(), 9, [want, 0, 0])
+    assert np.allclose(out[9], [want, 0, 0], atol=1e-6)
+
+
+def test_a_straightened_curve_bows_again_when_slack():
+    taut = bez_drag(set(), 9, [ARCS.sum() + 5, 0, 0])
+    out = taut.copy()      # off the line: a dead-straight chain can't fold (FABRIK)
+    for k, p in _bezier_rope_moves(taut, CHORDS, ARCS, set(), SMOOTH, 9, np.array([30.0, 2, 0])):
+        out[k] = p
+    assert np.allclose(_bezier_arc_lengths(out), ARCS, atol=1e-7)
+    assert np.allclose(out[9], [30, 2, 0], atol=1e-6)
+
+
+def slide(i, target, pins=frozenset()):
+    out = BEZ.copy()
+    for k, p in _bezier_slide_moves(BEZ, ARCS, set(pins), SMOOTH, i, np.array(target, float)):
+        out[k] = p
+    return out
+
+
+def test_slide_trades_arc_length_and_keeps_the_total():
+    out = slide(3, [18, -2, 0])
+    arcs = _bezier_arc_lengths(out)
+    assert np.isclose(arcs.sum(), ARCS.sum(), atol=1e-7)
+    assert arcs[0] > ARCS[0] + 1 and np.isclose(arcs[2], ARCS[2], atol=1e-7)
+    assert np.allclose(out[[0, 6, 9]], BEZ[[0, 6, 9]])     # other on-curve points stay
+    assert np.allclose(out[7:], BEZ[7:])                   # and the segment beyond
+    for v in SMOOTH:
+        assert tangent_turn(out, v) < 1e-9
+
+
+def test_slide_leaves_ends_handles_and_pins_alone():
+    for i, pins in ((0, ()), (9, ()), (4, ()), (3, (3,))):
+        assert _bezier_slide_moves(BEZ, ARCS, set(pins), SMOOTH, i, np.array([5.0, 5, 0])) == []
