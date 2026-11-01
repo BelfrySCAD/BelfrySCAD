@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.98.0" date="2026-11-01">
+      <description>
+        <p>The code editor can be split into several views of the same file, side by side or stacked</p>
+      </description>
+    </release>
     <release version="1.97.1" date="2026-11-01">
       <description>
         <p>Fixed more crashes on macOS 27.2 by moving to Qt 6.11.3</p>
