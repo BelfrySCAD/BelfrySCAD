@@ -1,46 +1,21 @@
-"""Holds the main viewport at a fixed aspect ratio (View ▸ Aspect Ratio).
+"""View ▸ Aspect Ratio: resize the main window so its viewport has a ratio.
 
-The viewport itself is resized to the ratio and centred, with bars in the
-space left over, rather than drawn letterboxed inside its own widget. So
-picking, the camera's projection, the size label and every capture
-(Save Image, Copy Image, animation frames) see a viewport of exactly that
-shape, with no change to any of them.
+A one-off resize, not a constraint: the window is free to be resized
+afterwards. The viewport is resized rather than drawn letterboxed, so
+picking, the projection, the size label and every capture (Save Image,
+Copy Image, animation frames) get exactly that shape.
 """
 
-from PySide6.QtWidgets import QWidget
-
-# (menu label, width / height); None is the default, filling the space.
-RATIOS = [("&Fill Window", None), ("&1:1", 1.0), ("&4:3", 4 / 3), ("&3:2", 3 / 2),
+# (menu label, width / height)
+RATIOS = [("&1:1", 1.0), ("&4:3", 4 / 3), ("&3:2", 3 / 2),
           ("16:1&0", 16 / 10), ("16:&9", 16 / 9), ("&2:1", 2.0)]
 
 
-def fit(w: int, h: int, ratio: float | None) -> tuple[int, int, int, int]:
-    """(x, y, w, h): the largest rectangle of `ratio` centred in w x h."""
-    if not ratio or w <= 0 or h <= 0:
-        return 0, 0, w, h
-    fw, fh = (w, round(w / ratio)) if w / h <= ratio else (round(h * ratio), h)
-    return (w - fw) // 2, (h - fh) // 2, fw, fh
-
-
-class AspectFrame(QWidget):
-    def __init__(self, child: QWidget, parent=None):
-        super().__init__(parent)
-        self._child = child
-        self._ratio = None
-        child.setParent(self)
-        self.setMinimumSize(child.minimumSize())
-        child.setMinimumSize(1, 1)
-
-    def ratio(self) -> float | None:
-        return self._ratio
-
-    def set_ratio(self, ratio: float | None):
-        self._ratio = ratio
-        self._place()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._place()
-
-    def _place(self):
-        self._child.setGeometry(*fit(self.width(), self.height(), self._ratio))
+def target(vw: int, vh: int, ratio: float, max_vh: int) -> tuple[int, int]:
+    """The viewport size to aim for: its width kept and its height fitted,
+    or, when that height won't fit on screen (`max_vh`), its height kept
+    and its width fitted."""
+    th = round(vw / ratio)
+    if th <= max_vh:
+        return vw, th
+    return round(vh * ratio), vh

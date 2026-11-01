@@ -18,7 +18,7 @@ import time
 
 from belfryscad import exporters
 from belfryscad.window import cursors
-from belfryscad.window.aspect_frame import AspectFrame, RATIOS as ASPECT_RATIOS
+from belfryscad.window import aspect_frame
 from belfryscad.window.editor import CodeEditor
 from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
@@ -1257,9 +1257,7 @@ class MainWindow(QMainWindow):
         # The busy overlay's close box; Escape does the same thing (#530).
         self._viewport.busy_cancel_requested.connect(self._cancel_busy)
         self._viewport.perspective_toggled.connect(self._on_viewport_perspective_toggled)
-        # In a frame that can hold it at a fixed aspect ratio (View menu).
-        self._viewport_frame = AspectFrame(self._viewport)
-        self.setCentralWidget(self._viewport_frame)
+        self.setCentralWidget(self._viewport)
 
         # Corner ownership and nesting must be set before any addDockWidget calls
         # so Qt builds the splitter tree with the correct structure from the start.
@@ -1838,14 +1836,9 @@ class MainWindow(QMainWindow):
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
         aspect_menu = view_menu.addMenu("Aspect &Ratio")
-        from PySide6.QtGui import QActionGroup
-        aspect_group = QActionGroup(self)
-        for label, ratio in ASPECT_RATIOS:
-            act = aspect_group.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(ratio is None)
-            act.triggered.connect(lambda _=False, r=ratio: self._viewport_frame.set_ratio(r))
-            aspect_menu.addAction(act)
+        for label, ratio in aspect_frame.RATIOS:
+            self._add_action(aspect_menu, label,
+                             lambda r=ratio: self._set_viewport_aspect(r))
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
         view_menu.addSeparator()
@@ -2136,6 +2129,26 @@ class MainWindow(QMainWindow):
         menu.addAction(f"Copy {var}", lambda: QApplication.clipboard().setText(strings[var]))
         menu.addAction("Copy all $vp* values", lambda: QApplication.clipboard().setText(full))
         menu.exec(label.mapToGlobal(pos))
+
+    def _set_viewport_aspect(self, ratio: float):
+        """View ▸ Aspect Ratio: resize the window so the viewport has
+        `ratio`. Docks share any change in size, so it is measured and
+        corrected a few times rather than computed once."""
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        avail = self.screen().availableGeometry()
+        for _ in range(4):
+            QApplication.processEvents()
+            vw, vh = self._viewport.width(), self._viewport.height()
+            chrome_h = self.frameGeometry().height() - vh
+            tw, th = aspect_frame.target(vw, vh, ratio, avail.height() - chrome_h)
+            if (tw, th) == (vw, vh):
+                break
+            self.resize(self.width() + tw - vw, self.height() + th - vh)
+        # Back on screen if it grew past an edge.
+        g = self.frameGeometry()
+        self.move(max(avail.left(), min(g.left(), avail.right() - g.width() + 1)),
+                  max(avail.top(), min(g.top(), avail.bottom() - g.height() + 1)))
 
     def _update_size_label(self, _w: int, _h: int):
         w = self._viewport.width()
