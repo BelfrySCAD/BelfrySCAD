@@ -225,8 +225,10 @@ def _eyedropper_cursor(size: int = 32):
     from PySide6.QtSvg import QSvgRenderer
     from PySide6.QtCore import QRectF
 
+    from belfryscad.window import cursors
+
     path = _ICONS_DIR / "eyedropper.svg"
-    if not path.exists():
+    if not path.exists() or cursors.image_cursors_broken():
         return QCursor(Qt.CursorShape.CrossCursor)
 
     ratio = 2

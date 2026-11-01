@@ -17,6 +17,7 @@ import threading
 import time
 
 from belfryscad import exporters
+from belfryscad.window import cursors
 from belfryscad.window.editor import CodeEditor
 from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
@@ -3636,7 +3637,7 @@ class MainWindow(QMainWindow):
         if want != self._wait_cursor:
             self._wait_cursor = want
             if want:
-                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                QApplication.setOverrideCursor(cursors.shape(Qt.CursorShape.WaitCursor))
             else:
                 QApplication.restoreOverrideCursor()
 
@@ -6703,7 +6704,7 @@ class MainWindow(QMainWindow):
         cancel = CancelSignal()
         timer = threading.Timer(self._VALUE_EVAL_TIMEOUT_S, cancel.request)
         tmp = None
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.setOverrideCursor(cursors.shape(Qt.CursorShape.WaitCursor))
         try:
             tmp = scad_temp.write_temp_scad(f"{text}\n{probe} = {name};\n",
                                             near=tab.resolve_near or tab.file_path)

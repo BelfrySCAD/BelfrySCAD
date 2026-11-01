@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayou
 
 from belfryscad import turtle, turtle3d
 from belfryscad.engine.renderer import _axis_extent, _drawn_spacings
+from belfryscad.window import cursors
 from belfryscad.window.background_image import restore_session_background
 from belfryscad.window.data_viewer_common import (open_large, _UndoableViewerMixin,
                                                   _lit_marker_triangles,
@@ -307,7 +308,7 @@ class _TurtleViewport(_PathViewport):
             return
         pos = event.position().toPoint()
         handle = self.start_handle_at(pos)
-        self.setCursor(Qt.CursorShape.SizeAllCursor if handle == "move" or self.joint_at(pos) >= 0
+        self.setCursor(cursors.shape(Qt.CursorShape.SizeAllCursor) if handle == "move" or self.joint_at(pos) >= 0
                        else Qt.CursorShape.CrossCursor if handle == "turn"
                        else Qt.CursorShape.ArrowCursor)
         self.hover = event.position().toPoint() if not event.buttons() else None
