@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.96.0" date="2026-10-31">
+      <description>
+        <p>Fixed Length in the path editor now works in Bezier and NURBS modes, keeping the curve's length as points are dragged or slid along it</p>
+      </description>
+    </release>
     <release version="1.95.5" date="2026-10-31">
       <description>
         <p>On macOS, a window that macOS has in front but that never heard it was activated re-activates itself</p>
