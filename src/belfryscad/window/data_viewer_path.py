@@ -679,6 +679,14 @@ def _bezier_rope_moves(path_pts, chords, arcs, pins: set, smooth: set,
     return _changed(new, pts)
 
 
+#: Pins are the editor's, never written into the script, so a path reopened
+#: for more editing came back with none (#947). Kept for the session, keyed
+#: by the points exactly as Save wrote them: reopening those same points
+#: brings their pins back, and points changed by hand match nothing.
+# ponytail: grows by one entry per pinned path saved; it is a session's worth.
+_session_pins: dict[str, frozenset] = {}
+
+
 class PathViewer(QDialog, _UndoableViewerMixin):
     """2D/3D path viewer with vertex table, selectable markers, and hover
     tooltips. Read-only by default; pass `editable=True` for a Save/Cancel
@@ -706,7 +714,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             path_value, self._is_2d, self, editable=editable)
         self._corners = set(corners or ())
         self._vp.corners = self._corners
-        self._pins: set = set()
+        self._pins: set = set(_session_pins.get(_format_value(path_value), ()))
         self._vp.pins = self._pins
         _sync_viewport_to_main_window(self._vp)
         # The view's own controls sit under it, and the dialog's buttons
@@ -1086,7 +1094,10 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._commit_value(new_value, "Edit Vertex")
 
     def _on_save(self):
-        self.committed.emit(_format_value(self._path))
+        text = _format_value(self._path)
+        if self._pins:
+            _session_pins[text] = frozenset(self._pins)
+        self.committed.emit(text)
         self.accept()
 
     def _on_vert_table_selection(self):
