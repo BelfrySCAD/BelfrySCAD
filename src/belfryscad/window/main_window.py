@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
+    QSplitter,
 )
 from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFont,
                            QIcon, QShortcut, QUndoCommand, QUndoGroup,
@@ -359,7 +360,7 @@ class _TextEditCmd(QUndoCommand):
         return True
 
     def _set_cursor(self, pos, changed=None):
-        _place_cursor(self._editor, pos, changed)
+        _place_cursor(self._tab.views.active, pos, changed)
 
     def undo(self):
         self._tab._suppress_text_undo = True
@@ -452,10 +453,16 @@ class FileTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        #: The primary view: the one whose text is saved, rendered, undone
+        #: and shared with other windows. Splits (View > Split) are copies
+        #: kept equal to it -- see `views` and `_mirror_from`.
         self.editor = CodeEditor()
-        layout.addWidget(self.editor)
+        self.views = self.editor.views
+        self._mirroring = False
+        self._layout.addWidget(self.editor)
+        self._watch_view(self.editor)
         self.chat_id = FileTab._next_chat_id
         FileTab._next_chat_id += 1
         self.file_path = None
@@ -491,6 +498,105 @@ class FileTab(QWidget):
         #: between windows (`_tear_off_tab` opens a fresh tab in the new
         #: one), so a stack belongs to one group for life.
         self.undo_stack = QUndoStack()
+
+    def _watch_view(self, view):
+        view.document().contentsChanged.connect(lambda v=view: self._mirror_from(v))
+
+    def _mirror_from(self, src):
+        """Copy an edit in view `src` into every other view of the file.
+
+        Each view has its own document: one shared document would fold,
+        and wrap at one width, in every view at once. Only the changed span
+        is replaced, so each view keeps its scroll, folds and caret. The
+        primary goes last, since MainWindow._on_editor_changed fires as it
+        changes and the other views must already be up to date by then.
+        """
+        if self._mirroring or len(self.views) < 2:
+            return
+        text = src.toPlainText()
+        self._mirroring = True
+        try:
+            for v in sorted((v for v in self.views if v is not src),
+                            key=lambda v: v is self.editor):
+                _replace_text_keeping_scroll(v, text)
+        finally:
+            self._mirroring = False
+        lines = (src.breakpoint_lines(), src.bookmark_lines())
+        for v in self.views:
+            if v is not src and (v.breakpoint_lines(), v.bookmark_lines()) != lines:
+                v._breakpoint_marks.set_lines(sorted(lines[0]))
+                v._bookmarks.set_lines(lines[1])
+                v._line_number_area.update()
+        # Highlights src re-made before the others had the edit (its Find
+        # bar re-searching, say) were copied at the old text's positions.
+        src._share_highlights(force=True)
+
+    def split(self, view, orientation) -> "CodeEditor":
+        """A new view of the file beside `view`, sharing its space."""
+        new = CodeEditor()
+        new.views = self.views
+        new.setPlainText(self.editor.toPlainText())
+        QPlainTextEdit.setReadOnly(new, self.editor.isReadOnly())
+        new._breakpoint_marks.set_lines(sorted(self.editor.breakpoint_lines()))
+        new._bookmarks.set_lines(self.editor.bookmark_lines())
+        self.views.append(new)
+        self._watch_view(new)
+        # Room for a few lines and a readable width in every split (#506).
+        fm = view.fontMetrics()
+        for v in (view, new):
+            v.setMinimumSize(30 * fm.horizontalAdvance("M"), 4 * fm.lineSpacing())
+        parent = view.parentWidget()
+        if isinstance(parent, QSplitter) and parent.orientation() == orientation:
+            i = parent.indexOf(view)
+            sizes = parent.sizes()
+            parent.insertWidget(i + 1, new)
+            sizes[i:i + 1] = [sizes[i] // 2, sizes[i] - sizes[i] // 2]
+            parent.setSizes(sizes)
+        else:
+            splitter = QSplitter(orientation)
+            splitter.setChildrenCollapsible(False)
+            self._replace_child(parent, view, splitter)
+            splitter.addWidget(view)
+            splitter.addWidget(new)
+            view.show()
+            half = (view.width() if orientation == Qt.Orientation.Horizontal else view.height()) // 2
+            splitter.setSizes([max(half, 1), max(half, 1)])
+        new.verticalScrollBar().setValue(view.verticalScrollBar().value())
+        view._share_highlights(force=True)
+        return new
+
+    def close_split(self, view) -> bool:
+        """Remove a split view; the primary stays. False if it can't go."""
+        if view is self.editor or view not in self.views:
+            return False
+        self.views.remove(view)
+        if self.views.active is view:
+            self.views.active = self.editor
+        splitter = view.parentWidget()
+        view.setParent(None)
+        view.deleteLater()
+        if splitter.count() == 1:
+            only = splitter.widget(0)
+            self._replace_child(splitter.parentWidget(), splitter, only)
+            only.show()
+            # Out of its parent now, not when deleteLater gets round to it,
+            # or that parent still counts it as a second child.
+            splitter.setParent(None)
+            splitter.deleteLater()
+        return True
+
+    def _replace_child(self, parent, old, new):
+        """Put `new` where `old` is, in the tab or in a splitter. Not
+        QSplitter.replaceWidget: PySide deletes the widget it hands back,
+        and that is a view still in use."""
+        if parent is self:
+            self._layout.replaceWidget(old, new)
+            # Alone again: no split to keep a minimum size for.
+            new.setMinimumSize(0, 0)
+        else:
+            sizes = parent.sizes()
+            parent.insertWidget(parent.indexOf(old), new)
+            parent.setSizes(sizes)
 
     def display_name(self):
         if self.file_path:
@@ -1839,6 +1945,16 @@ class MainWindow(QMainWindow):
         for label, ratio in aspect_frame.RATIOS:
             self._add_action(aspect_menu, label,
                              lambda r=ratio: self._set_viewport_aspect(r))
+        # Splits of the current tab's editor, beside or below the view last
+        # worked in (#506); the editor's right-click menu has them too.
+        self._add_action(view_menu, "Split Rig&ht",
+                         lambda: self._split_view(Qt.Orientation.Horizontal),
+                         QKeySequence("Ctrl+\\"))
+        self._add_action(view_menu, "Split Belo&w",
+                         lambda: self._split_view(Qt.Orientation.Vertical),
+                         QKeySequence("Ctrl+Shift+\\"))
+        self._act_close_split = self._add_action(view_menu, "Close Spli&t", self._close_split)
+        self._act_close_split.setEnabled(False)
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
         view_menu.addSeparator()
@@ -2037,33 +2153,11 @@ class MainWindow(QMainWindow):
     def _new_document(self):
         tab = FileTab()
         self._adopt_undo_stack(tab)
-        tab._last_revision = tab.editor.document().revision()
+        tab.editor._last_revision = tab.editor.document().revision()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
         )
-        tab.editor.cursorPositionChanged.connect(
-            lambda t=tab: self._on_editor_cursor_moved(t)
-        )
-        tab.editor.go_to_definition_requested.connect(
-            lambda word, t=tab: self._go_to_definition(t, word)
-        )
-        tab.editor.open_include_requested.connect(
-            lambda target, t=tab: self._open_include(t, target)
-        )
-        tab.editor.edit_parameter_requested.connect(
-            lambda word, t=tab: self._edit_customizer_parameter(t, word)
-        )
-        tab.editor.print_to_console.connect(self._on_debug_print)
-        tab.editor.print_value_to_console.connect(self._on_debug_print_value)
-        tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
-        tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
-        tab.editor.choose_color_requested.connect(self._choose_color)
-        tab.editor.replace_with_value_requested.connect(
-            lambda name, a, b, t=tab: self._replace_with_value(t, name, a, b))
-        tab.editor.value_nudged.connect(
-            lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
-        tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
-        tab.editor.use_library_requested.connect(self._open_use_library)
+        self._wire_editor(tab, tab.editor)
         if hasattr(self, '_act_word_wrap'):
             self._apply_preferences_to_tab(
                 tab,
@@ -2080,6 +2174,71 @@ class MainWindow(QMainWindow):
         # model must not stay on screen looking like its output.
         self._clear_viewport()
         return tab
+
+    def _wire_editor(self, tab, editor):
+        """Connect one view of `tab` -- the primary, or a split -- to the
+        window. Only the primary's document feeds _on_editor_changed: a
+        split's edits reach it through FileTab._mirror_from."""
+        editor.cursorPositionChanged.connect(
+            lambda t=tab, e=editor: self._on_editor_cursor_moved(t, e))
+        editor.view_focused.connect(lambda t=tab, e=editor: self._on_view_focused(t, e))
+        editor.go_to_definition_requested.connect(
+            lambda word, t=tab: self._go_to_definition(t, word))
+        editor.open_include_requested.connect(
+            lambda target, t=tab: self._open_include(t, target))
+        editor.edit_parameter_requested.connect(
+            lambda word, t=tab: self._edit_customizer_parameter(t, word))
+        editor.print_to_console.connect(self._on_debug_print)
+        editor.print_value_to_console.connect(self._on_debug_print_value)
+        editor.breakpoints_changed.connect(self._on_breakpoints_changed)
+        editor.source_edited_externally.connect(lambda t=tab: self._render(t))
+        editor.choose_color_requested.connect(self._choose_color)
+        editor.replace_with_value_requested.connect(
+            lambda name, a, b, t=tab: self._replace_with_value(t, name, a, b))
+        editor.value_nudged.connect(
+            lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
+        editor.value_nudge_status.connect(self._on_value_nudge_status)
+        editor.use_library_requested.connect(self._open_use_library)
+        editor.split_requested.connect(self._split_view)
+        editor.close_split_requested.connect(self._close_split)
+
+    def _on_view_focused(self, tab, editor):
+        """A different view of `tab` took the focus: the next edit's undo
+        step starts from ITS caret, not the last view's (#389)."""
+        tab._last_cursor = _cursor_position(editor)
+        self._sync_split_actions()
+
+    def _split_view(self, orientation):
+        tab = self._current_tab()
+        if not tab:
+            return
+        new = tab.split(tab.views.active, orientation)
+        new._last_revision = new.document().revision()
+        self._wire_editor(tab, new)
+        self._apply_preferences_to_tab(
+            tab,
+            QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
+            load_preference("editor/indentSize", int),
+            load_preference("editor/showColumnGuide", bool),
+            parse_guide_columns(load_preference("editor/columnGuide")),
+            views=[new])
+        self._apply_word_wrap_to_tab(tab)
+        if tab.root_scope is not None:
+            new._update_user_names_here(tab.root_scope, tab._last_parse_path)
+        new.setFocus()
+        self._sync_split_actions()
+
+    def _close_split(self):
+        tab = self._current_tab()
+        if tab and tab.close_split(tab.views.active):
+            tab.views.active.setFocus()
+        self._sync_split_actions()
+
+    def _sync_split_actions(self):
+        tab = self._current_tab()
+        if hasattr(self, "_act_close_split"):
+            self._act_close_split.setEnabled(
+                bool(tab) and tab.views.active is not tab.editor)
 
     def _sync_tab_label(self, idx: int, tab: "FileTab"):
         """Set a tab's label and its tooltip together.
@@ -2165,6 +2324,7 @@ class MainWindow(QMainWindow):
         if tab:
             # Undo/Redo act on what you are looking at.
             tab.undo_stack.setActive(True)
+            self._sync_split_actions()
             self._customizer_pane.set_file_path(tab.file_path)
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
@@ -2375,7 +2535,7 @@ class MainWindow(QMainWindow):
                 if is_modified:
                     win_tab.is_modified = True
 
-    def _on_editor_cursor_moved(self, tab):
+    def _on_editor_cursor_moved(self, tab, editor):
         """Keep `_last_cursor` current while the cursor moves WITHOUT an edit.
 
         `_TextEditCmd` takes its `cursor_before` from `_last_cursor`, and
@@ -2390,9 +2550,13 @@ class MainWindow(QMainWindow):
         """
         if getattr(tab, '_suppress_text_undo', False):
             return
-        if tab.editor.document().revision() != getattr(tab, '_last_revision', -1):
+        # Only the view being worked in: the others' carets move when an
+        # edit is copied into them.
+        if editor is not tab.views.active:
             return
-        tab._last_cursor = _cursor_position(tab.editor)
+        if editor.document().revision() != getattr(editor, '_last_revision', -1):
+            return
+        tab._last_cursor = _cursor_position(editor)
 
     def _log_modified_diagnostic(self, tab):
         """Why did this tab just become modified? For #394, which nobody can
@@ -2436,10 +2600,13 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         if idx >= 0:
             self._sync_tab_label(idx, tab)
-        tab._last_revision = tab.editor.document().revision()
+        for v in tab.views:
+            v._last_revision = v.document().revision()
         if getattr(tab, '_suppress_text_undo', False):
             return
-        cursor_after = _cursor_position(tab.editor)
+        # The edit's own caret: a split's edit reaches the primary as a copy,
+        # which moved the primary's caret to somewhere else.
+        cursor_after = _cursor_position(tab.views.active)
         before = getattr(tab, '_last_text', current)
         cursor_before = getattr(tab, '_last_cursor', 0)
         tab._last_text = current
@@ -2506,33 +2673,11 @@ class MainWindow(QMainWindow):
         tab._suppress_text_undo = False
         tab.editor.setPlainText(text)
         tab.is_modified = False
-        tab._last_revision = tab.editor.document().revision()
+        tab.editor._last_revision = tab.editor.document().revision()
         tab.editor.document().contentsChanged.connect(
             lambda t=tab: self._on_editor_changed(t)
         )
-        tab.editor.cursorPositionChanged.connect(
-            lambda t=tab: self._on_editor_cursor_moved(t)
-        )
-        tab.editor.go_to_definition_requested.connect(
-            lambda word, t=tab: self._go_to_definition(t, word)
-        )
-        tab.editor.open_include_requested.connect(
-            lambda target, t=tab: self._open_include(t, target)
-        )
-        tab.editor.edit_parameter_requested.connect(
-            lambda word, t=tab: self._edit_customizer_parameter(t, word)
-        )
-        tab.editor.print_to_console.connect(self._on_debug_print)
-        tab.editor.print_value_to_console.connect(self._on_debug_print_value)
-        tab.editor.breakpoints_changed.connect(self._on_breakpoints_changed)
-        tab.editor.source_edited_externally.connect(lambda t=tab: self._render(t))
-        tab.editor.choose_color_requested.connect(self._choose_color)
-        tab.editor.replace_with_value_requested.connect(
-            lambda name, a, b, t=tab: self._replace_with_value(t, name, a, b))
-        tab.editor.value_nudged.connect(
-            lambda a, b, txt, t=tab: self._on_value_nudged(t, a, b, txt))
-        tab.editor.value_nudge_status.connect(self._on_value_nudge_status)
-        tab.editor.use_library_requested.connect(self._open_use_library)
+        self._wire_editor(tab, tab.editor)
         self._apply_preferences_to_tab(
             tab,
             QFont(load_preference("editor/fontFamily"), load_preference("editor/fontSize", int)),
@@ -4454,7 +4599,7 @@ class MainWindow(QMainWindow):
                         return
                     target_tab = self._create_and_add_tab(def_file, text)
 
-        target_tab.editor.scroll_to_line(def_line)
+        target_tab.views.active.scroll_to_line(def_line)
         idx = self._tabs.indexOf(target_tab)
         if idx >= 0:
             self._tabs.setCurrentIndex(idx)
@@ -5491,8 +5636,9 @@ class MainWindow(QMainWindow):
         return dlg
 
     def _current_editor(self):
+        """The view of the current tab last worked in (View > Split)."""
         tab = self._current_tab()
-        return tab.editor if tab else None
+        return tab.views.active if tab else None
 
     # ------------------------------------------------------------------
     # View operations
@@ -6002,17 +6148,18 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _apply_preferences_to_tab(tab, font: QFont, indent: int, show_guide: bool,
-                                  guide_cols: list[int]):
-        tab.editor.setFont(font)
-        tab.editor.set_indent_size(indent)
-        tab.editor._column_guide.set_columns(guide_cols)
-        tab.editor._column_guide.setVisible(show_guide)
-        tab.editor.set_append_line_on_down(
-            load_preference("editor/appendLineOnDownArrow", type_=bool))
-        tab.editor.set_highlight_current_line(
-            load_preference("editor/highlightCurrentLine", type_=bool))
-        tab.editor.set_auto_close(load_preference("editor/autoCloseBrackets", type_=bool))
-        tab.editor.set_indent_with_tabs(load_preference("editor/indentWithTabs", type_=bool))
+                                  guide_cols: list[int], views=None):
+        for editor in views or tab.views:
+            editor.setFont(font)
+            editor.set_indent_size(indent)
+            editor._column_guide.set_columns(guide_cols)
+            editor._column_guide.setVisible(show_guide)
+            editor.set_append_line_on_down(
+                load_preference("editor/appendLineOnDownArrow", type_=bool))
+            editor.set_highlight_current_line(
+                load_preference("editor/highlightCurrentLine", type_=bool))
+            editor.set_auto_close(load_preference("editor/autoCloseBrackets", type_=bool))
+            editor.set_indent_with_tabs(load_preference("editor/indentWithTabs", type_=bool))
 
     def _park_idle_dock_tabbars(self):
         """Move dock tab bars that have nothing to show out of the way.
@@ -6262,7 +6409,8 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QPlainTextEdit
         enabled = self._act_word_wrap.isChecked()
         mode = QPlainTextEdit.LineWrapMode.WidgetWidth if enabled else QPlainTextEdit.LineWrapMode.NoWrap
-        tab.editor.setLineWrapMode(mode)
+        for editor in tab.views:
+            editor.setLineWrapMode(mode)
 
     def _current_debugger_splitter_orientation(self):
         if self._debugger_dock.isFloating():
@@ -6782,7 +6930,7 @@ class MainWindow(QMainWindow):
             start, lambda _offset: None,
             merge_id=1004, label="Adjust Value", viewport=self._viewport,
         ))
-        tab.editor.arm_value_nudge((start, start + len(new_text)))
+        tab.views.active.arm_value_nudge((start, start + len(new_text)))
         self._value_nudge_tab = tab
         self._value_nudge_timer.start(self._VALUE_NUDGE_RENDER_DELAY_MS)
 
