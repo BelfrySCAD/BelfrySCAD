@@ -435,6 +435,28 @@ class LineNumberArea(QWidget):
             menu.exec(event.globalPos())
 
 
+class ViewGroup(list):
+    """Every view of one file, the primary first (View > Split, #506).
+
+    Each view is its own CodeEditor on its own copy of the text (FileTab
+    keeps the copies equal), so folds, wrapping and scrolling are per view.
+    What is about the FILE rather than the view is kept the same in all of
+    them: highlights (see _SHARED_HIGHLIGHTS), breakpoints and bookmarks,
+    read-only, debug values and completion names. `active` is the view last
+    focused, the one that moves its caret when something is shown."""
+
+    def __init__(self, views):
+        super().__init__(views)
+        self.active = views[0]
+        self.sharing = False
+
+
+#: Highlights that belong to the file, so every view shows them. The
+#: current-line band and bracket match follow each view's own caret.
+_SHARED_HIGHLIGHTS = ("_coverage_selections", "_error_selections", "_selection_extra",
+                      "_find_selections", "_exec_selection")
+
+
 class _LineMarks:
     """Marked lines that stay on their text: a cursor anchored at each, so
     a mark moves as lines are added or removed above it, and deleting a
@@ -456,6 +478,11 @@ class _LineMarks:
     def lines(self) -> list[int]:
         """0-indexed block numbers, ascending."""
         return sorted({c.blockNumber() for c in self._cursors})
+
+    def set_lines(self, lines):
+        """Mark exactly `lines` (0-indexed), as another view of the file has them."""
+        self._cursors = [QTextCursor(self._doc.findBlockByNumber(n)) for n in lines]
+        self._lines = self.lines()
 
     def toggle(self, line: int):
         kept = [c for c in self._cursors if c.blockNumber() != line]
@@ -1444,9 +1471,15 @@ class CodeEditor(QPlainTextEdit):
     value_nudge_status = Signal(str)           # status-bar text while armed, "" when not
     use_library_requested = Signal()           # emits to open the Use Library picker
     replace_with_value_requested = Signal(str, int, int)  # (name, start, end) of a computed assignment
+    view_focused = Signal()                    # this view took the keyboard focus
+    split_requested = Signal(object)           # a Qt.Orientation: split this view
+    close_split_requested = Signal()           # close this view (a split, not the primary)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        #: This file's views; just this one until FileTab splits it.
+        self.views = ViewGroup([self])
+        self._shared_refs = ()
         self._line_number_area = LineNumberArea(self)
         self._highlighter = OpenSCADHighlighter(self.document())
         on_appearance_change(self, self._retheme)
@@ -2101,6 +2134,17 @@ class CodeEditor(QPlainTextEdit):
                 return
         super().mousePressEvent(event)
 
+    def focusInEvent(self, event):
+        self.views.active = self
+        self.view_focused.emit()
+        super().focusInEvent(event)
+
+    def setReadOnly(self, read_only: bool):
+        """For every view of the file: an Edit-as dialog's lock, or a
+        read-only file, must not leave a split editable."""
+        for v in self.views:
+            QPlainTextEdit.setReadOnly(v, read_only)
+
     def focusOutEvent(self, event):
         # Switching tabs or clicking the viewport ends it too -- otherwise
         # the status bar keeps promising arrow keys this editor no longer
@@ -2189,11 +2233,12 @@ class CodeEditor(QPlainTextEdit):
         sel.cursor.setPosition(end_offset, sel.cursor.MoveMode.KeepAnchor)
         self._selection_extra = [sel]
         self._refresh_extra_selections()
-        # Scroll to the selected node
-        c = self.textCursor()
+        # Scroll to the selected node, in the view last worked in
+        view = self.views.active
+        c = view.textCursor()
         c.setPosition(start_offset)
-        self.setTextCursor(c)
-        self.ensureCursorVisible()
+        view.setTextCursor(c)
+        view.ensureCursorVisible()
 
     def event(self, event):
         if event.type() == QEvent.Type.ShortcutOverride:
@@ -2954,6 +2999,11 @@ class CodeEditor(QPlainTextEdit):
         self._completer_model.setStringList(words)
 
     def update_user_names(self, scope, parse_path: str | None = None):
+        """For every view of the file; see _update_user_names_here."""
+        for v in self.views:
+            v._update_user_names_here(scope, parse_path)
+
+    def _update_user_names_here(self, scope, parse_path: str | None = None):
         """Extract user-defined names from a root scope and refresh the completer.
 
         The scope is kept as well as mined: the argument hint (#517) needs
@@ -3138,8 +3188,9 @@ class CodeEditor(QPlainTextEdit):
         """Mark or unmark a line: `block_number` (0-indexed), or the cursor's."""
         if block_number is None:
             block_number = self.textCursor().blockNumber()
-        self._bookmarks.toggle(block_number)
-        self._line_number_area.update()
+        for v in self.views:
+            v._bookmarks.toggle(block_number)
+            v._line_number_area.update()
 
     def jump_to_bookmark(self, forward: bool = True) -> bool:
         """Cursor to the next (or previous) bookmark, wrapping round the
@@ -3174,8 +3225,9 @@ class CodeEditor(QPlainTextEdit):
         return set(self._breakpoint_marks.lines())
 
     def toggle_breakpoint(self, block_number: int):
-        self._breakpoint_marks.toggle(block_number)
-        self._line_number_area.update()
+        for v in self.views:
+            v._breakpoint_marks.toggle(block_number)
+            v._line_number_area.update()
         self.breakpoints_changed.emit(self.breakpoint_lines())
 
     def scroll_to_line(self, line: int, margin: int = 5):
@@ -3386,7 +3438,7 @@ class CodeEditor(QPlainTextEdit):
         sel.cursor.clearSelection()
         self._exec_selection = [sel]
         self._refresh_extra_selections()
-        self.scroll_to_line(line)
+        self.views.active.scroll_to_line(line)      # the others just show it
 
     def _keep_selection_visible(self):
         """The selection keeps its colour while another window has the
@@ -3497,6 +3549,43 @@ class CodeEditor(QPlainTextEdit):
             + self._coverage_selections + self._error_selections + self._selection_extra
             + self._find_selections + self._exec_selection + self._bracket_selections
         )
+        self._share_highlights()
+
+    def _share_highlights(self, force: bool = False):
+        """Give every other view of the file this view's file-wide
+        highlights, when they have changed (each is replaced, never edited
+        in place, so identity says so)."""
+        if len(self.views) < 2 or self.views.sharing:
+            return
+        refs = tuple(getattr(self, a) for a in _SHARED_HIGHLIGHTS)
+        if not force and len(refs) == len(self._shared_refs) and all(
+                a is b for a, b in zip(refs, self._shared_refs)):
+            return
+        self._shared_refs = refs
+        self.views.sharing = True
+        try:
+            for v in self.views:
+                if v is not self:
+                    for a in _SHARED_HIGHLIGHTS:
+                        setattr(v, a, v._rehome(getattr(self, a)))
+                    v._shared_refs = tuple(getattr(v, a) for a in _SHARED_HIGHLIGHTS)
+                    v._refresh_extra_selections()
+        finally:
+            self.views.sharing = False
+
+    def _rehome(self, selections):
+        """`selections` from another view, on this view's copy of the text."""
+        end = self.document().characterCount() - 1
+        out = []
+        for s in selections:
+            n = QTextEdit.ExtraSelection()
+            n.format = s.format
+            c = QTextCursor(self.document())
+            c.setPosition(min(s.cursor.anchor(), end))
+            c.setPosition(min(s.cursor.position(), end), QTextCursor.MoveMode.KeepAnchor)
+            n.cursor = c
+            out.append(n)
+        return out
 
     def _reposition_find_bar(self):
         bar = self._find_bar
@@ -3548,7 +3637,8 @@ class CodeEditor(QPlainTextEdit):
             self._find_bar.open_find()
 
     def set_debug_locals(self, locals_dict: dict | None):
-        self._debug_locals = locals_dict
+        for v in self.views:
+            v._debug_locals = locals_dict
 
     def contextMenuEvent(self, event):
         cursor = self.cursorForPosition(event.pos())
@@ -3846,4 +3936,18 @@ class CodeEditor(QPlainTextEdit):
             build_new_literal_menu(add_sub, name, on_new_commit, self)
             menu.addMenu(add_sub)
 
+        menu.addSeparator()
+        menu.addAction("Split &Right", lambda: self._request_split(Qt.Orientation.Horizontal))
+        menu.addAction("Split &Below", lambda: self._request_split(Qt.Orientation.Vertical))
+        if self is not self.views[0]:
+            menu.addAction("&Close Split", self._request_close_split)
+
         menu.exec(event.globalPos())
+
+    def _request_split(self, orientation):
+        self.views.active = self
+        self.split_requested.emit(orientation)
+
+    def _request_close_split(self):
+        self.views.active = self
+        self.close_split_requested.emit()

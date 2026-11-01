@@ -81,6 +81,23 @@ Fold markers (▼ unfolded, ▶ folded) appear in the right section of the line-
 
 Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath.drawPath` was invisible at small sizes on macOS; `drawPolygon` is reliable.
 
+## Split editor
+
+**View ▸ Split Right** (Ctrl+\\) and **Split Below** (Ctrl+Shift+\\), also in the editor's right-click menu, open another view of the current file beside or below the view last worked in. Splits nest freely, as in vim or VS Code: splitting a view in its splitter's own direction adds a sibling, and the other direction nests a new splitter in its place. **Close Split** removes a view, and a splitter left with one child is replaced by it. The tab's first view, the **primary** (`tab.editor`), can't be closed. Splits are per tab and not saved. #506 asked for this and was first declined, because the debugger needed one answer to "which editor".
+
+**One document per view** (`FileTab.split`, `_mirror_from`). Each split is a full `CodeEditor` with its own `QTextDocument`, kept equal to the others. One shared document would fold, and wrap at one width, in every view at once: `block.setVisible` and the document layout belong to the document. An edit in any view is copied into the rest by `_replace_text_keeping_scroll`, which replaces only the changed span, so each view keeps its scroll, folds and caret. The primary goes last, because `_on_editor_changed` (undo, the modified mark, the DocumentManager) listens to the primary alone, and by then every split must already be up to date. Everything that reads or writes the file -- save, render, debug, undo text, reload, the Customizer, other windows -- goes through the primary, as before.
+
+**What is the file's, not the view's** (`ViewGroup` in editor.py, shared by a tab's views):
+- **Highlights:** Find matches, the error squiggle, coverage, the debugger's paused line and the viewport selection (`_SHARED_HIGHLIGHTS`). `_refresh_extra_selections` copies them into the other views whenever one of their lists is replaced. The current-line band and bracket match follow each view's own caret.
+- **Breakpoints and bookmarks:** a toggle in any view's gutter is made in all of them, and `_mirror_from` re-syncs them after each edit.
+- **Read-only:** `setReadOnly` covers every view, so an Edit-as dialog's lock holds in a split too.
+- **Debug values and completion names.**
+
+**The view last worked in** (`views.active`, set on focus) is the one that moves:
+- `_current_editor()` returns it, so menu commands, Find, bookmarks and typing in the viewport act on it.
+- It is the only view that scrolls to the paused line or a viewport selection, while the others just show it.
+- Undo puts its caret back there. A focus change resets `_last_cursor`, so typing in two views makes two undo steps (#389).
+
 ## Editor Context Menu
 
 Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
