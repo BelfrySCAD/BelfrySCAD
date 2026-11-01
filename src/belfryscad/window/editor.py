@@ -21,6 +21,7 @@ from PySide6.QtCore import (
     QStringListModel, QUrl,
 )
 
+from belfryscad.window import cursors
 from belfryscad.window.ui_colors import (
     bookmark_pill_colors,
     execution_line_color, find_bar_bg, find_match_colors, find_no_match_colors,
@@ -2484,7 +2485,7 @@ class CodeEditor(QPlainTextEdit):
         # ponytail: the index fetch is synchronous under a wait cursor; it
         # is one 150KB GET, cached for a week afterwards. Move it to a
         # worker thread if the freeze on a slow link ever bites.
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.setOverrideCursor(cursors.shape(Qt.CursorShape.WaitCursor))
         try:
             entry = bosl2_docs.lookup(word)
         except Exception as e:
