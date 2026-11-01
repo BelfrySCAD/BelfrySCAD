@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.96.1" date="2026-11-01">
+      <description>
+        <p>Fixed a crash on macOS 27.2 whenever a render started</p>
+      </description>
+    </release>
     <release version="1.96.0" date="2026-10-31">
       <description>
         <p>Fixed Length in the path editor now works in Bezier and NURBS modes, keeping the curve's length as points are dragged or slid along it</p>
