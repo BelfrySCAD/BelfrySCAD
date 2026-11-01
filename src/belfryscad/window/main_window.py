@@ -18,6 +18,7 @@ import time
 
 from belfryscad import exporters
 from belfryscad.window import cursors
+from belfryscad.window import aspect_frame
 from belfryscad.window.editor import CodeEditor
 from belfryscad.qt_positions import qt_length
 from belfryscad import scad_temp
@@ -1834,6 +1835,10 @@ class MainWindow(QMainWindow):
             # WindowModal.
             act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         view_menu.addSeparator()
+        aspect_menu = view_menu.addMenu("Aspect &Ratio")
+        for label, ratio in aspect_frame.RATIOS:
+            self._add_action(aspect_menu, label,
+                             lambda r=ratio: self._set_viewport_aspect(r))
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
         view_menu.addSeparator()
@@ -2124,6 +2129,26 @@ class MainWindow(QMainWindow):
         menu.addAction(f"Copy {var}", lambda: QApplication.clipboard().setText(strings[var]))
         menu.addAction("Copy all $vp* values", lambda: QApplication.clipboard().setText(full))
         menu.exec(label.mapToGlobal(pos))
+
+    def _set_viewport_aspect(self, ratio: float):
+        """View ▸ Aspect Ratio: resize the window so the viewport has
+        `ratio`. Docks share any change in size, so it is measured and
+        corrected a few times rather than computed once."""
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        avail = self.screen().availableGeometry()
+        for _ in range(4):
+            QApplication.processEvents()
+            vw, vh = self._viewport.width(), self._viewport.height()
+            chrome_h = self.frameGeometry().height() - vh
+            tw, th = aspect_frame.target(vw, vh, ratio, avail.height() - chrome_h)
+            if (tw, th) == (vw, vh):
+                break
+            self.resize(self.width() + tw - vw, self.height() + th - vh)
+        # Back on screen if it grew past an edge.
+        g = self.frameGeometry()
+        self.move(max(avail.left(), min(g.left(), avail.right() - g.width() + 1)),
+                  max(avail.top(), min(g.top(), avail.bottom() - g.height() + 1)))
 
     def _update_size_label(self, _w: int, _h: int):
         w = self._viewport.width()
