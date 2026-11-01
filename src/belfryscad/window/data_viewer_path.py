@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 
-from belfryscad import nurbs
+from belfryscad import nurbs, nurbs_rope
 from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
@@ -1204,12 +1204,26 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         return (self._mode() == "bezier" and self._degree_spin.value() == 3
                 and n >= 4 and (n - 1) % 3 == 0)
 
+    def _nurbs_lengths(self):
+        """The lengths NURBS Fixed Length holds, or None when the curve
+        can't be drawn (or this isn't a NURBS mode)."""
+        mode = self._mode()
+        if mode not in ("nurbs", "nurbs_interp") or self._closed_cb.isChecked():
+            return None
+        corners = self.corners_list() if mode == "nurbs_interp" else ()
+        try:
+            return nurbs_rope.arc_lengths(self._path, mode, self._degree_spin.value(), corners)
+        except (ValueError, np.linalg.LinAlgError):
+            return None
+
     def _total_length(self) -> float:
-        """The path's length: its curve's, in a Bezier mode Fixed Length
-        can edit, else its segments'."""
+        """The path's length: its curve's, in a Bezier or NURBS mode Fixed
+        Length can edit, else its segments'."""
         if len(self._path) < 2:
             return 0.0
         pts = [list(p) + [0.0] * (3 - len(p)) for p in self._path]
+        if (lengths := self._nurbs_lengths()) is not None:
+            return float(lengths.sum())
         if self._bezier_rope_ok():
             return float(_bezier_arc_lengths(pts).sum())
         return float(_segment_lengths(pts).sum())
@@ -1224,11 +1238,12 @@ class PathViewer(QDialog, _UndoableViewerMixin):
                             for p in self._path], "Set Length")
 
     def _sync_rope(self):
-        """Fixed Length is for an open plain path, or an open cubic Bezier
-        one; the Length field shows the total, and scales the path when
-        typed into."""
+        """Fixed Length is for an open plain path, an open cubic Bezier
+        one, or an open NURBS curve; the Length field shows the total, and
+        scales the path when typed into."""
         n = len(self._path)
-        ok = ((self._mode() == "path" or self._bezier_rope_ok())
+        ok = ((self._mode() == "path" or self._bezier_rope_ok()
+               or self._nurbs_lengths() is not None)
               and not self._closed_cb.isChecked() and n > 1)
         if not ok and self._rope_cb.isChecked():
             self._rope_cb.setChecked(False)
@@ -1357,6 +1372,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # with (and owned by) PathViewer; and the mode last loaded.
         self.corners: set = set()
         self._mode_now = "path"
+        self._nurbs_deg = 3
         # Fixed Length (#947): set by PathViewer, which owns the pins too.
         # The lengths are measured as each drag starts and held through it.
         self.rope = False
@@ -1452,6 +1468,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # NOT reclassify, or it would clobber explicit context-menu
         # overrides (and the type the user is actively dragging toward).
         self._mode_now = mode
+        self._nurbs_deg = degree
         # Bezier *editing* (node types, linked handles, splitting a segment)
         # is cubic only; any other degree draws its curve over the plain
         # control polygon and is edited like a path.
@@ -1648,6 +1665,8 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         (if anything) needs to move with it." Bezier off, or too few
         points to have a real bezier structure: today's plain single-point
         behavior, unchanged."""
+        if self.rope and self._mode_now in ("nurbs", "nurbs_interp"):
+            return self._nurbs_rope_moves(dragged_idx, new_pos)
         if self.rope and self._rope_lengths is not None and self._bezier:
             smooth = {i for i, t in self._node_types.items() if t != "disjointed"}
             if self._drag_slide and dragged_idx == self._drag_vertex_idx and dragged_idx % 3 == 0:
@@ -1668,6 +1687,24 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         node_type = self._node_types.get(v0_idx, "disjointed")
         return _bezier_linked_moves(self._path_pts, self._closed, dragged_idx, new_pos, node_type)
 
+    def _nurbs_corners(self):
+        return self.valid_corners() if self._mode_now == "nurbs_interp" else ()
+
+    def _nurbs_rope_moves(self, dragged_idx, new_pos):
+        """Fixed Length in the NURBS modes (nurbs_rope). Option-drag slides
+        a point along the curve as it was when the drag began -- NURBS
+        Interpolated only, whose points lie on the curve."""
+        if self._rope_lengths is None:
+            return []
+        mode, corners, together = self._mode_now, self._nurbs_corners(), None
+        if self._drag_slide and dragged_idx == self._drag_vertex_idx and mode == "nurbs_interp":
+            new_pos = nurbs_rope.slide_target(self._rope_base, self._nurbs_deg, corners, dragged_idx, new_pos)
+            if new_pos is None:
+                return []
+            together = dragged_idx - 1
+        return nurbs_rope.rope_moves(self._path_pts, mode, self._nurbs_deg, corners, self._rope_lengths,
+                                     self.pins, dragged_idx, new_pos, together)
+
     def _show_along(self, moves):
         """How far along the path an Option-dragged point is: along the
         curve in Bezier mode."""
@@ -1675,7 +1712,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         pts = np.array(self._path_pts, dtype=float)
         for k, p in moves:
             pts[k] = p
-        if self._bezier:
+        if self._mode_now == "nurbs_interp":
+            lengths = self._rope_lengths
+            new = nurbs_rope.arc_lengths(pts, "nurbs_interp", self._nurbs_deg, self._nurbs_corners())
+            along = float(lengths[:vi - 1].sum() + new[vi - 1])
+        elif self._bezier:
             lengths = self._rope_arcs
             along = float(lengths[:vi // 3 - 1].sum() + _cubic_arc_length(*pts[vi - 3:vi + 1]))
         else:
@@ -1684,12 +1725,25 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         total = float(lengths.sum())
         self._show_delta(f"Along: {along:g} of {total:g} ({100 * along / total:.1f}%)")
 
+    def _slides(self) -> bool:
+        """Whether an Option-drag of the point being dragged slides it."""
+        if self._mode_now in ("nurbs", "nurbs_interp"):
+            return self._mode_now == "nurbs_interp"
+        return not self._bezier or self._drag_vertex_idx % 3 == 0
+
     def _measure_rope(self):
         """Lengths held through a drag: each segment's, or in Bezier mode
         each segment's chord and arc length."""
         self._rope_lengths = self._rope_arcs = None
         self._rope_base = np.array(self._path_pts, dtype=float)
         if not self.rope:
+            return
+        if self._mode_now in ("nurbs", "nurbs_interp"):
+            try:
+                self._rope_lengths = nurbs_rope.arc_lengths(self._path_pts, self._mode_now,
+                                                            self._nurbs_deg, self._nurbs_corners())
+            except (ValueError, np.linalg.LinAlgError):
+                pass
             return
         if self._bezier:
             self._rope_lengths = _segment_lengths(self._path_pts[0::3])
@@ -1943,7 +1997,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             if hit is not None:
                 moves = self._resolve_bezier_moves(self._drag_vertex_idx, hit)
                 self._emit_moves(moves)
-                if self.rope and self._drag_slide and moves and (not self._bezier or self._drag_vertex_idx % 3 == 0):
+                if self.rope and self._drag_slide and moves and self._slides():
                     self._show_along(moves)
             return
         if self._last_mouse is None:
