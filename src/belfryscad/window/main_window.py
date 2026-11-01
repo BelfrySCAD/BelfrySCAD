@@ -2299,8 +2299,10 @@ class MainWindow(QMainWindow):
         for _ in range(4):
             QApplication.processEvents()
             vw, vh = self._viewport.width(), self._viewport.height()
+            chrome_w = self.frameGeometry().width() - vw
             chrome_h = self.frameGeometry().height() - vh
-            tw, th = aspect_frame.target(vw, vh, ratio, avail.height() - chrome_h)
+            tw, th = aspect_frame.target(vw, vh, ratio, avail.width() - chrome_w,
+                                         avail.height() - chrome_h)
             if (tw, th) == (vw, vh):
                 break
             self.resize(self.width() + tw - vw, self.height() + th - vh)
