@@ -1939,7 +1939,10 @@ class CodeEditor(QPlainTextEdit):
             cursor.endEditBlock()
             return True
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if prev not in _OPENERS or _AUTO_PAIRS[prev] != nxt:
+            # `not prev` first: at the start of the file prev is "", which
+            # `in` finds in any string -- and then _AUTO_PAIRS[""] raised,
+            # so Enter there did nothing (#1023).
+            if not prev or prev not in _OPENERS or _AUTO_PAIRS[prev] != nxt:
                 return False
             line = cursor.block().text()
             indent = line[:len(line) - len(line.lstrip())]
@@ -2390,6 +2393,9 @@ class CodeEditor(QPlainTextEdit):
             # Copied as written: counted and re-typed as spaces, a line
             # indented with tabs began a line indented by one space per tab.
             indent = block_text[:len(block_text) - len(block_text.lstrip())]
+            # Split inside the indent: what is left of it moves down with
+            # the text, so only the part before the cursor is re-typed.
+            indent = indent[:cursor.positionInBlock()]
             # ONE level if the line leaves any bracket open -- not one per
             # bracket. `foo({` indents the same as `foo(`, which keeps a
             # line that opens several at once from marching off to the
@@ -3147,7 +3153,15 @@ class CodeEditor(QPlainTextEdit):
         opened = self._is_callable_completion(completion)
         if opened:
             completion += "("
-        cursor.insertText(completion)
+        nxt = self.document().characterAt(cursor.selectionEnd())
+        # The ')' typed '(' would get, by the same rule (#1023).
+        closed = opened and self._auto_close and (not nxt or nxt.isspace() or nxt in "\0)]};,")
+        cursor.insertText(completion + (")" if closed else ""))
+        if closed:
+            cursor.movePosition(QTextCursor.MoveOperation.Left)
+            mark = QTextCursor(self.document())
+            mark.setPosition(cursor.position())
+            self._auto_closed.append(mark)
         self.setTextCursor(cursor)
         # Accepting a completion types the '(' for you, so it should hint
         # exactly as typing it by hand does -- otherwise the faster path is
