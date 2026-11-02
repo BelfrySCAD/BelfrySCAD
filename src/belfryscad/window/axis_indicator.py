@@ -70,8 +70,15 @@ class AxisIndicator(QWidget):
                for i in range(3)]
         return sorted(out, key=lambda t: t[3])
 
+    #: () -> (camera, background rgb) in anaglyph mode, else None; set by
+    #: the Viewport. See anaglyph_overlay.
+    stereo = None
+
     def paintEvent(self, event):
-        p = QPainter(self)
+        from .anaglyph_overlay import paint
+        paint(self, self._draw)
+
+    def _draw(self, p: QPainter) -> None:
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         c = QPointF(self.SIZE / 2, self.SIZE / 2)
         label = QColor.fromRgbF(*self._label_color()[:3])
@@ -84,4 +91,3 @@ class AxisIndicator(QWidget):
             g = self.GLYPH
             for (x0, y0), (x1, y1) in _GLYPHS[i]:
                 p.drawLine(at + QPointF(x0 * g, -y0 * g), at + QPointF(x1 * g, -y1 * g))
-        p.end()
