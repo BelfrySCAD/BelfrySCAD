@@ -61,3 +61,20 @@ def test_an_axis_toward_the_viewer_is_not_cut_at_the_near_plane():
     near, _far = cam.clip_planes()
     assert w < near                                           # past the near plane
     assert np.max(np.abs(ndc[:2])) >= 1.1 - 1e-6             # to the widened edge
+
+
+def test_orthographic_axes_survive_zooming_out():
+    """Clip w is 1 everywhere in orthographic, so a minimum w that grew with
+    the distance (1e-3 * distance) rejected every axis past distance 1000 --
+    and drawing no axes raised mid-frame, which blanked an anaglyph."""
+    from types import SimpleNamespace
+    from belfryscad.engine.renderer import SceneRenderer
+    cam = Camera()
+    cam.orthographic = True
+    cam.scene_bounds = (np.array([-44.0, -61, 0]), np.array([44.0, 44, 138]))
+    cam.target = np.array([48.42, 68.79, 139.71], np.float32)
+    cam.azimuth, cam.elevation, cam.distance = 25.0 - 90.0, 90.0 - 55.0, 1240.4
+    mvp = _mvp(cam, 783 / 589)
+    fake = SimpleNamespace(camera=cam)
+    for ai in range(3):
+        assert SceneRenderer._visible_halves(fake, mvp, _axis_extent(cam), ai), "XYZ"[ai]

@@ -75,6 +75,10 @@ _DEFAULTS = {
     "viewport/viewerIPD": 65.0,         # mm — interpupillary distance
     "viewport/viewerScreenDist": 600.0, # mm — eye-to-screen distance
     "viewport/stereoDepthScale": 0.75,  # comfort trim multiplier
+    # What each eye's brightness is drawn in by Grayscale Anaglyph, tuned
+    # to the user's glasses in AnaglyphCalibrationDialog.
+    "viewport/anaglyphLeftColor": "#ff0000",
+    "viewport/anaglyphRightColor": "#00ffff",
     "viewport/colorTheme": DEFAULT_COLOR_THEME,
     "viewport/keepMinuendColor": False,  # difference() cut faces keep the minuend's colour
     # The 3D views' orientation aids (#881): the clickable cube in the
@@ -416,7 +420,15 @@ class PreferencesDialog(QDialog):
             "The anaglyphs need red/blue or red/cyan glasses; the color one needs red/cyan.")
         self._stereo_mode.currentIndexChanged.connect(
             lambda _: self._emit("viewport/stereoMode", self._stereo_mode.currentData()))
-        vp_form.addRow("Stereo mode:", self._stereo_mode)
+        stereo_row = QHBoxLayout()
+        stereo_row.setSpacing(8)
+        stereo_row.addWidget(self._stereo_mode)
+        calibrate = QPushButton("Calibrate Anaglyph Colors…")
+        calibrate.setToolTip("Match Grayscale Anaglyph's red and cyan to your glasses.")
+        calibrate.clicked.connect(self._open_anaglyph_calibration)
+        stereo_row.addWidget(calibrate)
+        stereo_row.addStretch(1)
+        vp_form.addRow("Stereo mode:", stereo_row)
 
         current_ipd = s.value("viewport/viewerIPD", _DEFAULTS["viewport/viewerIPD"], type=float)
         self._viewer_ipd = QDoubleSpinBox()
@@ -651,6 +663,15 @@ class PreferencesDialog(QDialog):
         save_preferences({key: value})
         if self._on_change:
             self._on_change()
+
+    def _open_anaglyph_calibration(self):
+        from belfryscad.window.anaglyph_calibration import AnaglyphCalibrationDialog
+        dlg = getattr(self, "_anaglyph_dialog", None)
+        if dlg is None:
+            dlg = self._anaglyph_dialog = AnaglyphCalibrationDialog(self, self._emit)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     # -- AI tab -------------------------------------------------------------
 
