@@ -547,6 +547,11 @@ def _describe_qt_state(app) -> str:
         lines += [f"  {e}" for e in log.inputs] or ["  none"]
         lines.append("recent window events:")
         lines += [f"  {e}" for e in log.events]
+    from belfryscad.window.viewport import PAINT_ERRORS
+    lines.append(f"3D view drawing errors: {len(PAINT_ERRORS) or 'none'}")
+    for text, (count, first, last) in PAINT_ERRORS.items():
+        lines.append(f"  {count}x, first {first}, last {last}:")
+        lines += [f"    {t}" for t in text.rstrip().splitlines()]
     if sys.platform == "darwin":
         lines += _describe_macos_state()
     return "\n".join(lines) + "\n"
