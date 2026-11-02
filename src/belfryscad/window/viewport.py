@@ -14,7 +14,7 @@ from PySide6.QtGui import (QMouseEvent, QWheelEvent, QNativeGestureEvent,
                             QPainter, QPixmap, QIcon, QInputDevice, QTouchEvent,
                             QContextMenuEvent, QGuiApplication, QKeyEvent, QImage)
 
-from belfryscad.engine.renderer import (Camera, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
+from belfryscad.engine.renderer import (Camera, light_from_pointer, EXTRUDE_GIZMOS, GIZMO_SCALE, SceneRenderer,
                                         _project_to_screen)
 from belfryscad.window.debugger import _debug_icon
 
@@ -1500,6 +1500,12 @@ class Viewport(QOpenGLWidget):
 
         self._last_mouse = pos
         self._mouse_button = event.button()
+        if (event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers() & Qt.KeyboardModifier.AltModifier):
+            # The light jumps to the pointer on the press, not the first move.
+            self._renderer.light_view = light_from_pointer(
+                pos.x(), pos.y(), self.width(), self.height())
+            self.update()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """OpenSCAD's double-click (#881): the point of the model under the
@@ -1581,8 +1587,8 @@ class Viewport(QOpenGLWidget):
         cam = self._renderer.camera
         if self._mouse_button == Qt.MouseButton.LeftButton:
             if event.modifiers() & Qt.KeyboardModifier.AltModifier:
-                self._renderer.light_az_offset += dx * 0.5
-                self._renderer.light_el_offset += dy * 0.5
+                self._renderer.light_view = light_from_pointer(
+                    pos.x(), pos.y(), self.width(), self.height())
                 self.update()
                 return
             if not self._orbit_enabled:
