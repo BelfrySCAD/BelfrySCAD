@@ -60,9 +60,10 @@ def test_any_open_remembers_the_folder_but_revealing_a_library_does_not():
     assert json.loads(r.stdout.strip().splitlines()[-1]) == {"lib": False, "work": True}, r.stderr
 
 
-def test_exporting_a_design_again_starts_where_its_last_export_went(tmp_path, monkeypatch):
-    """#863: the folder an export went to is offered the next time the same
-    design is exported -- not for another design, and not once it is gone."""
+def test_exporting_from_the_same_source_folder_starts_where_the_last_export_went(tmp_path, monkeypatch):
+    """#863, #1018: the folder an export went to is offered for any design
+    in the same source folder -- not for one elsewhere, and not once it is
+    gone."""
     from types import SimpleNamespace
     from belfryscad.window.main_window import MainWindow
     from belfryscad.window.preferences import save_preferences
@@ -80,7 +81,9 @@ def test_exporting_a_design_again_starts_where_its_last_export_went(tmp_path, mo
     save_preferences({"export/lastDir": str(out), "export/lastSource": str(design)})
     assert offered() == os.path.join(str(out), "part")
     tab.file_path = tmp_path / "src" / "other.scad"
-    assert offered() == os.path.join(str(tmp_path / "src"), "part")
+    assert offered() == os.path.join(str(out), "part")
+    tab.file_path = tmp_path / "elsewhere" / "other.scad"
+    assert offered() == os.path.join(str(tmp_path / "elsewhere"), "part")
     tab.file_path = design
     os.rmdir(out)
     assert offered() == os.path.join(str(tmp_path / "src"), "part")
