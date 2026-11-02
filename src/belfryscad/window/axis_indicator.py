@@ -20,11 +20,12 @@ from PySide6.QtWidgets import QWidget
 _AXIS_RGB = ((0.85, 0.15, 0.15), (0.15, 0.65, 0.15), (0.25, 0.35, 0.9))
 
 # OpenSCAD's letters, as line segments in a box of half-width 1 centred on
-# the label point, y up: X is a cross, Y a cross whose lower right arm
-# stops at the centre, Z top bar, bottom bar and the diagonal joining them.
+# the label point, y up: X is a cross, Y two arms meeting at the centre over
+# a vertical stem (OpenSCAD slants its stem, which reads as a lowercase y),
+# Z top bar, bottom bar and the diagonal joining them.
 _GLYPHS = (
     (((-1, -1), (1, 1)), ((-1, 1), (1, -1))),
-    (((-1, -1), (1, 1)), ((-1, 1), (0, 0))),
+    (((-1, 1), (0, 0)), ((1, 1), (0, 0)), ((0, 0), (0, -1))),
     (((-1, -1), (1, -1)), ((-1, 1), (1, 1)), ((-1, -1), (1, 1))),
 )
 
