@@ -3347,16 +3347,19 @@ class MainWindow(QMainWindow):
         with the source file's basename, and assignable by the script),
         already reduced to filename-safe characters, in the source file's
         own directory when there is one -- so an export lands beside the
-        model rather than wherever the process happens to be. Exporting the
-        same design again starts in the folder its last export went to
-        (#863), so a separate output folder is chosen once, not every time."""
+        model rather than wherever the process happens to be. Exporting any
+        design from the same source folder as the last export starts in the
+        folder that export went to (#863, #1018), so a separate output folder
+        is chosen once, not once per file -- while a design in another
+        project's folder still starts beside itself."""
         tab = self._current_tab()
         if tab is None:
             return ""
         name = tab.export_name or default_export_name(tab.file_path)
         source = str(tab.file_path) if tab.file_path else ""
         last = load_preference("export/lastDir", str)
-        if last and os.path.isdir(last) and load_preference("export/lastSource", str) == source:
+        if last and os.path.isdir(last) and (os.path.dirname(load_preference("export/lastSource", str))
+                                               == os.path.dirname(source)):
             folder = last
         elif tab.file_path:
             folder = os.path.dirname(str(tab.file_path))
