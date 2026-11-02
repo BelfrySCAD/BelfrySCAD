@@ -344,12 +344,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-24.08-${{ matrix.arch }}
+          key: flatpak-26.08-${{ matrix.arch }}
 
       - name: Install the runtime and SDK
         run: |
           flatpak install --user --noninteractive flathub \
-              org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+              org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08
 
       # glcontext has no aarch64 wheel, so uv builds it from sdist here on
       # the host to give briefcase its dependencies. Its x11 backend needs
