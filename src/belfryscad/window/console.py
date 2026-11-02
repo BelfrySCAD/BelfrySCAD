@@ -112,6 +112,17 @@ class ConsoleWidget(QTextBrowser):
         self.anchorClicked.connect(self._on_anchor_clicked)
         on_appearance_change(self, self._retheme)
 
+    #: The console's own size, which Reset Font Size returns to.
+    DEFAULT_POINT_SIZE = 11
+
+    def step_font_size(self, step: int):
+        """Edit ▸ Increase/Decrease Font Size while the console has focus
+        (#1022). Not saved, like the editor's."""
+        f = self.font()
+        if f.pointSize() + step >= 6:
+            f.setPointSize(f.pointSize() + step)
+            self.setFont(f)
+
     def _band(self, first_bn: int, last_bn: int, kind: str):
         """Paint blocks first_bn..last_bn as an error or warning band.
 

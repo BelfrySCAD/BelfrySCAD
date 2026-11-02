@@ -1541,7 +1541,7 @@ class MainWindow(QMainWindow):
         # --- Console dock (bottom) ---
         self._console = ConsoleWidget()
         self._console.setReadOnly(True)
-        self._console.setFont(QFont("Menlo", 11))
+        self._console.setFont(QFont("Menlo", ConsoleWidget.DEFAULT_POINT_SIZE))
         self._console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._console.customContextMenuRequested.connect(self._console_context_menu)
 
@@ -1813,6 +1813,8 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Increase Font &Size", self._font_size_increase, QKeySequence("Ctrl++"))
         self._add_action(edit_menu, "Decrease Font Si&ze", self._font_size_decrease, QKeySequence("Ctrl+-"))
+        # No Ctrl+0: that is Isometric, as in OpenSCAD.
+        self._add_action(edit_menu, "Reset &Font Size", self._font_size_reset)
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Cop&y Viewport Image", self._copy_viewport_image,
                          QKeySequence("Ctrl+Shift+C"))
@@ -6568,13 +6570,23 @@ class MainWindow(QMainWindow):
     def _set_view(self, preset):
         self._target_viewport().set_view_preset(preset)
 
+    def _font_size_target(self):
+        """The console when it has focus (#1022), else the editor."""
+        return self._console if self._console.hasFocus() else self._current_editor()
+
     def _font_size_increase(self):
-        if e := self._current_editor():
-            e.step_font_size(1)
+        if t := self._font_size_target():
+            t.step_font_size(1)
 
     def _font_size_decrease(self):
-        if e := self._current_editor():
-            e.step_font_size(-1)
+        if t := self._font_size_target():
+            t.step_font_size(-1)
+
+    def _font_size_reset(self):
+        if t := self._font_size_target():
+            size = (ConsoleWidget.DEFAULT_POINT_SIZE if t is self._console
+                    else load_preference("editor/fontSize", int))
+            t.step_font_size(size - t.font().pointSize())
 
     def _zoom_viewport(self, direction):
         self._target_viewport().zoom(direction)
