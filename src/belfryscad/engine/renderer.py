@@ -981,6 +981,48 @@ def _axis_halves(camera: Camera, L: float, ai: int) -> list[tuple[float, float, 
     return halves
 
 
+def _clip_to_view(mvp, ai: int, sign: float, start: float, end: float,
+                  w_min: float, margin: float = 1.1):
+    """The part start..end of axis half `sign` along `ai` that lies in front
+    of the camera and on screen, as (start, end), or None if none does.
+
+    The near plane is NOT one of the limits. It sits just in front of the
+    model (Camera.clip_planes keeps it there for depth precision), so an
+    axis swung toward the viewer crossed it while still mid-screen and was
+    cut off there. The axes are drawn with depth clamping instead
+    (_render_axes), so this keeps only what is in front of the eye (clip w
+    at least `w_min`) and within the frustum's sides widened by `margin`,
+    which lets the line run just off the edge. No piece is ever behind the
+    eye or projected far off screen, which software GL can drop.
+
+    Clip space is linear along the axis: c(t) = a + t*b, and each limit is a
+    linear inequality in t (Cyrus-Beck)."""
+    m = np.asarray(mvp, dtype=np.float64)
+    a, b = m[:, 3], sign * m[:, ai]
+    lo, hi = start, end
+    limits = (                      # (f0, f1): f0 + t*f1 >= 0
+        (margin * a[3] - a[0], margin * b[3] - b[0]),
+        (margin * a[3] + a[0], margin * b[3] + b[0]),
+        (margin * a[3] - a[1], margin * b[3] - b[1]),
+        (margin * a[3] + a[1], margin * b[3] + b[1]),
+        (a[3] - a[2], b[3] - b[2]),                 # far plane
+        (a[3] - w_min, b[3]),                       # in front of the eye
+    )
+    for f0, f1 in limits:
+        if abs(f1) < 1e-15:
+            if f0 < 0:
+                return None
+            continue
+        t = -f0 / f1
+        if f1 > 0:
+            lo = max(lo, t)
+        else:
+            hi = min(hi, t)
+        if lo >= hi:
+            return None
+    return lo, hi
+
+
 def _axis_spans(L: float, seg: float, start: float = 0.0) -> list[tuple[float, float]]:
     """One axis half, start..L, as consecutive (start, end) spans of at most
     `seg` -- the pieces `_render_axes` draws instead of a single long line.
@@ -2330,6 +2372,16 @@ class SceneRenderer:
         return tuple(b * (1.0 - m) + a * m
                      for b, a in zip(self.bg_color[:3], self.axes_color[:3]))
 
+    def _visible_halves(self, mvp, L: float, ai: int):
+        """_axis_halves, each trimmed to what the view shows (_clip_to_view)."""
+        out = []
+        w_min = 1e-3 * self.camera.distance
+        for sign, start, end in _axis_halves(self.camera, L, ai):
+            span = _clip_to_view(mvp, ai, sign, start, end, w_min)
+            if span is not None:
+                out.append((sign, *span))
+        return out
+
     def _render_axes(self, mvp: np.ndarray):
         L       = _axis_extent(self.camera)
         label_spacing, major_spacing, minor_spacing = _drawn_spacings(L)
@@ -2354,7 +2406,7 @@ class SceneRenderer:
         # the axis colour, negative in light gray. See _axis_spans for why
         # it is not one line.
         for i in range(3):
-            for sign, start, end in _axis_halves(self.camera, L, i):
+            for sign, start, end in self._visible_halves(mvp, L, i):
                 color = axis_colors[i] if sign > 0.0 else gray
                 for t0, t1 in _axis_spans(end, minor_spacing, start):
                     p0 = np.zeros(3, dtype=np.float32)
@@ -2382,7 +2434,7 @@ class SceneRenderer:
         for ai in range(3):
             if not (self.show_scale_markers and minor_spacing > 0):
                 break
-            for sign, start, end in _axis_halves(self.camera, L, ai):
+            for sign, start, end in self._visible_halves(mvp, L, ai):
                 for k in range(max(1, math.ceil(start / minor_spacing - 1e-9)),
                                math.floor(end / minor_spacing * (1 + 1e-9)) + 1):
                     if not _tick_is_drawn(k, major_steps, end_on_axis[ai], tick_stride[ai]):
@@ -2472,7 +2524,12 @@ class SceneRenderer:
             self._active_fbo.depth_mask = False
             self._grid_vao.render(mgl.LINES)
             self._active_fbo.depth_mask = True
+        # Depth clamp: the part of an axis nearer than the near plane is
+        # drawn at the near depth rather than cut off (see _clip_to_view),
+        # still in front of the model, which lies past the near plane.
+        self._ctx.enable_direct(0x864F)   # GL_DEPTH_CLAMP
         self._axes_vao.render(mgl.LINES)
+        self._ctx.disable_direct(0x864F)
         self._ctx.disable(mgl.BLEND)
 
     def _render_crosshairs(self, mvp: np.ndarray):
