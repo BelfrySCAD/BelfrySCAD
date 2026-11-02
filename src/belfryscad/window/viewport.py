@@ -507,6 +507,8 @@ class Viewport(QOpenGLWidget):
             self._orientation_cube.menu_requested.connect(self._show_view_menu)
             self._axis_indicator = AxisIndicator(
                 self, label_color=lambda: self._renderer.axes_color)
+            self._orientation_cube.stereo = self._axis_indicator.stereo = self._overlay_stereo
+            self._overlay_key = None
             self.camera_changed.connect(self._sync_orientation_cube)
             self._sync_orientation_cube()
             from .preferences import load_preference
@@ -649,6 +651,8 @@ class Viewport(QOpenGLWidget):
 
     def paintGL(self):
         try:
+            if getattr(self, "_orientation_cube", None) is not None:
+                self._sync_overlay_stereo()
             fbo_id = self.defaultFramebufferObject()
             self._renderer.under_paint = getattr(self, "_paint_under", None)
             self._renderer.paint(qt_fbo_id=fbo_id, extra_paint=self._paint_extra)
@@ -1179,6 +1183,23 @@ class Viewport(QOpenGLWidget):
             view = self._renderer.camera.view_matrix()
             self._orientation_cube.set_orientation(view)
             self._axis_indicator.set_orientation(view)
+
+    def _overlay_stereo(self):
+        """(camera, background) for the overlays in anaglyph mode, else None."""
+        cam = self._renderer.camera
+        return (cam, self._renderer.bg_color) if cam.anaglyph else None
+
+    def _sync_overlay_stereo(self):
+        """Repaint the overlays when anything their anaglyph depends on
+        changed: they are separate widgets, so a GL repaint misses them."""
+        cam = self._renderer.camera
+        key = (cam.anaglyph, cam.anaglyph_style, tuple(cam.anaglyph_left_rgb),
+               tuple(cam.anaglyph_right_rgb), tuple(self._renderer.bg_color),
+               cam.viewer_ipd, cam.viewer_screen_dist, cam.stereo_depth_scale)
+        if key != self._overlay_key:
+            self._overlay_key = key
+            self._orientation_cube.update()
+            self._axis_indicator.update()
 
     def set_orientation_indicator(self, mode: str) -> None:
         """Preferences > Viewport > Orientation: "cube", "axes" or "both"."""

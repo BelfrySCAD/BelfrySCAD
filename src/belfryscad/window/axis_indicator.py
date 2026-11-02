@@ -20,11 +20,12 @@ from PySide6.QtWidgets import QWidget
 _AXIS_RGB = ((0.85, 0.15, 0.15), (0.15, 0.65, 0.15), (0.25, 0.35, 0.9))
 
 # OpenSCAD's letters, as line segments in a box of half-width 1 centred on
-# the label point, y up: X is a cross, Y a cross whose lower right arm
-# stops at the centre, Z top bar, bottom bar and the diagonal joining them.
+# the label point, y up: X is a cross, Y two arms meeting at the centre over
+# a vertical stem (OpenSCAD slants its stem, which reads as a lowercase y),
+# Z top bar, bottom bar and the diagonal joining them.
 _GLYPHS = (
     (((-1, -1), (1, 1)), ((-1, 1), (1, -1))),
-    (((-1, -1), (1, 1)), ((-1, 1), (0, 0))),
+    (((-1, 1), (0, 0)), ((1, 1), (0, 0)), ((0, 0), (0, -1))),
     (((-1, -1), (1, -1)), ((-1, 1), (1, 1)), ((-1, -1), (1, 1))),
 )
 
@@ -69,8 +70,15 @@ class AxisIndicator(QWidget):
                for i in range(3)]
         return sorted(out, key=lambda t: t[3])
 
+    #: () -> (camera, background rgb) in anaglyph mode, else None; set by
+    #: the Viewport. See anaglyph_overlay.
+    stereo = None
+
     def paintEvent(self, event):
-        p = QPainter(self)
+        from .anaglyph_overlay import paint
+        paint(self, self._draw)
+
+    def _draw(self, p: QPainter) -> None:
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         c = QPointF(self.SIZE / 2, self.SIZE / 2)
         label = QColor.fromRgbF(*self._label_color()[:3])
@@ -83,4 +91,3 @@ class AxisIndicator(QWidget):
             g = self.GLYPH
             for (x0, y0), (x1, y1) in _GLYPHS[i]:
                 p.drawLine(at + QPointF(x0 * g, -y0 * g), at + QPointF(x1 * g, -y1 * g))
-        p.end()

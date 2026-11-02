@@ -293,8 +293,15 @@ class OrientationCube(QWidget):
         return (self.CORNER_HIT_GROW if len(region.points) == 3
                 else self.EDGE_HIT_GROW)     # 3 points = corner, 4 = edge
 
+    #: () -> (camera, background rgb) in anaglyph mode, else None; set by
+    #: the Viewport. See anaglyph_overlay.
+    stereo = None
+
     def paintEvent(self, event):
-        painter = QPainter(self)
+        from .anaglyph_overlay import paint
+        paint(self, self._draw)
+
+    def _draw(self, painter: QPainter) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
@@ -333,8 +340,6 @@ class OrientationCube(QWidget):
                 d = np.array(foot) @ self._rot.T
                 down = np.array([d[0], -d[1]])      # screen y grows downward, as in _project
                 self._draw_face_label(painter, reg.label, proj, idx == self._hover, down)
-
-        painter.end()
 
     @staticmethod
     def _label_frame(proj: np.ndarray, down: np.ndarray | None = None):

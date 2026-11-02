@@ -2919,9 +2919,20 @@ class SceneRenderer:
         return best_axis
 
     def camera_ray(self, px: float, py: float, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
+        view = self.camera.view_matrix()
+        if self.camera.stereo and w >= 2:
+            # Side by side: the ray through the panel the pointer is in, from
+            # that panel's eye, as paint() draws them. With the whole width
+            # and the centre eye, a double-click picked a point half a view
+            # away from the one under the pointer.
+            half = w / 2.0
+            panel = 1 if px >= half else 0
+            views = self.camera.stereo_view_matrices(int(half), h)
+            if self.camera.wall_eyed:
+                views = views[::-1]
+            view, px, w = views[panel], px - panel * half, half
         aspect = w / h if h > 0 else 1.0
         proj = self.camera.projection_matrix(aspect)
-        view = self.camera.view_matrix()
         inv_vp = np.linalg.inv((proj @ view).astype(np.float64))
 
         ndc_x = (2.0 * px / w) - 1.0
