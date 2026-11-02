@@ -13,11 +13,8 @@ RATIOS = [("&1:1", 1.0), ("&4:3", 4 / 3), ("&3:2", 3 / 2),
 
 def target(vw: int, vh: int, ratio: float, max_vw: int, max_vh: int) -> tuple[int, int]:
     """The viewport size to aim for: its longer side kept and the other
-    fitted to `ratio`; or, when that won't fit on screen (`max_vw` x
-    `max_vh`), its shorter side kept and the longer one fitted instead."""
-    keep_width = (vw, round(vw / ratio))
-    keep_height = (round(vh * ratio), vh)
-    first, second = (keep_width, keep_height) if vw >= vh else (keep_height, keep_width)
-    if first[0] <= max_vw and first[1] <= max_vh:
-        return first
-    return second
+    fitted to `ratio`, shrunk (ratio kept) to the largest that fits on
+    screen (`max_vw` x `max_vh`) if it would be bigger."""
+    w, h = (vw, vw / ratio) if vw >= vh else (vh * ratio, vh)
+    scale = min(1.0, max_vw / w, max_vh / h)
+    return round(w * scale), round(h * scale)
