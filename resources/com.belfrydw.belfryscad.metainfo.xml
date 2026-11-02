@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.1" date="2026-11-02">
+      <description>
+        <p>Export offers the last export folder for every file in the same source folder; the state dump carries the 3D view's drawing errors</p>
+      </description>
+    </release>
     <release version="1.99.0" date="2026-11-02">
       <description>
         <p>Calibrate anaglyph colours to your glasses; Option-drag puts the light at the pointer; anaglyph depth holds when zoomed in; orthographic axes no longer vanish</p>
