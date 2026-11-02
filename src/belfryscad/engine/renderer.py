@@ -1147,6 +1147,16 @@ class PointBuffer:
         self.vao = vao
 
 
+def light_from_pointer(x: float, y: float, w: int, h: int) -> tuple[float, float, float]:
+    """Eye-space direction to a light sitting where the pointer is on screen,
+    out towards the viewer: x and y in units of half the viewport's shorter
+    side (so the light swings as far either way on a wide view), z one unit
+    towards the eye. The default (0.6, 0.8, 1.0) is the pointer up and to
+    the right of centre."""
+    half = max(min(w, h), 1) / 2
+    return ((x - w / 2) / half, (h / 2 - y) / half, 1.0)
+
+
 class SceneRenderer:
     #: Called with each eye's mvp before anything else is drawn: a data
     #: viewer's background image, which then lies under the whole shape (#802).
@@ -1263,8 +1273,9 @@ class SceneRenderer:
         self.torch_depth_dim: float = 0.45
 
         self.show_crosshairs: bool = False
-        self.light_az_offset: float = 0.0
-        self.light_el_offset: float = 0.0
+        # Eye-space direction towards the light; None is the default.
+        # Option-drag sets it from the pointer (light_from_pointer).
+        self.light_view: tuple[float, float, float] | None = None
         self._axes_vbo: Optional[mgl.Buffer] = None
         # The XY grid draws separately from the axes so it can go down
         # with depth writes off -- see _render_axes.
@@ -1813,15 +1824,7 @@ class SceneRenderer:
         self._ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
         center_view = self.camera.view_matrix()
-        L_view = np.array([0.6, 0.8, 1.0], dtype=np.float64)
-        if self.light_az_offset != 0.0 or self.light_el_offset != 0.0:
-            a = math.radians(self.light_az_offset)
-            e = math.radians(self.light_el_offset)
-            ca, sa = math.cos(a), math.sin(a)
-            ce, se = math.cos(e), math.sin(e)
-            Ry = np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]], dtype=np.float64)
-            Rx = np.array([[1, 0, 0], [0, ce, -se], [0, se, ce]], dtype=np.float64)
-            L_view = Rx @ Ry @ L_view
+        L_view = np.array(self.light_view or (0.6, 0.8, 1.0), dtype=np.float64)
         L_world = (center_view[:3, :3].T @ L_view).astype(np.float32)
         L_world /= np.linalg.norm(L_world)
 
