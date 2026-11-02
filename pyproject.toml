@@ -109,7 +109,7 @@ manylinux = "manylinux_2_28"
 
 [tool.briefcase.app.belfryscad.linux.flatpak]
 flatpak_runtime = "org.freedesktop.Platform"
-flatpak_runtime_version = "24.08"
+flatpak_runtime_version = "26.08"
 flatpak_sdk = "org.freedesktop.Sdk"
 
 # Briefcase's defaults are close but wrong in two places for this app.
