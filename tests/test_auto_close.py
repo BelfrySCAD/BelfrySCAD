@@ -29,6 +29,8 @@ def run(on, start, keys):
     for k in keys:
         if k in KEYS:
             QTest.keyClick(e, KEYS[k])
+        elif k.startswith("COMPLETE:"):
+            e._insert_completion(k[9:])
         else:
             QTest.keyClicks(e, k)
     c = e.textCursor(); t = e.toPlainText()
@@ -64,6 +66,14 @@ CASES = [
     # Enter between brackets puts the closer on its own line
     (True, "  x = |", ["[", "RET"], "  x = [\n      |\n  ]"),
     (False, "f(|)", ["RET"], "f(\n    |)"),
+    # Enter at the very start of the file (#1023), and inside an indent
+    (True, "|cube(1);", ["RET"], "\n|cube(1);"),
+    (False, "|  cube(1);", ["RET"], "\n|  cube(1);"),
+    (True, " | cube(1);", ["RET"], " \n | cube(1);"),
+    # a completion's '(' is paired as a typed one is (#1023)
+    (True, "cu|", ["COMPLETE:cube", "1", ")"], "cube(1)|"),
+    (True, "cu|x", ["COMPLETE:cube"], "cube(|x"),
+    (False, "cu|", ["COMPLETE:cube"], "cube(|"),
     # an opener over a selection wraps it
     (True, "a <bc> d", ["("], "a (<bc>) d"),
     (False, "a <bc> d", ["("], "a (| d"),
