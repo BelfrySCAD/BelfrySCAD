@@ -883,3 +883,24 @@ def test_a_released_drag_is_held_until_the_next_render():
     r._buffers = []                # fakes; nothing to release
     r.load_geometry([])
     assert r.held_model is None
+
+
+def test_side_by_side_rays_go_through_the_panel_under_the_pointer():
+    """Double-click re-centring picked the wrong point side by side: the ray
+    was cast across the whole width from the centre eye. Each panel's centre
+    looks at the target, from that panel's own eye."""
+    from types import SimpleNamespace
+    from belfryscad.engine.renderer import Camera, SceneRenderer
+    for wall in (False, True):
+        cam = Camera()
+        cam.stereo, cam.wall_eyed = True, wall
+        r = SimpleNamespace(camera=cam)
+        left, right = cam.stereo_view_matrices(400, 600)
+        if wall:
+            left, right = right, left
+        for px, view in ((200, left), (600, right)):
+            o, d = SceneRenderer.camera_ray(r, px, 300, 800, 600)
+            miss = np.linalg.norm(np.cross(cam.target - o, d))
+            assert miss < 1e-3 * cam.distance, (wall, px, miss)
+            eye = np.linalg.inv(view)[:3, 3]           # the ray leaves that panel's eye
+            assert np.linalg.norm(np.cross(o - eye, d)) < 1e-3 * cam.distance
