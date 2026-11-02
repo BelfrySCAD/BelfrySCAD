@@ -54,7 +54,7 @@ _AXIS_RGB = {
     (1, 0, 0): (0.85, 0.15, 0.15),
     (0, 1, 0): (0.15, 0.65, 0.15),
     # Nearer pure blue than the other two axes are to theirs, deliberately.
-    # The neutral face grey (150, 155, 165) is itself blue-leaning, so mixing
+    # The neutral face grey is itself blue-leaning, so mixing
     # blue into it moves the colour less far than red or green do -- the old
     # (0.25, 0.35, 0.90) left Z sitting 59.6 from neutral where X sat 82.1
     # and Y 74.1, visibly the faintest of the three.
@@ -69,7 +69,7 @@ _AXIS_RGB = {
     # stickers that constant's own note warns about.
     (0, 0, 1): (0.05, 0.20, 1.00),
 }
-_NEUTRAL_FACE = (150, 155, 165)
+_NEUTRAL_FACE = (185, 190, 200)
 
 # How far a positive face is pulled from the neutral grey towards its axis
 # colour. Enough to say "this is X" at this size; much more and the cube reads as
@@ -298,19 +298,21 @@ class OrientationCube(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        bevel_col = QColor(120, 125, 135)
+        bevel_col = QColor(155, 160, 170)
         hover_col = QColor(90, 150, 235)
         # Outlines every region, so its weight sets how the whole cube reads.
         # It was (45, 48, 55): 4.74:1 against a face, more than three times
         # the 1.48:1 step between a face and a bevel that it is there to
         # delineate -- so the cube read as a black wire cage with grey fill
         # rather than as a shaded solid. At (95, 100, 110) it is 2.13:1 and
-        # 1.44:1, about as strong as the shading step it accompanies.
+        # 1.44:1, about as strong as the shading step it accompanies. All three
+        # greys were later raised by 35 together, keeping those steps, to
+        # lighten the cube.
         #
-        # Not lighter than this: the bevels are (120, 125, 135), and by
-        # (125, 130, 140) the outline is 1.07:1 against them and the
+        # Not lighter than this relative to the bevels: 30 below them, and by
+        # 5 below them the outline is 1.07:1 against them and the
         # chamfers stop being visible at all.
-        edge_pen = QPen(QColor(95, 100, 110), 1.0)
+        edge_pen = QPen(QColor(130, 135, 145), 1.0)
 
         self._drawn = []
         for _depth, idx, proj in self._visible():
