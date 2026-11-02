@@ -427,6 +427,17 @@ ANAGLYPH_MATRICES = {
 }
 
 
+def anaglyph_matrices(camera) -> tuple[np.ndarray, np.ndarray]:
+    """The (left, right) matrices to draw `camera`'s anaglyph with. The gray
+    style draws each eye's brightness in that eye's calibrated colour; the
+    defaults, pure red and cyan, give ANAGLYPH_MATRICES["gray"] exactly.
+    The colour style is Dubois' fixed matrices, uncalibrated."""
+    if camera.anaglyph_style != "gray":
+        return ANAGLYPH_MATRICES[camera.anaglyph_style]
+    return (np.outer(camera.anaglyph_left_rgb, _LUMA),
+            np.outer(camera.anaglyph_right_rgb, _LUMA))
+
+
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
 # meshes) rather than evaluated ColoredBody scenes. Unlike `_VERT`/`_FRAG`
@@ -524,6 +535,10 @@ class Camera:
         self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
         self.anaglyph_style = "gray"     # a key of ANAGLYPH_MATRICES
+        # The colours each eye's brightness is drawn in (grayscale style),
+        # set by Preferences > Viewport > Calibrate Anaglyph Colors.
+        self.anaglyph_left_rgb = (1.0, 0.0, 0.0)
+        self.anaglyph_right_rgb = (0.0, 1.0, 1.0)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -1928,7 +1943,7 @@ class SceneRenderer:
         fbo.use()
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
-        left_mat, right_mat = ANAGLYPH_MATRICES[self.camera.anaglyph_style]
+        left_mat, right_mat = anaglyph_matrices(self.camera)
         # GLSL mat3 is column-major, so the rows above go in transposed.
         self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
         self._anaglyph_prog["right_mat"].value = tuple(right_mat.T.ravel())

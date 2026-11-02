@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
     QSplitter,
 )
-from PySide6.QtGui import (QAction, QCursor, QDesktopServices, QKeySequence, QFont,
+from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QKeySequence, QFont,
                            QIcon, QShortcut, QUndoCommand, QUndoGroup,
                            QUndoStack, QTextCursor)
 from PySide6.QtCore import (Qt, QProcess, QSize, QSettings, QThread, QObject, QTimer, QUrl,
@@ -6119,6 +6119,8 @@ class MainWindow(QMainWindow):
         viewer_ipd = load_preference("viewport/viewerIPD", float)
         viewer_screen_dist = load_preference("viewport/viewerScreenDist", float)
         stereo_depth_scale = load_preference("viewport/stereoDepthScale", float)
+        anaglyph_rgb = [QColor(load_preference(k)).getRgbF()[:3]
+                        for k in ("viewport/anaglyphLeftColor", "viewport/anaglyphRightColor")]
         theme = all_themes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -6138,6 +6140,7 @@ class MainWindow(QMainWindow):
             cam.viewer_ipd = viewer_ipd
             cam.viewer_screen_dist = viewer_screen_dist
             cam.stereo_depth_scale = stereo_depth_scale
+            cam.anaglyph_left_rgb, cam.anaglyph_right_rgb = anaglyph_rgb
             cam.screen_dpi = vp.screen().physicalDotsPerInch()
             vp._renderer.bg_color = theme["background"]
             vp._renderer._default_color = theme["object"]
