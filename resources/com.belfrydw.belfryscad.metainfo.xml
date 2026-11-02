@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.2" date="2026-11-02">
+      <description>
+        <p>Enter at the start of a file works with auto-close on; console font size; orientation cube and axis indicator in anaglyph stereo; side-by-side double-click picks the right point</p>
+      </description>
+    </release>
     <release version="1.99.1" date="2026-11-02">
       <description>
         <p>Export offers the last export folder for every file in the same source folder; the state dump carries the 3D view's drawing errors</p>
