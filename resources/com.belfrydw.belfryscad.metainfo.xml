@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.98.3" date="2026-11-01">
+      <description>
+        <p>An axis pointing toward the viewer no longer stops short in the middle of the view</p>
+      </description>
+    </release>
     <release version="1.98.2" date="2026-11-01">
       <description>
         <p>Aspect Ratio keeps the viewport's longer side and never grows the window past the screen</p>
