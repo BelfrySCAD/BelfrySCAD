@@ -156,6 +156,17 @@ class _MeasureLabel(QLabel):
         super().mousePressEvent(event)
 
 
+#: Every distinct paintGL traceback -> [count, first, last] (ISO times), for
+#: the SIGUSR1 state dump: a 3D view whose drawing fails every frame keeps
+#: its last picture and looks frozen while the app runs on (#703).
+PAINT_ERRORS: dict[str, list] = {}
+
+
+def _now_iso() -> str:
+    import datetime
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
 @dataclass
 class Measurement:
     """One finished measurement, in world space.
@@ -642,9 +653,18 @@ class Viewport(QOpenGLWidget):
             self._renderer.under_paint = getattr(self, "_paint_under", None)
             self._renderer.paint(qt_fbo_id=fbo_id, extra_paint=self._paint_extra)
             self._frame_count += 1
-        except Exception as e:
+        except Exception:
             import traceback
-            print("paintGL error:", traceback.format_exc())
+            text = traceback.format_exc()
+            seen = PAINT_ERRORS.get(text)
+            if seen is None:
+                # Once per distinct error: it repeats every frame, and a
+                # terminal full of copies is where #703's got cut off.
+                PAINT_ERRORS[text] = [1, _now_iso(), _now_iso()]
+                print("paintGL error:", text, flush=True)
+            else:
+                seen[0] += 1
+                seen[2] = _now_iso()
 
     def _paint_extra(self, mvp: np.ndarray):
         """Hook for subclasses (data-viewer dialogs) to draw their own
