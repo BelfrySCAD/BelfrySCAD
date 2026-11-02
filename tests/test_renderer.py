@@ -305,6 +305,29 @@ class TestCameraRoll:
                    for c in ([x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                              for z in (lo[2], hi[2]))) > 1e-4
 
+    def test_anaglyph_depth_does_not_outgrow_the_zoom(self):
+        """Zooming in magnifies the model, and its depth with it, but no
+        more: the back face's disparity grows at most as fast as the model's
+        size on screen, and not at all once the model overflows the view.
+        Separation scaled by the camera's distance while the screen sat at
+        the model's front, so it grew 16x for an 8x zoom."""
+        cam = Camera()
+        cam.scene_bounds = (np.array([-10.0, -10, -10]), np.array([10.0, 10, 10]))
+        cam.target = np.zeros(3, np.float32)
+
+        def back_disparity(distance):
+            cam.distance = distance
+            right_view, left_view = cam.stereo_view_matrices(1100, 700, behind_screen=True)
+            proj = cam.projection_matrix(1100 / 700)
+            back = -cam.eye_position() / np.linalg.norm(cam.eye_position()) * 10
+            x = [(v := proj @ view @ np.append(back, 1.0))[0] / v[3] for view in (left_view, right_view)]
+            return abs(x[0] - x[1])
+
+        far, near = back_disparity(200), back_disparity(25)
+        assert near < far * 200 / 25
+        # Model wider than the view: zooming further holds the depth.
+        assert back_disparity(20) < 1.1 * back_disparity(30)
+
     @pytest.mark.parametrize("style", ["gray", "color"])
     def test_anaglyph_styles_keep_white_white_and_black_black(self, style):
         """The composite is clamp(L @ left + R @ right). White and black in

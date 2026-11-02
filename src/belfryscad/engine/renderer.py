@@ -427,6 +427,17 @@ ANAGLYPH_MATRICES = {
 }
 
 
+def anaglyph_matrices(camera) -> tuple[np.ndarray, np.ndarray]:
+    """The (left, right) matrices to draw `camera`'s anaglyph with. The gray
+    style draws each eye's brightness in that eye's calibrated colour; the
+    defaults, pure red and cyan, give ANAGLYPH_MATRICES["gray"] exactly.
+    The colour style is Dubois' fixed matrices, uncalibrated."""
+    if camera.anaglyph_style != "gray":
+        return ANAGLYPH_MATRICES[camera.anaglyph_style]
+    return (np.outer(camera.anaglyph_left_rgb, _LUMA),
+            np.outer(camera.anaglyph_right_rgb, _LUMA))
+
+
 # Generic (no CSG model matrix, no flat_preview) mesh shader for raw geometry
 # uploaded via SceneRenderer.upload_mesh — used by data viewers (VNF/Grid
 # meshes) rather than evaluated ColoredBody scenes. Unlike `_VERT`/`_FRAG`
@@ -524,6 +535,10 @@ class Camera:
         self.wall_eyed = False           # ...wall-eyed (eyes not swapped)
         self.anaglyph = False            # red/blue, full width (never both)
         self.anaglyph_style = "gray"     # a key of ANAGLYPH_MATRICES
+        # The colours each eye's brightness is drawn in (grayscale style),
+        # set by Preferences > Viewport > Calibrate Anaglyph Colors.
+        self.anaglyph_left_rgb = (1.0, 0.0, 0.0)
+        self.anaglyph_right_rgb = (0.0, 1.0, 1.0)
         self.viewer_ipd = 65.0           # mm — interpupillary distance
         self.viewer_screen_dist = 600.0  # mm — eye-to-screen distance
         self.stereo_depth_scale = 0.75   # comfort trim (1.0 = geometrically correct)
@@ -735,7 +750,7 @@ class Camera:
         Both cameras toe-in toward the same point, which is what sits AT the
         screen: nearer comes out of it, farther goes into it. That point is
         the target, or with `behind_screen` the front of the model's bounding
-        box (see `_front_depth`), so the whole model sits behind the screen
+        box (see `_depth_span`), so the whole model sits behind the screen
         like a view through a window -- its edges are never cut off by the
         window frame while appearing in front of it, which is what makes an
         anaglyph hard to fuse.
@@ -762,7 +777,6 @@ class Camera:
         )
         view = self.view_matrix()
         right_vec = view[0, :3].astype(np.float32)
-        half = self.distance * stereo_eye_sep * 0.5
         eye = self.eye_position()
         # The VIEW's up, not world-up: each eye's look-at took world-up
         # against its own toed-in direction, and near a pole (Top, Bottom)
@@ -772,21 +786,36 @@ class Camera:
         # it leaves the two images no vertical offset anywhere.
         up = view[1, :3].astype(np.float32)
         focus = self.target
-        if behind_screen:
-            front = self._front_depth()
-            if front is not None:
-                fwd = (self.target - eye) / self.distance
-                focus = (eye + fwd * front).astype(np.float32)
+        half = self.distance * stereo_eye_sep * 0.5
+        span = self._depth_span() if behind_screen else None
+        if span is not None:
+            front, back, center, radius = span
+            fwd = (self.target - eye) / self.distance
+            focus = (eye + fwd * front).astype(np.float32)
+            # What a zoom should do to the depth: magnify it with the model,
+            # no more. Separation in proportion to the distance to the
+            # screen (the model's front), as a viewer's eyes are to theirs,
+            # does that while the model is small in the view. Close up, the
+            # back of the model is many times farther than its front and the
+            # disparity kept climbing (6x for an 8x zoom on a cube, and the
+            # model had long since overflowed the view). So once the model
+            # is wider than the view, separation shrinks to hold the back's
+            # disparity where it was at that point. Scaled by the camera's
+            # distance, as it first was, depth grew 16x for that 8x zoom.
+            s = 1.0 / math.tan(rendered_half_fov_h)          # NDC x per unit, at unit depth
+            overflow = min(1.0, center / (radius * s))       # < 1 once wider than the view
+            half = 0.5 * stereo_eye_sep * min(front, front * back / center * overflow)
         right_eye = _look_at(eye + right_vec * half, focus, up)
         left_eye  = _look_at(eye - right_vec * half, focus, up)
         return right_eye, left_eye  # left panel = right eye (cross-eye)
 
-    def _front_depth(self) -> float | None:
-        """Distance along the view direction to the nearest corner of
-        scene_bounds, or None with no scene, or with the eye inside it (there
-        is no front to put at the screen then). The box's nearest corner is
-        at or in front of the nearest surface, so the model lands just
-        behind the screen, never through it."""
+    def _depth_span(self) -> tuple[float, float, float, float] | None:
+        """(front, back, center, radius) of scene_bounds along the view: the
+        distances to its nearest and farthest corners and to its centre, and
+        its bounding radius. None with no scene, or with the eye inside it
+        (there is no front to put at the screen then). The box's nearest
+        corner is at or in front of the nearest surface, so the model lands
+        just behind the screen, never through it."""
         if self.scene_bounds is None or self.distance <= 0:
             return None
         lo, hi = (np.asarray(b, dtype=np.float64) for b in self.scene_bounds)
@@ -794,8 +823,12 @@ class Camera:
         fwd = (self.target.astype(np.float64) - eye) / self.distance
         corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                             for z in (lo[2], hi[2])])
-        front = float(((corners - eye) @ fwd).min())
-        return front if front > 0 else None
+        depths = (corners - eye) @ fwd
+        front, back = float(depths.min()), float(depths.max())
+        if front <= 0:
+            return None
+        center = (lo + hi) / 2
+        return front, back, float(np.linalg.norm(center - eye)), float(np.linalg.norm(hi - lo)) / 2
 
     def frame_bounds(self, bb_min: np.ndarray, bb_max: np.ndarray,
                       aspect: float | None = None):
@@ -1910,7 +1943,7 @@ class SceneRenderer:
         fbo.use()
         self._active_fbo = fbo
         self._ctx.disable(mgl.DEPTH_TEST)
-        left_mat, right_mat = ANAGLYPH_MATRICES[self.camera.anaglyph_style]
+        left_mat, right_mat = anaglyph_matrices(self.camera)
         # GLSL mat3 is column-major, so the rows above go in transposed.
         self._anaglyph_prog["left_mat"].value = tuple(left_mat.T.ravel())
         self._anaglyph_prog["right_mat"].value = tuple(right_mat.T.ravel())
@@ -2375,7 +2408,11 @@ class SceneRenderer:
     def _visible_halves(self, mvp, L: float, ai: int):
         """_axis_halves, each trimmed to what the view shows (_clip_to_view)."""
         out = []
-        w_min = 1e-3 * self.camera.distance
+        # In perspective clip w is the depth in front of the eye. In
+        # orthographic it is 1 everywhere and nothing is behind the eye, so
+        # there is no limit: 1e-3 * distance there passed 1 at distance
+        # 1000 and every axis vanished on zooming out.
+        w_min = 0.0 if self.camera.orthographic else 1e-3 * self.camera.distance
         for sign, start, end in _axis_halves(self.camera, L, ai):
             span = _clip_to_view(mvp, ai, sign, start, end, w_min)
             if span is not None:
@@ -2491,12 +2528,16 @@ class SceneRenderer:
         if self._axes_vbo is not None:
             self._axes_vao.release()
             self._axes_vbo.release()
-
-        self._axes_vbo = self._ctx.buffer(geo.tobytes())
-        self._axes_vao = self._ctx.vertex_array(
-            self._gizmo_prog,
-            [(self._axes_vbo, "3f 3f", "in_position", "in_color")],
-        )
+            self._axes_vbo = self._axes_vao = None
+        # Every axis can be out of view (zoomed in off to one side), which
+        # _visible_halves reports as nothing to draw. moderngl refuses an
+        # empty buffer, and raising here aborted the rest of the frame.
+        if len(geo):
+            self._axes_vbo = self._ctx.buffer(geo.tobytes())
+            self._axes_vao = self._ctx.vertex_array(
+                self._gizmo_prog,
+                [(self._axes_vbo, "3f 3f", "in_position", "in_color")],
+            )
 
         if self._grid_vbo is not None:
             self._grid_vao.release()
@@ -2527,9 +2568,10 @@ class SceneRenderer:
         # Depth clamp: the part of an axis nearer than the near plane is
         # drawn at the near depth rather than cut off (see _clip_to_view),
         # still in front of the model, which lies past the near plane.
-        self._ctx.enable_direct(0x864F)   # GL_DEPTH_CLAMP
-        self._axes_vao.render(mgl.LINES)
-        self._ctx.disable_direct(0x864F)
+        if self._axes_vao is not None:
+            self._ctx.enable_direct(0x864F)   # GL_DEPTH_CLAMP
+            self._axes_vao.render(mgl.LINES)
+            self._ctx.disable_direct(0x864F)
         self._ctx.disable(mgl.BLEND)
 
     def _render_crosshairs(self, mvp: np.ndarray):
