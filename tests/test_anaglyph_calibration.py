@@ -37,8 +37,10 @@ def test_tint_and_brightness_round_trip():
     assert eye_color(180, 60, 100) == (0.0, 0.0, 1.0)        # cyan tinted all the way to blue
     assert np.allclose(eye_color(0, 0, 130), (1.0, 0.3, 0.3))  # past 100%: towards white
     for hue in (0, 180):
-        for tint, bright in ((0, 100), (-25, 80), (40, 120), (-60, 10)):
+        for tint, bright in ((0, 100), (-15, 85), (20, 120), (-20, 80)):
             assert np.allclose(eye_settings(hue, eye_color(hue, tint, bright)), (tint, bright))
+    # A saved colour outside the sliders' ranges lands at their ends.
+    assert np.allclose(eye_settings(0, eye_color(0, 60, 10)), (20, 80))
 
 
 DRIVER = '''
@@ -51,24 +53,24 @@ from belfryscad.window.preferences import load_preference, save_preferences
 from belfryscad.window.anaglyph_calibration import AnaglyphCalibrationDialog, LEFT_KEY, RIGHT_KEY
 d = AnaglyphCalibrationDialog(None, lambda k, v: save_preferences({k: v})); d.show(); app.processEvents()
 out = {"intro_plus_six": d.pages.count() == 7 and d.pages.currentIndex() == 0 and not d.back.isEnabled()}
-d.next.click(); d.sliders[LEFT_KEY, "brightness"].setValue(50)
-out["live_save"] = load_preference(LEFT_KEY) == "#800000"
+d.next.click(); d.sliders[LEFT_KEY, "brightness"].setValue(90)
+out["live_save"] = load_preference(LEFT_KEY) == "#e60000"
 d.next.click(); d.sliders[LEFT_KEY, "tint"].setValue(10)
-out["tint_keeps_brightness"] = load_preference(LEFT_KEY) == "#801500"
+out["tint_keeps_brightness"] = load_preference(LEFT_KEY) == "#e62600"
 for _ in range(4):
     d.next.click()
 app.processEvents(); d.preview.grab()          # paints the stereo preview
 out["last_page"] = d.next.text() == "Done"
 d.reset_all()
 out["factory_reset"] = load_preference(LEFT_KEY) == "#ff0000" and load_preference(RIGHT_KEY) == "#00ffff"
-d.sliders[LEFT_KEY, "brightness"].setValue(50)
+d.sliders[LEFT_KEY, "brightness"].setValue(90)
 d.reject()
 out["cancel_restores"] = load_preference(LEFT_KEY) == "#ff0000"
 d.show(); out["reopens_at_start"] = d.pages.currentIndex() == 0 and d.sliders[LEFT_KEY, "brightness"].value() == 100
-d.next.click(); d.next.click(); d.next.click(); d.sliders[RIGHT_KEY, "brightness"].setValue(50)
+d.next.click(); d.next.click(); d.next.click(); d.sliders[RIGHT_KEY, "brightness"].setValue(90)
 for _ in range(5):
     d.next.click()
-out["done_keeps"] = load_preference(RIGHT_KEY) == "#008080" and not d.isVisible()
+out["done_keeps"] = load_preference(RIGHT_KEY) == "#00e6e6" and not d.isVisible()
 print(json.dumps(out))
 '''
 
