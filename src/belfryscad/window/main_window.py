@@ -2109,6 +2109,9 @@ class MainWindow(QMainWindow):
         self._add_action(help_menu, "&Color List", self._show_color_list)
         self._add_action(help_menu, "&Welcome Screen…", self.show_welcome)
         self._add_action(help_menu, "Show &Library Folder", self._show_library_folder)
+        # The state dump SIGUSR1 writes, for Windows, which has no SIGUSR1,
+        # and for a reporter who doesn't use a terminal (#1038).
+        self._add_action(help_menu, "Write Dia&gnostic Report…", self._write_diagnostic_report)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)
@@ -4246,6 +4249,23 @@ class MainWindow(QMainWindow):
         self.id_to_node = {}
         self._csg_cache.clear()
         self.log("Flushed AST caches — render or debug to rebuild.")
+
+    def _write_diagnostic_report(self):
+        from belfryscad.main import write_state_dump
+        path = write_state_dump(QApplication.instance(), "Diagnostic report")
+        if path is None:
+            QMessageBox.warning(self, "Diagnostic Report",
+                                "There is no crash log to write the report to.")
+            return
+        self.log(f"Diagnostic report added to {path}")
+        box = QMessageBox(QMessageBox.Icon.Information, "Diagnostic Report",
+                          f"The report was added to the end of\n{path}\n\n"
+                          "Please attach that file to your issue.", parent=self)
+        show = box.addButton("Show Folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is show:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
 
     def _show_library_folder(self):
         from belfryscad.window.library_manager import show_library_folder
