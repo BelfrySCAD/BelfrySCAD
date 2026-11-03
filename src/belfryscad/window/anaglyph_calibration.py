@@ -32,12 +32,14 @@ EYES = {
     RIGHT_KEY: ("cyan", 180.0, ("Green", "Blue"), "left"),
 }
 
-#: Tint's reach either side of the pure colour, in degrees of hue: far
-#: enough for red/blue glasses to take cyan all the way to blue.
-TINT_RANGE = 60
-#: Brightness past 100% mixes in white, for a lens that also passes a little
-#: of the other colours: pure red then looks darker than white through it.
-MAX_BRIGHTNESS = 150
+#: Tint's reach either side of the pure colour, in degrees of hue. Real
+#: lenses sit close to their nominal colour; a wider slider made the small
+#: moves that matter too coarse to make.
+TINT_RANGE = 20
+#: Brightness's range, in percent. Past 100% mixes in white, for a lens that
+#: also passes a little of the other colours: pure red then looks darker
+#: than white through it. Narrow for the same reason as Tint.
+MIN_BRIGHTNESS, MAX_BRIGHTNESS = 80, 120
 
 STEPS = 6
 
@@ -58,7 +60,7 @@ def eye_settings(base_hue: float, rgb) -> tuple[float, float]:
     tint = (h * 360 - base_hue + 180) % 360 - 180
     brightness = v * 100 if v < 0.999 else 100 + (1 - s) * 100
     return (max(-TINT_RANGE, min(TINT_RANGE, tint)),
-            max(0.0, min(MAX_BRIGHTNESS, brightness)))
+            max(MIN_BRIGHTNESS, min(MAX_BRIGHTNESS, brightness)))
 
 
 def _draw_pattern(p: QPainter, rect: QRectF, color: QColor, dx: float = 0.0):
@@ -232,7 +234,7 @@ class AnaglyphCalibrationDialog(QDialog):
         if which == "tint":
             slider.setRange(-TINT_RANGE, TINT_RANGE)
         else:
-            slider.setRange(0, MAX_BRIGHTNESS)
+            slider.setRange(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
         value = QLabel()
         value.setMinimumWidth(44)
         grid = QGridLayout()
