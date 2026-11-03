@@ -18,6 +18,8 @@ if os.environ.get("CLICK"):
     from PySide6.QtTest import QTest
     QTest.mouseClick(w, Qt.MouseButton.LeftButton)
     QTest.keyClick(w, Qt.Key.Key_Q)
+    QTest.mouseMove(w, w.rect().center())
+    app._state_log.note_window_screens()
 if os.environ.get("PAINT_FAIL"):
     # A 3D view whose drawing fails on every frame, without a GL context.
     from types import SimpleNamespace
@@ -52,6 +54,7 @@ def test_sigusr1_reports_exposure_and_recent_window_events():
     assert "screens: " in proc.stderr
     assert "3D view drawing errors: none" in proc.stderr
     assert "recent input events:\n  none" in proc.stderr
+    assert "last pointer move: none" in proc.stderr
     assert "Expose QWindow" in proc.stderr
 
 
@@ -63,6 +66,8 @@ def test_sigusr1_lists_presses_and_releases_but_never_the_key():
     assert "MouseButtonPress LeftButton on QWidget" in err, err[-2000:]
     assert "MouseButtonRelease LeftButton on QWidget" in err
     assert "KeyPress on QWidget" in err and "Key_Q" not in err
+    assert "last pointer move: 20" in err
+    assert " dpr=" in err
     if sys.platform == "darwin":
         assert "AppKit:" in err and "main run loop mode=" in err
 
