@@ -562,6 +562,7 @@ def _describe_qt_state(app) -> str:
     if log is not None:
         lines.append("recent input events:")
         lines += [f"  {e}" for e in log.inputs] or ["  none"]
+        lines.append(f"last pointer move: {log.last_move or 'none'}")
         lines.append("recent window events:")
         lines += [f"  {e}" for e in log.events]
     from belfryscad.window.viewport import PAINT_ERRORS
@@ -743,23 +744,34 @@ class _StateLog:
         from PySide6.QtCore import QEvent, QObject
         T = QEvent.Type
         inputs = {T.MouseButtonPress, T.MouseButtonRelease, T.MouseButtonDblClick,
-                  T.KeyPress, T.KeyRelease, T.Wheel, T.ContextMenu}
+                  T.KeyPress, T.KeyRelease, T.Wheel, T.ContextMenu, T.NativeGesture}
         mouse = {T.MouseButtonPress, T.MouseButtonRelease, T.MouseButtonDblClick}
         changes = {T.Expose, T.ApplicationStateChange, T.WindowActivate,
                    T.WindowDeactivate, T.Show, T.Hide}
         from PySide6.QtCore import QTimer
         self.inputs = collections.deque(maxlen=20)
         self.events = collections.deque(maxlen=40)
+        # Pointer moves are too many to list; the last one says whether
+        # macOS still delivers anything at all to a window taking no input.
+        self.last_move = None
         log = self
+        # Once a burst of display changes settles, which screen each window
+        # ended up on: the 27.2 freezes follow a display reconnect.
+        self._screens_timer = QTimer(singleShot=True, interval=500)
+        self._screens_timer.timeout.connect(self.note_window_screens)
 
         class Filter(QObject):
             def eventFilter(self, obj, event):
                 t = event.type()
-                if t in inputs and not obj.isWindowType():
+                if t == T.MouseMove and obj.isWindowType():
+                    # At the QWindow: a widget only sees moves with tracking on.
+                    log.last_move = f"{_now()} on {type(obj).__name__} {obj.title()!r}"
+                elif t in inputs and not obj.isWindowType():
                     # Logged at the widget, not again at its QWindow.
                     # Never the key itself: this lands in the crash log,
                     # and keys typed are the user's text.
-                    detail = f" {event.button().name}" if t in mouse else ""
+                    detail = (f" {event.button().name}" if t in mouse else
+                              f" {event.gestureType().name}" if t == T.NativeGesture else "")
                     log.inputs.append(f"{_now()} {t.name}{detail} on {type(obj).__name__}")
                 elif t in changes and obj.isWindowType():
                     extra = f" exposed={obj.isExposed()}" if t == T.Expose else ""
@@ -776,7 +788,16 @@ class _StateLog:
         self._filter = Filter()
         app.installEventFilter(self._filter)
         for sig, what in ((app.screenAdded, "screen added"), (app.screenRemoved, "screen removed")):
-            sig.connect(lambda s, what=what: log.events.append(f"{_now()} {what}: {s.name()}"))
+            sig.connect(lambda s, what=what: (log.events.append(f"{_now()} {what}: {s.name()}"),
+                                              log._screens_timer.start()))
+
+    def note_window_screens(self):
+        from PySide6.QtGui import QGuiApplication
+        for w in QGuiApplication.topLevelWindows():
+            if w.isVisible():
+                screen = w.screen()
+                self.events.append(f"{_now()}   {w.title()!r} on {screen.name() if screen else None} "
+                                   f"dpr={w.devicePixelRatio():g}")
 
     def note_frontmost(self):
         try:
