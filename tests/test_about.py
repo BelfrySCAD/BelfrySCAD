@@ -121,3 +121,4 @@ print(json.dumps(out))
     assert "Release Notes…" in out["buttons"]
     assert "Report an Issue…" in out["help_entries"], out["help_entries"]
     assert "Documentation" in out["help_entries"]
+    assert "Write Diagnostic Report…" in out["help_entries"]
