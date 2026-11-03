@@ -47,6 +47,12 @@ def test_inline_math_becomes_italic_unicode():
     assert render_math("radius $r^2$ ok") == "radius *r²* ok"
 
 
+def test_function_names_are_written_out():
+    # #1035: \cos was unknown, so the whole formula stayed as LaTeX.
+    assert render_math(r"x $\sqrt{(x^2+1)(\cos 2λ+10)}$ y") == "x *√((x²+1)(cos 2λ+10))* y"
+    assert to_unicode(r"\sin^2 \theta + \log x") == "sin² θ + log x"
+
+
 def test_display_math_between_dollar_lines():
     out = render_math("before\n\n$$\n\\frac{a+b}{2}\n$$\n\nafter")
     assert out.splitlines() == ["before", "", "*(a+b)/2*", "", "after"]

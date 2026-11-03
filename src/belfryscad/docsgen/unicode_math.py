@@ -71,6 +71,15 @@ _SYMBOLS = {
     "|": "‖", "prime": "′", "ast": "∗", "star": "⋆",
 }
 
+#: Named functions, which LaTeX sets upright and MathJax shows as the bare
+#: name: `\cos 2x` reads "cos 2x". Unknown, any of these refused the whole
+#: formula (#1035).
+_FUNCTIONS = {
+    "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+    "sinh", "cosh", "tanh", "coth", "log", "ln", "lg", "exp", "min", "max",
+    "sup", "inf", "lim", "det", "dim", "deg", "arg", "gcd", "mod", "ker",
+}
+
 #: Commands that only affect typesetting, and so simply vanish.
 _IGNORED = {"left", "right", "displaystyle", "textstyle", "limits", "!"}
 
@@ -152,6 +161,8 @@ def _convert(src: str) -> str:
                 out.append(_convert(body))
             elif cmd in _SYMBOLS:
                 out.append(_SYMBOLS[cmd])
+            elif cmd in _FUNCTIONS:
+                out.append(cmd)
             elif cmd in _IGNORED:
                 pass
             elif cmd in _SPACING:
