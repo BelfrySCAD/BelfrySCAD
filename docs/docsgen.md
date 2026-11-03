@@ -366,7 +366,8 @@ strips the prefix and hands the real URL to `QDesktopServices`.
 **LaTeX math renders as Unicode.** GitHub's wiki sets `$inline$` and
 `$$display$$` with MathJax. Qt has no MathJax, no MathML and no way to
 typeset, so `unicode_math` converts the subset Unicode can express --
-superscripts, subscripts, roots, Greek, the common operators -- and
+superscripts, subscripts, roots, Greek, the common operators, and named
+functions like `\cos` and `\log` written out as their names -- and
 **refuses everything else**, leaving the original LaTeX untouched. Refusing
 is the important half: a reader can decode `\frac{a}{b}`, but not a formula
 that silently lost its numerator.
