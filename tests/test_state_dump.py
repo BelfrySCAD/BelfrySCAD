@@ -76,3 +76,35 @@ def test_sigusr1_carries_the_whole_paint_error_printed_once():
     assert "3D view drawing errors: 1" in err, err[-2000:]
     assert "  3x, first " in err
     assert "    RuntimeError: context lost" in err
+
+
+def test_animation_state_names_a_job_that_never_left():
+    # #1038: a leftover render job blocks every animation frame.
+    from types import SimpleNamespace as NS
+    from belfryscad.main import _describe_animation
+    win = NS(_animate_pane=NS(_playing=True, _dumping=False, _pending_advance="next",
+                              _timer=NS(isActive=lambda: True), _step=3, _steps=20),
+             _render_jobs=[(None, None, NS(isRunning=lambda: False))], _render_id=41)
+    out = "\n".join(_describe_animation(win))
+    assert "playing=True dumping=False pending_advance='next' timer_active=True step=3/20" in out
+    assert "render_jobs=1 running=0 render_id=41" in out
+
+
+REPORT_DRIVER = r'''
+import io, sys
+from PySide6.QtWidgets import QApplication
+app = QApplication(sys.argv)
+from belfryscad import main as m
+log = io.StringIO()
+m._crash_stream = log
+path = m.write_state_dump(app, "Diagnostic report")
+print(path.endswith("crash.log"), "=== Diagnostic report " in log.getvalue(),
+      "applicationState=" in log.getvalue())
+'''
+
+
+def test_diagnostic_report_writes_the_dump_to_the_crash_log():
+    # Help > Write Diagnostic Report: the only trigger on Windows (#1038).
+    proc = subprocess.run([sys.executable, "-c", REPORT_DRIVER], capture_output=True, text=True,
+                          env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=60)
+    assert proc.stdout.split() == ["True", "True", "True"], proc.stderr[-2000:]

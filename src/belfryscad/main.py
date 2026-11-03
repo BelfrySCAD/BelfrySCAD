@@ -502,6 +502,23 @@ def _install_crash_log():
     sys.excepthook = hook
 
 
+def _describe_animation(win) -> list[str]:
+    """Animation playback state for one main window, for a stuck animation
+    (#1038). A frame waits while anything is in `_render_jobs`, so a job
+    that never leaves it stops playback while F5/F6 still work."""
+    pane = win._animate_pane
+    timer = getattr(pane, "_timer", None)
+    jobs = list(getattr(win, "_render_jobs", []))
+    running = sum(1 for *_, t in jobs if t.isRunning())
+    return [f"animation: playing={getattr(pane, '_playing', '?')} "
+            f"dumping={getattr(pane, '_dumping', '?')} "
+            f"pending_advance={getattr(pane, '_pending_advance', '?')!r} "
+            f"timer_active={timer.isActive() if timer is not None else '?'} "
+            f"step={getattr(pane, '_step', '?')}/{getattr(pane, '_steps', '?')}",
+            f"  render_jobs={len(jobs)} running={running} "
+            f"render_id={getattr(win, '_render_id', '?')}"]
+
+
 def _describe_qt_state(app) -> str:
     """What Qt thinks is in front: the modal, popup, focus and every
     visible top-level window. Answers "why does the window ignore input"."""
@@ -552,6 +569,12 @@ def _describe_qt_state(app) -> str:
     for text, (count, first, last) in PAINT_ERRORS.items():
         lines.append(f"  {count}x, first {first}, last {last}:")
         lines += [f"    {t}" for t in text.rstrip().splitlines()]
+    for w in app.topLevelWidgets():
+        if hasattr(w, "_animate_pane"):
+            try:
+                lines += _describe_animation(w)
+            except Exception as e:      # a dump must never fail over this
+                lines.append(f"animation: unavailable ({type(e).__name__}: {e})")
     if sys.platform == "darwin":
         lines += _describe_macos_state()
     return "\n".join(lines) + "\n"
@@ -767,30 +790,37 @@ def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+def write_state_dump(app, title: str = "SIGUSR1 state dump") -> str | None:
+    """Write Qt's window/modal state, the animation state and every Python
+    thread's stack to stderr and the crash log. Returns the crash log's
+    path, or None if there is no crash log to point a reporter at."""
+    import datetime
+    import faulthandler
+    head = f"\n=== {title} {datetime.datetime.now().isoformat(timespec='seconds')} ===\n"
+    text = head + _describe_qt_state(app)
+    for stream in (sys.stderr, _crash_stream):
+        if stream is not None:
+            stream.write(text)
+            stream.flush()
+            try:
+                faulthandler.dump_traceback(stream, all_threads=True)
+            except (OSError, ValueError, AttributeError):
+                pass    # e.g. stderr is os.devnull's wrapper without a usable fileno
+    return os.path.expanduser(CRASH_LOG) if _crash_stream is not None else None
+
+
 def _install_state_dump(app):
-    """`kill -USR1 <pid>` prints Qt's window/modal state and every Python
-    thread's stack to stderr and the crash log -- for a window that stops
-    taking input with nothing in the sample to say why (#703)."""
+    """`kill -USR1 <pid>` writes the state dump (write_state_dump) -- for a
+    window that stops taking input with nothing in the sample to say why
+    (#703). Windows has no SIGUSR1; there Help > Write Diagnostic Report
+    is the only trigger, so the event log is kept everywhere."""
+    app._state_log = _StateLog(app)
     import signal
     if not hasattr(signal, "SIGUSR1"):
         return          # Windows
-    import datetime
-    import faulthandler
     from PySide6.QtCore import QTimer
 
-    def dump(*_):
-        head = f"\n=== SIGUSR1 state dump {datetime.datetime.now().isoformat(timespec='seconds')} ===\n"
-        text = head + _describe_qt_state(app)
-        for stream in (sys.stderr, _crash_stream):
-            if stream is not None:
-                stream.write(text)
-                stream.flush()
-                try:
-                    faulthandler.dump_traceback(stream, all_threads=True)
-                except (OSError, ValueError, AttributeError):
-                    pass    # e.g. stderr is os.devnull's wrapper without a usable fileno
-    app._state_log = _StateLog(app)
-    signal.signal(signal.SIGUSR1, dump)
+    signal.signal(signal.SIGUSR1, lambda *_: write_state_dump(app))
     # A Python signal handler only runs when Python code does; an idle Qt
     # loop runs none, so tick once a second to let it through.
     app._state_dump_tick = QTimer(app)
