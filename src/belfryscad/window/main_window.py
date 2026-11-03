@@ -3838,6 +3838,11 @@ class MainWindow(QMainWindow):
         self._geometry = geometry
         self._geometry_is_preview = self._render_is_preview
         if not self._render_is_preview:
+            # A `%` object vanishing on F6 reads as a bug (#1031); OpenSCAD
+            # hides it too, but says nothing.
+            if any(b.role == "background" for b in bodies):
+                self.log("Objects with the % modifier are hidden in Render. "
+                         "Use Preview (F5) to see them.")
             bodies = as_rendered(bodies)
         self._last_csg_tree = csg_tree
         self._last_profile_result = profile_result

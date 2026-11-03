@@ -55,8 +55,10 @@ out["menu"] = sorted((a.text().replace("&", ""), a.shortcut().toString())
 w.open_file_by_path(p, render=False)
 out["preview"] = roles_after(lambda: w._render())
 wait(lambda: echo()); out["preview_echo"] = echo()
+out["note_after_preview"] = "Objects with the % modifier are hidden in Render" in w._console.toPlainText()
 out["render"] = roles_after(lambda: w._render(preview=False))
 wait(lambda: echo()); out["render_echo"] = echo()
+out["note_after_render"] = "Objects with the % modifier are hidden in Render" in w._console.toPlainText()
 
 # Export from a Preview renders first, then asks where to save.
 asked = []
@@ -78,6 +80,7 @@ def test_preview_and_render_modes():
     assert out["menu"] == [["Automatic Reload and Preview", ""], ["Preview", "F5"],
                            ["Reload and Preview", "F4"], ["Render", "F6"]]
     assert "background" in out["preview"] and "highlight_ghost" in out["preview"]
+    assert not out["note_after_preview"] and out["note_after_render"]   # #1031
     assert out["preview_echo"] == ["ECHO: preview = true"]
     assert set(out["render"]) == {"normal"}
     assert out["render_echo"] == ["ECHO: preview = false"]
