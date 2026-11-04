@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.7" date="2026-11-03">
+      <description>
+        <p>Edit as Grid and Edit as Region save one row per line</p>
+      </description>
+    </release>
     <release version="1.99.6" date="2026-11-03">
       <description>
         <p>Anaglyph calibrator ranges narrowed to 80-120% brightness and +-20 degrees tint, and more detail in the diagnostic report</p>
