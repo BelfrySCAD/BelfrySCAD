@@ -827,6 +827,12 @@ def _open_path_editor(title: str, value: list, on_commit, parent=None, is_2d=Non
     dlg.show()
 
 
+def _line_indent(text: str, pos: int) -> str:
+    """The leading whitespace of the line `pos` is on."""
+    line = text[text.rfind("\n", 0, pos) + 1:]
+    return line[:len(line) - len(line.lstrip(" \t"))]
+
+
 def _open_grid_editor(title: str, value: list, on_commit, parent=None):
     dlg = GridViewer(title, value, parent, editable=True)
     dlg.committed.connect(on_commit)
@@ -951,7 +957,9 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         start, end, value = literals["grid"]
         menu.addAction("Edit as Grid...", lambda start=start, end=end, value=value:
                        _open_grid_editor(_preview(start, end), value,
-                                         lambda t, s=start, e=end: on_commit(t, s, e), parent))
+                                         lambda t, s=start, e=end: on_commit(
+                                             t.replace("\n", "\n" + _line_indent(text, s)), s, e),
+                                         parent))
     if "heightfield" in literals:
         start, end, value = literals["heightfield"]
         menu.addAction("Edit as Heightfield...", lambda start=start, end=end, value=value:
