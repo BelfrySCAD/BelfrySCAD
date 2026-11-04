@@ -827,10 +827,12 @@ def _open_path_editor(title: str, value: list, on_commit, parent=None, is_2d=Non
     dlg.show()
 
 
-def _line_indent(text: str, pos: int) -> str:
-    """The leading whitespace of the line `pos` is on."""
-    line = text[text.rfind("\n", 0, pos) + 1:]
-    return line[:len(line) - len(line.lstrip(" \t"))]
+def _indented_commit(on_commit, text: str, start: int, end: int):
+    """on_commit for a viewer that saves several lines: each line after the
+    first is indented to match the line the literal starts on (#1046)."""
+    line = text[text.rfind("\n", 0, start) + 1:]
+    indent = line[:len(line) - len(line.lstrip(" \t"))]
+    return lambda t: on_commit(t.replace("\n", "\n" + indent), start, end)
 
 
 def _open_grid_editor(title: str, value: list, on_commit, parent=None):
@@ -957,9 +959,7 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         start, end, value = literals["grid"]
         menu.addAction("Edit as Grid...", lambda start=start, end=end, value=value:
                        _open_grid_editor(_preview(start, end), value,
-                                         lambda t, s=start, e=end: on_commit(
-                                             t.replace("\n", "\n" + _line_indent(text, s)), s, e),
-                                         parent))
+                                         _indented_commit(on_commit, text, start, end), parent))
     if "heightfield" in literals:
         start, end, value = literals["heightfield"]
         menu.addAction("Edit as Heightfield...", lambda start=start, end=end, value=value:
@@ -989,7 +989,7 @@ def build_editor_menu(menu: QMenu, text: str, literals: dict, on_commit, parent=
         start, end, value = literals["region"]
         menu.addAction("Edit as Region...", lambda start=start, end=end, value=value:
                        _open_region_editor(_preview(start, end), value,
-                                            lambda t, s=start, e=end: on_commit(t, s, e), parent))
+                                            _indented_commit(on_commit, text, start, end), parent))
     if "turtle" in literals:
         start, end, value = literals["turtle"]
         menu.addAction("Edit as Turtle Path...", lambda start=start, end=end, value=value:
