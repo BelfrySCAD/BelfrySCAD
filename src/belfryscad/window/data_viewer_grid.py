@@ -17,7 +17,7 @@ from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _apply_click_selection,
-                                                  _dodecahedron_faces, _format_value,
+                                                  _dodecahedron_faces,
                                                   _grid_flat_to_rc, _grid_row_offsets,
                                                   _is_list, _is_numeric_point,
                                                   _lit_marker_field,
@@ -736,7 +736,9 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         self._commit_value(new_value, "Edit Vertex")
 
     def _on_save(self):
-        self.committed.emit(_format_value(self._grid))
+        # One row per line, as Replace with Value writes a grid (#1046).
+        from belfryscad.scad_literals import rounded, scad_literal_block
+        self.committed.emit(scad_literal_block(rounded(self._grid)))
         self.accept()
 
 
