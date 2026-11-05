@@ -118,7 +118,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   `[major, minor, patch]`, and `supported_feature("name")` returns the level at which this build
   implements a named feature (`render-expr`, `polyhedron-vnf`, `separate-children`,
   `minkowski-diff`, `sphere-styles`, `export-name`, `simplify-op`, `expr-import`,
-  `object-function`, `roof-op`, `discretization-by-error`, `profile-time`, `alpha-wrap`, `export-as` — one for every documented extension) or **0** for one it
+  `object-function`, `roof-op`, `discretization-by-error`, `profile-time`, `alpha-wrap`, `export-as`, `offset-3d` — one for every documented extension) or **0** for one it
   does not — including names it has never heard of, so probing for a future feature is safe.
   Both are `undef` in OpenSCAD, so the guard is portable. They exist because OpenSCAD silently
   ignores unknown *arguments*: `children(separate=true)` runs there and renders the wrong shape
@@ -135,6 +135,15 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   GUI change beyond the editor's completion and signature tables. Not part of upstream OpenSCAD,
   which drops an unknown module's children, so a portable script guards it with
   `supported_feature("export-as")`.
+- **Language extension — 3D `offset()`**: `offset(r=)`, `offset(delta=)` and
+  `offset(delta=, chamfer=true)` take a solid as well as a 2D shape, growing or shrinking it: every
+  face moves `d` along its normal, `delta=` keeps edges sharp (no miter limit, as in 2D),
+  `chamfer=true` cuts them flat and `r=` rounds them with a faceted ball inscribed in the true one,
+  its sides counted from `$fn`/`$fa`/`$fs` as in 2D (so the default gives `r=1` five; set `$fn`).
+  The first real child fixes the dimension, as for a boolean. Implemented entirely in
+  openscad_cpp_evaluator ≥1.52.0 (`src/builtins/offset3d.cpp`; the construction, its Manifold
+  workarounds and known limits are in its `CLAUDE.md`); no GUI change. Upstream OpenSCAD ignores a
+  3D child of `offset()`, so a portable script guards it with `supported_feature("offset-3d")`.
 - **Export object split**: top level is an implicit union, so every format writes the union, never the raw body list. The evaluator's `splitBodiesForExport` cuts it into objects that never share volume — one per colour (later `color()` wins an overlap), then one per connected component — and carries per-triangle colour where a CSG merge produced it. The GUI calls `exporters.export_model(path, evaluator.geometry)` and logs the warnings it returns. See `docs/rendering.md`'s Export section.
 - **Export options**: asked **after** the save dialog, not in Preferences. The format is only known once the name is typed and the filter picked, and a native macOS save dialog cannot host extra controls — so `window/export_options.py` opens a small dialog for the chosen format, and shows nothing at all for a format with no options (`.off`). Cancelling it cancels the export. `export_fields(ext)` is plain data with no Qt in it (so what each format offers is testable without a widget) and `export_kwargs(ext, values, design)` turns the answers into `export_model` arguments. The `export/*` preference keys survive as the **defaults the dialog opens on**, rewritten by each export, so a second export in a session asks nothing new. This is also how `.stl` finally reaches ASCII from the GUI (`--export-format asciistl` was CLI-only) and how SVG's stroke width became reachable at all.
 - **Export workflow**: if no current render exists, or what is on screen is a Preview, Export makes a Render first and continues once it lands (see Render Triggers)
