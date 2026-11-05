@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.9" date="2026-11-05">
+      <description>
+        <p>offset() of a solid is several times faster</p>
+      </description>
+    </release>
     <release version="1.99.8" date="2026-11-05">
       <description>
         <p>offset() grows or shrinks solids too: r=, delta= and chamfer=</p>
