@@ -1357,10 +1357,22 @@ class Viewport(QOpenGLWidget):
         self.camera_changed.emit()
         self.update()
 
-    def scroll_to_visible(self, pt: np.ndarray):
+    #: How much of the way a drag scrolls the view per mouse move once the
+    #: point nears an edge. It pans on every move while the pointer sits
+    #: there, so the whole way at once raced off (2026-11-05).
+    DRAG_SCROLL_FRACTION = 0.25
+
+    def follow_moved_point(self, pt: np.ndarray):
+        """Keep a point being moved on screen: by a mouse drag, a quarter
+        of the way per move (DRAG_SCROLL_FRACTION); by an arrow key, the
+        whole way, so a nudge never leaves the point behind."""
+        held = QApplication.mouseButtons() != Qt.MouseButton.NoButton
+        self.scroll_to_visible(pt, self.DRAG_SCROLL_FRACTION if held else 1.0)
+
+    def scroll_to_visible(self, pt: np.ndarray, fraction: float = 1.0):
         """Pan the camera target the minimum amount to keep `pt` within the
         visible area (used by data-viewer dialogs to keep a newly-selected
-        vertex/face on screen)."""
+        vertex/face on screen), or `fraction` of that amount."""
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
             return
@@ -1390,8 +1402,8 @@ class Viewport(QOpenGLWidget):
         up = view[1, :3].astype(np.float32)
         half_h = cam.distance * math.tan(math.radians(cam.fov / 2))
         cam.target = (cam.target
-                      + right * dx_ndc * half_h * aspect
-                      + up * dy_ndc * half_h).astype(np.float32)
+                      + (right * dx_ndc * half_h * aspect
+                         + up * dy_ndc * half_h) * fraction).astype(np.float32)
         if self._measurements:
             self._refresh_measure_labels()
         self.camera_changed.emit()

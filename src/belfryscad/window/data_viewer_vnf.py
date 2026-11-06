@@ -1111,7 +1111,7 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         self._vert_table.item(vi, 2).setText(f"{z:g}")
         self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, z]))
+        self._vp.follow_moved_point(np.array([x, y, z]))
 
     def _on_save(self):
         self.committed.emit(_format_value(self._vnf))

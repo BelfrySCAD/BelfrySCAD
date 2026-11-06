@@ -418,7 +418,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
             self._vert_table.item(col_idx, 1).setText(f"{y:g}")
             self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, 0.0]))
+        self._vp.follow_moved_point(np.array([x, y, 0.0]))
 
     def _do_initial_load(self):
         self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))

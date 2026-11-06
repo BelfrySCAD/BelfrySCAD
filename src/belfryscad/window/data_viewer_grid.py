@@ -742,7 +742,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
                 self._vert_table.item(col_idx, 2).setText(f"{z:g}")
             self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, z if is_3d else 0.0]))
+        self._vp.follow_moved_point(np.array([x, y, z if is_3d else 0.0]))
 
     def _wrap_flags(self) -> tuple[bool, bool]:
         wrap = self._wrap_combo.currentText()

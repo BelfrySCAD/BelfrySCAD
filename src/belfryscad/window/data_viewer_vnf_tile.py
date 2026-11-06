@@ -125,4 +125,4 @@ class VNFTileViewer(VNFViewer):
                 self._vert_table.item(k, c).setText(f"{p[c]:g}")
         self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array(moves[0][1]))
+        self._vp.follow_moved_point(np.array(moves[0][1]))

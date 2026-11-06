@@ -3633,3 +3633,51 @@ def test_a_capped_degree_comes_back_with_the_points(tmp_path):
     assert out["path_regrown"] == 5, "back to the degree chosen, not the default"
     assert out["grid_small"] == [1, 1]
     assert out["grid_grown"] == [3, 3]
+
+
+_EDGE_SCROLL_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtCore import Qt
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window import viewport as vpm
+from belfryscad.window.data_viewer_path import PathViewer
+
+v = PathViewer("p", [[0, 0], [10, 0], [10, 10]], None, editable=True)
+v.resize(800, 500); v.show(); app.processEvents()
+vp = v._vp
+start = vp._renderer.camera.target.copy()
+far = start + np.array([1000.0, 0, 0], dtype=np.float32)   # well past the right edge
+def shift(buttons):
+    vp._renderer.camera.target = start.copy()
+    vpm.QApplication.mouseButtons = staticmethod(lambda: buttons)
+    vp.follow_moved_point(far)
+    return float(vp._renderer.camera.target[0] - start[0])
+print(json.dumps({"drag": shift(Qt.MouseButton.LeftButton), "nudge": shift(Qt.MouseButton.NoButton)}))
+"""
+
+
+def test_a_drag_scrolls_the_view_a_quarter_as_fast_as_a_nudge(tmp_path):
+    """Dragging a point to the viewport's edge pans the view on every mouse
+    move while the pointer sits there, and panning the whole way each time
+    raced off. A drag now pans a quarter of the way per move; an arrow-key
+    nudge, with no button held, still pans the whole way, so the point it
+    moved is never left off screen."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_edge_scroll.py"
+    driver.write_text(_EDGE_SCROLL_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["nudge"] > 0
+    assert abs(out["drag"] - 0.25 * out["nudge"]) < 1e-3 * out["nudge"]

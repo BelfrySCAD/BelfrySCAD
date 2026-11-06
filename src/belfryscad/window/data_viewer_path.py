@@ -1112,7 +1112,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._vert_table.item(vi, 2).setText(f"{z:g}")
         self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, z if is_3d else 0.0]))
+        self._vp.follow_moved_point(np.array([x, y, z if is_3d else 0.0]))
 
     def _on_viewport_add_vertex_requested(self, insert_after: int, x: float, y: float, z: float):
         """Right-click "Add Vertex" on a path line (`_PathViewport.
