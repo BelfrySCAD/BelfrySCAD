@@ -3381,3 +3381,75 @@ class TestNurbsCorners:
 
     def test_a_computed_corners_is_left_alone(self):
         assert self._write("nurbs_interp([[0,0],[1,1]], 3, corners=cs);", [1]) == "nurbs_interp(PTS, 3, corners=cs);"
+
+
+_GRID_SET_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QInputDialog, QMenu
+app = QApplication([])
+from belfryscad.window import data_viewer_grid as dvg
+
+answers = []
+asked = []
+def get_text(parent, title, label, text=""):
+    asked.append([title, text])
+    return answers.pop(0), True
+dvg.QInputDialog.getText = staticmethod(get_text)
+
+grid = dvg.GridViewer("g", [[[c, r, c * r] for c in range(4)] for r in range(4)],
+                      None, editable=True)
+grid.show(); app.processEvents()
+grid._row_combo.setCurrentIndex(1); app.processEvents()
+def run(build):
+    m = QMenu(); build(m)
+    labels = [a.text() for a in m.actions()]
+    m.actions()[0].trigger(); app.processEvents()
+    return labels
+out = {}
+answers.append("5")
+out["row_menu"] = run(lambda m: grid._add_set_row_action(m, 2))
+out["row"] = [p[2] for p in grid._grid[1]]
+out["others"] = [p[2] for p in grid._grid[2]]
+answers.append("-1.5")
+out["col_menu"] = run(lambda m: grid._add_set_column_action(m, 0, 3))
+out["col"] = [row[3][0] for row in grid._grid]
+answers.append("nope")
+run(lambda m: grid._add_set_row_action(m, 1))
+out["bad_left"] = [p[1] for p in grid._grid[1]]
+out["asked"] = asked
+grid._undo_stack.undo(); app.processEvents()
+out["undone_col"] = [row[3][0] for row in grid._grid]
+out["undone_row_kept"] = [p[2] for p in grid._grid[1]]
+print(json.dumps(out))
+"""
+
+
+def test_a_grid_row_or_column_takes_one_coordinate(tmp_path):
+    """#1054: flattening a patch's edge meant typing the same Z into every
+    cell. One value now goes to a whole row (an X/Y/Z header) or column (a
+    point number), as one undo step; an answer that isn't a number does
+    nothing."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_grid_set.py"
+    driver.write_text(_GRID_SET_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["row_menu"] == ["Set Z of Row 1…"]
+    assert out["row"] == [5, 5, 5, 5]
+    assert out["others"] == [0, 2, 4, 6], "other rows untouched"
+    assert out["col_menu"] == ["Set X of Column 3…"]
+    assert out["col"] == [-1.5] * 4
+    assert out["bad_left"] == [1, 1, 1, 1]
+    assert out["asked"][0] == ["Set Z of Row 1", "0"], "starts from the first point's value"
+    assert out["undone_col"] == [3, 3, 3, 3]
+    assert out["undone_row_kept"] == [5, 5, 5, 5], "each Set is its own undo step"
