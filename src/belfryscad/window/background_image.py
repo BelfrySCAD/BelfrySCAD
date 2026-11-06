@@ -2,15 +2,18 @@
 
 The image lies in the XY plane, under the shape, and is never written into the
 script. Its placement is kept for the session only, per editor title, so closing
-and reopening an editor on the same literal finds it where it was left.
+and reopening an editor on the same literal finds it where it was left -- and
+per image file, so loading the same file in another editor puts it at the same
+size and place (#1073).
 """
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field, replace
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QAction, QBrush, QColor, QImage, QPainter, QPen, QUndoCommand
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QInputDialog, QMessageBox, QPushButton,
@@ -38,6 +41,7 @@ _MAX_TEXTURE = 8192
 class BackgroundImage:
     path: str = ""
     aspect: float = 1.0        # height / width, from the file
+    pixels: int = 0            # the file's width in pixels, for the scale
     width: float = 100.0       # in model units
     x: float = 0.0             # where the anchor point sits
     y: float = 0.0
@@ -98,6 +102,40 @@ class BackgroundImage:
 
 #: The session's images, by editor window title.
 _session: dict[str, BackgroundImage] = {}
+#: Where each image file was last placed, in any editor, so loading it in
+#: another editor puts it at the same size and place (#1073): one drawing of
+#: several views is traced a view at a time, each in its own editor.
+_by_file: dict[str, BackgroundImage] = {}
+
+
+def _file_key(path: str) -> str:
+    return os.path.normcase(os.path.realpath(path))
+
+
+def remember_placement(bg: BackgroundImage):
+    if bg.path:
+        _by_file[_file_key(bg.path)] = replace(bg)
+
+
+def placement_for(path: str) -> BackgroundImage | None:
+    """A copy of where image `path` was last placed this session, if it was."""
+    bg = _by_file.get(_file_key(path))
+    return None if bg is None else replace(bg, visible=True)
+
+
+def _num(v: float) -> str:
+    return f"{v:.3f}".rstrip("0").rstrip(".") or "0"
+
+
+def scale_label(bg: BackgroundImage) -> str:
+    """The image's size, place and scale, for the adjust overlay."""
+    text = (f"{_num(bg.width)} × {_num(bg.height)}, "
+            f"{anchor_name(bg.anchor).lower()} at ({_num(bg.x)}, {_num(bg.y)})")
+    if bg.rotation:
+        text += f", rotated {_num(bg.rotation)}°"
+    if bg.pixels:
+        text += f"\nScale {_num(100 * bg.width / bg.pixels)}% (1 pixel = {_num(bg.width / bg.pixels)} units)"
+    return text
 
 #: How each 2D view sees a model: its plane (as the 3D editors' presets,
 #: reference_3d.PLANES) and the axis cut along.
@@ -323,8 +361,10 @@ class BackgroundImageViewportMixin:
         ctx.disable(mgl.BLEND)
 
     def background_edited(self):
-        if self.background is not None and self.background_key:
-            _session[self.background_key] = replace(self.background)
+        if self.background is not None:
+            remember_placement(self.background)
+            if self.background_key:
+                _session[self.background_key] = replace(self.background)
         # One undo step per change; a drag's is pushed on release, for the
         # whole drag.
         if self._bg_drag is None:
@@ -601,8 +641,11 @@ class BackgroundImageViewportMixin:
             return
         bg = self.background
         if bg is None:
-            # A new image starts fitted to the shape; a replacement keeps
+            # A new image starts where this file was last placed, in any
+            # editor (#1073), else fitted to the shape; a replacement keeps
             # the old one's place, size and rotation.
+            bg = placement_for(path)
+        if bg is None:
             bg = BackgroundImage()
             bounds = self.shape_bounds()
             bg.aspect = img.height() / img.width()
@@ -610,6 +653,7 @@ class BackgroundImageViewportMixin:
                 bg.fit(bounds)
         bg.path = path
         bg.aspect = img.height() / img.width()
+        bg.pixels = img.width()
         bg.visible = True
         self.background = bg
         self.background_edited()
@@ -992,6 +1036,16 @@ class _AdjustOverlay(QWidget):
                 p.drawEllipse(rect.adjusted(-1.5, -1.5, 1.5, 1.5))
             else:
                 p.drawRect(rect)
+        # Size, place and scale, bottom left, to set another editor's copy
+        # to match (#1073).
+        text = scale_label(vp.background)
+        box = p.fontMetrics().boundingRect(QRect(0, 0, 10000, 10000), 0, text)
+        box.moveBottomLeft(QPoint(10, self.height() - 10))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 220))
+        p.drawRoundedRect(QRectF(box).adjusted(-6, -4, 6, 4), 4, 4)
+        p.setPen(QColor(30, 30, 30))
+        p.drawText(box, 0, text)
         p.end()
 
 
