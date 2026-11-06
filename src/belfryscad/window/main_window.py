@@ -1955,7 +1955,7 @@ class MainWindow(QMainWindow):
         self._add_action(view_menu, "Split Editor Belo&w",
                          lambda: self._split_view(Qt.Orientation.Vertical),
                          QKeySequence("Ctrl+Shift+\\"))
-        self._act_close_split = self._add_action(view_menu, "Close Spli&t", self._close_split)
+        self._act_close_split = self._add_action(view_menu, "Close Editor Spli&t", self._close_split)
         self._act_close_split.setEnabled(False)
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)

@@ -121,6 +121,7 @@ def collect(menubar, toolbars=(), extra=(), skip_menus=()) -> list[Binding]:
 RENAMED = {
     "View > Split Right": "View > Split Editor Right",
     "View > Split Below": "View > Split Editor Below",
+    "View > Close Split": "View > Close Editor Split",
 }
 
 
