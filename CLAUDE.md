@@ -97,7 +97,7 @@ Requires every AST node to carry both its **source span** (file/line/col) and it
   from the paper and **not** from CGAL's GPL code; it lives in openscad_cpp_evaluator ≥1.50.0
   (`src/builtins/alpha_wrap.cpp`, see its `CLAUDE.md`), with no GUI change. #941.
   `alpha_wrap(alpha, offset, points=[...]);` wraps a point cloud instead -- `[x, y, z]` points with
-  no faces, from a scan -- into one solid (evaluator ≥1.52.2, `supported_feature("alpha-wrap")` 2).
+  no faces, from a scan -- into one solid (evaluator ≥1.53.0, `supported_feature("alpha-wrap")` 2).
   **`points=` with children is an error**, not a union (#1037: no use was found for both, and
   refusing now lets it be allowed later without breaking a script). A cloud's default alpha is at
   least 1.5x its median point spacing, or the ball passes between the points and wraps each alone.
