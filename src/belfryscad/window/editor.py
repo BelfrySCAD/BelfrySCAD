@@ -3951,8 +3951,8 @@ class CodeEditor(QPlainTextEdit):
             menu.addMenu(add_sub)
 
         menu.addSeparator()
-        menu.addAction("Split &Right", lambda: self._request_split(Qt.Orientation.Horizontal))
-        menu.addAction("Split &Below", lambda: self._request_split(Qt.Orientation.Vertical))
+        menu.addAction("Split Editor &Right", lambda: self._request_split(Qt.Orientation.Horizontal))
+        menu.addAction("Split Editor &Below", lambda: self._request_split(Qt.Orientation.Vertical))
         if self is not self.views[0]:
             menu.addAction("&Close Split", self._request_close_split)
 
