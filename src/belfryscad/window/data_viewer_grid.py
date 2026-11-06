@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QAbstractItemView, QCheckBox, QMenu,
                                QLabel, QPushButton, QSplitter, QWidget, QComboBox,
-                               QSpinBox)
+                               QSpinBox, QInputDialog)
 from PySide6.QtCore import Qt, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent
 
@@ -237,6 +237,12 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         if editable:
             self._vert_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self._vert_table.customContextMenuRequested.connect(self._show_vert_table_context_menu)
+            # An axis header sets that coordinate along the shown row; a
+            # point number sets one along its column (#1054).
+            for header, handler in ((self._vert_table.horizontalHeader(), self._show_axis_header_menu),
+                                    (self._vert_table.verticalHeader(), self._show_point_header_menu)):
+                header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                header.customContextMenuRequested.connect(handler)
         tc_layout.addWidget(self._vert_table, 1)
 
         splitter.addWidget(table_container)
@@ -470,22 +476,75 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         always whichever row `_row_combo` currently shows; "this column"
         is the specific table row (a grid column/point index) under the
         cursor, so the column-specific actions are hidden when the click
-        lands on empty space below the last point. No menu at all in
-        Bezier Patch mode -- see `_is_bezier_mode`."""
-        if self._is_bezier_mode():
-            return
+        lands on empty space below the last point. In Bezier Patch mode
+        only the Set X/Y/Z actions, which keep the shape -- see
+        `_is_bezier_mode`."""
         col_idx = self._vert_table.rowAt(pos.y())
+        axis = self._vert_table.columnAt(pos.x())
         menu = QMenu(self._vert_table)
-        menu.addAction("Add Row Before", lambda: self._add_row(before=True))
-        menu.addAction("Add Row After", lambda: self._add_row(before=False))
-        if col_idx >= 0:
-            menu.addAction("Add Column Before", lambda: self._add_column(before=True, col_idx=col_idx))
-            menu.addAction("Add Column After", lambda: self._add_column(before=False, col_idx=col_idx))
-        menu.addSeparator()
-        menu.addAction("Delete this Row", self._delete_row)
-        if col_idx >= 0:
-            menu.addAction("Delete this Column", lambda: self._delete_column(col_idx))
-        menu.exec(self._vert_table.viewport().mapToGlobal(pos))
+        if not self._is_bezier_mode():
+            menu.addAction("Add Row Before", lambda: self._add_row(before=True))
+            menu.addAction("Add Row After", lambda: self._add_row(before=False))
+            if col_idx >= 0:
+                menu.addAction("Add Column Before", lambda: self._add_column(before=True, col_idx=col_idx))
+                menu.addAction("Add Column After", lambda: self._add_column(before=False, col_idx=col_idx))
+            menu.addSeparator()
+            menu.addAction("Delete this Row", self._delete_row)
+            if col_idx >= 0:
+                menu.addAction("Delete this Column", lambda: self._delete_column(col_idx))
+        if col_idx >= 0 and axis >= 0:
+            # Setting a value keeps the shape, so a Bezier patch offers it too.
+            if not menu.isEmpty():
+                menu.addSeparator()
+            self._add_set_row_action(menu, axis)
+            self._add_set_column_action(menu, axis, col_idx)
+        if not menu.isEmpty():
+            menu.exec(self._vert_table.viewport().mapToGlobal(pos))
+
+    def _add_set_row_action(self, menu, axis: int):
+        r = self._row_combo.currentIndex()
+        menu.addAction(f"Set {'XYZ'[axis]} of Row {r}…",
+                       lambda: self._set_coordinate(axis, [(r, c) for c in range(len(self._grid[r]))],
+                                                    f"Row {r}"))
+
+    def _add_set_column_action(self, menu, axis: int, c: int):
+        menu.addAction(f"Set {'XYZ'[axis]} of Column {c}…",
+                       lambda: self._set_coordinate(axis, [(r, c) for r, row in enumerate(self._grid)
+                                                           if c < len(row)], f"Column {c}"))
+
+    def _show_axis_header_menu(self, pos):
+        axis = self._vert_table.horizontalHeader().logicalIndexAt(pos)
+        if axis < 0:
+            return
+        menu = QMenu(self._vert_table)
+        self._add_set_row_action(menu, axis)
+        menu.exec(self._vert_table.horizontalHeader().mapToGlobal(pos))
+
+    def _show_point_header_menu(self, pos):
+        c = self._vert_table.verticalHeader().logicalIndexAt(pos)
+        if c < 0:
+            return
+        menu = QMenu(self._vert_table)
+        for axis in range(self._vert_table.columnCount()):
+            self._add_set_column_action(menu, axis, c)
+        menu.exec(self._vert_table.verticalHeader().mapToGlobal(pos))
+
+    def _set_coordinate(self, axis: int, cells: list, what: str):
+        """Give every point in `cells` ((row, column) pairs) the same X, Y
+        or Z, asked for once and starting from the first one's (#1054):
+        flattening a Bezier or NURBS patch's edge was a cell at a time.
+        One undo step."""
+        name = "XYZ"[axis]
+        r0, c0 = cells[0]
+        text, ok = QInputDialog.getText(self, f"Set {name} of {what}", f"{name} for every point of {what}:",
+                                        text=f"{self._grid[r0][c0][axis]:g}")
+        value = _parse_number(text) if ok else None
+        if value is None:
+            return
+        new_grid = copy.deepcopy(self._grid)
+        for r, c in cells:
+            new_grid[r][c][axis] = value
+        self._commit_value(new_grid, f"Set {name} of {what}")
 
     def _add_row(self, before: bool):
         """Insert a new row before or after the currently displayed row.
