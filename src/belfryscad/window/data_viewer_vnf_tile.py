@@ -44,9 +44,9 @@ class VNFTileViewer(VNFViewer):
             "Draw the tile's eight neighbors as the texture would repeat,\n"
             "so the seams between copies are visible.")
         self._tile_cb.toggled.connect(self._on_tiling_toggled)
-        self._btn_row.insertWidget(1, self._tile_cb)
+        self._settings_btn.add_settings(None, self._tile_cb)
         self._seam_label = QLabel("")
-        self._btn_row.insertWidget(2, self._seam_label)
+        self._btn_row.insertWidget(1, self._seam_label)
         self._update_seam_label()
 
     def _adjust_report(self, report):

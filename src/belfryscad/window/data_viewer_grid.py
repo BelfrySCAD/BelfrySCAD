@@ -15,7 +15,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 from belfryscad import nurbs
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _quantize, _view_locked_axis)
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces,
                                                   _grid_flat_to_rc, _grid_row_offsets,
@@ -261,23 +261,18 @@ class GridViewer(QDialog, _UndoableViewerMixin):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(20, 0, 20, 0)
+        # Every option is in the gear's menu (settings_button); the row
+        # keeps only Reset, Cancel and Save.
         # Checked by default here, unlike VNFViewer's opt-in: these
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
-        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
         self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
-        btn_row.addWidget(self._show_verts_cb)
         self._face_mode_combo = QComboBox()
-        self._face_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._face_mode_combo.currentIndexChanged.connect(self._rebuild)
-        btn_row.addWidget(self._face_mode_combo)
         # NURBS degree in each direction, in BOSL2's terms: u runs down the
         # rows (the first index), v along each row.
-        self._degree_label = QLabel("Degree u/v")
-        self._degree_label.setStyleSheet("QLabel { padding-left: 12px; }")
-        btn_row.addWidget(self._degree_label)
         self._degree_spins = []
         for tip in ("Degree in u, across the rows (the first index)",
                     "Degree in v, along each row"):
@@ -285,36 +280,31 @@ class GridViewer(QDialog, _UndoableViewerMixin):
             spin.setValue(3)
             spin.setToolTip(tip)
             spin.valueChanged.connect(self._rebuild)
-            btn_row.addWidget(spin)
             self._degree_spins.append(spin)
         self._sync_face_mode_combo()
-        btn_row.addSpacing(20)
         self._wrap_combo = QComboBox()
         self._wrap_combo.addItem("No Wrap")
         self._wrap_combo.addItem("Wrap Columns")
         self._wrap_combo.addItem("Wrap Rows")
         self._wrap_combo.addItem("Wrap Both")
-        self._wrap_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        _size_combo_to_widest_item(self._wrap_combo)
         self._wrap_combo.currentIndexChanged.connect(self._rebuild)
-        btn_row.addWidget(self._wrap_combo)
-        btn_row.addSpacing(20)
+        settings = [self._show_verts_cb, None, ("Faces", self._face_mode_combo),
+                    ("Degree u", self._degree_spins[0]), ("Degree v", self._degree_spins[1]),
+                    ("Wrap", self._wrap_combo)]
         if editable:
             # A dragged vertex lands on multiples of this, as an arrow-key
             # nudge moves by it (#1054). Off drags freely, as before.
-            btn_row.addWidget(QLabel("Drag Snap"))
             self._snap_combo = QComboBox()
             self._snap_combo.addItems(["Off", "10", "1", "0.1"])
-            self._snap_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-            _size_combo_to_widest_item(self._snap_combo)
             self._snap_combo.currentTextChanged.connect(self._on_snap_changed)
             self._snap_combo.setCurrentText(GridViewer._drag_snap)
             self._on_snap_changed(self._snap_combo.currentText())
-            btn_row.addWidget(self._snap_combo)
-            btn_row.addSpacing(20)
+            settings += [None, ("Drag Snap", self._snap_combo)]
+        btn_row.addWidget(settings_button(self, settings))
+        btn_row.addStretch()
+        if editable:
             self._setup_undo(grid_value)
             btn_row.addWidget(self._make_reset_button())
-        btn_row.addStretch()
         if editable:
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
@@ -430,7 +420,6 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         combo.blockSignals(False)
         _size_combo_to_widest_item(combo)
         nurbs_mode = combo.currentText().startswith("NURBS")
-        self._degree_label.setVisible(nurbs_mode)
         for spin, count in zip(self._degree_spins, (rows, max(lens))):
             spin.setVisible(nurbs_mode)
             spin.blockSignals(True)

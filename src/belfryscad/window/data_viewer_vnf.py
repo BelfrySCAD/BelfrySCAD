@@ -14,7 +14,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces, _format_value,
                                                   _is_list, _is_numeric_point,
@@ -818,7 +818,6 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
         btn_row.setContentsMargins(20, 0, 20, 0)
         show_unselected_cb = QCheckBox("Show Vertices")
         show_unselected_cb.toggled.connect(self._vp.set_show_unselected)
-        btn_row.addWidget(show_unselected_cb)
 
         # Manifold validation. Deliberately a button rather than something
         # that runs on open: the pairwise face tests are the expensive part
@@ -828,7 +827,10 @@ class VNFViewer(QDialog, _UndoableViewerMixin):
             "Check for holes, flipped normals, T-joints, intersecting faces "
             "and overlapping coplanar faces, and highlight what it finds")
         self._validate_btn.clicked.connect(self._on_validate)
-        btn_row.addWidget(self._validate_btn)
+        # Every option is in the gear's menu; the row keeps the validation
+        # result and Reset, Cancel and Save.
+        self._settings_btn = settings_button(self, [show_unselected_cb, None, self._validate_btn])
+        btn_row.addWidget(self._settings_btn)
         self._validation_label = QLabel("")
         self._validation_label.setWordWrap(True)
         btn_row.addWidget(self._validation_label, 1)

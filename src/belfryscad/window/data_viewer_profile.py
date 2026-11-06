@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from belfryscad.window.data_viewer_common import _style_table_headers
+from belfryscad.window.data_viewer_common import _style_table_headers, settings_button
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,9 @@ class ProfileViewer(QDialog):
         # the default the moment it took focus and Return would then start
         # writing a file. Dismiss is the one Return should hit.
         export.setAutoDefault(False)
-        btn_row.addWidget(export)
+        # In the gear's menu, as every viewer's options are; the row keeps
+        # only Dismiss.
+        btn_row.addWidget(settings_button(self, [export]))
         btn_row.addStretch()
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self.close)
