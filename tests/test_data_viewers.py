@@ -3534,10 +3534,10 @@ app = QApplication([])
 from belfryscad.window.data_viewer_path import PathViewer
 
 def append(n, degree=None):
-    v = PathViewer("p", [[i, 0] for i in range(n)], None, editable=True)
+    # As opened on a bezier_path(..., N=degree) call, which sets the degree.
+    preset = {"mode": "bezier", "degree": degree} if degree else None
+    v = PathViewer("p", [[i, 0] for i in range(n)], None, editable=True, preset=preset)
     v._mode_combo.setCurrentIndex(v._mode_combo.findData("bezier"))
-    if degree:
-        v._degree_spin.setValue(degree)
     v.show(); app.processEvents()
     v._vp._renderer.camera_ray = lambda *a: (np.array([20.0, 6, 5]), np.array([0.0, 0, -1]))
     v._vp._append_menu(QPoint(1, 1)).actions()[0].trigger(); app.processEvents()
@@ -3556,8 +3556,9 @@ def test_a_bezier_append_finishes_a_short_segment(tmp_path):
     degree-many points for a new one, but only what a short path still
     needs to reach a whole number of segments -- a cubic's five points
     became eight, not seven, and every other degree took one point at a
-    time. Below four points a cubic is capped to a lower degree by the
-    point count, and grows as that degree does."""
+    time. A cubic begun from one point is drawn at a lower degree until it
+    has four (BOSL2 needs degree+1 points), but grows to those four in one
+    step: segments are finished at the degree chosen."""
     import json, os, subprocess, sys
     import pytest
 
@@ -3571,8 +3572,64 @@ def test_a_bezier_append_finishes_a_short_segment(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
 
     counts = {kind: {int(n): length for n, (length, _) in r.items()} for kind, r in out.items()}
-    assert counts["cubic"] == {1: 2, 2: 3, 3: 5, 4: 7, 5: 7, 6: 7, 7: 10, 8: 10}
+    assert counts["cubic"] == {1: 4, 2: 4, 3: 4, 4: 7, 5: 7, 6: 7, 7: 10, 8: 10}
     assert counts["quadratic"] == {3: 5, 4: 5, 5: 7, 6: 7, 7: 9}
     assert counts["quartic"] == {5: 9, 6: 9, 7: 9, 8: 9, 9: 13, 10: 13}
     assert all(last == [20, 6] for r in out.values() for _, last in r.values()), \
         "the click is the segment's end"
+
+
+_DEGREE_CAP_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewer_path import PathViewer
+from belfryscad.window.data_viewer_grid import GridViewer
+
+out = {}
+p = PathViewer("p", [[0, 0]], None, editable=True)
+p._mode_combo.setCurrentIndex(p._mode_combo.findData("bezier"))
+out["path_one_point"] = p._degree_spin.value()
+p._commit_value([[i, 0] for i in range(7)], "grow"); app.processEvents()
+out["path_grown"] = p._degree_spin.value()
+p._degree_spin.setValue(5)
+p._commit_value([[i, 0] for i in range(3)], "cut"); app.processEvents()
+out["path_cut"] = p._degree_spin.value()
+p._commit_value([[i, 0] for i in range(9)], "regrow"); app.processEvents()
+out["path_regrown"] = p._degree_spin.value()
+
+g = GridViewer("g", [[[c, r, 0] for c in range(2)] for r in range(2)], None, editable=True)
+g._face_mode_combo.setCurrentText("NURBS Surface"); app.processEvents()
+out["grid_small"] = [s.value() for s in g._degree_spins]
+g._commit_value([[[c, r, 0] for c in range(5)] for r in range(5)], "grow"); app.processEvents()
+out["grid_grown"] = [s.value() for s in g._degree_spins]
+print(json.dumps(out))
+"""
+
+
+def test_a_capped_degree_comes_back_with_the_points(tmp_path):
+    """BOSL2 needs degree+1 points, so the Degree is capped at the point
+    count -- but it stayed capped: a cubic begun from one point, or cut
+    below four, was degree 1 or 2 for good. The degree chosen now returns
+    once there are points enough, in the path and grid editors both."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_degree_cap.py"
+    driver.write_text(_DEGREE_CAP_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["path_one_point"] == 1
+    assert out["path_grown"] == 3, "back to the default cubic"
+    assert out["path_cut"] == 2
+    assert out["path_regrown"] == 5, "back to the degree chosen, not the default"
+    assert out["grid_small"] == [1, 1]
+    assert out["grid_grown"] == [3, 3]

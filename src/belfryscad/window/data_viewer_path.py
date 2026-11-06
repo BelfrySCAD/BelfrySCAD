@@ -17,7 +17,8 @@ from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
-from belfryscad.window.data_viewer_common import (open_large, settings_button, _UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (open_large, settings_button, cap_degree,
+                                                  track_wanted_degree, _UndoableViewerMixin,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces, _format_value,
                                                   _is_list, _is_numeric_point,
@@ -798,6 +799,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._mode_combo.currentIndexChanged.connect(self._rebuild)
         self._degree_spin = QSpinBox()
         self._degree_spin.setValue(3)
+        track_wanted_degree(self._degree_spin)
         self._degree_spin.valueChanged.connect(self._rebuild)
         # NURBS Interpolated: the corners, as nurbs_interp() takes them, to
         # copy into a call the editor was not opened on (#803). The label
@@ -818,6 +820,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._closed_cb.setChecked(preset["closed"])
         self._sync_degree_spin()
         if preset.get("degree"):
+            # Chosen, even when the cap already shows it (no valueChanged).
+            self._degree_spin._wanted = preset["degree"]
             self._degree_spin.setValue(preset["degree"])
         # Hidden unless NURBS Interpolated has corners. Synced here because
         # the first load does not rebuild, and a widget starts out visible:
@@ -1264,17 +1268,16 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         mode = self._mode()
         nurbs = mode in ("nurbs", "nurbs_interp", "bezier")
         self._degree_spin.setVisible(nurbs)
-        low = 2 if mode == "nurbs_interp" else 1
-        self._degree_spin.blockSignals(True)
-        self._degree_spin.setRange(low, max(low, len(self._path) - 1))
-        self._degree_spin.blockSignals(False)
+        cap_degree(self._degree_spin, 2 if mode == "nurbs_interp" else 1, len(self._path) - 1)
 
     def _do_initial_load(self):
+        self._vp.wanted_degree = self._degree_spin._wanted
         self._vp.load_path(self._path, self._closed_cb.isChecked(),
                            self._mode(), self._degree_spin.value())
 
     def _rebuild(self, _=None, reframe: bool = True):
         self._sync_degree_spin()
+        self._vp.wanted_degree = self._degree_spin._wanted
         self._sync_corners_label()
         self._sync_rope()
         if self._vp._ctx is not None:
@@ -1361,6 +1364,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # with (and owned by) PathViewer; and the mode last loaded.
         self.corners: set = set()
         self._mode_now = "path"
+        #: The Bezier degree chosen, which the drawn one (capped at the
+        #: point count) may be short of while a path is being built up:
+        #: appending finishes segments of this degree.
+        self.wanted_degree = 3
         self._nurbs_deg = 3
         # Fixed Length (#947): set by PathViewer, which owns the pins too.
         # The lengths are measured as each drag starts and held through it.
@@ -2138,7 +2145,7 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
             hit = np.asarray(hit, dtype=np.float64)
             new = [hit]
             n = len(self._path_pts)
-            deg = 3 if self._bezier else self._deg if self._bezier_n else 1
+            deg = self.wanted_degree if self._mode_now == "bezier" else 1
             if deg > 1 and n:
                 k = (1 - n) % deg or deg      # points to the next k*deg+1
                 a = self._path_pts[-1].astype(np.float64)

@@ -16,6 +16,7 @@ from belfryscad import nurbs
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _quantize, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button,
+                                                  cap_degree, track_wanted_degree,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces,
                                                   _grid_flat_to_rc, _grid_row_offsets,
@@ -279,6 +280,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
             spin = QSpinBox()
             spin.setValue(3)
             spin.setToolTip(tip)
+            track_wanted_degree(spin)
             spin.valueChanged.connect(self._rebuild)
             self._degree_spins.append(spin)
         self._sync_face_mode_combo()
@@ -422,9 +424,7 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         nurbs_mode = combo.currentText().startswith("NURBS")
         for spin, count in zip(self._degree_spins, (rows, max(lens))):
             spin.setVisible(nurbs_mode)
-            spin.blockSignals(True)
-            spin.setRange(1, max(1, count - 1))     # BOSL2 needs degree+1 points
-            spin.blockSignals(False)
+            cap_degree(spin, 1, count - 1)
 
     def _nurbs_surface(self):
         """The NURBS surface to draw, sampled as BOSL2's nurbs_patch_points

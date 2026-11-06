@@ -160,6 +160,27 @@ def _ask_spin_value(parent, label: str, w):
         w.setValue(v)
 
 
+def track_wanted_degree(spin):
+    """Remember the degree last chosen in `spin`, so `cap_degree` can give
+    it back once there are points enough. Connect before anything else
+    listening to valueChanged, which then reads the chosen value."""
+    spin._wanted = spin.value()
+    spin.valueChanged.connect(lambda v, spin=spin: setattr(spin, "_wanted", v))
+
+
+def cap_degree(spin, low: int, high: int):
+    """Limit `spin` to low..high -- BOSL2 asserts degree+1 points -- showing
+    the degree last chosen when the range allows, else the nearest it does.
+    Capping alone left a cubic at 1 for good once a path was built up from
+    one point, or cut below four. Signals stay blocked: a cap is not a
+    choice, so it never overwrites the one remembered."""
+    wanted = getattr(spin, "_wanted", spin.value())
+    spin.blockSignals(True)
+    spin.setRange(low, max(low, high))
+    spin.setValue(min(max(wanted, spin.minimum()), spin.maximum()))
+    spin.blockSignals(False)
+
+
 def open_large(dialog):
     """Size a drawing editor to most of the screen, centred, with a
     maximize button: at a fixed 900 x 520 every tracing session began by
