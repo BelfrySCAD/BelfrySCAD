@@ -77,3 +77,58 @@ def test_size_dialog_links_width_and_height():
     assert d.image_width() == pytest.approx(60)
     d._w.setValue(10)
     assert d._h.value() == pytest.approx(5)
+
+
+def test_scale_label_gives_size_place_and_scale():
+    from belfryscad.window.background_image import scale_label
+    bg = BackgroundImage(path="i.png", aspect=0.5, pixels=800, width=200, x=1.25, y=0, anchor=(0, 0))
+    assert scale_label(bg) == "200 × 100, bottom left at (1.25, 0)\nScale 25% (1 pixel = 0.25 units)"
+    bg.rotation, bg.pixels = 90, 0
+    assert scale_label(bg) == "200 × 100, bottom left at (1.25, 0), rotated 90°"
+
+
+def test_a_file_loads_where_it_was_last_placed(tmp_path):
+    from belfryscad.window.background_image import placement_for, remember_placement
+    f = tmp_path / "views.png"
+    assert placement_for(str(f)) is None
+    remember_placement(BackgroundImage(path=str(f), width=55, x=3, y=4, rotation=10, visible=False))
+    got = placement_for(str(tmp_path / "." / "views.png"))
+    assert (got.width, got.x, got.y, got.rotation, got.visible) == (55, 3, 4, 10, True)
+
+
+LOAD_DRIVER = r'''
+import json, os, sys, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtGui import QImage
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.main import hard_exit
+sys.excepthook = lambda *e: (__import__("traceback").print_exception(*e), hard_exit(1))
+from belfryscad.window.data_viewer_path import PathViewer
+png = os.path.join(tempfile.mkdtemp(), "views.png")
+QImage(400, 200, QImage.Format.Format_RGB32).save(png)
+QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (png, ""))
+a = PathViewer("first", [[0, 0], [10, 5]], editable=True, is_2d=True)._vp
+a.choose_background()
+a.background.width, a.background.x = 123, 9
+a.background_edited()
+b = PathViewer("second", [[0, 0], [99, 1]], editable=True, is_2d=True)._vp
+b.choose_background()
+b._toggle_adjust()
+b._bg_overlay.resize(400, 300)
+b._bg_overlay.grab()                      # paints the scale label
+print("RESULT" + json.dumps([b.background.width, b.background.x, b.background.pixels]))
+sys.stdout.flush()
+hard_exit(0)
+'''
+
+
+def test_another_editor_loads_the_image_at_the_same_place():
+    import json, os, subprocess, sys
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    r = subprocess.run([sys.executable, "-c", LOAD_DRIVER], capture_output=True, text=True, env=env, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    assert json.loads(line[6:]) == [123, 9, 400]
