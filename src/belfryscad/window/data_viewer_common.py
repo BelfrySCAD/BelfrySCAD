@@ -108,7 +108,9 @@ def _fill_settings_menu(menu: QMenu, items, parent):
             for i in range(w.count()):
                 choice = sub.addAction(w.itemText(i))
                 choice.setCheckable(True)
-                choice.setChecked(i == w.currentIndex())
+                # By text: an editable box (the heightfield's Z scale) sets
+                # its text and leaves its index on the first item.
+                choice.setChecked(w.itemText(i) == w.currentText())
                 choice.setEnabled(bool(model.flags(model.index(i, 0)) & Qt.ItemFlag.ItemIsEnabled))
                 choice.triggered.connect(lambda _=False, w=w, i=i: _pick_combo_item(w, i))
             if w.isEditable():

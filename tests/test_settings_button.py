@@ -57,6 +57,9 @@ out["big_after"] = big.value()
 acts["Validate"].trigger()
 out["clicked"] = clicked
 out["disabled"] = acts["Disabled"].isEnabled()
+z.setCurrentText("100%")
+acts = show()
+out["z_ticked"] = [a.text() for a in acts["Z"].menu().actions() if a.isChecked()]
 c.QInputDialog.getText = staticmethod(lambda *a, **k: ("150%", True))
 [a for a in acts["Z"].menu().actions() if a.text() == "Other…"][0].trigger()
 out["typed"] = typed
@@ -84,6 +87,7 @@ def test_the_gear_menu_drives_the_windows_own_controls():
     assert out["big_after"] == 7.25, "a wide range asks in a dialog"
     assert out["clicked"] == [1]
     assert out["disabled"] is False
+    assert out["z_ticked"] == ["100%"], "an editable box ticks what it shows, not its first item"
     assert out["typed"] == ["150%"], "an editable box takes a typed value"
     assert out["never_on_screen"] is False, "the controls themselves never appear"
     assert out["shown_later"] is True
