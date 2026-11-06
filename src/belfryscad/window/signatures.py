@@ -62,6 +62,7 @@ BUILTIN_SIGNATURES: dict[str, str] = {
     "render": "render(convexity=1) { ... }",
     "profile_time": "profile_time(label) { ... }  |  x = profile_time(label) expr;",
     "export_as": "export_as(name) { ... }",
+    "alpha_wrap": "alpha_wrap(alpha, offset) { ... }  |  alpha_wrap(alpha, offset, points=[[x,y,z], ...]);",
     # extrusion / import
     "linear_extrude": ("linear_extrude(height=100, v=[0,0,1], scale=1, center=false, "
                        "twist=0, slices, segments, convexity, $fn)"),

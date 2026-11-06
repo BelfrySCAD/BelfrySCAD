@@ -31,6 +31,11 @@ class TestBuiltins:
         assert "textmetrics" in BUILTIN_SIGNATURES
         assert "fontmetrics" in BUILTIN_SIGNATURES
 
+    def test_alpha_wrap_shows_both_inputs(self):
+        """#1037: children, or a point cloud through points= -- not both."""
+        sig = signature_for("alpha_wrap")
+        assert "{ ... }" in sig and "points=" in sig
+
     def test_every_signature_starts_with_its_own_name(self):
         for name, sig in BUILTIN_SIGNATURES.items():
             assert sig.startswith(name + "("), (name, sig)

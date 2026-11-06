@@ -2935,7 +2935,7 @@ class CodeEditor(QPlainTextEdit):
         "color", "hull", "minkowski", "resize", "offset",
         "union", "difference", "intersection",
         "echo", "assert", "children", "render", "profile_time",
-        "export_as", "circle", "square", "polygon", "text",
+        "export_as", "alpha_wrap", "circle", "square", "polygon", "text",
         "linear_extrude", "rotate_extrude", "roof", "surface",
         "projection", "import",
     }
