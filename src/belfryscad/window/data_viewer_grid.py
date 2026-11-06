@@ -290,9 +290,9 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         self._wrap_combo.addItem("Wrap Rows")
         self._wrap_combo.addItem("Wrap Both")
         self._wrap_combo.currentIndexChanged.connect(self._rebuild)
-        settings = [self._show_verts_cb, None, ("Display Mode", self._face_mode_combo),
+        settings = [("Display Mode", self._face_mode_combo),
                     ("Degree u", self._degree_spins[0]), ("Degree v", self._degree_spins[1]),
-                    ("Wrap", self._wrap_combo)]
+                    ("Wrap", self._wrap_combo), None, self._show_verts_cb]
         if editable:
             # A dragged vertex lands on multiples of this, as an arrow-key
             # nudge moves by it (#1054). Off drags freely, as before.
