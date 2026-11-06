@@ -3752,6 +3752,14 @@ class MainWindow(QMainWindow):
         def _cleanup_job(job=job):
             if job in self._render_jobs:
                 self._render_jobs.remove(job)
+            # Deleted here, after the job is off the list -- never by a
+            # connection of its own to thread.finished. With two, deleteLater
+            # sometimes ran first and Qt dropped this call along with the
+            # thread, leaving a job that made every animation frame wait
+            # forever while F5/F6 still worked (#1038): up to 132 jobs in
+            # 3,000 were lost that way in a stress test on macOS, none in
+            # this order.
+            job[2].deleteLater()
             if not self._render_jobs:
                 # The render's evaluator is gone; give what it freed back to
                 # the OS rather than holding the session's high-water mark.
@@ -3774,7 +3782,6 @@ class MainWindow(QMainWindow):
         worker.finished.connect(callback.on_finished)
         worker.done.connect(callback.on_done)
         worker.done.connect(thread.quit)
-        thread.finished.connect(thread.deleteLater)
         thread.finished.connect(_cleanup_job)
 
         thread.start()
