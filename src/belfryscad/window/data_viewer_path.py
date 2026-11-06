@@ -2121,8 +2121,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         """Off the path: "Add Vertex" appends a point where clicked -- how
         a new, empty path is built. In 2D it lies in XY; in 3D, on the plane
         facing the view through the last point (the origin for the first).
-        In Bezier mode a new segment is three points, so the two control
-        points go in a straight line between the last point and the click."""
+        In Bezier mode the click ends a segment: N points for a new one at
+        degree N, or only those a short path still needs to reach a whole
+        number of segments (kN+1) -- a cubic's five points take two more, to
+        seven, not three to eight. Any new control points go in a straight
+        line between the last point and the click."""
         menu = QMenu(self)
         if self._is_2d:
             ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
@@ -2134,9 +2137,12 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         if hit is not None:
             hit = np.asarray(hit, dtype=np.float64)
             new = [hit]
-            if self._bezier and len(self._path_pts):
+            n = len(self._path_pts)
+            deg = 3 if self._bezier else self._deg if self._bezier_n else 1
+            if deg > 1 and n:
+                k = (1 - n) % deg or deg      # points to the next k*deg+1
                 a = self._path_pts[-1].astype(np.float64)
-                new = [a + (hit - a) / 3, a + (hit - a) * 2 / 3, hit]
+                new = [a + (hit - a) * j / k for j in range(1, k + 1)]
             new = [[round(float(c), 3) for c in p] for p in new]
             menu.addAction("Add Vertex", lambda: self.vertices_appended.emit(new))
         return menu

@@ -3520,3 +3520,59 @@ def test_drag_snap_lands_a_grid_vertex_on_multiples(tmp_path):
     assert out["tenth"] == [1.2, 5.7, 0.25]
     assert out["ten"] == [10, -10, 0.25]
     assert out["remembered"] == "10"
+
+
+_BEZIER_APPEND_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtCore import QPoint
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewer_path import PathViewer
+
+def append(n, degree=None):
+    v = PathViewer("p", [[i, 0] for i in range(n)], None, editable=True)
+    v._mode_combo.setCurrentIndex(v._mode_combo.findData("bezier"))
+    if degree:
+        v._degree_spin.setValue(degree)
+    v.show(); app.processEvents()
+    v._vp._renderer.camera_ray = lambda *a: (np.array([20.0, 6, 5]), np.array([0.0, 0, -1]))
+    v._vp._append_menu(QPoint(1, 1)).actions()[0].trigger(); app.processEvents()
+    v.close()
+    return [len(v._path), v._path[-1]]
+
+out = {"cubic": {n: append(n) for n in range(1, 9)},
+       "quadratic": {n: append(n, 2) for n in range(3, 8)},
+       "quartic": {n: append(n, 4) for n in range(5, 11)}}
+print(json.dumps(out))
+"""
+
+
+def test_a_bezier_append_finishes_a_short_segment(tmp_path):
+    """Off the path, Add Vertex in Bezier mode ends a segment where clicked:
+    degree-many points for a new one, but only what a short path still
+    needs to reach a whole number of segments -- a cubic's five points
+    became eight, not seven, and every other degree took one point at a
+    time. Below four points a cubic is capped to a lower degree by the
+    point count, and grows as that degree does."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_bezier_append.py"
+    driver.write_text(_BEZIER_APPEND_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    counts = {kind: {int(n): length for n, (length, _) in r.items()} for kind, r in out.items()}
+    assert counts["cubic"] == {1: 2, 2: 3, 3: 5, 4: 7, 5: 7, 6: 7, 7: 10, 8: 10}
+    assert counts["quadratic"] == {3: 5, 4: 5, 5: 7, 6: 7, 7: 9}
+    assert counts["quartic"] == {5: 9, 6: 9, 7: 9, 8: 9, 9: 13, 10: 13}
+    assert all(last == [20, 6] for r in out.values() for _, last in r.values()), \
+        "the click is the segment's end"
