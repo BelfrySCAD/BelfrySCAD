@@ -1,0 +1,57 @@
+name: Bug Report
+description: Something doesn't work, crashes, or gives a different result from OpenSCAD.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. The fastest fix comes from a small script that shows it.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Include any console message, copied exactly.
+    validations:
+      required: true
+  - type: textarea
+    id: script
+    attributes:
+      label: A script that shows it
+      description: As short as you can make it. Drag files that the script needs (STL, images, libraries) into this box, or say where they come from.
+      render: openscad
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: For something in the UI, the clicks and keys that lead to it.
+      placeholder: |
+        1. Open the script above
+        2. Press F6
+        3. ...
+  - type: textarea
+    id: openscad
+    attributes:
+      label: What does OpenSCAD do?
+      description: If the result differs from OpenSCAD, say which OpenSCAD version and what it shows. Leave blank if it doesn't apply.
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: In **Help ▸ About BelfrySCAD**, click **Copy Versions** and paste the result here.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 27.1, Windows 11, Ubuntu 24.04 (Wayland)
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Diagnostic report (for freezes, hangs and crashes)
+      description: Before restarting a stuck BelfrySCAD, choose **Help ▸ Write Diagnostic Report…**. Then paste the part of the file it names, or attach the file.
+      render: text

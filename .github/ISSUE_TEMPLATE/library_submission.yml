@@ -1,0 +1,94 @@
+name: Library Submission
+description: Add an OpenSCAD library to the Library Manager's catalogue, so others can install it from inside BelfrySCAD.
+title: "Library: "
+labels: ["New Library"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Libraries in the catalogue install from their own repository, so the library needs a public git repository (GitHub, GitLab, Codeberg, ...).
+  - type: input
+    id: name
+    attributes:
+      label: Library name
+      placeholder: e.g. BOSL2
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: Repository URL
+      placeholder: https://github.com/you/your-library
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: One or two sentences, as the Library Manager will show it.
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - General (many kinds of shapes and tools)
+        - Single Topic (gears, threads, text, ...)
+    validations:
+      required: true
+  - type: input
+    id: license
+    attributes:
+      label: License
+      description: An SPDX identifier, matching the repository's LICENSE file.
+      placeholder: e.g. MIT, BSD-2-Clause, GPL-3.0-or-later, CC0-1.0
+    validations:
+      required: true
+  - type: input
+    id: folder
+    attributes:
+      label: Folder name
+      description: The folder it installs as, which scripts name in `include <FOLDER/...>`.
+      placeholder: e.g. BOSL2
+    validations:
+      required: true
+  - type: textarea
+    id: includes
+    attributes:
+      label: Include statements
+      description: The `include`/`use` lines a script needs, main one first, with a short note on each if there are several.
+      render: openscad
+      placeholder: |
+        include <BOSL2/std.scad>
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Current version
+      description: A release tag if the repository has them, otherwise the default branch name.
+      placeholder: e.g. v2.0.0, or main
+  - type: input
+    id: docs
+    attributes:
+      label: Documentation URL
+  - type: input
+    id: thumbnail
+    attributes:
+      label: Thumbnail image URL
+      description: Optional. A small picture of what the library makes.
+  - type: textarea
+    id: depends
+    attributes:
+      label: Depends on other libraries?
+      description: Any library it includes that users must install too.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Checks
+      options:
+        - label: I wrote this library, or its author agrees to it being listed.
+          required: true
+        - label: Its examples run in the current BelfrySCAD release without errors.
+          required: true
