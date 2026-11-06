@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest something BelfrySCAD should do, in the app or in the language.
+title: "Feature Request: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or problem, not the solution yet. "I import many STLs and typing each path is slow" is more useful than "add drag-and-drop".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: How you picture it working. For a language feature, show the script you'd like to write.
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: How do you do it now?
+      description: Any workaround you use today, and what makes it awkward.
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: Seen elsewhere?
+      description: OpenSCAD, another CAD program, or a library (BOSL2, for example) that does something like it. Links help.
