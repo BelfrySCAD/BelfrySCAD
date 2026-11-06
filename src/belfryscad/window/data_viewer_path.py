@@ -17,7 +17,8 @@ from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _view_locked_axis)
-from belfryscad.window.data_viewer_common import (open_large, _UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (open_large, settings_button, cap_degree,
+                                                  track_wanted_degree, _UndoableViewerMixin,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces, _format_value,
                                                   _is_list, _is_numeric_point,
@@ -762,33 +763,21 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
 
-        btn_row = QHBoxLayout()          # view options
-        btn_row.setContentsMargins(20, 0, 0, 0)
-        nurbs_row = QHBoxLayout()        # NURBS Interpolated's corners
-        nurbs_row.setContentsMargins(20, 0, 0, 0)
         # Checked by default here, unlike VNFViewer's opt-in: these
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
-        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
         self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
-        btn_row.addWidget(self._show_verts_cb)
         self._closed_cb = QCheckBox("Close Path")
-        self._closed_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._closed_cb.toggled.connect(self._rebuild)
-        btn_row.addWidget(self._closed_cb)
         # Fixed Length (#947): 2D plain paths, editable only.
         self._rope_cb = QCheckBox("Fixed Length")
-        self._rope_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._rope_cb.setToolTip(
             "Keep every segment's length while dragging: the rest of the path\n"
             "follows the dragged point, and the first point and any pinned points\n"
             "(right-click a point > Pin) stay where they are.")
         self._rope_cb.toggled.connect(self._toggle_rope)
-        btn_row.addWidget(self._rope_cb)
-        self._length_label = QLabel("Length")
-        btn_row.addWidget(self._length_label)
         self._length_spin = QDoubleSpinBox()
         self._length_spin.setRange(0.0, 1e9)
         self._length_spin.setDecimals(3)
@@ -796,9 +785,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         self._length_spin.setToolTip("The path's total length. Type a new one to scale\n"
                                      "the path to it about its first point.")
         self._length_spin.valueChanged.connect(self._set_length)
-        btn_row.addWidget(self._length_spin)
-        self._length_spin.setStyleSheet("QDoubleSpinBox { margin-right: 20px; }")
-        for w in (self._rope_cb, self._length_label, self._length_spin):
+        for w in (self._rope_cb, self._length_spin):
             w.setVisible(editable and self._is_2d)
         # How the points are read: a plain polyline, cubic Bezier segments,
         # NURBS control points, or points a NURBS interpolates. View-only,
@@ -809,23 +796,15 @@ class PathViewer(QDialog, _UndoableViewerMixin):
                            ("NURBS Path", "nurbs"),
                            ("NURBS Interpolated Path", "nurbs_interp")):
             self._mode_combo.addItem(label, key)
-        self._mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        _size_combo_to_widest_item(self._mode_combo)
         self._mode_combo.currentIndexChanged.connect(self._rebuild)
-        btn_row.addWidget(self._mode_combo)
-        self._degree_label = QLabel("Degree")
-        self._degree_label.setStyleSheet("QLabel { padding-left: 12px; }")
-        btn_row.addWidget(self._degree_label)
         self._degree_spin = QSpinBox()
         self._degree_spin.setValue(3)
+        track_wanted_degree(self._degree_spin)
         self._degree_spin.valueChanged.connect(self._rebuild)
-        btn_row.addWidget(self._degree_spin)
         # NURBS Interpolated: the corners, as nurbs_interp() takes them, to
-        # copy into a call the editor was not opened on (#803).
+        # copy into a call the editor was not opened on (#803). The label
+        # only holds the text; the gear menu's Copy entry shows it.
         self._corners_label = QLabel()
-        self._corners_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._corners_label.setStyleSheet("QLabel { padding-left: 12px; }")
-        nurbs_row.addWidget(self._corners_label)
         self._corners_copy = QPushButton("Copy")
         self._corners_copy.setToolTip(
             "Copy the corners argument to the clipboard, ready to paste into a\n"
@@ -833,7 +812,6 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             "> Corner), where the curve may turn sharply instead of passing smoothly.")
         self._corners_copy.clicked.connect(
             lambda: QGuiApplication.clipboard().setText(self._corners_label.text()))
-        nurbs_row.addWidget(self._corners_copy)
         # Opened on nurbs_interp()'s points: show them as that call does.
         preset = preset or {}
         if preset.get("mode"):
@@ -842,6 +820,8 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._closed_cb.setChecked(preset["closed"])
         self._sync_degree_spin()
         if preset.get("degree"):
+            # Chosen, even when the cap already shows it (no valueChanged).
+            self._degree_spin._wanted = preset["degree"]
             self._degree_spin.setValue(preset["degree"])
         # Hidden unless NURBS Interpolated has corners. Synced here because
         # the first load does not rebuild, and a widget starts out visible:
@@ -854,12 +834,16 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         else:
             # Images on any plane and a model to trace over in 3D (#836).
             self._vp.restore_references(self.windowTitle())
-        btn_row.addStretch()
-        nurbs_row.addStretch()
-        vp_layout.addLayout(btn_row)
-        vp_layout.addLayout(nurbs_row)
 
-        act_row = QHBoxLayout()          # the dialog's own buttons
+        # Every option is in the gear's menu (settings_button); the row
+        # keeps only Reset, Cancel and Save.
+        act_row = QHBoxLayout()
+        act_row.setContentsMargins(20, 0, 20, 0)
+        act_row.addWidget(settings_button(self, [
+            self._show_verts_cb, self._closed_cb, None,
+            self._rope_cb, ("Length", self._length_spin), None,
+            ("Path Type", self._mode_combo), ("Degree", self._degree_spin), None,
+            (lambda: f"Copy {self._corners_label.text()}", self._corners_copy)]))
         act_row.addStretch()
         if editable:
             act_row.addWidget(self._make_reset_button())
@@ -873,7 +857,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             dismiss = QPushButton("Dismiss")
             dismiss.clicked.connect(self.close)
             act_row.addWidget(dismiss)
-        tc_layout.addLayout(act_row)
+        layout.addLayout(act_row)
 
         self._vp.schedule_load(self._do_initial_load)
 
@@ -1128,7 +1112,7 @@ class PathViewer(QDialog, _UndoableViewerMixin):
             self._vert_table.item(vi, 2).setText(f"{z:g}")
         self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, z if is_3d else 0.0]))
+        self._vp.follow_moved_point(np.array([x, y, z if is_3d else 0.0]))
 
     def _on_viewport_add_vertex_requested(self, insert_after: int, x: float, y: float, z: float):
         """Right-click "Add Vertex" on a path line (`_PathViewport.
@@ -1272,7 +1256,6 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         corners = self.corners_list()
         show = self._mode() == "nurbs_interp" and bool(corners)
         self._corners_label.setText(f"corners={corners}")
-        self._corners_label.setVisible(show)
         self._corners_copy.setVisible(show)
 
     def _sync_degree_spin(self):
@@ -1284,19 +1267,17 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         deleted."""
         mode = self._mode()
         nurbs = mode in ("nurbs", "nurbs_interp", "bezier")
-        self._degree_label.setVisible(nurbs)
         self._degree_spin.setVisible(nurbs)
-        low = 2 if mode == "nurbs_interp" else 1
-        self._degree_spin.blockSignals(True)
-        self._degree_spin.setRange(low, max(low, len(self._path) - 1))
-        self._degree_spin.blockSignals(False)
+        cap_degree(self._degree_spin, 2 if mode == "nurbs_interp" else 1, len(self._path) - 1)
 
     def _do_initial_load(self):
+        self._vp.wanted_degree = self._degree_spin._wanted
         self._vp.load_path(self._path, self._closed_cb.isChecked(),
                            self._mode(), self._degree_spin.value())
 
     def _rebuild(self, _=None, reframe: bool = True):
         self._sync_degree_spin()
+        self._vp.wanted_degree = self._degree_spin._wanted
         self._sync_corners_label()
         self._sync_rope()
         if self._vp._ctx is not None:
@@ -1383,6 +1364,10 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         # with (and owned by) PathViewer; and the mode last loaded.
         self.corners: set = set()
         self._mode_now = "path"
+        #: The Bezier degree chosen, which the drawn one (capped at the
+        #: point count) may be short of while a path is being built up:
+        #: appending finishes segments of this degree.
+        self.wanted_degree = 3
         self._nurbs_deg = 3
         # Fixed Length (#947): set by PathViewer, which owns the pins too.
         # The lengths are measured as each drag starts and held through it.
@@ -2143,8 +2128,11 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         """Off the path: "Add Vertex" appends a point where clicked -- how
         a new, empty path is built. In 2D it lies in XY; in 3D, on the plane
         facing the view through the last point (the origin for the first).
-        In Bezier mode a new segment is three points, so the two control
-        points go in a straight line between the last point and the click."""
+        In Bezier mode the click ends a segment: N points for a new one at
+        degree N, or only those a short path still needs to reach a whole
+        number of segments (kN+1) -- a cubic's five points take two more, to
+        seven, not three to eight. Any new control points go in a straight
+        line between the last point and the click."""
         menu = QMenu(self)
         if self._is_2d:
             ray_o, ray_d = self._renderer.camera_ray(pos.x(), pos.y(), self.width(), self.height())
@@ -2156,9 +2144,12 @@ class _PathViewport(BackgroundImageViewportMixin, Viewport):
         if hit is not None:
             hit = np.asarray(hit, dtype=np.float64)
             new = [hit]
-            if self._bezier and len(self._path_pts):
+            n = len(self._path_pts)
+            deg = self.wanted_degree if self._mode_now == "bezier" else 1
+            if deg > 1 and n:
+                k = (1 - n) % deg or deg      # points to the next k*deg+1
                 a = self._path_pts[-1].astype(np.float64)
-                new = [a + (hit - a) / 3, a + (hit - a) * 2 / 3, hit]
+                new = [a + (hit - a) * j / k for j in range(1, k + 1)]
             new = [[round(float(c), 3) for c in p] for p in new]
             menu.addAction("Add Vertex", lambda: self.vertices_appended.emit(new))
         return menu

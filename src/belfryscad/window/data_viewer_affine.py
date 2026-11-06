@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from belfryscad.window.viewport import Viewport
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button,
                                                   _dodecahedron_faces, _fmt_short,
                                                   _format_value, _identity_matrix,
                                                   _is_list, _lit_marker_field,
@@ -322,22 +322,24 @@ class AffineMatrixViewer(QDialog, _UndoableViewerMixin):
             layout.addWidget(self._build_tools_tabs(n))
 
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.setContentsMargins(20, 0, 20, 0)
         # Checked by default here, unlike VNFViewer's opt-in: these
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
-        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
         self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
-        btn_row.addWidget(self._show_verts_cb)
+        settings = [self._show_verts_cb]
         if editable:
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
-            btn_row.addWidget(reset_id)
-            btn_row.addWidget(self._make_reset_button())
+            settings += [None, reset_id]
+        # Every option is in the gear's menu; the row keeps only Reset,
+        # Cancel and Save.
+        btn_row.addWidget(settings_button(self, settings))
         btn_row.addStretch()
         if editable:
+            btn_row.addWidget(self._make_reset_button())
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
             btn_row.addWidget(cancel)

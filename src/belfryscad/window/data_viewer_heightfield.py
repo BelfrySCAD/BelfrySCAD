@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, Signal, QItemSelectionModel
 from PySide6.QtGui import QFont
 
 from belfryscad.window.ui_colors import apply_themed_icon
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, _is_list,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button, _is_list,
                                                   _parse_number,
                                                   _size_combo_to_widest_item,
                                                   _style_table_headers,
@@ -775,20 +775,13 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         self._size_label = QLabel()
         right_layout.addWidget(self._size_label)
 
-        # Their own row under the label: side by side, the two dropdowns and
-        # their captions left the label no room to say anything.
-        zrow = QHBoxLayout()
-        zrow.setContentsMargins(0, 0, 0, 0)
-        zrow.addWidget(QLabel("Style:"))
+        # Style, Show points, Show tiling and Z scale are in the gear's menu.
         self._style_combo = QComboBox()
         self._style_combo.addItems(QUAD_STYLES)
         self._style_combo.setToolTip(
             "How each quad is split into triangles -- BOSL2's own\n"
             "vnf_vertex_array styles, which is what heightfield() uses.")
         self._style_combo.currentTextChanged.connect(self._on_style_changed)
-        _size_combo_to_widest_item(self._style_combo)
-        zrow.addWidget(self._style_combo)
-        zrow.addStretch()
         # An image-derived field is routinely 50x50 or more, where a marker
         # on every point buries the surface it sits on. Selected points keep
         # their markers regardless, so turning this off does not lose track
@@ -799,8 +792,6 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
             "Marker on every point. Worth turning off for a large field;\n"
             "selected points stay marked either way.")
         self._verts_cb.toggled.connect(self._vp.set_show_unselected)
-        zrow.addWidget(self._verts_cb)
-        zrow.addStretch()
 
         self._tile_cb = QCheckBox("Show tiling")
         self._tile_cb.setToolTip(
@@ -808,11 +799,6 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
             "seam between one copy and the next is visible. Only the middle\n"
             "copy is editable.")
         self._tile_cb.toggled.connect(self._on_tiling_toggled)
-        zrow.addWidget(self._tile_cb)
-        # A stretch either side, so the checkbox sits midway between the
-        # Style and Z scale controls rather than crowding one of them.
-        zrow.addStretch()
-        zrow.addWidget(QLabel("Z scale:"))
         self._zcombo = QComboBox()
         self._zcombo.setEditable(True)
         self._zcombo.addItems([f"{pct}%" for pct in self._Z_PRESETS])
@@ -823,13 +809,9 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         # `activated` for a pick and `editingFinished` for something typed,
         # rather than currentTextChanged: that fires on every keystroke, so
         # typing "200" would rebuild the surface at 2% and then 20% on the
-        # way. _size_combo_to_widest_item before the box is populated with
-        # anything longer than its presets.
+        # way.
         self._zcombo.activated.connect(lambda _i: self._apply_zscale_text())
         self._zcombo.lineEdit().editingFinished.connect(self._apply_zscale_text)
-        _size_combo_to_widest_item(self._zcombo)
-        zrow.addWidget(self._zcombo)
-        right_layout.addLayout(zrow)
 
         splitter.addWidget(right)
         # An even split: the table's columns have a width they cannot go
@@ -844,21 +826,24 @@ class HeightfieldViewer(QDialog, _UndoableViewerMixin):
         self._vp.schedule_load(self._do_initial_load)
 
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        settings = [("Style", self._style_combo), self._verts_cb, self._tile_cb, ("Z Scale", self._zcombo)]
         if editable:
             self._setup_undo(value)
             import_btn = QPushButton("Import Image…")
             import_btn.setToolTip("Build the field from an image's brightness.")
             import_btn.clicked.connect(self._on_import_image)
-            btn_row.addWidget(import_btn)
             normalize = QPushButton("Normalize…")
             normalize.setToolTip("Rescale every height into a given range, "
                                   "keeping the shape of the field.")
             normalize.clicked.connect(self._on_normalize)
-            btn_row.addWidget(normalize)
-            btn_row.addWidget(self._make_reset_button())
+            settings += [None, import_btn, normalize]
+        # Every option is in the gear's menu; the row keeps only Reset,
+        # Cancel and Save.
+        btn_row.addWidget(settings_button(self, settings))
         btn_row.addStretch()
         if editable:
+            btn_row.addWidget(self._make_reset_button())
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
             btn_row.addWidget(cancel)

@@ -11,12 +11,174 @@ import math
 import numpy as np
 
 from PySide6.QtWidgets import (QApplication, QTableWidget, QPushButton,
-                               QComboBox)
-from PySide6.QtCore import Qt, QItemSelectionModel
+                               QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox,
+                               QToolButton, QMenu, QWidget, QHBoxLayout, QInputDialog)
+from PySide6.QtCore import Qt, QItemSelectionModel, QSize
 from PySide6.QtGui import QUndoStack, QUndoCommand, QKeySequence
 
 from belfryscad.window.viewport import Viewport
 from belfryscad.window.ui_colors import header_colors, on_appearance_change
+
+
+def settings_button(parent, items) -> QToolButton:
+    """The gear at the bottom left of an editor or viewer: a menu holding
+    every option its window offers, so the bottom row keeps only Reset,
+    Cancel and Save (or Dismiss).
+
+    `items` are the window's own controls, which go on holding the state
+    and emitting the signals the window already handles; the menu only
+    reads and drives them, rebuilt each time it opens so it shows them as
+    they are. Each item is one of:
+      - a QCheckBox: a checkable entry;
+      - a QPushButton: an entry that clicks it;
+      - (label, QComboBox): a submenu, one choice per item;
+      - (label, QSpinBox or QDoubleSpinBox): a submenu of its values when
+        there are few, else "label: value..." asking in a dialog;
+      - (label, QCheckBox or QPushButton): that control under another
+        name; the label may be a callable, read when the menu opens;
+      - None: a separator.
+    A control hidden with setHidden/setVisible(False) is left out, and a
+    disabled one is greyed, so existing show/enable logic carries over.
+
+    The controls are kept, invisible, in a hidden holder parented to
+    `parent`: showing one shows nothing on screen.
+    """
+    from pathlib import Path
+    from belfryscad.window.ui_colors import apply_themed_icon
+
+    holder = QWidget(parent)
+    holder.hide()
+    box = QHBoxLayout(holder)
+    for item in items:
+        if item is not None:
+            box.addWidget(item[1] if isinstance(item, tuple) else item)
+
+    button = QToolButton(parent)
+    button.setToolTip("Settings")
+    button.setAutoRaise(True)
+    button.setIconSize(QSize(22, 22))
+    # A gear says "menu" already; Qt's arrow beside it only shrank it.
+    button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
+    apply_themed_icon(button, Path(__file__).parent.parent / "resources" / "icons" / "settings-gear.svg")
+    menu = QMenu(button)
+    menu.setToolTipsVisible(True)
+    button.setMenu(menu)
+    button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    button._settings_holder = holder
+    items = list(items)
+
+    def add(*more):
+        """More entries, for a subclass whose own options follow its base's."""
+        for item in more:
+            if item is not None:
+                box.addWidget(item[1] if isinstance(item, tuple) else item)
+        items.extend(more)
+    button.add_settings = add
+    menu.aboutToShow.connect(lambda: _fill_settings_menu(menu, items, parent))
+    return button
+
+
+def _fill_settings_menu(menu: QMenu, items, parent):
+    menu.clear()
+    pending_separator = False
+    for item in items:
+        if item is None:
+            pending_separator = True
+            continue
+        label, w = item if isinstance(item, tuple) else (None, item)
+        if w.isHidden():
+            continue
+        if callable(label):
+            label = label()
+        if pending_separator and not menu.isEmpty():
+            menu.addSeparator()
+        pending_separator = False
+        if isinstance(w, QCheckBox):
+            act = menu.addAction(label or w.text())
+            act.setCheckable(True)
+            act.setChecked(w.isChecked())
+            act.toggled.connect(w.setChecked)
+        elif isinstance(w, QPushButton):
+            act = menu.addAction(label or w.text())
+            act.triggered.connect(w.click)
+        elif isinstance(w, QComboBox):
+            act = menu.addMenu(label).menuAction()
+            sub = act.menu()
+            model = w.model()
+            for i in range(w.count()):
+                choice = sub.addAction(w.itemText(i))
+                choice.setCheckable(True)
+                # By text: an editable box (the heightfield's Z scale) sets
+                # its text and leaves its index on the first item.
+                choice.setChecked(w.itemText(i) == w.currentText())
+                choice.setEnabled(bool(model.flags(model.index(i, 0)) & Qt.ItemFlag.ItemIsEnabled))
+                choice.triggered.connect(lambda _=False, w=w, i=i: _pick_combo_item(w, i))
+            if w.isEditable():
+                # A box that takes typed values (a Z scale's percentage)
+                # offers that too.
+                sub.addSeparator()
+                sub.addAction("Other\u2026").triggered.connect(
+                    lambda _=False, w=w, label=label: _ask_combo_text(parent, label, w))
+        elif isinstance(w, QSpinBox) and w.maximum() - w.minimum() <= 16:
+            act = menu.addMenu(label).menuAction()
+            for v in range(w.minimum(), w.maximum() + 1):
+                choice = act.menu().addAction(str(v))
+                choice.setCheckable(True)
+                choice.setChecked(v == w.value())
+                choice.triggered.connect(lambda _=False, w=w, v=v: w.setValue(v))
+        elif isinstance(w, (QSpinBox, QDoubleSpinBox)):
+            act = menu.addAction(f"{label}: {w.value():g}\u2026")
+            act.triggered.connect(lambda _=False, w=w, label=label: _ask_spin_value(parent, label, w))
+        else:
+            raise TypeError(f"settings_button: no menu entry for {type(w).__name__}")
+        act.setEnabled(act.isEnabled() and w.isEnabled())
+        if w.toolTip():
+            act.setToolTip(w.toolTip())
+
+
+def _pick_combo_item(w: QComboBox, i: int):
+    """As if picked from the box itself: `activated` too, which some boxes
+    listen to instead of currentIndexChanged."""
+    w.setCurrentIndex(i)
+    w.activated.emit(i)
+
+
+def _ask_combo_text(parent, label: str, w: QComboBox):
+    text, ok = QInputDialog.getText(parent, label, f"{label}:", text=w.currentText())
+    if ok:
+        w.setCurrentText(text)
+        w.lineEdit().editingFinished.emit()
+
+
+def _ask_spin_value(parent, label: str, w):
+    if isinstance(w, QDoubleSpinBox):
+        v, ok = QInputDialog.getDouble(parent, label, f"{label}:", w.value(), w.minimum(), w.maximum(),
+                                       w.decimals())
+    else:
+        v, ok = QInputDialog.getInt(parent, label, f"{label}:", w.value(), w.minimum(), w.maximum())
+    if ok:
+        w.setValue(v)
+
+
+def track_wanted_degree(spin):
+    """Remember the degree last chosen in `spin`, so `cap_degree` can give
+    it back once there are points enough. Connect before anything else
+    listening to valueChanged, which then reads the chosen value."""
+    spin._wanted = spin.value()
+    spin.valueChanged.connect(lambda v, spin=spin: setattr(spin, "_wanted", v))
+
+
+def cap_degree(spin, low: int, high: int):
+    """Limit `spin` to low..high -- BOSL2 asserts degree+1 points -- showing
+    the degree last chosen when the range allows, else the nearest it does.
+    Capping alone left a cubic at 1 for good once a path was built up from
+    one point, or cut below four. Signals stay blocked: a cap is not a
+    choice, so it never overwrites the one remembered."""
+    wanted = getattr(spin, "_wanted", spin.value())
+    spin.blockSignals(True)
+    spin.setRange(low, max(low, high))
+    spin.setValue(min(max(wanted, spin.minimum()), spin.maximum()))
+    spin.blockSignals(False)
 
 
 def open_large(dialog):

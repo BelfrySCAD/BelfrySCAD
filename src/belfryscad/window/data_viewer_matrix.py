@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, _fmt_short,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button, _fmt_short,
                                                   _format_value, _identity_matrix,
                                                   _is_list, _parse_number,
                                                   _style_table_headers)
@@ -75,15 +75,17 @@ class MatrixViewer(QDialog, _UndoableViewerMixin):
             self._table.itemChanged.connect(self._on_item_changed)
 
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 20, 0)
+        btn_row.setContentsMargins(20, 0, 20, 0)
         if editable:
             self._setup_undo(value)
             reset_id = QPushButton("Reset to Identity")
             reset_id.clicked.connect(self._on_reset_identity)
-            btn_row.addWidget(reset_id)
-            btn_row.addWidget(self._make_reset_button())
+            # The gear's menu holds the options; the row keeps only Reset,
+            # Cancel and Save. A read-only matrix has none, so no gear.
+            btn_row.addWidget(settings_button(self, [reset_id]))
         btn_row.addStretch()
         if editable:
+            btn_row.addWidget(self._make_reset_button())
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
             btn_row.addWidget(cancel)

@@ -16,7 +16,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 from belfryscad.window.background_image import (BackgroundImageViewportMixin,
                                                   restore_session_background)
 from belfryscad.window.viewport import Viewport, _key_nudge_delta, _key_nudge_magnitude
-from belfryscad.window.data_viewer_common import (open_large, _UndoableViewerMixin,
+from belfryscad.window.data_viewer_common import (open_large, settings_button, _UndoableViewerMixin,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces,
                                                   _grid_flat_to_rc, _grid_row_offsets,
@@ -158,26 +158,22 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
         # shapes carry few enough points to draw them all, and
         # unchecking this is what clears the view.
         self._show_verts_cb = QCheckBox("Show Vertices")
-        self._show_verts_cb.setStyleSheet("QCheckBox { padding-right: 20px; }")
         self._show_verts_cb.setChecked(True)
         self._show_verts_cb.toggled.connect(self._vp.set_show_unselected)
-        btn_row.addWidget(self._show_verts_cb)
         self._fill_combo = QComboBox()
         self._fill_combo.addItem("Region Only")
         self._fill_combo.addItem("Region Filled")
         self._fill_combo.setCurrentIndex(1)
-        self._fill_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        _size_combo_to_widest_item(self._fill_combo)
         self._fill_combo.currentIndexChanged.connect(self._rebuild)
-        btn_row.addWidget(self._fill_combo)
         # A reference image to trace over (#788), 2D only: it lies in XY.
         restore_session_background(self.windowTitle(), self._vp)
-        btn_row.addSpacing(20)
+        # Every option is in the gear's menu; the row keeps only Reset,
+        # Cancel and Save.
+        btn_row.addWidget(settings_button(self, [self._show_verts_cb, ("Fill", self._fill_combo)]))
+        btn_row.addStretch()
         if editable:
             self._setup_undo(region_value)
             btn_row.addWidget(self._make_reset_button())
-        btn_row.addStretch()
-        if editable:
             cancel = QPushButton("Cancel")
             cancel.clicked.connect(self.reject)
             btn_row.addWidget(cancel)
@@ -422,7 +418,7 @@ class RegionViewer(QDialog, _UndoableViewerMixin):
             self._vert_table.item(col_idx, 1).setText(f"{y:g}")
             self._vert_table.blockSignals(False)
         self._rebuild(reframe=False)
-        self._vp.scroll_to_visible(np.array([x, y, 0.0]))
+        self._vp.follow_moved_point(np.array([x, y, 0.0]))
 
     def _do_initial_load(self):
         self._vp.load_region(self._region, draw_fill=(self._fill_combo.currentText() == "Region Filled"))
