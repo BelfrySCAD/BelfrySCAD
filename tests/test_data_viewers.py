@@ -3453,3 +3453,70 @@ def test_a_grid_row_or_column_takes_one_coordinate(tmp_path):
     assert out["asked"][0] == ["Set Z of Row 1", "0"], "starts from the first point's value"
     assert out["undone_col"] == [3, 3, 3, 3]
     assert out["undone_row_kept"] == [5, 5, 5, 5], "each Set is its own undo step"
+
+
+_GRID_SNAP_DRIVER = """
+import json
+import numpy as np
+from PySide6.QtGui import QSurfaceFormat, QMouseEvent
+from PySide6.QtCore import Qt, QEvent, QPointF
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewer_grid import GridViewer
+
+def drag_to(grid, target, lock_axis=2):
+    # A drag of vertex 0 whose ray meets the drag plane at `target`.
+    vp = grid._vp
+    vp._renderer.camera_ray = lambda *a: (np.array(target, float) + [0, 0, 5], np.array([0.0, 0, -1]))
+    vp._drag_vertex_idx = 0
+    vp._drag_lock_axis = lock_axis
+    vp._drag_plane_point = np.array([0.0, 0, 0.25])
+    vp._press_pos = None
+    vp.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove, QPointF(5, 5), Qt.MouseButton.LeftButton,
+                                  Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+    return list(grid._grid[0][0])
+
+out = {}
+pts = [[[c, r, 0.25] for c in range(3)] for r in range(3)]
+g = GridViewer("g", pts, None, editable=True); g.show(); app.processEvents()
+out["default"] = g._snap_combo.currentText()
+out["free"] = drag_to(g, [1.234, 5.678, 0.25])
+g._snap_combo.setCurrentText("1")
+out["one"] = drag_to(g, [1.234, 5.678, 0.25])
+g._snap_combo.setCurrentText("0.1")
+out["tenth"] = drag_to(g, [1.234, 5.678, 0.25])
+g._snap_combo.setCurrentText("10")
+out["ten"] = drag_to(g, [14.9, -5.2, 0.25])
+g.close()
+again = GridViewer("g", pts, None, editable=True)
+out["remembered"] = again._snap_combo.currentText()
+print(json.dumps(out))
+"""
+
+
+def test_drag_snap_lands_a_grid_vertex_on_multiples(tmp_path):
+    """#1054: Drag Snap makes a dragged vertex land on multiples of 10, 1
+    or 0.1, as the arrow keys step it. The locked axis keeps its value, so
+    the point stays on its plane. Off, the default, drags freely; the
+    choice carries over to the next editor opened in the session."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_grid_snap.py"
+    driver.write_text(_GRID_SNAP_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert out["default"] == "Off"
+    assert out["free"] == [1.234, 5.678, 0.25]
+    assert out["one"] == [1, 6, 0.25], "Z, the locked axis, is not snapped"
+    assert out["tenth"] == [1.2, 5.7, 0.25]
+    assert out["ten"] == [10, -10, 0.25]
+    assert out["remembered"] == "10"
