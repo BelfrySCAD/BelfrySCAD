@@ -3004,6 +3004,59 @@ def test_editing_a_grid_cell_stays_on_its_row(tmp_path):
     assert out["cell"] == [1, 1] and out["editing"], "Tab edits the next cell"
 
 
+_GRID_NUDGE_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat, QKeyEvent
+from PySide6.QtCore import Qt, QEvent
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.window.data_viewer_grid import GridViewer
+
+grid = GridViewer("g", [[[c, r, 0] for c in range(3)] for r in range(3)],
+                  None, editable=True)
+grid.show(); app.processEvents()
+grid._on_viewport_vertex_clicked(4, "replace")
+grid._on_viewport_vertex_clicked(5, "add"); app.processEvents()
+def up():
+    grid._vp.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Up,
+                                     Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+up(); up()
+after = [sorted(grid._vp._selected_indices), grid._grid[1][1][2], grid._grid[1][2][2]]
+grid._undo_stack.undo(); app.processEvents()
+print(json.dumps({
+    "after": after,
+    "undone": [sorted(grid._vp._selected_indices), grid._grid[1][1][2]],
+    "table": sorted(r.row() for r in grid._vert_table.selectionModel().selectedRows()),
+}))
+"""
+
+
+def test_an_arrow_key_nudge_keeps_the_grid_vertex_selected(tmp_path):
+    """#1054: a nudge commits an undo step, whose redo repopulated the
+    table and cleared the selection, so every further press needed a click
+    to reselect the vertex first."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_grid_nudge.py"
+    driver.write_text(_GRID_NUDGE_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    sel, z1, z2 = out["after"]
+    assert sel == [4, 5], "both vertices stay selected"
+    assert z1 == z2 != 0, "and the second press moved them again"
+    assert out["undone"][0] == [4, 5], "undo keeps the selection too"
+    assert out["table"] == [1, 2]
+
+
 _ROW_ORDER_DRIVER = """
 import json
 import numpy as np

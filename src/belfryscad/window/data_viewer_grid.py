@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QAbstractItemView, QCheckBox, QMenu,
                                QLabel, QPushButton, QSplitter, QWidget, QComboBox,
                                QSpinBox)
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QItemSelectionModel
 from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad import nurbs
@@ -707,6 +707,13 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         return self._grid
 
     def _apply_value(self, value):
+        # Same shape (a move, a cell edit, or the undo of one): keep the
+        # selection, or an arrow-key nudge -- which commits through here --
+        # deselects the vertex it just moved (#1054). A row or column added
+        # or deleted renumbers the vertices, so that clears it.
+        keep = []
+        if [len(r) for r in value] == [len(r) for r in self._grid]:
+            keep = self._vert_table.selectionModel().selectedRows()
         self._grid = value
         self._sync_face_mode_combo()
         self._vp.sync_row_bookkeeping(self._grid)
@@ -720,6 +727,10 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         self._row_combo.setCurrentIndex(row_idx)
         self._row_combo.blockSignals(False)
         self._on_row_changed(row_idx, select_all=False)
+        sel = self._vert_table.selectionModel()
+        for index in keep:
+            sel.select(self._vert_table.model().index(index.row(), 0),
+                       QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
         self._rebuild()
 
     def _on_item_changed(self, item: QTableWidgetItem):
