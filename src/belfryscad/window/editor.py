@@ -1,6 +1,8 @@
+import os
 import re
 import sys
 
+from belfryscad.drop_files import statement_for
 from belfryscad.qt_positions import byte_column_to_qt, qt_length, to_index, to_qt
 from belfryscad.scad_templates import expand as expand_template
 
@@ -2833,6 +2835,46 @@ class CodeEditor(QPlainTextEdit):
         if not templates:
             menu.addAction("(No templates)").setEnabled(False)
         menu.exec(at if at is not None else self.viewport().mapToGlobal(self.cursorRect().bottomLeft()))
+
+    def _drop_base_dir(self) -> str | None:
+        """The folder a dropped file's path is written relative to: that of
+        the FileTab holding this view (duck-typed: main_window imports this
+        module), or None for a tab that names no file."""
+        w = self.parentWidget()
+        while w is not None and not hasattr(w, "resolve_near"):
+            w = w.parentWidget()
+        path = w and (w.file_path or w.resolve_near)
+        return os.path.dirname(path) if path else None
+
+    def insert_dropped_files(self, paths) -> bool:
+        """Insert an import()/surface() line per droppable file in `paths`,
+        above the cursor's line and at its indent. False if none was."""
+        base = self._drop_base_dir()
+        lines = [s for s in (statement_for(p, base) for p in paths) if s]
+        if not lines or self.isReadOnly():
+            return False
+        cursor = self.textCursor()
+        cursor.clearSelection()
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        text = cursor.block().text()
+        indent = text[:len(text) - len(text.lstrip())]
+        cursor.insertText("".join(f"{indent}{s}\n" for s in lines))
+        self.setTextCursor(cursor)
+        return True
+
+    @staticmethod
+    def _local_paths(source):
+        return [u.toLocalFile() for u in source.urls() if u.isLocalFile()] if source.hasUrls() else []
+
+    def canInsertFromMimeData(self, source):
+        return (any(statement_for(p, None) for p in self._local_paths(source))
+                or super().canInsertFromMimeData(source))
+
+    def insertFromMimeData(self, source):
+        # A drop lands here with the cursor already moved to the drop point;
+        # a paste of files copied in Finder/Explorer does too.
+        if not self.insert_dropped_files(self._local_paths(source)):
+            super().insertFromMimeData(source)
 
     def _insert_template_at(self, content: str, cursor=None):
         if cursor is not None:
