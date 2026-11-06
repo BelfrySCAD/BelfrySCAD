@@ -113,3 +113,30 @@ def test_diagnostic_report_writes_the_dump_to_the_crash_log():
     proc = subprocess.run([sys.executable, "-c", REPORT_DRIVER], capture_output=True, text=True,
                           env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=60)
     assert proc.stdout.split() == ["True", "True", "True"], proc.stderr[-2000:]
+
+
+DRAWING_DRIVER = r'''
+from PySide6.QtWidgets import QApplication, QWidget
+app = QApplication([])
+from belfryscad import main as m
+m._install_state_dump(app)
+w = QWidget(); w.setWindowTitle("Main"); w.show()
+for _ in range(3):
+    w.update(); app.processEvents()
+app.screenRemoved.emit(app.primaryScreen())
+app.screenAdded.emit(app.primaryScreen())
+for i in range(60):      # what a user tries once frozen: must not push the reconnect out
+    app._state_log.events.append(f"filler {i}")
+print(m._describe_qt_state(app))
+'''
+
+
+def test_the_dump_says_what_was_drawn_and_keeps_display_changes():
+    # #703: a frozen 27.2 window took input; was it still being drawn? And
+    # the display reconnect before it was pushed out of the window events.
+    proc = subprocess.run([sys.executable, "-c", DRAWING_DRIVER], capture_output=True, text=True,
+                          env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}, timeout=60)
+    out = proc.stdout
+    assert "drawing (count, last):\n  window 'Main': " in out, (out + proc.stderr)[-2000:]
+    displays = out.split("display changes:\n")[1].split("drawing")[0]
+    assert "screen removed: " in displays and "screen added: " in displays
