@@ -14,7 +14,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 
 from belfryscad import nurbs
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
-                                        _key_nudge_magnitude, _view_locked_axis)
+                                        _key_nudge_magnitude, _quantize, _view_locked_axis)
 from belfryscad.window.data_viewer_common import (_UndoableViewerMixin,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces,
@@ -300,6 +300,18 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         btn_row.addWidget(self._wrap_combo)
         btn_row.addSpacing(20)
         if editable:
+            # A dragged vertex lands on multiples of this, as an arrow-key
+            # nudge moves by it (#1054). Off drags freely, as before.
+            btn_row.addWidget(QLabel("Drag Snap"))
+            self._snap_combo = QComboBox()
+            self._snap_combo.addItems(["Off", "10", "1", "0.1"])
+            self._snap_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            _size_combo_to_widest_item(self._snap_combo)
+            self._snap_combo.currentTextChanged.connect(self._on_snap_changed)
+            self._snap_combo.setCurrentText(GridViewer._drag_snap)
+            self._on_snap_changed(self._snap_combo.currentText())
+            btn_row.addWidget(self._snap_combo)
+            btn_row.addSpacing(20)
             self._setup_undo(grid_value)
             btn_row.addWidget(self._make_reset_button())
         btn_row.addStretch()
@@ -528,6 +540,14 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         for axis in range(self._vert_table.columnCount()):
             self._add_set_column_action(menu, axis, c)
         menu.exec(self._vert_table.verticalHeader().mapToGlobal(pos))
+
+    #: The Drag Snap last chosen, offered by the next editor opened: kept
+    #: for the session, so a run of edits on one model asks once.
+    _drag_snap = "Off"
+
+    def _on_snap_changed(self, text: str):
+        GridViewer._drag_snap = text
+        self._vp.drag_snap = 0.0 if text == "Off" else float(text)
 
     def _set_coordinate(self, axis: int, cells: list, what: str):
         """Give every point in `cells` ((row, column) pairs) the same X, Y
@@ -849,6 +869,10 @@ class _GridViewport(Viewport):
         #: number per cell, and x/y ARE the cell's position in the array,
         #: so a moved x or y is not something it can express.
         self.z_only = False
+        #: Drag Snap (#1054): a dragged vertex's coordinates in the drag
+        #: plane land on multiples of this; 0 drags freely. The locked
+        #: axis is left alone, so a snap never moves a point off its plane.
+        self.drag_snap = 0.0
         cam = self._renderer.camera
         cam.fov = 45.0
         self._renderer.depth_test_points = True
@@ -1299,6 +1323,9 @@ class _GridViewport(Viewport):
                     # Height follows the cursor; the cell keeps its place.
                     start_pt = self._all_pts[self._drag_vertex_idx]
                     hit = np.array([start_pt[0], start_pt[1], hit[2]], dtype=np.float32)
+                elif self.drag_snap:
+                    hit = np.array([v if a == self._drag_lock_axis else _quantize(float(v), self.drag_snap)
+                                    for a, v in enumerate(hit)], dtype=np.float64)
                 self._emit_moved(self._drag_vertex_idx, hit)
             return
         if self._last_mouse is None:
