@@ -1234,8 +1234,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
 
     def _sync_rope(self):
         """Fixed Length is for an open plain path, an open cubic Bezier
-        one, or an open NURBS curve; the Length field shows the total, and
-        scales the path when typed into."""
+        one, or an open NURBS curve; the Length field, shown only while
+        Fixed Length is on, gives the total and scales the path when typed
+        into."""
         n = len(self._path)
         ok = ((self._mode() == "path" or self._bezier_rope_ok()
                or self._nurbs_lengths() is not None)
@@ -1243,7 +1244,9 @@ class PathViewer(QDialog, _UndoableViewerMixin):
         if not ok and self._rope_cb.isChecked():
             self._rope_cb.setChecked(False)
         self._rope_cb.setEnabled(ok)
-        self._length_spin.setEnabled(n > 1)
+        # Length belongs to Fixed Length: shown only while that is on, not
+        # merely greyed when it is off or cannot apply.
+        self._length_spin.setVisible(not self._rope_cb.isHidden() and ok and self._rope_cb.isChecked())
         self._length_spin.blockSignals(True)
         self._length_spin.setValue(self._total_length())
         self._length_spin.blockSignals(False)

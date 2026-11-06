@@ -3681,3 +3681,50 @@ def test_a_drag_scrolls_the_view_a_quarter_as_fast_as_a_nudge(tmp_path):
 
     assert out["nudge"] > 0
     assert abs(out["drag"] - 0.25 * out["nudge"]) < 1e-3 * out["nudge"]
+
+
+_LENGTH_ENTRY_DRIVER = """
+import json
+from PySide6.QtGui import QSurfaceFormat
+f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfile)
+f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
+from PySide6.QtWidgets import QApplication, QToolButton
+app = QApplication([])
+from belfryscad.window.data_viewer_path import PathViewer
+
+v = PathViewer("p", [[0, 0], [10, 0], [10, 10]], None, editable=True)
+v.show(); app.processEvents()
+menu = [b for b in v.findChildren(QToolButton) if b.toolTip() == "Settings"][0].menu()
+def entries():
+    menu.aboutToShow.emit()
+    return [[a.text(), a.isEnabled()] for a in menu.actions() if a.text()]
+out = {"off": entries()}
+v._rope_cb.setChecked(True); app.processEvents()
+out["on"] = entries()
+v._closed_cb.setChecked(True); app.processEvents()    # Fixed Length cannot apply to a closed path
+out["closed"] = entries()
+print(json.dumps(out))
+"""
+
+
+def test_the_length_entry_shows_only_with_fixed_length_on(tmp_path):
+    """Length is Fixed Length's own setting: hidden from the gear menu while
+    Fixed Length is off or cannot apply, not just greyed out."""
+    import json, os, subprocess, sys
+    import pytest
+
+    driver = tmp_path / "_length_entry.py"
+    driver.write_text(_LENGTH_ENTRY_DRIVER)
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True,
+                       text=True, env=env)
+    if r.returncode != 0:
+        pytest.skip(f"no Qt GUI available here: {(r.stderr or '').strip()[-200:]}")
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def names(state):
+        return [t for t, _ in out[state]]
+    assert not any(t.startswith("Length") for t in names("off"))
+    assert any(t.startswith("Length") for t in names("on"))
+    assert not any(t.startswith("Length") for t in names("closed"))
+    assert ["Fixed Length", False] in out["closed"], "Fixed Length itself greys, as before"

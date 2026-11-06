@@ -1283,7 +1283,7 @@ A `VNFViewer` subclass for a BOSL2 **VNF tile texture**: a VNF whose X and Y lie
 
 ### PathViewer (QDialog)
 
-`QSplitter`: `_PathViewport` on left, vertex table on right. Below both, the gear menu (Show Vertices, Close Path, Fixed Length and its Length, Path Type, and in NURBS modes Degree, and Copy corners) and Dismiss; in `editable=True` mode, Dismiss is replaced with Reset/Cancel/Save.
+`QSplitter`: `_PathViewport` on left, vertex table on right. Below both, the gear menu (Show Vertices, Close Path, Fixed Length and, while it is on, its Length, Path Type, and in NURBS modes Degree, and Copy corners) and Dismiss; in `editable=True` mode, Dismiss is replaced with Reset/Cancel/Save.
 
 - **Vertex table**: `QTableWidget`, 0-indexed rows, X/Y/Z columns. Extended multi-select. Selecting rows highlights the corresponding vertices in the viewport. When `editable=True`, cells are directly editable (`itemChanged` parses/validates each edit, reverting non-numeric input, updates `self._path` in place, and calls `_rebuild()` to refresh the viewport preview) — no source writeback until Save, which emits `self._path` re-serialized via `committed`.
 - **Viewport**: `_PathViewport(Viewport)`. Black lines at 2× width (`SceneRenderer.line_width`). Dodecahedron vertex markers (~9px screen size, `_MARKER_RADIUS_PX` regardless of zoom, camera distance, or projection mode — `_marker_radius_for_point`, rebuilt on zoom): theme-colored (`renderer.unselected_vertex_color`) for unselected, red↔white blink (250ms) for selected. Hovering a marker shows a tooltip with index and coordinates.
