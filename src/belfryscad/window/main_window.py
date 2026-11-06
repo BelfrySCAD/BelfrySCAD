@@ -18,6 +18,7 @@ import threading
 import time
 
 from belfryscad import exporters
+from belfryscad.drop_files import statement_for
 from belfryscad.window import cursors
 from belfryscad.window import aspect_frame
 from belfryscad.window.editor import CodeEditor
@@ -6433,16 +6434,22 @@ class MainWindow(QMainWindow):
         s.sync()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            for url in event.mimeData().urls():
-                if url.toLocalFile().endswith('.scad'):
-                    event.acceptProposedAction()
-                    return
+        # A .scad opens; a mesh/image dropped anywhere but the editor (which
+        # takes its own drops) goes into the current tab at its cursor.
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.endswith('.scad') or (
+                    self._current_editor() is not None and statement_for(path, None)):
+                event.acceptProposedAction()
+                return
         event.ignore()
 
     def dropEvent(self, event):
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        editor = self._current_editor()
+        if editor is not None:
+            editor.insert_dropped_files([p for p in paths if not p.endswith('.scad')])
+        for path in paths:
             if path.endswith('.scad'):
                 self.open_file_by_path(path)
         event.acceptProposedAction()

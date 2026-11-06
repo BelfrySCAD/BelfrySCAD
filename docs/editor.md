@@ -98,6 +98,12 @@ Fold indicators are drawn with `painter.drawPolygon(QPoint[])` — `QPainterPath
 - It is the only view that scrolls to the paused line or a viewport selection, while the others just show it.
 - Undo puts its caret back there. A focus change resets `_last_cursor`, so typing in two views makes two undo steps (#389).
 
+## Dropping files
+
+A `.scad` dropped on the window opens in a tab. A mesh or drawing (`.stl .obj .off .3mf .amf .x3d .wrl .svg .dxf`) becomes an `import("...")` line, and a raster image (`.png .jpg .jpeg .gif .bmp`) a `surface(file="...")` line. Each file gets its own line, inserted above the line the cursor is on and at that line's indent: the drop point in the editor, or the current view's caret for a drop anywhere else in the window. One drop is one undo step. A paste of files copied in Finder/Explorer does the same.
+
+The path is relative to the tab's file (or its `resolve_near` for an example copy), since OpenSCAD resolves both relative to the script naming them, and absolute for an unsaved tab or another Windows drive. The rules are in Qt-free `belfryscad/drop_files.py`; its extension lists mirror the evaluator's `import.cpp` and `surface_load.cpp`, and leave out `.json`/`.csv`, which `import()` reads as values, not shapes.
+
 ## Editor Context Menu
 
 Right-clicking in the editor builds a standard Qt context menu, then appends identifier-aware and debug-aware actions.
