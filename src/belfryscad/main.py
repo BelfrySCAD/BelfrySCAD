@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 import setproctitle
 
 
@@ -565,6 +566,12 @@ def _describe_qt_state(app) -> str:
         lines.append(f"last pointer move: {log.last_move or 'none'}")
         lines.append("recent window events:")
         lines += [f"  {e}" for e in log.events]
+        lines.append("display changes:")
+        lines += [f"  {e}" for e in log.displays] or ["  none"]
+        import datetime
+        lines.append("drawing (count, last):")
+        lines += [f"  {key}: {n}, {datetime.datetime.fromtimestamp(t).isoformat(timespec='seconds')}"
+                  for key, (n, t) in sorted(log.paints.items())] or ["  none"]
     from belfryscad.window.viewport import PAINT_ERRORS
     lines.append(f"3D view drawing errors: {len(PAINT_ERRORS) or 'none'}")
     for text, (count, first, last) in PAINT_ERRORS.items():
@@ -751,6 +758,13 @@ class _StateLog:
         from PySide6.QtCore import QTimer
         self.inputs = collections.deque(maxlen=20)
         self.events = collections.deque(maxlen=40)
+        # Display changes, kept apart: a freeze follows a reconnect hours
+        # earlier, and the steps tried once frozen push it out of `events`.
+        self.displays = collections.deque(maxlen=20)
+        # Drawing, as [count, last time.time()]: per window, each flush of
+        # its widgets to the screen (UpdateRequest); and the 3D view's own
+        # paints. Says whether a frozen window is still being drawn (#703).
+        self.paints = {}
         # Pointer moves are too many to list; the last one says whether
         # macOS still delivers anything at all to a window taking no input.
         self.last_move = None
@@ -763,7 +777,18 @@ class _StateLog:
         class Filter(QObject):
             def eventFilter(self, obj, event):
                 t = event.type()
-                if t == T.MouseMove and obj.isWindowType():
+                if t == T.UpdateRequest or t == T.Paint:
+                    # Per paint, so nothing but a lookup and two stores.
+                    key = (f"window {obj.title()!r}" if obj.isWindowType() else
+                           "3D view" if type(obj).__name__ == "Viewport" else None)
+                    if key is not None:
+                        rec = log.paints.get(key)
+                        if rec is None:
+                            log.paints[key] = [1, time.time()]
+                        else:
+                            rec[0] += 1
+                            rec[1] = time.time()
+                elif t == T.MouseMove and obj.isWindowType():
                     # At the QWindow: a widget only sees moves with tracking on.
                     log.last_move = f"{_now()} on {type(obj).__name__} {obj.title()!r}"
                 elif t in inputs and not obj.isWindowType():
@@ -789,6 +814,7 @@ class _StateLog:
         app.installEventFilter(self._filter)
         for sig, what in ((app.screenAdded, "screen added"), (app.screenRemoved, "screen removed")):
             sig.connect(lambda s, what=what: (log.events.append(f"{_now()} {what}: {s.name()}"),
+                                              log.displays.append(f"{_now()} {what}: {s.name()}"),
                                               log._screens_timer.start()))
 
     def note_window_screens(self):
@@ -796,8 +822,10 @@ class _StateLog:
         for w in QGuiApplication.topLevelWindows():
             if w.isVisible():
                 screen = w.screen()
-                self.events.append(f"{_now()}   {w.title()!r} on {screen.name() if screen else None} "
-                                   f"dpr={w.devicePixelRatio():g}")
+                line = (f"{_now()}   {w.title()!r} on {screen.name() if screen else None} "
+                        f"dpr={w.devicePixelRatio():g}")
+                self.events.append(line)
+                self.displays.append(line)
 
     def note_frontmost(self):
         try:
