@@ -116,12 +116,27 @@ def collect(menubar, toolbars=(), extra=(), skip_menus=()) -> list[Binding]:
     return out
 
 
+#: Commands renamed since their keys could first be set: a binding saved
+#: under the old menu path follows the command to its new one.
+RENAMED = {
+    "View > Split Right": "View > Split Editor Right",
+    "View > Split Below": "View > Split Editor Below",
+    "View > Close Split": "View > Close Editor Split",
+}
+
+
 def load_overrides(settings) -> dict:
     try:
         value = json.loads(settings.value(PREF_KEY, "{}") or "{}")
     except (TypeError, ValueError):
         return {}
-    return value if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        return {}
+    for old, new in RENAMED.items():
+        if old in value:
+            value.setdefault(new, value[old])
+            del value[old]
+    return value
 
 
 def save_overrides(settings, overrides: dict):

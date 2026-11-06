@@ -149,3 +149,25 @@ def test_tab_follows_indent_binding():
     assert out["cleared"] == []
     assert out["ended"] == [True, True]
     assert out["back"] == [["Tab"], ["Shift+Tab"], [], "    a;\n    b;"]
+
+
+def test_a_key_saved_under_a_renamed_command_follows_it():
+    """View > Split Right/Below and Close Split became Split Editor Right/Below
+    and Close Editor Split: a key the
+    user set under the old name keeps working under the new one."""
+    from belfryscad.window import shortcuts
+
+    class Settings:
+        def __init__(self, value):
+            self.v = value
+        def value(self, key, default=None):
+            return self.v
+
+    saved = json.dumps({"View > Split Right": "Ctrl+Alt+R", "View > Close Split": "Ctrl+Alt+C",
+                        "File > Open...": "Ctrl+O"})
+    got = shortcuts.load_overrides(Settings(saved))
+    assert got == {"View > Split Editor Right": "Ctrl+Alt+R", "View > Close Editor Split": "Ctrl+Alt+C",
+                   "File > Open...": "Ctrl+O"}
+    # A key already set under the new name wins over a stale old one.
+    both = json.dumps({"View > Split Below": "F1", "View > Split Editor Below": "F2"})
+    assert shortcuts.load_overrides(Settings(both)) == {"View > Split Editor Below": "F2"}

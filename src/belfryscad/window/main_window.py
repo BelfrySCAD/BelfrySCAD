@@ -1949,13 +1949,13 @@ class MainWindow(QMainWindow):
                              lambda r=ratio: self._set_viewport_aspect(r))
         # Splits of the current tab's editor, beside or below the view last
         # worked in (#506); the editor's right-click menu has them too.
-        self._add_action(view_menu, "Split Rig&ht",
+        self._add_action(view_menu, "Split Editor Rig&ht",
                          lambda: self._split_view(Qt.Orientation.Horizontal),
                          QKeySequence("Ctrl+\\"))
-        self._add_action(view_menu, "Split Belo&w",
+        self._add_action(view_menu, "Split Editor Belo&w",
                          lambda: self._split_view(Qt.Orientation.Vertical),
                          QKeySequence("Ctrl+Shift+\\"))
-        self._act_close_split = self._add_action(view_menu, "Close Spli&t", self._close_split)
+        self._act_close_split = self._add_action(view_menu, "Close Editor Spli&t", self._close_split)
         self._act_close_split.setEnabled(False)
         self._add_action(view_menu, "Reset Panel La&yout",
                          self._reset_panel_layout)
