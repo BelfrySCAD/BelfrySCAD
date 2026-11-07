@@ -185,8 +185,17 @@ def open_large(dialog):
     """Size a drawing editor to most of the screen, centred, with a
     maximize button: at a fixed 900 x 520 every tracing session began by
     dragging a corner out (#861). Windows gives a dialog no maximize
-    button unless asked; macOS already offers Zoom."""
+    button unless asked; macOS already offers Zoom.
+
+    That is only the first time: each kind of editor then reopens where,
+    and at the size, it was last closed (setting `geometry/<class>`)."""
+    from belfryscad.settings import app_settings
     dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+    key = f"geometry/{type(dialog).__name__}"
+    dialog.finished.connect(lambda _r: app_settings().setValue(key, dialog.saveGeometry()))
+    saved = app_settings().value(key)
+    if saved and dialog.restoreGeometry(saved):
+        return
     screen = (dialog.parentWidget() or dialog).screen()
     if screen is None:
         dialog.resize(900, 520)
