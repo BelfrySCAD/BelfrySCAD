@@ -2495,9 +2495,9 @@ class MainWindow(QMainWindow):
                 pass
             tab.backup_path = None
 
-    def _close_tab(self, index):
+    def _close_tab(self, index, confirm=True):
         tab = self._tabs.widget(index)
-        if tab and not self._confirm_unsaved(tab):
+        if confirm and tab and not self._confirm_unsaved(tab):
             return
         if tab:
             self._drop_backup(tab)
@@ -2511,37 +2511,39 @@ class MainWindow(QMainWindow):
             self._undo_group.removeStack(tab.undo_stack)
         self._tabs.removeTab(index)
         self._refresh_watched_files()
-        if self._tabs.count() == 0:
+        if self._tabs.count() == 0 and confirm:
             self._new_document()
 
     def _close_current_tab(self):
         self._close_tab(self._tabs.currentIndex())
 
     def _tear_off_tab(self):
+        """Move the current tab into a new window, unsaved edits and all.
+
+        The last tab moves too, and its window closes behind it: that is
+        the way out of a window that has stopped reaching the screen (#703),
+        where a new window still works. The text is in the new window before
+        the old tab goes, so nothing asks to save it.
+        """
         tab = self._current_tab()
-        if tab is None or self._tabs.count() <= 1:
+        if tab is None:
             return
         file_path = tab.file_path
         text = tab.editor.toPlainText()
         is_modified = tab.is_modified
-        self._close_tab(self._tabs.currentIndex())
         win = MainWindow()
         win.show()
         if file_path:
             win.open_file_by_path(file_path)
-            if is_modified:
-                win_tab = win._current_tab()
-                if win_tab:
-                    win_tab.editor.setPlainText(text)
-                    win_tab.is_modified = True
-                    win_tab._last_text = text
-        else:
-            win_tab = win._current_tab()
-            if win_tab:
-                win_tab.editor.setPlainText(text)
-                win_tab._last_text = text
-                if is_modified:
-                    win_tab.is_modified = True
+        win_tab = win._current_tab()
+        if win_tab and (is_modified or not file_path):
+            win_tab.editor.setPlainText(text)
+            win_tab._last_text = text
+            win_tab.is_modified = is_modified
+        last = self._tabs.count() == 1
+        self._close_tab(self._tabs.currentIndex(), confirm=False)
+        if last:
+            self.close()
 
     def _on_editor_cursor_moved(self, tab, editor):
         """Keep `_last_cursor` current while the cursor moves WITHOUT an edit.
