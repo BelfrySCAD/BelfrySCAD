@@ -298,6 +298,9 @@ temporary copy of the live buffer instead, so examples see unsaved edits. A full
 build is unchanged by it.
 A fifth: a `SynTags:` tag the rc file never defines is a docs error at that line naming the
 tag, where upstream dies with a bare `KeyError` (all the Docs pane could show). Same verdict.
+A sixth, BOSL2#2033: AlphaIndex and Topics list an `Alias:` under its own name; upstream
+prints the main name for the alias's entry too, so the main name appears twice and the alias not
+at all. Output only, no verdict change: on BOSL2 it rewrites exactly the 13 alias lines.
 The first two alter no verdict at all: the same input passes or fails exactly
 as upstream would have it. Keeping the parser otherwise byte-identical is what
 makes the pane's verdict trustworthy: it is the same validation a real docs
