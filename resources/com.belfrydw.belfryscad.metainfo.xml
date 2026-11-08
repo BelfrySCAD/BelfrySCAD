@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.15" date="2026-11-07">
+      <description>
+        <p>The Grid editor remembers its settings, and docs indexes list each alias under its own name</p>
+      </description>
+    </release>
     <release version="1.99.14" date="2026-11-07">
       <description>
         <p>The Path, Region and Turtle editors reopen at the size and place they were closed at</p>
