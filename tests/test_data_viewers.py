@@ -2905,6 +2905,9 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.data_viewer_heightfield import HeightfieldViewer
 from belfryscad.window.data_viewer_grid import GridViewer
 
@@ -2958,6 +2961,9 @@ from PySide6.QtWidgets import QApplication, QAbstractItemView
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.data_viewer_grid import GridViewer
 
 grid = GridViewer("g", [[[c, r, 0] for c in range(4)] for r in range(4)],
@@ -3012,6 +3018,9 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.data_viewer_grid import GridViewer
 
 grid = GridViewer("g", [[[c, r, 0] for c in range(3)] for r in range(3)],
@@ -3390,6 +3399,9 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window import data_viewer_grid as dvg
 
 answers = []
@@ -3464,6 +3476,9 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.data_viewer_grid import GridViewer
 
 def drag_to(grid, target, lock_axis=2):
@@ -3586,6 +3601,9 @@ f = QSurfaceFormat(); f.setVersion(3, 3); f.setProfile(QSurfaceFormat.CoreProfil
 f.setDepthBufferSize(24); QSurfaceFormat.setDefaultFormat(f)
 from PySide6.QtWidgets import QApplication
 app = QApplication([])
+import tempfile
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.data_viewer_path import PathViewer
 from belfryscad.window.data_viewer_grid import GridViewer
 

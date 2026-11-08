@@ -159,6 +159,22 @@ def _bezier_patch_mesh(cp: np.ndarray, steps: int = 16) -> tuple[np.ndarray, np.
     return _surface_mesh(np.einsum('ia,jb,abk->ijk', basis, basis, cp))
 
 
+#: Back faces, as the main viewport draws them (#1081): the side BOSL2's
+#: own VNF for the grid turns inward, so an inside-out stretch shows here
+#: before the script is rendered.
+_INSIDE_OUT = (1.0, 0.0, 1.0, 1.0)
+
+
+def _as_bosl2(tris_pos, tris_norm):
+    """The triangles wound as BOSL2's vnf_vertex_array() and nurbs_vnf()
+    wind the same grid, opposite to how they are built here: rows stepping
+    +y and columns +x face +z here, -z there. bezier_vnf() winds the other
+    way from those two, matching this file, so the Bezier patch is drawn
+    as built. Checked against BOSL2 by volume sign and face normals."""
+    pos = np.asarray(tris_pos, dtype=np.float32).reshape(-1, 3, 3)[:, [0, 2, 1]]
+    return pos.reshape(-1, 3), -np.asarray(tris_norm, dtype=np.float32)
+
+
 def _surface_mesh(surface: np.ndarray, wrap_rows: bool = False,
                   wrap_cols: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Triangulate a sampled surface -- an (m, k, 3) grid of points -- two
@@ -1129,20 +1145,22 @@ class _GridViewport(Viewport):
                         else:
                             _add_tri(p_anchor, p_k, p_k1)
             if tris_pos:
-                self._renderer.upload_mesh(np.array(tris_pos, dtype=np.float32),
-                                 np.array(tris_norm, dtype=np.float32),
-                                 backface_color=(0.9, 0.85, 0.1, 1.0))
+                self._renderer.upload_mesh(*_as_bosl2(np.array(tris_pos, dtype=np.float32),
+                                                      np.array(tris_norm, dtype=np.float32)),
+                                           backface_color=_INSIDE_OUT)
 
         if bezier_patch and rows == 4 and row_lens == [4, 4, 4, 4]:
             cp = pts.reshape(4, 4, 3)
             tris_pos, tris_norm = _bezier_patch_mesh(cp)
-            self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
+            # bezier_vnf already winds the patch as drawn here.
+            self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=_INSIDE_OUT)
 
         if surface is not None:
             # A NURBS surface, sampled by the dialog (see GridViewer._nurbs_surface).
             tris_pos, tris_norm = _surface_mesh(surface, row_wrap, col_wrap)
             if len(tris_pos):
-                self._renderer.upload_mesh(tris_pos, tris_norm, backface_color=(0.9, 0.85, 0.1, 1.0))
+                self._renderer.upload_mesh(*_as_bosl2(tris_pos, tris_norm),
+                                           backface_color=_INSIDE_OUT)
 
         self._build_point_markers()
         if self._selected_indices:
