@@ -92,7 +92,7 @@
   <releases>
     <release version="1.99.17" date="2026-11-08">
       <description>
-        <p>The Grid editor opens large and reopens at the size and place it was closed at</p>
+        <p>The Grid editor opens large and reopens where it was closed; Window, Redraw Window rebuilds a window that stopped drawing; submenus switch faster</p>
       </description>
     </release>
     <release version="1.99.16" date="2026-11-07">
