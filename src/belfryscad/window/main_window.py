@@ -2878,6 +2878,14 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return False
+        # A second tab on one file would overwrite the first's on every save
+        # (#1094), so ask for the other tab to be closed instead.
+        if get_document_manager().open_elsewhere(path, tab.editor):
+            QMessageBox.warning(
+                self, "File Already Open",
+                f"{os.path.basename(path)} is open in another tab. Close that "
+                "tab first, or save under a different name.")
+            return False
         return self._write_file(tab, path)
 
     # ------------------------------------------------------------------
