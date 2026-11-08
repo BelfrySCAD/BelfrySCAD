@@ -32,6 +32,11 @@ d = GridViewer("h", grid, editable=True); out["new_run"] = state(d); d.done(0)
 small = [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]]
 GridViewer._by_grid["s"] = {"mode": "Bezier Patch", "degrees": [3, 3], "wrap": 9}
 d = GridViewer("s", small, editable=True); out["unavailable"] = state(d)
+d.done(0)
+d = GridViewer("g", grid, editable=True); d.show(); app.processEvents()
+d.setGeometry(100, 120, 640, 400); app.processEvents(); d.done(0)
+d = GridViewer("g", grid, editable=True); d.show(); app.processEvents()
+out["geometry"] = list(d.geometry().getRect())
 print("RESULT" + json.dumps(out)); import sys; sys.stdout.flush()
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
@@ -47,3 +52,4 @@ def test_grid_editor_keeps_its_settings():
     assert out["g_again"] == ["NURBS Surface", 1, False, "1", 2]      # g's own, not h's
     assert out["new_run"] == ["NURBS Surface", 1, False, "1", 2]      # the last closed: g
     assert out["unavailable"][:2] == ["Grid Faces", 0]                # a 2x2 has no Bezier patch
+    assert out["geometry"] == [100, 120, 640, 400]                  # reopens where it was closed

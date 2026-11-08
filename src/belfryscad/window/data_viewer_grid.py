@@ -15,7 +15,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 from belfryscad import nurbs
 from belfryscad.window.viewport import (Viewport, _key_nudge_delta,
                                         _key_nudge_magnitude, _quantize, _view_locked_axis)
-from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button,
+from belfryscad.window.data_viewer_common import (_UndoableViewerMixin, settings_button, open_large,
                                                   cap_degree, track_wanted_degree,
                                                   _apply_click_selection,
                                                   _dodecahedron_faces,
@@ -215,7 +215,10 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         super().__init__(parent)
         label = "Grid Editor" if editable else "Grid Viewer"
         self.setWindowTitle(f"{label}: {title}" if title else label)
-        self.resize(900, 520)
+        # Most of the screen the first time, then where it was last closed,
+        # as the other drawing editors (#1081: 900 x 520 was too small to
+        # drag vertices in).
+        open_large(self)
 
         self._editable = editable
         self._grid = grid_value
