@@ -122,6 +122,8 @@ _DEFAULTS = {
     # Typing (, [, { or " adds its closer, as VS Code does. Off: as many
     # people dislike it as rely on it (#830).
     "editor/autoCloseBrackets": False,
+    "editor/tabHideScadExtension": True,
+    "editor/tabsFitWidth": True,
     # Indent with tab characters rather than spaces (#840).
     "editor/indentWithTabs": False,
     # A file opened from the desktop (double-click, "open with") goes to
@@ -327,6 +329,19 @@ class PreferencesDialog(QDialog):
         self._auto_close.toggled.connect(
             lambda v: self._emit("editor/autoCloseBrackets", bool(v)))
         form.addRow("Typing:", self._auto_close)
+
+        # Document tabs (#1096)
+        self._tab_hide_ext = QCheckBox("Leave .scad off tab names")
+        self._tab_hide_ext.setChecked(
+            s.value("editor/tabHideScadExtension", _DEFAULTS["editor/tabHideScadExtension"], type=bool))
+        self._tab_hide_ext.toggled.connect(
+            lambda v: self._emit("editor/tabHideScadExtension", bool(v)))
+        form.addRow("Tabs:", self._tab_hide_ext)
+        self._tabs_fit = QCheckBox("Fit all tabs in the window, shortening names")
+        self._tabs_fit.setChecked(
+            s.value("editor/tabsFitWidth", _DEFAULTS["editor/tabsFitWidth"], type=bool))
+        self._tabs_fit.toggled.connect(lambda v: self._emit("editor/tabsFitWidth", bool(v)))
+        form.addRow("", self._tabs_fit)
 
         # Second launch with a file: hand it to the running instance
         self._single_instance = QCheckBox("A file opened from the desktop goes to the running BelfrySCAD as a new tab")
