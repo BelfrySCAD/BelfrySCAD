@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.16" date="2026-11-07">
+      <description>
+        <p>The Grid editor shows inside-out faces in magenta, and a two-row grid no longer crashes the VNF editor</p>
+      </description>
+    </release>
     <release version="1.99.15" date="2026-11-07">
       <description>
         <p>The Grid editor remembers its settings, and docs indexes list each alias under its own name</p>
