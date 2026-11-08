@@ -238,6 +238,26 @@ def _isolate_settings():
     return use_scratch_settings(tmpdir)
 
 
+#: How long a menu keeps an open submenu while the pointer may be heading
+#: into it. Qt's own is 1 s, so going back up from Edit as... to View as...
+#: in the editor's right-click menu held the wrong submenu open for up to a
+#: second, depending on how the hand moved.
+SUBMENU_SLOPPY_MS = 200
+
+
+def _snappier_submenus(app):
+    """Wrap the platform style to shorten that hold; nothing else changes."""
+    from PySide6.QtWidgets import QProxyStyle, QStyle
+
+    class _Style(QProxyStyle):
+        def styleHint(self, hint, *args):
+            if hint == QStyle.StyleHint.SH_Menu_SubMenuSloppyCloseTimeout:
+                return SUBMENU_SLOPPY_MS
+            return super().styleHint(hint, *args)
+
+    app.setStyle(_Style(app.style().name()))
+
+
 def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None,
              testing: bool = False, mode: str = ""):
@@ -270,6 +290,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # the name and icon in the dock and window switcher. Unset, Qt falls back
     # to the executable's name -- "python3" in a Flatpak. No effect elsewhere.
     app.setDesktopFileName("com.belfrydw.belfryscad")
+    _snappier_submenus(app)
     if testing:
         # Before MainWindow, which reads settings while constructing itself.
         path = _isolate_settings()
