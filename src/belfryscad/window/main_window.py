@@ -2027,6 +2027,7 @@ class MainWindow(QMainWindow):
         self._add_action(window_menu, "New &Window", self._new_window, QKeySequence("Ctrl+Shift+N"))
         self._add_action(window_menu, "O&pen in New Window…", self._open_in_new_window)
         self._add_action(window_menu, "Mo&ve Tab to New Window", self._tear_off_tab)
+        self._add_action(window_menu, "Re&draw Window", self._redraw_window)
         # Qt's standard "next child" keys (Ctrl+Tab on Windows and Linux,
         # Cmd+Shift+] on macOS) plus, on macOS, the physical Ctrl+Tab -- Qt
         # calls it Meta+Tab there, and its own list offers Cmd+Tab instead,
@@ -2516,6 +2517,24 @@ class MainWindow(QMainWindow):
 
     def _close_current_tab(self):
         self._close_tab(self._tabs.currentIndex())
+
+    def _redraw_window(self):
+        """Give this window a new native window, keeping everything in it.
+
+        For #703: after the displays disconnect and reconnect, a window can
+        go on drawing while nothing it draws reaches the screen, though a
+        new window works. Destroying the platform window and showing the
+        widget again builds a fresh one in place; tabs, panes, the 3D view
+        and its GL state, position, size and state all carry over (checked
+        on a real window with a rendered model: the frame is identical).
+        """
+        handle = self.windowHandle()
+        if handle is None:
+            return
+        handle.destroy()
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _tear_off_tab(self):
         """Move the current tab into a new window, unsaved edits and all.
