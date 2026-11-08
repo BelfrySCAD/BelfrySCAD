@@ -321,6 +321,9 @@ class GridViewer(QDialog, _UndoableViewerMixin):
         layout.addLayout(btn_row)
 
         self._on_row_changed(0)
+        self._settings_key = title
+        self._apply_settings(GridViewer._by_grid.get(title) if title else None)
+        self.finished.connect(lambda _r: self._remember_settings())
         self._vp.schedule_load(self._do_initial_load)
         if editable:
             self._vert_table.itemChanged.connect(self._on_item_changed)
@@ -533,6 +536,56 @@ class GridViewer(QDialog, _UndoableViewerMixin):
     #: The Drag Snap last chosen, offered by the next editor opened: kept
     #: for the session, so a run of edits on one model asks once.
     _drag_snap = "Off"
+
+    #: The gear menu's settings, by grid (the variable the literal is
+    #: assigned to) for this session; the last used are also saved under
+    #: _SETTINGS_KEY, for a grid not yet opened this run (#1081).
+    _by_grid: dict = {}
+    _SETTINGS_KEY = "gridEditor/lastSettings"
+
+    def _settings_state(self) -> dict:
+        state = {"mode": self._face_mode_combo.currentText(),
+                 "degrees": [getattr(s, "_wanted", s.value()) for s in self._degree_spins],
+                 "wrap": self._wrap_combo.currentIndex(),
+                 "show_vertices": self._show_verts_cb.isChecked()}
+        if self._editable:
+            state["snap"] = self._snap_combo.currentText()
+        return state
+
+    def _apply_settings(self, state):
+        """Restore `state` (this grid's, or else the last saved), skipping
+        anything this grid can't take: a mode its shape doesn't offer
+        stays at Grid Faces, a degree too high for its points is capped."""
+        if state is None:
+            import json
+            from belfryscad.settings import app_settings
+            try:
+                state = json.loads(app_settings().value(self._SETTINGS_KEY, "") or "null")
+            except (TypeError, ValueError):
+                state = None
+        if not isinstance(state, dict):
+            return
+        for spin, d in zip(self._degree_spins, state.get("degrees", [])):
+            if isinstance(d, int):
+                spin._wanted = d
+        if self._face_mode_combo.findText(str(state.get("mode"))) >= 0:
+            self._face_mode_combo.setCurrentText(state["mode"])
+        wrap = state.get("wrap")
+        if isinstance(wrap, int) and 0 <= wrap < self._wrap_combo.count():
+            self._wrap_combo.setCurrentIndex(wrap)
+        if isinstance(state.get("show_vertices"), bool):
+            self._show_verts_cb.setChecked(state["show_vertices"])
+        if self._editable and self._snap_combo.findText(str(state.get("snap"))) >= 0:
+            self._snap_combo.setCurrentText(state["snap"])
+        self._sync_face_mode_combo()
+
+    def _remember_settings(self):
+        import json
+        from belfryscad.settings import app_settings
+        state = self._settings_state()
+        if self._settings_key:
+            GridViewer._by_grid[self._settings_key] = state
+        app_settings().setValue(self._SETTINGS_KEY, json.dumps(state))
 
     def _on_snap_changed(self, text: str):
         GridViewer._drag_snap = text
