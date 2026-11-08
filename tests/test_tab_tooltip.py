@@ -72,7 +72,7 @@ class TestLabelAndTooltipStayTogether:
         src = inspect.getsource(main_window)
         # No bare setTabText outside the helper and the facade passthrough.
         bare = [ln.strip() for ln in src.splitlines()
-                if "setTabText(idx, tab.display_name())" in ln]
+                if "setTabText(idx, tab.tab_label())" in ln]
         assert len(bare) == 1, (
             "a rename site sets the label without the tooltip: " + repr(bare))
 

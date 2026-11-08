@@ -609,6 +609,15 @@ class FileTab(QWidget):
         name += " (ro)" if self.editor.isReadOnly() else ""
         return name
 
+    def tab_label(self):
+        """display_name() for the tab itself: without `.scad` unless
+        Preferences > Editor says otherwise (#1096). The tooltip keeps the
+        full path, and dialogs keep the full name."""
+        name = self.display_name()
+        if load_preference("editor/tabHideScadExtension", bool):
+            name = re.sub(r"\.scad(?=\*?( \(ro\))?$)", "", name, flags=re.IGNORECASE)
+        return name
+
     def has_unsaved_content(self):
         """Whether this buffer holds text that is not on disk.
 
@@ -2174,7 +2183,7 @@ class MainWindow(QMainWindow):
                 parse_guide_columns(load_preference("editor/columnGuide")),
             )
             self._apply_word_wrap_to_tab(tab)
-        idx = self._tabs.addTab(tab, tab.display_name())
+        idx = self._tabs.addTab(tab, tab.tab_label())
         self._tabs.setTabToolTip(idx, tab.tooltip_text())
         self._tabs.setCurrentIndex(idx)
         # A new, empty document has nothing rendered, so the previous
@@ -2254,7 +2263,7 @@ class MainWindow(QMainWindow):
         and the tooltip is what tells two same-named files in different
         directories apart. Every place that renames a tab goes through here.
         """
-        self._tabs.setTabText(idx, tab.display_name())
+        self._tabs.setTabText(idx, tab.tab_label())
         self._tabs.setTabToolTip(idx, tab.tooltip_text())
 
     def _current_tab(self) -> FileTab | None:
@@ -2721,7 +2730,7 @@ class MainWindow(QMainWindow):
             old = self._tabs.widget(0)
             if old and not old.file_path and not old.is_modified and not old.editor.toPlainText():
                 self._tabs.removeTab(0)
-        idx = self._tabs.addTab(tab, tab.display_name())
+        idx = self._tabs.addTab(tab, tab.tab_label())
         self._tabs.setTabToolTip(idx, tab.tooltip_text())
         self._tabs.setCurrentIndex(idx)
         return tab
@@ -6191,10 +6200,17 @@ class MainWindow(QMainWindow):
         theme = all_themes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
+        # Fit every tab into the bar, eliding names in the middle, instead
+        # of scrolling the rest off its end (#1096).
+        fit = load_preference("editor/tabsFitWidth", bool)
+        bar = self._tabs.tab_bar
+        bar.setUsesScrollButtons(not fit)
+        bar.setElideMode(Qt.TextElideMode.ElideMiddle if fit else Qt.TextElideMode.ElideNone)
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
                 self._apply_preferences_to_tab(tab, font, indent, show_guide, guide_cols)
+                self._sync_tab_label(i, tab)
         # Data-viewer dialogs (VNF/Path/Grid) each own a real Viewport/camera
         # too, so their stereo settings should track preference changes the
         # same way the main window's does, not just at dialog-open time.
