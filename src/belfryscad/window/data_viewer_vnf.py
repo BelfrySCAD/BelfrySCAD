@@ -39,8 +39,14 @@ def _is_vnf(v) -> bool:
         return False
     if not all(_is_numeric_point(p) and len(p) == 3 for p in verts):
         return False
+    # Faces must index real vertices: a two-row grid of points is also a
+    # 2-list of lists of numbers, and read as a VNF its second row's
+    # coordinates became face indices past the end (#1081).
+    n = len(verts)
     return all(_is_list(f) and len(f) >= 3
-               and all(isinstance(i, (int, float)) for i in f) for f in faces)
+               and all(isinstance(i, (int, float)) and not isinstance(i, bool)
+                       and i == int(i) and 0 <= i < n for i in f)
+               for f in faces)
 
 
 def _tube_triangles(p0, p1, r0: float, r1: float, color: np.ndarray,

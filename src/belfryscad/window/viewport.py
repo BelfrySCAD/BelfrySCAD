@@ -626,7 +626,15 @@ class Viewport(QOpenGLWidget):
         if self._pending_load is not None:
             fn = self._pending_load
             self._pending_load = None
-            fn()
+            try:
+                fn()
+            except Exception:
+                # Not raised out of initializeGL: Qt's C++ caller cannot take
+                # a Python exception, which stayed set and failed every event
+                # after it until the app died (a VNF with bad face indices).
+                # This view stays empty; the app goes on.
+                import traceback
+                print("Viewer load failed:", traceback.format_exc(), flush=True)
 
     def schedule_load(self, fn):
         """Schedule a geometry-load function to run once GL is initialized
