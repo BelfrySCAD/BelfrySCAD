@@ -2107,28 +2107,35 @@ class MainWindow(QMainWindow):
         window_menu.addAction(self._act_show_testing)
 
         help_menu = mb.addMenu("&Help")
-        # AboutRole moves this into the application menu on macOS, where
-        # the platform expects it -- the same reason Preferences carries
-        # PreferencesRole above. On Windows and Linux it stays in Help.
-        about_act = self._add_action(help_menu, "&About BelfrySCAD", lambda: show_about_dialog(self))
-        about_act.setMenuRole(QAction.MenuRole.AboutRole)
+        # Grouped: reading, reference, what's new, something went wrong,
+        # then About last, where Windows and Linux put it.
         self._add_action(help_menu, "&Documentation", open_documentation)
         # Ours rather than OpenSCAD's, which cannot list the extensions (#968).
         self._add_action(help_menu, "C&heat Sheet", lambda: open_documentation("Cheat-Sheet"))
         from belfryscad.window.ai_setup import open_guide
         self._add_action(help_menu, "A&I Chat Setup Guide", open_guide)
-        self._add_action(help_menu, "&Report an Issue…", open_issue_tracker)
-        self._add_action(help_menu, "Check for &Updates…", lambda: check_for_updates(self))
-        self._add_action(help_menu, "Show Release &Notes…", lambda: show_release_notes(self))
+        help_menu.addSeparator()
         # Not Qt's font database: these are the names text() will accept,
         # read from the evaluator's own index (issue #379).
         self._add_action(help_menu, "&Font List…", lambda: show_font_list(self))
         self._add_action(help_menu, "&Color List", self._show_color_list)
-        self._add_action(help_menu, "&Welcome Screen…", self.show_welcome)
         self._add_action(help_menu, "Show &Library Folder", self._show_library_folder)
+        help_menu.addSeparator()
+        self._add_action(help_menu, "&Welcome Screen…", self.show_welcome)
+        self._add_action(help_menu, "Show Release &Notes…", lambda: show_release_notes(self))
+        self._add_action(help_menu, "Check for &Updates…", lambda: check_for_updates(self))
+        help_menu.addSeparator()
+        self._add_action(help_menu, "&Report an Issue…", open_issue_tracker)
         # The state dump SIGUSR1 writes, for Windows, which has no SIGUSR1,
         # and for a reporter who doesn't use a terminal (#1038).
         self._add_action(help_menu, "Write Dia&gnostic Report…", self._write_diagnostic_report)
+        if sys.platform != "darwin":
+            help_menu.addSeparator()    # on macOS About leaves, and would strand it
+        # AboutRole moves this into the application menu on macOS, where
+        # the platform expects it -- the same reason Preferences carries
+        # PreferencesRole above. On Windows and Linux it stays in Help.
+        about_act = self._add_action(help_menu, "&About BelfrySCAD", lambda: show_about_dialog(self))
+        about_act.setMenuRole(QAction.MenuRole.AboutRole)
 
     def _add_action(self, menu, label, slot=None, shortcut=None):
         act = QAction(label, self)
