@@ -419,6 +419,7 @@ class Viewport(QOpenGLWidget):
     extrude_committed   = Signal(float, bool)            # height delta, centred
     scale_committed     = Signal(int, float, bool)       # axis (0/1/2), factor, uniform
     camera_changed      = Signal()                       # emitted on any camera movement
+    view_preset_chosen  = Signal(str)                    # set_view_preset's name (demo recording)
     size_changed        = Signal(int, int)               # emitted on viewport resize (w, h)
     busy_cancel_requested = Signal()                     # the busy overlay's close box was clicked (#530)
     #: A callable giving the code editor that text typed here goes to, or
@@ -1155,6 +1156,7 @@ class Viewport(QOpenGLWidget):
     }
 
     def set_view_preset(self, preset: str):
+        self.view_preset_chosen.emit(preset)
         cam = self._renderer.camera
         if preset == "all":
             # Framing, not an orientation change -- nothing to swing through.
@@ -1351,9 +1353,14 @@ class Viewport(QOpenGLWidget):
     def zoom(self, direction: int):
         """Zoom by one step -- the View menu's Zoom In/Out and their
         Cmd+]/Cmd+[ shortcuts."""
-        cam = self._renderer.camera
         factor = 1.03 if direction < 0 else 0.97
-        cam.distance = max(Camera.MIN_DISTANCE, cam.distance * factor)
+        self.set_distance(self._renderer.camera.distance * factor)
+
+    def set_distance(self, distance: float):
+        """Put the camera `distance` from its target (the demo player's
+        @zoom, and zoom() above)."""
+        cam = self._renderer.camera
+        cam.distance = max(Camera.MIN_DISTANCE, distance)
         # This changes apparent scale exactly as the wheel does, so
         # screen-space markers need the same rebuild. Without it the
         # keyboard shortcuts zoomed the scene and left every vertex

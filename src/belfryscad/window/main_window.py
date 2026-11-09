@@ -1169,6 +1169,8 @@ class MainWindow(QMainWindow):
         self._geometry_is_preview: bool = True
         #: (render id, callable) to run once that render lands -- _render_then.
         self._after_render = None
+        self._demo_player = None
+        self._demo_recorder = None
         self._render_jobs: list = []  # (worker, callback, thread) kept alive until thread.finished
         # Window-level render results (shared by viewport, export, gizmo, selection)
         self.id_to_node: dict = {}
@@ -1786,6 +1788,10 @@ class MainWindow(QMainWindow):
         # whatever format was exported last (#791).
         self._add_action(file_menu, "Quic&k Export…", self._quick_export, QKeySequence("F7"))
         self._add_action(file_menu, "Export as &Image…", self._export_image)
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Play &Demo Script…", self._play_demo)
+        self._act_record_demo = self._add_action(file_menu, "Record De&mo Script", self._record_demo)
+        self._act_record_demo.setCheckable(True)
         file_menu.addSeparator()
         self._add_action(file_menu, "&Quit", self.close, QKeySequence.StandardKey.Quit)
 
@@ -2526,6 +2532,61 @@ class MainWindow(QMainWindow):
 
     def _close_current_tab(self):
         self._close_tab(self._tabs.currentIndex())
+
+    def _play_demo(self, path=None):
+        """File > Play Demo Script... (#1082); see window/demo_player.py."""
+        from belfryscad.window import demo_player
+        if self._demo_player is not None:
+            self._demo_player.stop()
+        if self._demo_recorder is not None:
+            self._record_demo()         # stop recording first; the script opens
+        tab = self._current_tab()
+        text = None
+        if path is None and tab is not None and (
+                getattr(tab, "is_demo", False) or str(tab.file_path or "").endswith(".demo")):
+            # The demo in front, unsaved edits and all -- a recording, or a
+            # .demo file being tidied -- played into a tab of its own.
+            text = tab.editor.toPlainText()
+        elif path is None:
+            start = (os.path.dirname(tab.file_path) if tab and tab.file_path
+                     else file_dialog_dir())
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Play Demo Script", start,
+                "Demo scripts (*.demo *.txt);;All files (*)")
+            if not path:
+                return
+        name = os.path.basename(path) if path else tab.tab_label()
+        try:
+            if text is None:
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+            steps = demo_player.parse(text)
+        except (OSError, UnicodeDecodeError, demo_player.DemoScriptError) as e:
+            self.log(f"ERROR: Demo script {name}: {e}")
+            return
+        if self._current_editor() is None or (path is None and steps[:1] != [("new",)]):
+            self._new_document()        # never type into the script itself
+        self._demo_player = demo_player.DemoPlayer(self, steps)
+        self._demo_player.start()
+
+    def _record_demo(self):
+        """File > Record Demo Script (#1082): the first choice starts
+        recording into a new tab, the second stops and opens the script in
+        another, ready to tidy and play."""
+        from belfryscad.window import demo_player
+        if self._demo_recorder is None:
+            if self._demo_player is not None:
+                self._demo_player.stop()
+            self._demo_recorder = demo_player.DemoRecorder(self)
+            self._act_record_demo.setChecked(True)
+            return
+        script = self._demo_recorder.finish()
+        self._demo_recorder = None
+        self._act_record_demo.setChecked(False)
+        tab = self._new_document()
+        tab.is_demo = True
+        tab.editor.setPlainText(script)
+        self.log("Demo recorded: File > Play Demo Script plays it.")
 
     def _redraw_window(self):
         """Give this window a new native window, keeping everything in it.
@@ -3730,6 +3791,8 @@ class MainWindow(QMainWindow):
             tab = self._current_tab()
         if not tab:
             return
+        if self._demo_recorder is not None:
+            self._demo_recorder.note_render(preview)
         source = tab.editor.toPlainText()
         if not source.strip():
             return
