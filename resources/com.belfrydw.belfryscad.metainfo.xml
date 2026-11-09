@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.18" date="2026-11-08">
+      <description>
+        <p>Shorter document tabs that all fit; one file open in two editors no longer jumps the cursor; the export folder is remembered more reliably; on macOS, windows redraw by themselves after the displays reconnect</p>
+      </description>
+    </release>
     <release version="1.99.17" date="2026-11-08">
       <description>
         <p>The Grid editor opens large and reopens where it was closed; Window, Redraw Window rebuilds a window that stopped drawing; submenus switch faster</p>
