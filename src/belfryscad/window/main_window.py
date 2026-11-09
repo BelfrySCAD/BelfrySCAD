@@ -3402,8 +3402,11 @@ class MainWindow(QMainWindow):
         name = tab.export_name or default_export_name(tab.file_path)
         source = str(tab.file_path) if tab.file_path else ""
         last = load_preference("export/lastDir", str)
-        if last and os.path.isdir(last) and (os.path.dirname(load_preference("export/lastSource", str))
-                                               == os.path.dirname(source)):
+        # One folder can be spelled many ways -- "/" or "\\", any letter case
+        # on Windows, through a link -- so compare what they resolve to (#1097).
+        same = lambda f: os.path.normcase(os.path.realpath(os.path.dirname(f)))
+        if last and os.path.isdir(last) and source and (
+                same(load_preference("export/lastSource", str)) == same(source)):
             folder = last
         elif tab.file_path:
             folder = os.path.dirname(str(tab.file_path))
