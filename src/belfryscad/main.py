@@ -258,6 +258,35 @@ def _snappier_submenus(app):
     app.setStyle(_Style(app.style().name()))
 
 
+#: How long the displays must stay unchanged before windows are rebuilt:
+#: a reconnect arrives as a burst of screen added/removed signals (#703).
+REDRAW_SETTLE_MS = 2000
+
+
+def _redraw_after_display_changes(app):
+    """#703: on macOS, after the displays disconnect and reconnect, a window
+    can go on drawing while nothing reaches the screen. Window > Redraw Window
+    brings it back (confirmed by the reporter on macOS 27.2), so do that for
+    every window once the screens stop changing."""
+    if sys.platform != "darwin":
+        return
+    from PySide6.QtCore import QTimer
+    from belfryscad.window.main_window import MainWindow
+
+    def redraw():
+        if not app.screens():
+            return  # every display gone: wait for one to come back
+        for w in app.topLevelWidgets():
+            if isinstance(w, MainWindow) and w.isVisible() and not w.isMinimized():
+                w._redraw_window()
+
+    timer = QTimer(app, singleShot=True, interval=REDRAW_SETTLE_MS)
+    timer.timeout.connect(redraw)
+    for sig in (app.screenAdded, app.screenRemoved):
+        sig.connect(lambda _screen: timer.start())
+    return timer
+
+
 def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
              ai_echo: bool = False, ai_prompt: str | None = None,
              testing: bool = False, mode: str = ""):
@@ -291,6 +320,7 @@ def _run_gui(initial_files: list[str], no_save_prompts: bool = False,
     # to the executable's name -- "python3" in a Flatpak. No effect elsewhere.
     app.setDesktopFileName("com.belfrydw.belfryscad")
     _snappier_submenus(app)
+    _redraw_after_display_changes(app)
     if testing:
         # Before MainWindow, which reads settings while constructing itself.
         path = _isolate_settings()
