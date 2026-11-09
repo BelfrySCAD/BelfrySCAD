@@ -84,6 +84,13 @@ def test_exporting_from_the_same_source_folder_starts_where_the_last_export_went
     assert offered() == os.path.join(str(out), "part")
     tab.file_path = tmp_path / "elsewhere" / "other.scad"
     assert offered() == os.path.join(str(tmp_path / "elsewhere"), "part")
+    # #1097: the same folder spelled another way -- through a link, or with
+    # a "." in it -- is still the same folder.
+    (tmp_path / "link").symlink_to(tmp_path / "src")
+    tab.file_path = tmp_path / "link" / "other.scad"
+    assert offered() == os.path.join(str(out), "part")
+    tab.file_path = str(tmp_path / "src") + os.sep + "." + os.sep + "other.scad"
+    assert offered() == os.path.join(str(out), "part")
     tab.file_path = design
     os.rmdir(out)
     assert offered() == os.path.join(str(tmp_path / "src"), "part")
