@@ -43,12 +43,20 @@ w._tabs.setCurrentIndex(4)             # the current tab is drawn bolder: keep i
 natural = widths()
 # More long names than fit: the short tabs keep their width, the long ones
 # are cut to one level.
-for k in range(6):
+# Added one at a time until they first overflow, so the test holds at any
+# bar width (the Windows runner's screen is narrower).
+k = 0
+while sum(bar.__class__.__mro__[1].tabSizeHint(bar, i).width() for i in range(bar.count())) <= bar.width():
     p = os.path.join(d, f"another_quite_long_part_name_{k}.scad"); open(p, "w").write("x\\n")
-    w.open_file_by_path(p)
+    w.open_file_by_path(p); k += 1
+n_long = bar.count()
 cut = widths()
 out["short_kept"] = cut[:4] == natural[:4]
-out["long_level"] = max(cut[4:]) - min(cut[4:]) <= 1 and max(cut[4:]) < natural[4]
+nat = [bar.__class__.__mro__[1].tabSizeHint(bar, i).width() for i in range(bar.count())]
+level = max(cut)
+# Every tab keeps its own width or sits at the one level; the longest is cut.
+out["long_level"] = (all(c == n or abs(c - level) <= 1 for c, n in zip(cut, nat))
+                     and cut[4] < nat[4])
 out["fits"] = fits()
 # Far more than fit even at the minimum: the arrows take over.
 for k in range(40):
@@ -57,7 +65,7 @@ for k in range(40):
 tiny = widths()
 fm = bar.fontMetrics()
 # The long tabs stop at their floor -- 12 characters of the name -- not below.
-out["min_kept"] = all(bar.minimumTabSizeHint(i).width() <= tiny[i] < cut[i] for i in range(4, 11))
+out["min_kept"] = all(bar.minimumTabSizeHint(i).width() <= tiny[i] < cut[i] for i in range(4, n_long))
 out["short_not_widened"] = tiny[:4] == natural[:4]
 out["scrolls"] = not fits()
 for i in range(bar.count() - 1, 4, -1):
