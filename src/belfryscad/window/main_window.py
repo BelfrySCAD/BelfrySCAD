@@ -1325,6 +1325,10 @@ class MainWindow(QMainWindow):
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._service_pending_reloads)
+        # A change asked about while the app is in the background waits for
+        # it to come forward, as Notepad++ asks (#1094).
+        self._deferred_reloads: set[str] = set()
+        QApplication.instance().applicationStateChanged.connect(self._on_app_state_for_reloads)
         self._create_measure_actions()
         self._setup_ui()
         self._setup_menus()
@@ -3104,25 +3108,28 @@ class MainWindow(QMainWindow):
         if watcher is None:
             return
         want, want_dirs, owners = set(), set(), {}
-        if self._auto_reload_enabled():
-            for i in range(self._tabs.count()):
-                tab = self._tabs.widget(i)
-                path = getattr(tab, "file_path", None) if tab else None
-                if not path:
-                    continue
-                if Path(path).is_file():
-                    want.add(path)
-                for dep in self._deps_of(tab):
-                    owners.setdefault(dep, set()).add(path)
-                # The containing directory is watched whether or not the
-                # file is there right now. A watched file that stops
-                # existing is dropped for good and never re-armed when it
-                # returns -- and at the moment we notice the deletion the
-                # file is gone, so there is nothing to re-add. Watching the
-                # directory is what notices it come back.
-                parent = str(Path(path).parent)
-                if Path(parent).is_dir():
-                    want_dirs.add(parent)
+        # Open files are watched always -- with Automatic Reload off, a change
+        # is asked about rather than ignored (#1094); what they include is
+        # polled only with it on, since only then does a change do anything.
+        auto = self._auto_reload_enabled()
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            path = getattr(tab, "file_path", None) if tab else None
+            if not path:
+                continue
+            if Path(path).is_file():
+                want.add(path)
+            for dep in (self._deps_of(tab) if auto else ()):
+                owners.setdefault(dep, set()).add(path)
+            # The containing directory is watched whether or not the
+            # file is there right now. A watched file that stops
+            # existing is dropped for good and never re-armed when it
+            # returns -- and at the moment we notice the deletion the
+            # file is gone, so there is nothing to re-add. Watching the
+            # directory is what notices it come back.
+            parent = str(Path(path).parent)
+            if Path(parent).is_dir():
+                want_dirs.add(parent)
         self._dep_owners = owners
         # A dependency new to the poll starts from its current stamp: only
         # a change after this point is news.
@@ -3176,6 +3183,11 @@ class MainWindow(QMainWindow):
     def _service_pending_reloads(self):
         paths, self._pending_reloads = self._pending_reloads, set()
         if not self._auto_reload_enabled():
+            # No automatic reload: an open file changed elsewhere is asked
+            # about instead of ignored (#1094). Nothing renders.
+            for path in sorted(paths):
+                self._reload_one(path)
+            self._refresh_watched_files()
             return
         rendered = False
         for path in sorted(paths):
@@ -3241,19 +3253,24 @@ class MainWindow(QMainWindow):
             tab._disk_text = text
             return False       # our own save, or a touch with no edit
 
-        if tab.is_modified and not force:
-            # Never discard unsaved work to pick up an external edit. The
-            # user is the only one who can say which version wins. Said once
-            # per change on disk, not again after every render -- marked
-            # apart from _disk_text, which must keep saying the disk moved
-            # on, or Reload and Render would not pick the change up.
+        if not force and (tab.is_modified or not self._auto_reload_enabled()):
+            # Never discard unsaved work, nor reload with Automatic Reload
+            # off, without asking: the user is the only one who can say which
+            # version wins (#1094). Asked once per change on disk, not again
+            # after every render -- marked apart from _disk_text, which must
+            # keep saying the disk moved on, or Reload and Render would not
+            # pick the change up. Kept, it is logged as before.
             if text == getattr(tab, "_warned_disk_text", None):
                 return False
+            if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+                self._deferred_reloads.add(path)
+                return False
             tab._warned_disk_text = text
-            self.log(f"WARNING: {Path(path).name} changed on disk, but this "
-                     f"tab has unsaved changes -- not reloaded. Save or "
-                     f"revert it to pick the change up.")
-            return False
+            self._tabs.setCurrentWidget(tab)
+            if not self._confirm_external_reload(tab):
+                self.log(f"WARNING: {Path(path).name} changed on disk; kept this "
+                         f"tab's version. File > Reload picks the change up.")
+                return False
 
         editor = tab.editor
         cursor_pos = editor.textCursor().position()
@@ -3271,6 +3288,25 @@ class MainWindow(QMainWindow):
             self._sync_tab_label(idx, tab)
         self.log(f"Reloaded {Path(path).name}" + ("." if force else " (changed on disk)."))
         return True
+
+    def _confirm_external_reload(self, tab) -> bool:
+        """Ask whether to reload a tab whose file another program changed."""
+        lost = (" Your unsaved changes in this tab will be replaced (Undo brings them back)."
+                if tab.is_modified else "")
+        box = QMessageBox(QMessageBox.Icon.Question, "File Changed",
+                          f"{tab.display_name()} was changed by another program.\n\n"
+                          f"Reload it?{lost}", parent=self)
+        reload_btn = box.addButton("Reload", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Keep Mine", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(reload_btn)
+        box.exec()
+        return box.clickedButton() is reload_btn
+
+    def _on_app_state_for_reloads(self, state):
+        if state == Qt.ApplicationState.ApplicationActive and self._deferred_reloads:
+            self._pending_reloads |= self._deferred_reloads
+            self._deferred_reloads = set()
+            self._reload_timer.start(0)
 
     def _reload_current(self):
         """File > Reload (Ctrl+R, as OpenSCAD): the current tab's text from
