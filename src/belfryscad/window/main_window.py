@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
     QTabBar, QStackedWidget, QPlainTextEdit, QToolBar, QStatusBar,
     QLabel, QMessageBox, QFileDialog, QDockWidget, QApplication, QMenu, QDialog,
-    QSplitter,
+    QSizePolicy, QSplitter,
 )
 from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QKeySequence, QFont,
                            QIcon, QShortcut, QUndoCommand, QUndoGroup,
@@ -1045,6 +1045,71 @@ class _RenderWorker(QObject):
                             geometry, export_name)
 
 
+class _ShrinkingTabBar(QTabBar):
+    """Document tabs that shrink longest first (#1096): a tab wider than
+    the rest is cut to the width of the next widest, and so on down, so a
+    short name stays whole until every tab is the same width. No tab goes
+    below MIN_CHARS characters of its name; past that the scroll arrows take
+    over. Names are cut in the middle, where the end that tells similar
+    files apart survives."""
+
+    MIN_CHARS = 12
+
+    def __init__(self):
+        super().__init__()
+        self.setUsesScrollButtons(True)
+        self.setElideMode(Qt.TextElideMode.ElideMiddle)
+        self.setExpanding(False)
+        # Fill the toolbar, so the room there is is the room to share out.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    def _floor(self, index, natural):
+        """The narrowest this tab may go: MIN_CHARS of its name, or its whole
+        name if that is shorter -- a short name is never widened to it."""
+        fm = self.fontMetrics()
+        text = self.tabText(index)
+        half = self.MIN_CHARS // 2
+        if len(text) <= self.MIN_CHARS + 1:
+            return natural          # cutting it would save next to nothing
+        short = text[:half] + "\u2026" + text[-half:]
+        return min(natural, natural - fm.horizontalAdvance(text) + fm.horizontalAdvance(short))
+
+    def minimumTabSizeHint(self, index):
+        # Qt shrinks tabs no further than this before it scrolls instead.
+        # Overridden whole: Qt's own asks tabSizeHint about a shortened name.
+        hint = super().tabSizeHint(index)
+        hint.setWidth(self._floor(index, hint.width()))
+        return hint
+
+    def tabSizeHint(self, index):
+        # ponytail: recomputes every tab per call, O(n^2) per layout --
+        # nothing for the tab counts anyone has open.
+        hint = super().tabSizeHint(index)
+        widths = [super(_ShrinkingTabBar, self).tabSizeHint(i).width() for i in range(self.count())]
+        cap = _water_level(widths, self.width())
+        if cap is not None and hint.width() > cap:
+            hint.setWidth(max(int(cap), self._floor(index, hint.width())))
+        return hint
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.updateGeometry()       # the widths above depend on this one
+
+
+def _water_level(widths, room):
+    """The width W at which capping every width at W makes them fit `room`
+    -- the widest cut first -- or None when they already fit."""
+    if sum(widths) <= room or not widths:
+        return None
+    rest = sorted(widths)
+    for n, w in enumerate(rest):
+        # Below w, everything from here on is capped at the same level.
+        level = (room - sum(rest[:n])) / (len(rest) - n)
+        if level <= w:
+            return max(level, 0)
+    return None
+
+
 class _DetachedTabBar(QWidget):
     """A `QTabWidget`-compatible facade whose `QTabBar` (`self.tab_bar`) is a
     free-standing widget the caller places wherever it likes — e.g. in a
@@ -1060,7 +1125,7 @@ class _DetachedTabBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.tab_bar = QTabBar()
+        self.tab_bar = _ShrinkingTabBar()
         self.tab_bar.setStyleSheet(document_tab_style())
         on_appearance_change(self.tab_bar,
                              lambda: self.tab_bar.setStyleSheet(document_tab_style()))
@@ -6273,12 +6338,6 @@ class MainWindow(QMainWindow):
         theme = all_themes().get(load_preference("viewport/colorTheme"), COLOR_THEMES[DEFAULT_COLOR_THEME])
         font = QFont(family, size)
         font.setStyleHint(QFont.StyleHint.Monospace)
-        # Fit every tab into the bar, eliding names in the middle, instead
-        # of scrolling the rest off its end (#1096).
-        fit = load_preference("editor/tabsFitWidth", bool)
-        bar = self._tabs.tab_bar
-        bar.setUsesScrollButtons(not fit)
-        bar.setElideMode(Qt.TextElideMode.ElideMiddle if fit else Qt.TextElideMode.ElideNone)
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
             if tab:
