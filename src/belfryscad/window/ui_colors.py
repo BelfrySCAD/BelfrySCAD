@@ -199,7 +199,7 @@ def document_tab_style() -> str:
     hover = "#454545" if is_dark() else "#E4E4E4"
     border = "#555555" if is_dark() else "#C0C0C0"
     return (
-        "QTabBar::tab { background: transparent; padding: 4px 10px;"
+        "QTabBar::tab { background: transparent; padding: 4px 6px;"
         f" border: none; border-right: 1px solid {border}; color: {dim}; }}"
         f"QTabBar::tab:hover:!selected {{ background: {hover}; }}"
         f"QTabBar::tab:selected {{ background: {sel}; color: {text}; font-weight: bold; }}"
