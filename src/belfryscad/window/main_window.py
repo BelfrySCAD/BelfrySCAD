@@ -2597,6 +2597,8 @@ class MainWindow(QMainWindow):
         tab = self._tabs.widget(index)
         if confirm and tab and not self._confirm_unsaved(tab):
             return
+        if confirm and tab and self._demo_recorder is not None:
+            self._demo_recorder.note_close(index)
         if tab:
             self._drop_backup(tab)
             if self._debug_tab is tab:
@@ -2646,10 +2648,18 @@ class MainWindow(QMainWindow):
         except (OSError, UnicodeDecodeError, demo_player.DemoScriptError) as e:
             self.log(f"ERROR: Demo script {name}: {e}")
             return
+        # @open looks in the script's folder: the file's, or for a recording
+        # not yet saved, the folder it was recorded in.
+        if path:
+            base = os.path.dirname(os.path.abspath(path))
+        elif tab.file_path:
+            base = os.path.dirname(tab.file_path)
+        else:
+            base = getattr(tab, "demo_base", None)
         if self._current_editor() is None or (
-                path is None and (steps[:1] or [("",)])[0][0] not in ("new", "tab")):
+                path is None and (steps[:1] or [("",)])[0][0] not in ("new", "tab", "open")):
             self._new_document()        # never type into the script itself
-        self._demo_player = demo_player.DemoPlayer(self, steps)
+        self._demo_player = demo_player.DemoPlayer(self, steps, base)
         self._demo_player.start()
 
     def _record_demo(self):
@@ -2664,10 +2674,12 @@ class MainWindow(QMainWindow):
             self._act_record_demo.setChecked(True)
             return
         script = self._demo_recorder.finish()
+        base = self._demo_recorder.base
         self._demo_recorder = None
         self._act_record_demo.setChecked(False)
         tab = self._new_document()
         tab.is_demo = True
+        tab.demo_base = base
         tab.suggested_name = "demo.demo"
         tab.editor.setPlainText(script)
         self._sync_tab_label(self._tabs.indexOf(tab), tab)
@@ -2914,6 +2926,8 @@ class MainWindow(QMainWindow):
         # Not a library revealed by render=False.
         if render:
             remember_file_dir(path)
+            if self._demo_recorder is not None:
+                self._demo_recorder.note_open(path)
         resolved = str(Path(path).resolve())
         for i in range(self._tabs.count()):
             tab = self._tabs.widget(i)
@@ -3024,7 +3038,7 @@ class MainWindow(QMainWindow):
         # is resolved against the remembered folder: QFileDialog given a
         # relative name picks its own starting directory, which is not
         # necessarily the one the user thinks they are in.
-        start = tab.file_path or file_dialog_dir()
+        start = tab.file_path or getattr(tab, "demo_base", None) or file_dialog_dir()
         if not tab.file_path and tab.suggested_name:
             start = str(Path(start) / tab.suggested_name)
         # A demo script opens on All Files, or macOS's save panel adds .scad
@@ -3695,6 +3709,18 @@ class MainWindow(QMainWindow):
             options = ask_export_options(ext, self, os.path.basename(path))
         if options is None:
             return
+        problem = self.write_export(path, ext, options)
+        if problem:
+            QMessageBox.critical(self, "Export Error", problem)
+
+    def write_export(self, path, ext=None, options=None, remember=True):
+        """Write the current Render to `path`: the file's format, with
+        `options` or that format's saved ones (Quick Export's). Returns the
+        error, or None. `remember` updates the last export's format and
+        folder; a demo script's @export leaves them alone."""
+        ext = ext or os.path.splitext(path)[1].lower()
+        if options is None:
+            options = saved_values(ext)
         try:
             # One call: the evaluator owns the split, the colour handling,
             # the mesh repair and the per-format writing, and hands back the
@@ -3713,17 +3739,19 @@ class MainWindow(QMainWindow):
             for problem in exporters.export_model(path, self._geometry, **kwargs):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
-            save_preferences({"export/lastFormat": ext,
-                              "export/lastDir": os.path.dirname(os.path.abspath(path)),
-                              "export/lastSource": str(tab.file_path) if tab is not None and tab.file_path else ""})
-        except OSError as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+            if remember:
+                save_preferences({"export/lastFormat": ext,
+                                  "export/lastDir": os.path.dirname(os.path.abspath(path)),
+                                  "export/lastSource": str(tab.file_path) if tab is not None and tab.file_path else ""})
+            if self._demo_recorder is not None:
+                self._demo_recorder.note_export(path)
         except Exception as e:
             # Not every export failure is an OSError: SVG refuses a model
             # that is not all 2D, and the evaluator raises EvalError for
-            # that. Caught here so it reaches the user as the dialog every
+            # that. Returned so it reaches the user as the dialog every
             # other export problem gets, instead of a traceback on stderr.
-            QMessageBox.critical(self, "Export Error", str(e))
+            return str(e)
+        return None
 
     def _current_slicer(self):
         """The slicer chosen last time, if it is still there."""
