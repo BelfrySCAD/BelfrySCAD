@@ -439,3 +439,69 @@ def test_export_plays_and_records():
     assert (out["stl"], out["text"]) == (True, "cube(1);\n!"), out
     assert out["last_format"] != ".stl", out        # a demo's export isn't remembered
     assert out["script"] == ["@export rec.3mf", f"@export far.stl   // was {out['far']}"], out
+
+
+def test_pane_and_set_directives():
+    assert parse("@show Customizer\n@hide console\n@scroll customizer 40%\n@scroll docs end over 1s\n"
+                 "@set width 30 // mm\n@set label \"a // b\"\n@set on true\n@set v [1, 2.5]\n") == [
+        ("pane", "customizer", True), ("pane", "console", False), ("pane_scroll", "customizer", 40.0, 300),
+        ("pane_scroll", "docs", 100.0, 1000), ("set", "width", 30), ("set", "label", "a // b"),
+        ("set", "on", True), ("set", "v", [1, 2.5])]
+    for bad in ("@show sidebar", "@scroll customizer 40", "@scroll customizer 140%", "@set width",
+                "@set 9x 1", "@set w foo"):
+        with pytest.raises(DemoScriptError, match="Line 1"):
+            parse(bad)
+    from belfryscad.window.demo_player import merge_lines
+    assert merge_lines(["@set w 1", "@set w 2", "@set h 3", "@scroll 4", "@scroll customizer 5%",
+                        "@scroll customizer 9%"]) == ["@set w 2", "@set h 3", "@scroll 4", "@scroll customizer 9%"]
+
+
+PANE_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+from belfryscad.window.demo_player import pane_scrollbar
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+w = MainWindow(); w.resize(1200, 700); w.show(); app.processEvents()
+src = "".join(f"p{i} = {i}; // [0:100]\\n" for i in range(40))
+w._current_editor().setPlainText(src)
+w._customizer_dock.show(); w._console_dock.show(); app.processEvents(); run(300)
+pane = w._customizer_pane
+w._record_demo()
+w._console_dock.hide(); app.processEvents()
+pane._widgets["p3"][0].set_value(42); pane._on_widget_changed("p3", 42)
+pane._on_widget_changed("p3", 43)
+run(100)
+w._record_demo()
+script = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().splitlines()][2:]
+w._close_tab(w._tabs.currentIndex(), confirm=False)
+w._console_dock.show()
+p = os.path.join(tempfile.mkdtemp(), "t.demo")
+open(p, "w").write("@set p7 70\\n@set nope 1\\n@hide console\\n@scroll customizer end over 0.1s\\n")
+w._play_demo(p)
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 20:
+    run(50)
+bar = pane_scrollbar(w._customizer_dock)
+print("RESULT" + json.dumps({"script": script, "text": w._current_editor().toPlainText().splitlines()[7],
+                             "console_hidden": w._console_dock.isHidden(),
+                             "scrolled": bar.maximum() > 0 and bar.value() == bar.maximum()}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_panes_and_set_record_and_play():
+    r = subprocess.run([sys.executable, "-c", PANE_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    # the write-back into the editor is not recorded as typing
+    assert out["script"] == ["@hide console", "@set p3 43"], out
+    assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True}, out

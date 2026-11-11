@@ -859,6 +859,8 @@ class CustomizerPane(QWidget):
     """
 
     source_changed = Signal(str)
+    #: A parameter set through its control (name, value), for the demo recorder.
+    parameter_set = Signal(str, object)
 
     def auto_update(self) -> bool:
         """Whether a field change should schedule a render (see #397)."""
@@ -1104,9 +1106,18 @@ class CustomizerPane(QWidget):
         w.value_changed.connect(lambda v, n=name: self._on_widget_changed(n, v))
         return w
 
+    def set_parameter(self, name: str, value: Any) -> bool:
+        """Set a parameter as its control would (a demo's @set). False if
+        there is none of that name."""
+        if name not in self._widgets:
+            return False
+        self._on_widget_changed(name, value)
+        return True
+
     def _on_widget_changed(self, name: str, new_value: Any):
         if self._updating:
             return
+        self.parameter_set.emit(name, new_value)
         # A Global param may have one widget instance per tab it's mirrored
         # into (see _rebuild_ui) -- keep every copy in sync immediately,
         # not just the one the user actually edited.
