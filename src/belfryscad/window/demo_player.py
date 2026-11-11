@@ -11,6 +11,8 @@ Return. A directive may end in a `//` comment.
     @open parts/gear.scad    open a file, or switch to its tab; the path is
                              relative to the script's folder, and must stay in it
     @close                   close the tab, if every unsaved edit in it is the demo's
+    @export out/part.stl     Render if need be, then export, as Quick Export does,
+                             into the script's folder only
     @tab 2                   switch to the second tab
     @rate 8                  characters per second (default 8)
     @speed 1.5               play everything after this 1.5x as fast
@@ -77,12 +79,14 @@ def parse(text: str) -> list[tuple]:
         if not line.startswith("@"):
             steps.append(("type", line + "\n"))
             continue
-        if re.match(r"@open(\s|$)", line, re.IGNORECASE):
-            name = _open_name(line[5:])
-            problem = _bad_name(name)
+        m = re.match(r"@(open|export)(\s|$)", line, re.IGNORECASE)
+        if m:
+            verb = m.group(1).lower()
+            name = _open_name(line[len(verb) + 1:])
+            problem = _bad_name(name) or (verb == "export" and _bad_export(name))
             if problem:
-                raise DemoScriptError(f"Line {n}: @open {name}: {problem}")
-            steps.append(("open", name))
+                raise DemoScriptError(f"Line {n}: @{verb} {name}: {problem}")
+            steps.append((verb, name))
             continue
         body, ms = _split_over(line[1:].split("//", 1)[0].strip())
         name, *args = body.split() or [""]
@@ -114,23 +118,37 @@ def _bad_name(name):
     return None
 
 
-def open_path(base, name):
-    """The file `@open name` means: `name` resolved against `base`, the
-    script's folder, and only if it stays inside that folder and is a file.
-    A shared script can't put an arbitrary file on screen in a demo."""
-    problem = _bad_name(name)
-    if problem is None and not base:
-        problem = "save the script first; its folder is where @open looks"
-    if problem is None:
+def _bad_export(name):
+    from belfryscad.exporters import export_extensions
+    if os.path.splitext(name)[1].lower() not in export_extensions():
+        return "not a format Export writes"
+    return None
+
+
+def open_path(base, name, verb="open"):
+    """The file `@open name` (or `@export name`) means: `name` resolved
+    against `base`, the script's folder, and only if it stays inside that
+    folder. @open's must be a file; @export's must have a format Export
+    writes, which no .scad has, in a folder that exists, and be a file if
+    it is there already. A shared script can't put an arbitrary file on
+    screen, nor write anywhere but beside itself."""
+    problem = _bad_name(name) or (verb == "export" and _bad_export(name))
+    if not problem and not base:
+        problem = f"save the script first; its folder is where @{verb} looks"
+    if not problem:
         root = os.path.realpath(base)
         path = os.path.realpath(os.path.join(root, name))
         if os.path.commonpath([root, path]) != root:
             problem = "outside the script's folder"
-        elif not os.path.isfile(path):
+        elif verb == "open" and not os.path.isfile(path):
             problem = "no such file"
+        elif verb == "export" and not os.path.isdir(os.path.dirname(path)):
+            problem = "no such folder"
+        elif verb == "export" and os.path.exists(path) and not os.path.isfile(path):
+            problem = "not a file"
         else:
             return path
-    raise DemoScriptError(f"@open {name}: {problem}")
+    raise DemoScriptError(f"@{verb} {name}: {problem}")
 
 
 def _split_over(body):
@@ -383,6 +401,26 @@ class DemoPlayer(QObject):
         self._cursor = self._editor.textCursor() if self._editor else None
         self._schedule(300)
 
+    def _do_export(self, name):
+        try:
+            path = open_path(self._base, name, "export")
+        except DemoScriptError as e:
+            self._win.log(f"ERROR: Demo: {e}")
+            self._schedule(0)
+            return
+        if self._win._needs_render():
+            self._win._render(preview=False)
+        self._wait_render(lambda: self._export_now(path))
+
+    def _export_now(self, path):
+        if self._win._needs_render():
+            self._win.log(f"ERROR: Demo: nothing rendered to export to {os.path.basename(path)}.")
+        else:
+            problem = self._win.write_export(path, remember=False)
+            if problem:
+                self._win.log(f"ERROR: Demo: export to {os.path.basename(path)}: {problem}")
+        self._schedule(0)
+
     def _do_open(self, name):
         try:
             path = open_path(self._base, name)
@@ -430,9 +468,11 @@ class DemoPlayer(QObject):
         self._win._render(preview=preview)
         self._wait_render()
 
-    def _wait_render(self):
+    def _wait_render(self, then=None):
         if self._win._render_busy():
-            QTimer.singleShot(100, self._wait_render)
+            QTimer.singleShot(100, lambda: self._wait_render(then))
+        elif then is not None:
+            then()
         else:
             self._schedule(0)
 
@@ -661,6 +701,16 @@ class DemoRecorder(QObject):
         self._event("@close")
         self._new_tab = True
         QTimer.singleShot(0, lambda: self._closed(index == current))
+
+    def note_export(self, path):
+        """An export written."""
+        rel = os.path.relpath(path, self.base).replace(os.sep, "/") \
+            if os.path.splitdrive(path)[0] == os.path.splitdrive(self.base)[0] else path
+        if rel.startswith("../") or os.path.isabs(rel):
+            # @export writes only beside the script; this one went elsewhere
+            self._event(f"@export {os.path.basename(path)}   // was {path}")
+        else:
+            self._event(f"@export {rel}")
 
     def _closed(self, was_current):
         self._new_tab = False

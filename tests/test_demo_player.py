@@ -244,6 +244,11 @@ def test_save_demo_as_opens_on_all_files():
 def test_open_names():
     assert parse('@open "my part.scad"  // the base\n@OPEN sub/b.scad\n@close\n') == [
         ("open", "my part.scad"), ("open", "sub/b.scad"), ("close",)]
+    assert parse("@export out/part.stl\n@EXPORT 'a b.3mf'\n") == [
+        ("export", "out/part.stl"), ("export", "a b.3mf")]
+    for bad in ("@export", "@export part.scad", "@export /tmp/x.stl", "@export notes.txt"):
+        with pytest.raises(DemoScriptError, match="Line 1"):
+            parse(bad)
     for bad in ("@open", "@open /etc/passwd", "@open ~/x.scad", "@open C:\\x.scad", "@open \\\\srv\\x",
                 "@open a\x07.scad"):
         with pytest.raises(DemoScriptError, match="Line 1"):
@@ -370,3 +375,68 @@ def test_close_records_and_plays():
     assert out["script"][2:] == ["@close", "@tab 1", "@close", "@tab 1"], out["script"]
     # mine.scad, with your edit, stays; a.scad, edited only by the demo, closes
     assert out["tabs"] == ["b.scad", "mine.scad"], out
+
+
+def test_export_path_stays_in_the_scripts_folder(tmp_path):
+    import os
+    from belfryscad.window.demo_player import open_path
+    (tmp_path / "out").mkdir()
+    (tmp_path / "dir.stl").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path.parent)
+    base = str(tmp_path)
+    assert open_path(base, "out/a.stl", "export") == os.path.realpath(tmp_path / "out" / "a.stl")
+    for name, why in (("../a.stl", "outside"), ("link/a.stl", "outside"), ("none/a.stl", "no such folder"),
+                      ("dir.stl", "not a file"), ("a.scad", "not a format"), ("a.STL.txt", "not a format")):
+        with pytest.raises(DemoScriptError, match=why):
+            open_path(base, name, "export")
+
+
+EXPORT_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+from belfryscad.window.preferences import load_preference
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+d = os.path.realpath(tempfile.mkdtemp())
+open(os.path.join(d, "a.scad"), "w").write("cube(1);\\n")
+w = MainWindow(); w.show(); app.processEvents()
+w.open_file_by_path(os.path.join(d, "a.scad"))
+t0 = time.monotonic()
+while w._render_busy() and time.monotonic() - t0 < 30:
+    run(50)
+p = os.path.join(d, "t.demo")
+open(p, "w").write("@export out.stl\\n@export none/x.stl\\n@goto end\\n@type !\\n")
+w._play_demo(p)
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 30:
+    run(50)
+out = {"stl": os.path.getsize(os.path.join(d, "out.stl")) > 0, "text": w._current_editor().toPlainText(),
+       "last_format": load_preference("export/lastFormat", str)}
+w._record_demo()
+other = os.path.realpath(tempfile.mkdtemp())
+w.write_export(os.path.join(d, "rec.3mf"))
+w.write_export(os.path.join(other, "far.stl"))
+w._record_demo()
+out["script"] = w._current_editor().toPlainText().splitlines()[2:]
+out["other"] = other
+print("RESULT" + json.dumps(out), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_export_plays_and_records():
+    r = subprocess.run([sys.executable, "-c", EXPORT_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    # a refused @export is reported and the demo goes on
+    assert (out["stl"], out["text"]) == (True, "cube(1);\n!"), out
+    assert out["last_format"] != ".stl", out        # a demo's export isn't remembered
+    far = out["other"] + "/far.stl"
+    assert out["script"] == ["@export rec.3mf", f"@export far.stl   // was {far}"], out

@@ -3709,6 +3709,18 @@ class MainWindow(QMainWindow):
             options = ask_export_options(ext, self, os.path.basename(path))
         if options is None:
             return
+        problem = self.write_export(path, ext, options)
+        if problem:
+            QMessageBox.critical(self, "Export Error", problem)
+
+    def write_export(self, path, ext=None, options=None, remember=True):
+        """Write the current Render to `path`: the file's format, with
+        `options` or that format's saved ones (Quick Export's). Returns the
+        error, or None. `remember` updates the last export's format and
+        folder; a demo script's @export leaves them alone."""
+        ext = ext or os.path.splitext(path)[1].lower()
+        if options is None:
+            options = saved_values(ext)
         try:
             # One call: the evaluator owns the split, the colour handling,
             # the mesh repair and the per-format writing, and hands back the
@@ -3727,17 +3739,19 @@ class MainWindow(QMainWindow):
             for problem in exporters.export_model(path, self._geometry, **kwargs):
                 self.log(f"WARNING: export: {problem}")
             self.log(f"Exported to {path}")
-            save_preferences({"export/lastFormat": ext,
-                              "export/lastDir": os.path.dirname(os.path.abspath(path)),
-                              "export/lastSource": str(tab.file_path) if tab is not None and tab.file_path else ""})
-        except OSError as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+            if remember:
+                save_preferences({"export/lastFormat": ext,
+                                  "export/lastDir": os.path.dirname(os.path.abspath(path)),
+                                  "export/lastSource": str(tab.file_path) if tab is not None and tab.file_path else ""})
+            if self._demo_recorder is not None:
+                self._demo_recorder.note_export(path)
         except Exception as e:
             # Not every export failure is an OSError: SVG refuses a model
             # that is not all 2D, and the evaluator raises EvalError for
-            # that. Caught here so it reaches the user as the dialog every
+            # that. Returned so it reaches the user as the dialog every
             # other export problem gets, instead of a traceback on stderr.
-            QMessageBox.critical(self, "Export Error", str(e))
+            return str(e)
+        return None
 
     def _current_slicer(self):
         """The slicer chosen last time, if it is still there."""
