@@ -199,7 +199,8 @@ def test_record_then_play():
     out = json.loads(line[6:])
     lines = [l.split("//")[0].strip() if l.startswith("@") else l for l in out["script"].splitlines()]
     assert out["tabs_recording"] == 1, out
-    assert lines[0] == "@tab 1" and lines[2] == "cube(1);" and "@preview" in lines, out["script"]
+    assert lines[0] == "@tab 1" and lines[4] == "cube(1);" and "@preview" in lines, out["script"]
+    assert all(not l.startswith("@mainwin") for l in lines[4:]), out["script"]
     events = [l.split()[0] for l in lines if l.startswith("@") and not l.startswith("@pause")]
     assert events[events.index("@new"):] == ["@new", "@type", "@view", "@tab", "@goto", "@scroll", "@rotate", "@zoom", "@zoom"], out["script"]
     assert any(l.startswith("@zoom 2.00 at 3 -1 2 over") for l in lines), out["script"]
@@ -372,7 +373,7 @@ def test_close_records_and_plays():
     line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
-    assert out["script"][2:] == ["@close", "@tab 1", "@close", "@tab 1"], out["script"]
+    assert out["script"][4:] == ["@close", "@tab 1", "@close", "@tab 1"], out["script"]
     # mine.scad, with your edit, stays; a.scad, edited only by the demo, closes
     assert out["tabs"] == ["b.scad", "mine.scad"], out
 
@@ -423,7 +424,7 @@ other = os.path.realpath(tempfile.mkdtemp())
 w.write_export(os.path.join(d, "rec.3mf"))
 w.write_export(os.path.join(other, "far.stl"))
 w._record_demo()
-out["script"] = w._current_editor().toPlainText().splitlines()[2:]
+out["script"] = w._current_editor().toPlainText().splitlines()[4:]
 out["far"] = os.path.join(other, "far.stl")
 print("RESULT" + json.dumps(out), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
@@ -477,14 +478,14 @@ src = "".join(f"p{i} = {i}; // [0:100]\\n" for i in range(40))
 w._current_editor().setPlainText(src)
 w._customizer_dock.show(); w._console_dock.show(); app.processEvents(); run(300)
 pane = w._customizer_pane
+w.resize(1300, 760); app.processEvents(); run(150)
 w._record_demo()
 w._console_dock.hide(); app.processEvents()
-w.resize(1300, 760); app.processEvents(); run(150)
 pane._widgets["p3"][0].set_value(42); pane._on_widget_changed("p3", 42)
 pane._on_widget_changed("p3", 43)
 run(100)
 w._record_demo()
-script = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().splitlines()][2:]
+script = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().splitlines()]
 w._close_tab(w._tabs.currentIndex(), confirm=False)
 w._console_dock.show()
 p = os.path.join(tempfile.mkdtemp(), "t.demo")
@@ -509,7 +510,9 @@ def test_panes_and_set_record_and_play():
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
     # the write-back into the editor is not recorded as typing
-    assert out["script"] == ["@hide console", "@mainwin size 1300 760", "@set p3 43"], out
+    # the window as it was when recording began, once, then what was done
+    assert out["script"][2] == "@mainwin size 1300 760" and out["script"][3].startswith("@mainwin position"), out
+    assert out["script"][4:] == ["@hide console", "@set p3 43"], out
     assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True,
                    "size": [1400, 680]}, out
     assert abs(out["cust_w"] - 333) <= 2, out

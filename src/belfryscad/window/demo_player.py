@@ -763,10 +763,10 @@ class DemoRecorder(QObject):
             signal.connect(slot)
         self._absorb_text = False
         window._customizer_pane.parameter_set.connect(self.note_set)
-        self._geom = (window.size(), window.pos())
-        self._geom_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
-        self._geom_settle.timeout.connect(self._geometry_settled)
-        window.installEventFilter(self)
+        # The window as it was, once, at the top: following its resizes also
+        # caught the window growing itself as its contents' minimum grew.
+        self._lines[2:2] = [f"@mainwin size {window.width()} {window.height()}",
+                            f"@mainwin position {window.x()} {window.y()}"]
         vp = window._viewport
         cam = vp._renderer.camera
         self._cam = (cam.azimuth, cam.elevation, cam.distance, cam.target.copy())
@@ -787,7 +787,6 @@ class DemoRecorder(QObject):
         for signal, slot in self._pane_links:
             signal.disconnect(slot)
         self._win._customizer_pane.parameter_set.disconnect(self.note_set)
-        self._win.removeEventFilter(self)
         vp = self._win._viewport
         vp.camera_changed.disconnect(self._on_camera)
         vp.view_preset_chosen.disconnect(self.note_view)
@@ -901,23 +900,6 @@ class DemoRecorder(QObject):
             self._scroll = value
             self._event(f"@scroll {value + 1}")
 
-    def eventFilter(self, obj, event):
-        if obj is self._win and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
-            self._geom_settle.start()
-        return False
-
-    def _geometry_settled(self):
-        self._geom_settle.stop()
-        size, pos = self._win.size(), self._win.pos()
-        lines = []
-        if size != self._geom[0]:
-            lines.append(f"@mainwin size {size.width()} {size.height()}")
-        if pos != self._geom[1]:
-            lines.append(f"@mainwin position {pos.x()} {pos.y()}")
-        self._geom = (size, pos)
-        if lines:
-            self._event(*lines)
-
     def _on_pane_shown(self, name):
         hidden = getattr(self._win, PANES[name]).isHidden()
         if hidden != self._hidden[name]:     # not just a tab switch among docks
@@ -955,7 +937,7 @@ class DemoRecorder(QObject):
 
     def _flush_pending(self):
         """Write what is still settling, so events stay in order."""
-        pending = [(self._settle, self._camera_settled), (self._geom_settle, self._geometry_settled),
+        pending = [(self._settle, self._camera_settled),
                    (self._cursor_settle, self._cursor_settled),
                    (self._scroll_settle, self._scroll_settled)]
         pending += [(t, lambda n=n: self._pane_scrolled(n)) for n, t in self._pane_settle.items()]
