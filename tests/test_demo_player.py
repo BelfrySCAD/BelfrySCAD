@@ -12,7 +12,7 @@ from belfryscad.window.demo_player import DemoScriptError, parse, text_steps
 
 def test_parse():
     assert parse(
-        "@new\n@rate 20 // fast\ncube(1);\n\n@@x\n@pause key\n@pause 0.5\n"
+        "@new\n@rate 20 // fast\ncube(1);\n\n  \n@enter\n@@x\n@pause key\n@pause 0.5\n"
         "@preview\n@render\n@view Front\n@rotate 30 20 over 1.5s\n@zoom 2\n@zoom 0.5 over 2\n@zoom 3 at 1 -2 .5\n"
     ) == [
         ("new",), ("rate", 20.0), ("type", "cube(1);\n"), ("type", "\n"), ("type", "@x\n"),
@@ -112,6 +112,8 @@ def test_text_steps_simple_cases():
     assert text_steps("a\n", "a\n@x\n", 2) == (["@@x"], 5)
     assert text_steps("cube(1);\n", "cube(2);\n", 9) == (["@goto 1 6", "@delete 1", "@type 2"], 6)
     assert text_steps("same", "same", 4) == ([], 4)
+    # #1108: a Return is written where it can be seen, not as a blank line
+    assert text_steps("a\n", "a\n\n  \nb\n", 2) == (["@enter", "@type   ", "@enter", "b"], 8)
 
 
 def test_recorded_edits_replay_to_the_same_text():

@@ -536,10 +536,11 @@ Each frame change re-renders the current file with `$t` set accordingly — `Mai
 
 ## Demo Scripts
 
-**File ▸ Play Demo Script…** (`window/demo_player.py`, #1082) plays a plain-text script for a live demo or a screen recording. It types into the current tab at the cursor and drives the view. A line starting with `@` is a directive. Any other line is typed into the editor, followed by a newline, and `@@` types a line that starts with `@`. A directive may end in a `//` comment. If the tab in front is a demo script (a recording, or a `.demo` file), Play plays it, unsaved edits included, into a new tab rather than asking for a file.
+**File ▸ Play Demo Script…** (`window/demo_player.py`, #1082) plays a plain-text script for a live demo or a screen recording. It types into the current tab at the cursor and drives the view. A line starting with `@` is a directive. Any other line is typed into the editor, followed by a newline, and `@@` types a line that starts with `@`. A blank line types nothing, so a script can be spaced out for reading; `@enter` types a Return, and is what the recorder writes for an empty line (#1108). A directive may end in a `//` comment. If the tab in front is a demo script (a recording, or a `.demo` file), Play plays it, unsaved edits included, into a new tab rather than asking for a file.
 
 | Directive | Does |
 |---|---|
+| `@enter` | types a Return; a blank line in the script types nothing |
 | `@new` | opens a new tab to type into |
 | `@tab 2` | switches to the second tab; a tab that doesn't exist is logged and skipped |
 | `@rate 8` | sets the typing speed in characters per second (the default is 8), from that line on |

@@ -3,8 +3,10 @@ rate and drives the view, for live demos and screen recordings (#1082).
 
 A demo script is plain text. A line starting with `@` is a directive; any
 other line is typed into the editor, followed by a newline (`@@` types a
-line that starts with `@`). A directive may end in a `//` comment.
+line that starts with `@`). A blank line types nothing; `@enter` types a
+Return. A directive may end in a `//` comment.
 
+    @enter                   type a Return (a blank line types nothing)
     @new                     open a new tab to type into
     @tab 2                   switch to the second tab
     @rate 8                  characters per second (default 8)
@@ -66,6 +68,8 @@ def parse(text: str) -> list[tuple]:
         if line.startswith("@@"):
             steps.append(("type", line[1:] + "\n"))
             continue
+        if not line.strip():
+            continue                    # blank lines are for reading (#1108)
         if not line.startswith("@"):
             steps.append(("type", line + "\n"))
             continue
@@ -84,6 +88,8 @@ def _split_over(body):
 
 
 def _directive(name, args, ms):
+    if name == "enter" and not args:
+        return ("type", "\n")
     if name == "new" and not args:
         return ("new",)
     if name == "rate" and len(args) == 1 and float(args[0]) > 0:
@@ -410,9 +416,15 @@ def _line_col(text, pos):
 
 def _typed_lines(text):
     """`text` as script lines that type it: a whole line as itself (@@ when
-    it starts with @), a last line with no newline as @type."""
+    it starts with @), a blank one as @enter, a last line with no newline
+    as @type."""
     *lines, last = text.split("\n")
-    out = ["@" + l if l.startswith("@") else l for l in lines]
+    out = []
+    for l in lines:
+        if not l.strip():
+            out += ["@type " + l, "@enter"] if l else ["@enter"]
+        else:
+            out.append("@" + l if l.startswith("@") else l)
     if last:
         out.append("@type " + last)
     return out
