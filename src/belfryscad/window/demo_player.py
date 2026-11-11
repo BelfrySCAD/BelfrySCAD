@@ -3,9 +3,16 @@ rate and drives the view, for live demos and screen recordings (#1082).
 
 A demo script is plain text. A line starting with `@` is a directive; any
 other line is typed into the editor, followed by a newline (`@@` types a
-line that starts with `@`). A directive may end in a `//` comment.
+line that starts with `@`). A blank line types nothing; `@enter` types a
+Return. A directive may end in a `//` comment.
 
+    @enter                   type a Return (a blank line types nothing)
     @new                     open a new tab to type into
+    @open parts/gear.scad    open a file, or switch to its tab; the path is
+                             relative to the script's folder, and must stay in it
+    @close                   close the tab, if every unsaved edit in it is the demo's
+    @export out/part.stl     Render if need be, then export, as Quick Export does,
+                             into the script's folder only
     @tab 2                   switch to the second tab
     @rate 8                  characters per second (default 8)
     @speed 1.5               play everything after this 1.5x as fast
@@ -31,6 +38,7 @@ File > Record Demo Script writes one of these from what you do: see
 DemoRecorder below.
 """
 
+import os
 import re
 import time
 
@@ -66,8 +74,19 @@ def parse(text: str) -> list[tuple]:
         if line.startswith("@@"):
             steps.append(("type", line[1:] + "\n"))
             continue
+        if not line.strip():
+            continue                    # blank lines are for reading (#1108)
         if not line.startswith("@"):
             steps.append(("type", line + "\n"))
+            continue
+        m = re.match(r"@(open|export)(\s|$)", line, re.IGNORECASE)
+        if m:
+            verb = m.group(1).lower()
+            name = _open_name(line[len(verb) + 1:])
+            problem = _bad_name(name) or (verb == "export" and _bad_export(name))
+            if problem:
+                raise DemoScriptError(f"Line {n}: @{verb} {name}: {problem}")
+            steps.append((verb, name))
             continue
         body, ms = _split_over(line[1:].split("//", 1)[0].strip())
         name, *args = body.split() or [""]
@@ -78,14 +97,72 @@ def parse(text: str) -> list[tuple]:
     return steps
 
 
+def _open_name(rest):
+    """@open's file name: the rest of the line, less a // comment and any
+    quotes around it. Spaces inside it are kept."""
+    name = rest.split("//", 1)[0].strip()
+    if len(name) >= 2 and name[0] == name[-1] and name[0] in "\"'":
+        name = name[1:-1]
+    return name
+
+
+def _bad_name(name):
+    """Why `name` can't be @opened, judged from the text alone, or None."""
+    if not name:
+        return "no file name"
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        return "control characters in the name"
+    if (os.path.isabs(name) or name.startswith(("/", "\\", "~"))
+            or re.match(r"[A-Za-z]:", name)):
+        return "the path must be relative to the script's folder"
+    return None
+
+
+def _bad_export(name):
+    from belfryscad.exporters import export_extensions
+    if os.path.splitext(name)[1].lower() not in export_extensions():
+        return "not a format Export writes"
+    return None
+
+
+def open_path(base, name, verb="open"):
+    """The file `@open name` (or `@export name`) means: `name` resolved
+    against `base`, the script's folder, and only if it stays inside that
+    folder. @open's must be a file; @export's must have a format Export
+    writes, which no .scad has, in a folder that exists, and be a file if
+    it is there already. A shared script can't put an arbitrary file on
+    screen, nor write anywhere but beside itself."""
+    problem = _bad_name(name) or (verb == "export" and _bad_export(name))
+    if not problem and not base:
+        problem = f"save the script first; its folder is where @{verb} looks"
+    if not problem:
+        root = os.path.realpath(base)
+        path = os.path.realpath(os.path.join(root, name))
+        if os.path.commonpath([root, path]) != root:
+            problem = "outside the script's folder"
+        elif verb == "open" and not os.path.isfile(path):
+            problem = "no such file"
+        elif verb == "export" and not os.path.isdir(os.path.dirname(path)):
+            problem = "no such folder"
+        elif verb == "export" and os.path.exists(path) and not os.path.isfile(path):
+            problem = "not a file"
+        else:
+            return path
+    raise DemoScriptError(f"@{verb} {name}: {problem}")
+
+
 def _split_over(body):
     m = _OVER.match(body)
     return m.group(1), (int(float(m.group(2)) * 1000) if m.group(2) else None)
 
 
 def _directive(name, args, ms):
+    if name == "enter" and not args:
+        return ("type", "\n")
     if name == "new" and not args:
         return ("new",)
+    if name == "close" and not args:
+        return ("close",)
     if name == "rate" and len(args) == 1 and float(args[0]) > 0:
         return ("rate", float(args[0]))
     if name == "speed" and len(args) == 1 and float(args[0]) > 0:
@@ -127,9 +204,13 @@ class DemoPlayer(QObject):
     scheduling the next on a single-shot timer, so pausing anywhere is
     stopping that timer (and any camera animation) and resuming it later."""
 
-    def __init__(self, window, steps):
+    def __init__(self, window, steps, base=None):
         super().__init__(window)
         self._win = window
+        self._base = base           # the script's folder, for @open
+        # Each tab the demo has been in: whether it had no unsaved edits
+        # then, so that all it has now are the demo's and @close may drop them.
+        self._clean = {}
         self._steps = list(steps)
         self._i = 0
         self._rate = DEFAULT_RATE
@@ -249,7 +330,13 @@ class DemoPlayer(QObject):
             return
         step = self._steps[self._i]
         self._i += 1
+        self._touch()
         getattr(self, "_do_" + step[0])(*step[1:])
+
+    def _touch(self):
+        tab = self._win._current_tab()
+        if tab is not None and tab not in self._clean:
+            self._clean[tab] = not tab.has_unsaved_content()
 
     def _type_one(self):
         ch, self._typing = self._typing[0], self._typing[1:]
@@ -301,6 +388,51 @@ class DemoPlayer(QObject):
         self._cursor = self._editor.textCursor()
         self._schedule(0)
 
+    def _do_close(self):
+        win = self._win
+        tab = win._current_tab()
+        if tab is not None and tab.has_unsaved_content() and not self._clean.get(tab):
+            win.log(f"Demo: {tab.display_name()} has edits of your own, so it stays open.")
+        elif tab is not None:
+            win._close_tab(win._tabs.currentIndex(), confirm=False)  # nothing of yours to lose
+            if win._tabs.count() == 0:
+                win._new_document()
+        self._editor = win._current_editor()
+        self._cursor = self._editor.textCursor() if self._editor else None
+        self._schedule(300)
+
+    def _do_export(self, name):
+        try:
+            path = open_path(self._base, name, "export")
+        except DemoScriptError as e:
+            self._win.log(f"ERROR: Demo: {e}")
+            self._schedule(0)
+            return
+        if self._win._needs_render():
+            self._win._render(preview=False)
+        self._wait_render(lambda: self._export_now(path))
+
+    def _export_now(self, path):
+        if self._win._needs_render():
+            self._win.log(f"ERROR: Demo: nothing rendered to export to {os.path.basename(path)}.")
+        else:
+            problem = self._win.write_export(path, remember=False)
+            if problem:
+                self._win.log(f"ERROR: Demo: export to {os.path.basename(path)}: {problem}")
+        self._schedule(0)
+
+    def _do_open(self, name):
+        try:
+            path = open_path(self._base, name)
+        except DemoScriptError as e:
+            self._win.log(f"ERROR: Demo: {e}")
+            self.stop()
+            return
+        self._win.open_file_by_path(path)
+        self._editor = self._win._current_editor()
+        self._cursor = self._editor.textCursor()
+        self._schedule(300)
+
     def _do_tab(self, n):
         if n <= self._win._tabs.count():
             self._win._tabs.setCurrentIndex(n - 1)
@@ -336,9 +468,11 @@ class DemoPlayer(QObject):
         self._win._render(preview=preview)
         self._wait_render()
 
-    def _wait_render(self):
+    def _wait_render(self, then=None):
         if self._win._render_busy():
-            QTimer.singleShot(100, self._wait_render)
+            QTimer.singleShot(100, lambda: self._wait_render(then))
+        elif then is not None:
+            then()
         else:
             self._schedule(0)
 
@@ -410,11 +544,35 @@ def _line_col(text, pos):
 
 def _typed_lines(text):
     """`text` as script lines that type it: a whole line as itself (@@ when
-    it starts with @), a last line with no newline as @type."""
+    it starts with @), a blank one as @enter, a last line with no newline
+    as @type."""
     *lines, last = text.split("\n")
-    out = ["@" + l if l.startswith("@") else l for l in lines]
+    out = []
+    for l in lines:
+        if not l.strip():
+            out += ["@type " + l, "@enter"] if l else ["@enter"]
+        else:
+            out.append("@" + l if l.startswith("@") else l)
     if last:
         out.append("@type " + last)
+    return out
+
+
+def merge_lines(lines):
+    """Consecutive @goto or @scroll lines as the last of them, @pause lines
+    as one of their total, @type lines as one typing them all."""
+    out = []
+    for line in lines:
+        prev = out[-1] if out else ""
+        word, pword = line.split(" ", 1)[0], prev.split(" ", 1)[0]
+        if word == pword and word in ("@goto", "@scroll"):
+            out[-1] = line
+        elif word == pword == "@type":
+            out[-1] = prev + line[6:]
+        elif word == pword == "@pause" and "key" not in (line[7:].strip(), prev[7:].strip()):
+            out[-1] = f"@pause {float(prev[7:]) + float(line[7:]):g}"
+        else:
+            out.append(line)
     return out
 
 
@@ -463,6 +621,11 @@ class DemoRecorder(QObject):
         self._scroll_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
         self._scroll_settle.timeout.connect(self._scroll_settled)
         self._lines = [self._tab_line(), f"@rate {DEFAULT_RATE:g}   // recorded; edit freely"]
+        # @open paths are relative to this, where the script is offered to be saved
+        from belfryscad.window.main_window import file_dialog_dir
+        tab = window._current_tab()
+        self.base = (os.path.dirname(tab.file_path) if tab is not None and tab.file_path
+                     else file_dialog_dir())
         self._bind(window._current_editor())
         window._tabs.currentChanged.connect(self._on_tab)
         vp = window._viewport
@@ -485,7 +648,7 @@ class DemoRecorder(QObject):
         vp = self._win._viewport
         vp.camera_changed.disconnect(self._on_camera)
         vp.view_preset_chosen.disconnect(self.note_view)
-        return "\n".join(self._lines) + "\n"
+        return "\n".join(merge_lines(self._lines)) + "\n"
 
     def _tab_line(self):
         tabs = self._win._tabs
@@ -496,9 +659,12 @@ class DemoRecorder(QObject):
     def _bind(self, editor):
         """Follow `editor`'s text, cursor and scrolling, and only its."""
         if self._editor is not None:
-            self._editor.document().contentsChanged.disconnect(self._on_text)
-            self._editor.cursorPositionChanged.disconnect(self._on_cursor)
-            self._editor.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
+            try:
+                self._editor.document().contentsChanged.disconnect(self._on_text)
+                self._editor.cursorPositionChanged.disconnect(self._on_cursor)
+                self._editor.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
+            except (RuntimeError, TypeError):
+                pass                # its tab was closed
         self._editor = editor
         if editor is None:
             return
@@ -516,12 +682,51 @@ class DemoRecorder(QObject):
         self._event("@new")
         self._new_tab = True
 
+    def note_open(self, path):
+        """A file opened, called before its tab opens or comes to the front."""
+        try:
+            rel = os.path.relpath(path, self.base).replace(os.sep, "/")
+        except ValueError:          # another Windows drive: refused on playback
+            rel = path
+        self._event(f"@open {rel}")
+        self._new_tab = True
+        QTimer.singleShot(0, self._opened)
+
+    def note_close(self, index):
+        """A tab closing, called once it is sure to close."""
+        tabs = self._win._tabs
+        current = tabs.currentIndex()
+        if index != current:
+            self._event(f"@tab {index + 1}")
+        self._event("@close")
+        self._new_tab = True
+        QTimer.singleShot(0, lambda: self._closed(index == current))
+
+    def note_export(self, path):
+        """An export written."""
+        rel = os.path.relpath(path, self.base).replace(os.sep, "/") \
+            if os.path.splitdrive(path)[0] == os.path.splitdrive(self.base)[0] else path
+        if rel.startswith("../") or os.path.isabs(rel):
+            # @export writes only beside the script; this one went elsewhere
+            self._event(f"@export {os.path.basename(path)}   // was {path}")
+        else:
+            self._event(f"@export {rel}")
+
+    def _closed(self, was_current):
+        self._new_tab = False
+        self._bind(self._win._current_editor())
+        if not was_current:
+            self._event(self._tab_line())   # back to the tab that was in front
+
+    def _opened(self):
+        self._new_tab = False       # in case the file was already in front
+
     def _on_tab(self, _index):
         if self._editor is not None:
             self._flush_pending()
             self._flush_text()
         if self._new_tab:
-            self._new_tab = False       # File > New's own switch
+            self._new_tab = False       # File > New's or an open's own switch
         else:
             self._event(self._tab_line())
         self._bind(self._win._current_editor())
