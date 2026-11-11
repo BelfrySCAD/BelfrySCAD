@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QSlider, QSpinBox, QStyle, QTabWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
 from belfryscad.scad_literals import (
@@ -938,8 +938,14 @@ class CustomizerPane(QWidget):
         outer.addWidget(self._preset_row_widget)
         self._refresh_preset_combo()
 
-        self._tab_widget = QTabWidget()
-        outer.addWidget(self._tab_widget)
+        # Groups are collapsible sections in one scrolling list, as in
+        # OpenSCAD; tabs hid their names behind arrows in a narrow pane (#1110).
+        self._sections = QScrollArea()
+        self._sections.setWidgetResizable(True)
+        self._sections.setFrameShape(QFrame.Shape.NoFrame)
+        self._collapsed: set[str] = set()
+        self._last_section = 'Parameters'
+        outer.addWidget(self._sections)
 
         self._empty_label = QLabel(
             "No customizable parameters found.\n\n"
@@ -956,7 +962,7 @@ class CustomizerPane(QWidget):
 
         outer.addWidget(add_row_widget)
 
-        self._tab_widget.hide()
+        self._sections.hide()
         self._preset_row_widget.hide()
 
     # ------------------------------------------------------------------
@@ -1008,17 +1014,19 @@ class CustomizerPane(QWidget):
 
     def _rebuild_ui(self):
         self._widgets.clear()
-        self._tab_widget.clear()
+        old = self._sections.takeWidget()
+        if old is not None:
+            old.deleteLater()
 
         if not self._params:
-            self._tab_widget.hide()
+            self._sections.hide()
             self._preset_row_widget.hide()
             self._empty_label.show()
             self._update_preset_buttons()
             return
 
         self._empty_label.hide()
-        self._tab_widget.show()
+        self._sections.show()
         self._preset_row_widget.show()
         self._update_preset_buttons()
 
@@ -1038,8 +1046,18 @@ class CustomizerPane(QWidget):
             else:
                 tabs['Parameters'] = global_params
 
+        page = QWidget()
+        column = QVBoxLayout(page)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(2)
+        if tabs and self._last_section not in tabs:
+            self._last_section = next(iter(tabs)) or 'Parameters'
         for tab_name, params in tabs.items():
+            tab_name = tab_name or 'Parameters'
             container = QWidget()
+            if len(tabs) > 1:       # one group needs no header
+                column.addWidget(self._section_header(tab_name, container))
+                container.setVisible(tab_name not in self._collapsed)
             form = QFormLayout(container)
             form.setContentsMargins(8, 8, 8, 8)
             form.setSpacing(8)
@@ -1061,14 +1079,32 @@ class CustomizerPane(QWidget):
                 )
                 form.addRow(lbl, w)
 
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidget(container)
-            self._tab_widget.addTab(scroll, tab_name or 'Parameters')
+            column.addWidget(container)
+        column.addStretch(1)
+        self._sections.setWidget(page)
 
-        # Hide the tab bar when there is only one group
-        self._tab_widget.tabBar().setVisible(self._tab_widget.count() > 1)
+    def _section_header(self, name: str, body: QWidget) -> QToolButton:
+        """A group's title, which opens and closes it. Which are closed is
+        remembered by name, so a rebuild after an edit keeps them."""
+        btn = QToolButton()
+        btn.setText(name)
+        btn.setCheckable(True)
+        btn.setChecked(name not in self._collapsed)
+        btn.setArrowType(Qt.ArrowType.DownArrow if btn.isChecked() else Qt.ArrowType.RightArrow)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        btn.setAutoRaise(True)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        font = btn.font()
+        font.setBold(True)
+        btn.setFont(font)
+
+        def toggled(on):
+            btn.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+            body.setVisible(on)
+            (self._collapsed.discard if on else self._collapsed.add)(name)
+            self._last_section = name
+        btn.toggled.connect(toggled)
+        return btn
 
     def _make_widget(self, param: ParameterDef) -> Optional[QWidget]:
         spec = _parse_constraint(param.constraint, param.default)
@@ -1135,10 +1171,9 @@ class CustomizerPane(QWidget):
     # ------------------------------------------------------------------
 
     def _current_tab_name(self) -> str:
-        idx = self._tab_widget.currentIndex()
-        if idx < 0:
-            return 'Parameters'
-        return self._tab_widget.tabText(idx) or 'Parameters'
+        """The group a new parameter goes in: the section last opened or
+        closed, else the first."""
+        return self._last_section
 
     def _apply_new_source(self, new_source: str):
         if new_source == self._source:
