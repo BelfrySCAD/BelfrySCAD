@@ -22,6 +22,12 @@ Return. A directive may end in a `//` comment.
     @goto end                ... or to its end
     @delete 4                delete the 4 characters after the cursor
     @scroll 40               scroll the editor so line 40 is at the top
+    @scroll customizer 40%   scroll a pane 40% of the way down (`end`: the bottom)
+    @show customizer         show a docked pane (@hide hides it); see PANES
+    @show customizer 300     ... 300 pixels wide (high, docked at the top or bottom)
+    @mainwin size 1280 800   resize the main window
+    @mainwin position 100 100  move it
+    @set width 30            set a Customizer parameter, as its control would
     @pause 3                 wait 3 seconds
     @pause key               wait for Space (or a presenter remote's "next")
     @preview / @render       F5 / F6, waiting until the result lands
@@ -46,6 +52,11 @@ import numpy as np
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, Qt, QTimer, QVariantAnimation
 from PySide6.QtWidgets import QApplication
+
+#: Pane names for @show, @hide and @scroll, and their MainWindow docks.
+PANES = {"editor": "_editor_dock", "console": "_console_dock", "customizer": "_customizer_dock",
+         "debugger": "_debugger_dock", "animate": "_animate_dock", "ai": "_ai_chat_dock",
+         "testing": "_testing_dock", "docs": "_docs_dock", "colors": "_color_list_dock"}
 
 VIEWS = ("top", "bottom", "left", "right", "front", "back", "iso", "all", "center")
 DEFAULT_RATE = 8.0
@@ -79,6 +90,10 @@ def parse(text: str) -> list[tuple]:
         if not line.startswith("@"):
             steps.append(("type", line + "\n"))
             continue
+        m = re.match(r"@set(\s|$)", line, re.IGNORECASE)
+        if m:
+            steps.append(_set_step(n, line[4:]))
+            continue
         m = re.match(r"@(open|export)(\s|$)", line, re.IGNORECASE)
         if m:
             verb = m.group(1).lower()
@@ -95,6 +110,22 @@ def parse(text: str) -> list[tuple]:
         except (ValueError, IndexError):
             raise DemoScriptError(f"Line {n}: can't read {line.strip()!r}") from None
     return steps
+
+
+def _set_step(n, rest):
+    """@set NAME VALUE: VALUE a literal a Customizer control can hold."""
+    from belfryscad.scad_literals import parse_literal
+    m = re.match(r"\s*([A-Za-z_$][\w$]*)\s+(.*)$", rest)
+    if m:
+        value = m.group(2)
+        if value.startswith('"'):   # a string may hold // or spaces
+            value = value[:value.rfind('"') + 1]
+        else:
+            value = value.split("//", 1)[0].strip()
+        parsed = parse_literal(value)
+        if parsed is not None:
+            return ("set", m.group(1), parsed)
+    raise DemoScriptError(f"Line {n}: can't read '@set{rest}'")
 
 
 def _open_name(rest):
@@ -179,6 +210,20 @@ def _directive(name, args, ms):
         return ("tab", int(args[0]))
     if name == "scroll" and len(args) == 1 and int(args[0]) >= 1:
         return ("scroll", int(args[0]), 300 if ms is None else ms)
+    if name == "scroll" and len(args) == 2 and args[0].lower() in PANES:
+        pct = 100.0 if args[1].lower() == "end" else float(args[1].rstrip("%"))
+        if not args[1].endswith("%") and args[1].lower() != "end" or not 0 <= pct <= 100:
+            raise ValueError(name)
+        return ("pane_scroll", args[0].lower(), pct, 300 if ms is None else ms)
+    if name in ("show", "hide") and len(args) == 1 and args[0].lower() in PANES:
+        return ("pane", args[0].lower(), name == "show", None)
+    if name == "show" and len(args) == 2 and args[0].lower() in PANES and int(args[1]) > 0:
+        return ("pane", args[0].lower(), True, int(args[1]))
+    if name == "mainwin" and len(args) == 3 and args[0].lower() in ("size", "position"):
+        a, b = int(args[1]), int(args[2])
+        if args[0].lower() == "size" and (a <= 0 or b <= 0):
+            raise ValueError(name)
+        return ("mainwin", args[0].lower(), a, b)
     if name == "pause" and args == ["key"]:
         return ("pause", None)
     if name == "pause" and len(args) == 1 and float(args[0]) >= 0:
@@ -443,10 +488,53 @@ class DemoPlayer(QObject):
         self._schedule(300)
 
     def _do_scroll(self, line, ms):
-        bar = self._editor.verticalScrollBar()
+        self._scroll_bar(self._editor.verticalScrollBar(), line - 1, ms)
+
+    def _do_pane_scroll(self, pane, pct, ms):
+        bar = pane_scrollbar(getattr(self._win, PANES[pane]))
+        if bar is None:
+            self._schedule(0)
+        else:
+            self._scroll_bar(bar, round(bar.maximum() * pct / 100), ms)
+
+    def _do_pane(self, pane, show, size=None):
+        win = self._win
+        dock = getattr(win, PANES[pane])
+        if show:
+            dock.show()
+            dock.raise_()
+            if size is not None:
+                # once shown and laid out: resizeDocks ignores a dock not yet placed
+                QTimer.singleShot(0, lambda: self._size_dock(dock, size))
+        else:
+            dock.hide()
+        self._schedule(300)
+
+    def _size_dock(self, dock, size):
+        win = self._win
+        if dock.isFloating():
+            dock.resize(size, dock.height())
+        else:
+            across = win.dockWidgetArea(dock) in (Qt.DockWidgetArea.TopDockWidgetArea,
+                                                  Qt.DockWidgetArea.BottomDockWidgetArea)
+            win.resizeDocks([dock], [size], Qt.Orientation.Vertical if across else Qt.Orientation.Horizontal)
+
+    def _do_mainwin(self, what, a, b):
+        if what == "size":
+            self._win.resize(a, b)
+        else:
+            self._win.move(a, b)
+        self._schedule(300)
+
+    def _do_set(self, name, value):
+        if not self._win._customizer_pane.set_parameter(name, value):
+            self._win.log(f"Demo: the Customizer has no parameter {name}.")
+        self._schedule(300)
+
+    def _scroll_bar(self, bar, target, ms):
         anim = QVariantAnimation(self)
         anim.setStartValue(bar.value())
-        anim.setEndValue(line - 1)
+        anim.setEndValue(target)
         anim.setDuration(max(1, int(ms / self._speed)))
         anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         anim.valueChanged.connect(lambda v: bar.setValue(int(v)))
@@ -558,14 +646,40 @@ def _typed_lines(text):
     return out
 
 
+def pane_scrollbar(dock):
+    """The vertical scroll bar of a dock's main scrolling area: the largest
+    one in it."""
+    from PySide6.QtWidgets import QAbstractScrollArea
+    areas = [a for a in dock.findChildren(QAbstractScrollArea) if a.isVisible()]
+    if not areas:
+        return None
+    big = max(areas, key=lambda a: a.viewport().width() * a.viewport().height())
+    return big.verticalScrollBar()
+
+
+def _merge_key(line):
+    """What a line is about, for merge_lines: @goto, @scroll of one pane or
+    the editor, @set of one parameter."""
+    words = line.split()
+    word = words[0] if words else ""
+    if word == "@goto":
+        return (word,)
+    if word == "@scroll":
+        return (word, words[1] if len(words) > 2 and words[1] in PANES else "")
+    if word in ("@set", "@mainwin") and len(words) > 1:
+        return (word, words[1])
+    return None
+
+
 def merge_lines(lines):
-    """Consecutive @goto or @scroll lines as the last of them, @pause lines
-    as one of their total, @type lines as one typing them all."""
+    """Consecutive @goto, @scroll (of one pane) or @set (of one parameter)
+    lines as the last of them, @pause lines as one of their total, @type
+    lines as one typing them all."""
     out = []
     for line in lines:
         prev = out[-1] if out else ""
         word, pword = line.split(" ", 1)[0], prev.split(" ", 1)[0]
-        if word == pword and word in ("@goto", "@scroll"):
+        if _merge_key(line) is not None and _merge_key(line) == _merge_key(prev):
             out[-1] = line
         elif word == pword == "@type":
             out[-1] = prev + line[6:]
@@ -628,6 +742,31 @@ class DemoRecorder(QObject):
                      else file_dialog_dir())
         self._bind(window._current_editor())
         window._tabs.currentChanged.connect(self._on_tab)
+        # Panes: shown or hidden, and scrolled by hand
+        self._hidden = {}
+        self._pane_settle = {}
+        self._pane_links = []
+        for name, attr in PANES.items():
+            dock = getattr(window, attr)
+            self._hidden[name] = dock.isHidden()
+            link = (dock.visibilityChanged, lambda _v, n=name: self._on_pane_shown(n))
+            self._pane_links.append(link)
+            timer = QTimer(self, singleShot=True, interval=SETTLE_MS)
+            timer.timeout.connect(lambda n=name: self._pane_scrolled(n))
+            self._pane_settle[name] = timer
+            if name != "editor":        # the editor's own scrolling is @scroll LINE
+                from PySide6.QtWidgets import QAbstractScrollArea
+                for area in dock.findChildren(QAbstractScrollArea):
+                    self._pane_links.append((area.verticalScrollBar().valueChanged,
+                                             lambda _v, n=name: self._on_pane_scroll(n)))
+        for signal, slot in self._pane_links:
+            signal.connect(slot)
+        self._absorb_text = False
+        window._customizer_pane.parameter_set.connect(self.note_set)
+        # The window as it was, once, at the top: following its resizes also
+        # caught the window growing itself as its contents' minimum grew.
+        self._lines[2:2] = [f"@mainwin size {window.width()} {window.height()}",
+                            f"@mainwin position {window.x()} {window.y()}"]
         vp = window._viewport
         cam = vp._renderer.camera
         self._cam = (cam.azimuth, cam.elevation, cam.distance, cam.target.copy())
@@ -645,6 +784,9 @@ class DemoRecorder(QObject):
         self._flush_text()
         self._bind(None)
         self._win._tabs.currentChanged.disconnect(self._on_tab)
+        for signal, slot in self._pane_links:
+            signal.disconnect(slot)
+        self._win._customizer_pane.parameter_set.disconnect(self.note_set)
         vp = self._win._viewport
         vp.camera_changed.disconnect(self._on_camera)
         vp.view_preset_chosen.disconnect(self.note_view)
@@ -758,17 +900,57 @@ class DemoRecorder(QObject):
             self._scroll = value
             self._event(f"@scroll {value + 1}")
 
+    def _on_pane_shown(self, name):
+        hidden = getattr(self._win, PANES[name]).isHidden()
+        if hidden != self._hidden[name]:     # not just a tab switch among docks
+            self._hidden[name] = hidden
+            self._event(f"@{'hide' if hidden else 'show'} {name}")
+
+    def _on_pane_scroll(self, name):
+        # ponytail: a scroll with the pointer over the pane is the user's;
+        # the console scrolling itself as output arrives is not.
+        dock = getattr(self._win, PANES[name])
+        from PySide6.QtGui import QCursor
+        if dock.rect().contains(dock.mapFromGlobal(QCursor.pos())):
+            self._pane_settle[name].start()
+
+    def _pane_scrolled(self, name):
+        self._pane_settle[name].stop()
+        bar = pane_scrollbar(getattr(self._win, PANES[name]))
+        if bar is not None:
+            pct = 100 * bar.value() / bar.maximum() if bar.maximum() else 0
+            self._event(f"@scroll {name} {pct:.0f}%")
+
+    def note_set(self, name, value):
+        """A Customizer control changed; the editor text it writes back is
+        not typing."""
+        from belfryscad.scad_literals import format_value
+        self._event(f"@set {name} {format_value(value)}")
+        self._absorb_text = True
+        QTimer.singleShot(0, self._absorbed)
+
+    def _absorbed(self):
+        self._absorb_text = False
+        if self._editor is not None:
+            self._snap = self._last = self._editor.toPlainText()
+            self._cursor = self._editor.textCursor().position()
+
     def _flush_pending(self):
         """Write what is still settling, so events stay in order."""
-        for timer, done in ((self._settle, self._camera_settled),
-                            (self._cursor_settle, self._cursor_settled),
-                            (self._scroll_settle, self._scroll_settled)):
+        pending = [(self._settle, self._camera_settled),
+                   (self._cursor_settle, self._cursor_settled),
+                   (self._scroll_settle, self._scroll_settled)]
+        pending += [(t, lambda n=n: self._pane_scrolled(n)) for n, t in self._pane_settle.items()]
+        for timer, done in pending:
             if timer.isActive():
                 timer.stop()
                 done()
 
     def _on_text(self):
         self._touched = time.monotonic()
+        if self._absorb_text:           # a Customizer write-back
+            self._snap = self._last = self._editor.toPlainText()
+            return
         if time.monotonic() - self._idle_from >= PAUSE_MIN_S:
             self._flush_text()          # the text before the pause
             self._pause()
