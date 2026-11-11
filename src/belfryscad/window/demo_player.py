@@ -8,6 +8,9 @@ Return. A directive may end in a `//` comment.
 
     @enter                   type a Return (a blank line types nothing)
     @new                     open a new tab to type into
+    @open parts/gear.scad    open a file, or switch to its tab; the path is
+                             relative to the script's folder, and must stay in it
+    @close                   close the tab, if every unsaved edit in it is the demo's
     @tab 2                   switch to the second tab
     @rate 8                  characters per second (default 8)
     @speed 1.5               play everything after this 1.5x as fast
@@ -33,6 +36,7 @@ File > Record Demo Script writes one of these from what you do: see
 DemoRecorder below.
 """
 
+import os
 import re
 import time
 
@@ -73,6 +77,13 @@ def parse(text: str) -> list[tuple]:
         if not line.startswith("@"):
             steps.append(("type", line + "\n"))
             continue
+        if re.match(r"@open(\s|$)", line, re.IGNORECASE):
+            name = _open_name(line[5:])
+            problem = _bad_name(name)
+            if problem:
+                raise DemoScriptError(f"Line {n}: @open {name}: {problem}")
+            steps.append(("open", name))
+            continue
         body, ms = _split_over(line[1:].split("//", 1)[0].strip())
         name, *args = body.split() or [""]
         try:
@@ -80,6 +91,46 @@ def parse(text: str) -> list[tuple]:
         except (ValueError, IndexError):
             raise DemoScriptError(f"Line {n}: can't read {line.strip()!r}") from None
     return steps
+
+
+def _open_name(rest):
+    """@open's file name: the rest of the line, less a // comment and any
+    quotes around it. Spaces inside it are kept."""
+    name = rest.split("//", 1)[0].strip()
+    if len(name) >= 2 and name[0] == name[-1] and name[0] in "\"'":
+        name = name[1:-1]
+    return name
+
+
+def _bad_name(name):
+    """Why `name` can't be @opened, judged from the text alone, or None."""
+    if not name:
+        return "no file name"
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        return "control characters in the name"
+    if (os.path.isabs(name) or name.startswith(("/", "\\", "~"))
+            or re.match(r"[A-Za-z]:", name)):
+        return "the path must be relative to the script's folder"
+    return None
+
+
+def open_path(base, name):
+    """The file `@open name` means: `name` resolved against `base`, the
+    script's folder, and only if it stays inside that folder and is a file.
+    A shared script can't put an arbitrary file on screen in a demo."""
+    problem = _bad_name(name)
+    if problem is None and not base:
+        problem = "save the script first; its folder is where @open looks"
+    if problem is None:
+        root = os.path.realpath(base)
+        path = os.path.realpath(os.path.join(root, name))
+        if os.path.commonpath([root, path]) != root:
+            problem = "outside the script's folder"
+        elif not os.path.isfile(path):
+            problem = "no such file"
+        else:
+            return path
+    raise DemoScriptError(f"@open {name}: {problem}")
 
 
 def _split_over(body):
@@ -92,6 +143,8 @@ def _directive(name, args, ms):
         return ("type", "\n")
     if name == "new" and not args:
         return ("new",)
+    if name == "close" and not args:
+        return ("close",)
     if name == "rate" and len(args) == 1 and float(args[0]) > 0:
         return ("rate", float(args[0]))
     if name == "speed" and len(args) == 1 and float(args[0]) > 0:
@@ -133,9 +186,13 @@ class DemoPlayer(QObject):
     scheduling the next on a single-shot timer, so pausing anywhere is
     stopping that timer (and any camera animation) and resuming it later."""
 
-    def __init__(self, window, steps):
+    def __init__(self, window, steps, base=None):
         super().__init__(window)
         self._win = window
+        self._base = base           # the script's folder, for @open
+        # Each tab the demo has been in: whether it had no unsaved edits
+        # then, so that all it has now are the demo's and @close may drop them.
+        self._clean = {}
         self._steps = list(steps)
         self._i = 0
         self._rate = DEFAULT_RATE
@@ -255,7 +312,13 @@ class DemoPlayer(QObject):
             return
         step = self._steps[self._i]
         self._i += 1
+        self._touch()
         getattr(self, "_do_" + step[0])(*step[1:])
+
+    def _touch(self):
+        tab = self._win._current_tab()
+        if tab is not None and tab not in self._clean:
+            self._clean[tab] = not tab.has_unsaved_content()
 
     def _type_one(self):
         ch, self._typing = self._typing[0], self._typing[1:]
@@ -306,6 +369,31 @@ class DemoPlayer(QObject):
         self._editor = self._win._current_editor()
         self._cursor = self._editor.textCursor()
         self._schedule(0)
+
+    def _do_close(self):
+        win = self._win
+        tab = win._current_tab()
+        if tab is not None and tab.has_unsaved_content() and not self._clean.get(tab):
+            win.log(f"Demo: {tab.display_name()} has edits of your own, so it stays open.")
+        elif tab is not None:
+            win._close_tab(win._tabs.currentIndex(), confirm=False)  # nothing of yours to lose
+            if win._tabs.count() == 0:
+                win._new_document()
+        self._editor = win._current_editor()
+        self._cursor = self._editor.textCursor() if self._editor else None
+        self._schedule(300)
+
+    def _do_open(self, name):
+        try:
+            path = open_path(self._base, name)
+        except DemoScriptError as e:
+            self._win.log(f"ERROR: Demo: {e}")
+            self.stop()
+            return
+        self._win.open_file_by_path(path)
+        self._editor = self._win._current_editor()
+        self._cursor = self._editor.textCursor()
+        self._schedule(300)
 
     def _do_tab(self, n):
         if n <= self._win._tabs.count():
@@ -430,6 +518,24 @@ def _typed_lines(text):
     return out
 
 
+def merge_lines(lines):
+    """Consecutive @goto or @scroll lines as the last of them, @pause lines
+    as one of their total, @type lines as one typing them all."""
+    out = []
+    for line in lines:
+        prev = out[-1] if out else ""
+        word, pword = line.split(" ", 1)[0], prev.split(" ", 1)[0]
+        if word == pword and word in ("@goto", "@scroll"):
+            out[-1] = line
+        elif word == pword == "@type":
+            out[-1] = prev + line[6:]
+        elif word == pword == "@pause" and "key" not in (line[7:].strip(), prev[7:].strip()):
+            out[-1] = f"@pause {float(prev[7:]) + float(line[7:]):g}"
+        else:
+            out.append(line)
+    return out
+
+
 def text_steps(old, new, cursor):
     """Script lines turning `old` into `new` with the player's cursor at
     `cursor`, and where the cursor is after them. One edit: what lies
@@ -475,6 +581,11 @@ class DemoRecorder(QObject):
         self._scroll_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
         self._scroll_settle.timeout.connect(self._scroll_settled)
         self._lines = [self._tab_line(), f"@rate {DEFAULT_RATE:g}   // recorded; edit freely"]
+        # @open paths are relative to this, where the script is offered to be saved
+        from belfryscad.window.main_window import file_dialog_dir
+        tab = window._current_tab()
+        self.base = (os.path.dirname(tab.file_path) if tab is not None and tab.file_path
+                     else file_dialog_dir())
         self._bind(window._current_editor())
         window._tabs.currentChanged.connect(self._on_tab)
         vp = window._viewport
@@ -497,7 +608,7 @@ class DemoRecorder(QObject):
         vp = self._win._viewport
         vp.camera_changed.disconnect(self._on_camera)
         vp.view_preset_chosen.disconnect(self.note_view)
-        return "\n".join(self._lines) + "\n"
+        return "\n".join(merge_lines(self._lines)) + "\n"
 
     def _tab_line(self):
         tabs = self._win._tabs
@@ -508,9 +619,12 @@ class DemoRecorder(QObject):
     def _bind(self, editor):
         """Follow `editor`'s text, cursor and scrolling, and only its."""
         if self._editor is not None:
-            self._editor.document().contentsChanged.disconnect(self._on_text)
-            self._editor.cursorPositionChanged.disconnect(self._on_cursor)
-            self._editor.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
+            try:
+                self._editor.document().contentsChanged.disconnect(self._on_text)
+                self._editor.cursorPositionChanged.disconnect(self._on_cursor)
+                self._editor.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
+            except (RuntimeError, TypeError):
+                pass                # its tab was closed
         self._editor = editor
         if editor is None:
             return
@@ -528,12 +642,41 @@ class DemoRecorder(QObject):
         self._event("@new")
         self._new_tab = True
 
+    def note_open(self, path):
+        """A file opened, called before its tab opens or comes to the front."""
+        try:
+            rel = os.path.relpath(path, self.base).replace(os.sep, "/")
+        except ValueError:          # another Windows drive: refused on playback
+            rel = path
+        self._event(f"@open {rel}")
+        self._new_tab = True
+        QTimer.singleShot(0, self._opened)
+
+    def note_close(self, index):
+        """A tab closing, called once it is sure to close."""
+        tabs = self._win._tabs
+        current = tabs.currentIndex()
+        if index != current:
+            self._event(f"@tab {index + 1}")
+        self._event("@close")
+        self._new_tab = True
+        QTimer.singleShot(0, lambda: self._closed(index == current))
+
+    def _closed(self, was_current):
+        self._new_tab = False
+        self._bind(self._win._current_editor())
+        if not was_current:
+            self._event(self._tab_line())   # back to the tab that was in front
+
+    def _opened(self):
+        self._new_tab = False       # in case the file was already in front
+
     def _on_tab(self, _index):
         if self._editor is not None:
             self._flush_pending()
             self._flush_text()
         if self._new_tab:
-            self._new_tab = False       # File > New's own switch
+            self._new_tab = False       # File > New's or an open's own switch
         else:
             self._event(self._tab_line())
         self._bind(self._win._current_editor())

@@ -239,3 +239,134 @@ def test_save_demo_as_opens_on_all_files():
     out = json.loads(line[6:])
     assert out["asked"][0][1] == "" and out["asked"][1] == ["demo.demo", "All Files (*)"], out
     assert out["label"].startswith("demo.demo"), out
+
+
+def test_open_names():
+    assert parse('@open "my part.scad"  // the base\n@OPEN sub/b.scad\n@close\n') == [
+        ("open", "my part.scad"), ("open", "sub/b.scad"), ("close",)]
+    for bad in ("@open", "@open /etc/passwd", "@open ~/x.scad", "@open C:\\x.scad", "@open \\\\srv\\x",
+                "@open a\x07.scad"):
+        with pytest.raises(DemoScriptError, match="Line 1"):
+            parse(bad)
+
+
+def test_open_path_stays_in_the_scripts_folder(tmp_path):
+    import os
+    from belfryscad.window.demo_player import open_path
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "a.scad").write_text("cube(1);\n")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.scad"
+    outside.write_text("secret\n")
+    (tmp_path / "link.scad").symlink_to(outside)
+    base = str(tmp_path)
+    assert open_path(base, "sub/a.scad") == os.path.realpath(tmp_path / "sub" / "a.scad")
+    assert open_path(base, "sub/../sub/a.scad") == os.path.realpath(tmp_path / "sub" / "a.scad")
+    for name, why in (("../" + outside.name, "outside"), ("link.scad", "outside"),
+                      ("sub", "no such file"), ("nope.scad", "no such file"), ("/etc/hosts", "relative")):
+        with pytest.raises(DemoScriptError, match=why):
+            open_path(base, name)
+    with pytest.raises(DemoScriptError, match="save the script first"):
+        open_path(None, "sub/a.scad")
+
+
+def test_merge_lines():
+    from belfryscad.window.demo_player import merge_lines
+    assert merge_lines(["@goto 1 2", "@goto start", "@scroll 3", "@scroll 9", "@pause 1", "@pause 0.5",
+                        "@pause key", "@pause 2", "@type ab", "@type  c", "x", "@type d"]) == [
+        "@goto start", "@scroll 9", "@pause 1.5", "@pause key", "@pause 2", "@type ab c", "x", "@type d"]
+
+
+OPEN_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+d = os.path.realpath(tempfile.mkdtemp())
+os.mkdir(os.path.join(d, "parts"))
+for n in ("start.scad", "parts/gear.scad"):
+    open(os.path.join(d, n), "w").write("cube(1);\\n")
+w = MainWindow(); w.show(); app.processEvents()
+w.open_file_by_path(os.path.join(d, "start.scad"))
+w._record_demo()                           # records relative to start.scad's folder
+w.open_file_by_path(os.path.join(d, "parts/gear.scad"))
+run(100)
+w._record_demo()
+script = w._current_editor().toPlainText()
+p = os.path.join(d, "t.demo")
+open(p, "w").write("@open parts/gear.scad\\n@goto end\\n@type !\\n@open ../escape.scad\\n@type never\\n")
+w._play_demo(p)
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 20:
+    run(50)
+tab = w._current_tab()
+print("RESULT" + json.dumps({"script": script, "file": os.path.relpath(tab.file_path, d),
+                             "text": tab.editor.toPlainText()}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_open_records_and_plays():
+    r = subprocess.run([sys.executable, "-c", OPEN_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    assert "@open parts/gear.scad" in out["script"].splitlines(), out["script"]
+    assert "@tab" not in out["script"].split("@open", 1)[1], out["script"]
+    # opened and typed into, then stopped at the path that leaves the folder
+    assert (out["file"], out["text"]) == ("parts/gear.scad", "cube(1);\n!"), out
+
+
+CLOSE_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+d = os.path.realpath(tempfile.mkdtemp())
+for n in ("a.scad", "b.scad", "c.scad", "mine.scad"):
+    open(os.path.join(d, n), "w").write("cube(1);\\n")
+w = MainWindow(); w.show(); app.processEvents()
+def names(): return [os.path.basename(w._tabs.widget(i).file_path or "-") for i in range(w._tabs.count())]
+for n in ("a.scad", "b.scad", "c.scad"):
+    w.open_file_by_path(os.path.join(d, n))
+w._record_demo()
+w._close_tab(2)                            # the current one, c
+w._close_tab(0)                            # another, a; b stays in front
+run(100)
+w._record_demo()
+script = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().splitlines()]
+w._close_tab(w._tabs.currentIndex(), confirm=False)
+w.open_file_by_path(os.path.join(d, "mine.scad"))
+w._current_editor().textCursor().insertText("// mine\\n")        # your own edit
+p = os.path.join(d, "t.demo")
+open(p, "w").write("@close\\n@open a.scad\\n@type x\\n@close\\n")
+w._play_demo(p)
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 20:
+    run(50)
+print("RESULT" + json.dumps({"script": script, "tabs": names()}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_close_records_and_plays():
+    r = subprocess.run([sys.executable, "-c", CLOSE_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    assert out["script"][2:] == ["@close", "@tab 1", "@close", "@tab 1"], out["script"]
+    # mine.scad, with your edit, stays; a.scad, edited only by the demo, closes
+    assert out["tabs"] == ["b.scad", "mine.scad"], out
