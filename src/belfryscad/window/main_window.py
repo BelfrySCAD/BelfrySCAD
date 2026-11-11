@@ -1727,7 +1727,7 @@ class MainWindow(QMainWindow):
         self._act_new = QAction("New", self)
         self._set_toolbar_icon(self._act_new, "new")
         self._act_new.setToolTip("New (Ctrl+N)")
-        self._act_new.triggered.connect(self._new_document)
+        self._act_new.triggered.connect(self._file_new)
         tb.addAction(self._act_new)
 
         self._act_open = QAction("Open", self)
@@ -1839,7 +1839,7 @@ class MainWindow(QMainWindow):
 
         # File
         file_menu = mb.addMenu("&File")
-        self._add_action(file_menu, "&New", self._new_document, QKeySequence.StandardKey.New)
+        self._add_action(file_menu, "&New", self._file_new, QKeySequence.StandardKey.New)
         self._add_action(file_menu, "&Open…", self._open_file, QKeySequence.StandardKey.Open)
         self._recent_menu = file_menu.addMenu("Open Recen&t")
         self._examples_menu = file_menu.addMenu("&Examples")
@@ -2248,6 +2248,12 @@ class MainWindow(QMainWindow):
     # Tab management
     # ------------------------------------------------------------------
 
+    def _file_new(self, *_):
+        """File > New; a demo being recorded notes it as @new."""
+        if self._demo_recorder is not None:
+            self._demo_recorder.note_new()
+        return self._new_document()
+
     def _new_document(self):
         tab = FileTab()
         self._adopt_undo_stack(tab)
@@ -2640,14 +2646,15 @@ class MainWindow(QMainWindow):
         except (OSError, UnicodeDecodeError, demo_player.DemoScriptError) as e:
             self.log(f"ERROR: Demo script {name}: {e}")
             return
-        if self._current_editor() is None or (path is None and steps[:1] != [("new",)]):
+        if self._current_editor() is None or (
+                path is None and (steps[:1] or [("",)])[0][0] not in ("new", "tab")):
             self._new_document()        # never type into the script itself
         self._demo_player = demo_player.DemoPlayer(self, steps)
         self._demo_player.start()
 
     def _record_demo(self):
         """File > Record Demo Script (#1082): the first choice starts
-        recording into a new tab, the second stops and opens the script in
+        recording in the tab in front, the second stops and opens the script in
         another, ready to tidy and play."""
         from belfryscad.window import demo_player
         if self._demo_recorder is None:
@@ -2661,7 +2668,9 @@ class MainWindow(QMainWindow):
         self._act_record_demo.setChecked(False)
         tab = self._new_document()
         tab.is_demo = True
+        tab.suggested_name = "demo.demo"
         tab.editor.setPlainText(script)
+        self._sync_tab_label(self._tabs.indexOf(tab), tab)
         self.log("Demo recorded: File > Play Demo Script plays it.")
 
     def _redraw_window(self):
@@ -3018,9 +3027,13 @@ class MainWindow(QMainWindow):
         start = tab.file_path or file_dialog_dir()
         if not tab.file_path and tab.suggested_name:
             start = str(Path(start) / tab.suggested_name)
+        # A demo script opens on All Files, or macOS's save panel adds .scad
+        # to the name typed (#1107).
+        demo = getattr(tab, "is_demo", False) or start.lower().endswith(".demo")
         path, _ = QFileDialog.getSaveFileName(
             self, "Save File", start,
-            "OpenSCAD Files (*.scad);;All Files (*)"
+            "OpenSCAD Files (*.scad);;All Files (*)",
+            "All Files (*)" if demo else "",
         )
         if not path:
             return False

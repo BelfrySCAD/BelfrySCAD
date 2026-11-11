@@ -541,20 +541,23 @@ Each frame change re-renders the current file with `$t` set accordingly — `Mai
 | Directive | Does |
 |---|---|
 | `@new` | opens a new tab to type into |
+| `@tab 2` | switches to the second tab; a tab that doesn't exist is logged and skipped |
 | `@rate 8` | sets the typing speed in characters per second (the default is 8), from that line on |
 | `@speed 1.5` | plays everything after it 1.5 times as fast: typing, pauses and camera moves |
 | `@type TEXT` | types TEXT exactly as written, comment and spaces included, with no newline after it |
-| `@goto 3 5` | moves the cursor to line 3, column 5 |
+| `@goto 3 5` / `@goto start` / `@goto end` | moves the cursor to line 3, column 5, or to the start or end of the text |
 | `@delete 4` | deletes the 4 characters after the cursor, one at a time |
+| `@scroll 40 [over 0.3s]` | scrolls the editor so line 40 is at the top |
 | `@pause 3` / `@pause key` | waits 3 seconds, or until Space (or a presenter remote's PageDown or Right) is pressed |
 | `@preview` / `@render` | runs F5 or F6, then waits until the result lands |
 | `@view front` | goes to a View-menu view: `top bottom left right front back iso all center` |
 | `@rotate 30 20 over 1.5s` | swings to azimuth 30, elevation 20 (1 s if `over` is left off) |
 | `@zoom 1.5 over 1s` | zooms in 1.5 times; a value below 1 zooms out (0.5 s if `over` is left off) |
+| `@zoom 2 at 10 0 5` | zooms, ending centred on the point [10, 0, 5]; the recorder adds `at` when a zoom toward the pointer moved the centre |
 
 During playback, Space, PageDown and Right pause and resume the demo wherever it is, mid-word or mid-camera move. Up and Down speed it up and slow it down by a quarter each press, between 0.25x and 4x, shown in the status bar; what is left of the current wait is rescaled at once, while a camera move already under way keeps its pace. Esc stops it and keeps what it typed. While a demo plays it owns the keyboard: every other plain key is dropped, menu shortcuts included, so a presenter remote's other buttons (F5 for "start slideshow", which is Preview here; B or . for a black screen) change nothing (#1082). Keys with Cmd, Ctrl or Alt are left alone, so Quit still works. The script is checked before anything runs, and a line it can't read is reported on the console by number. Text is inserted through a `QTextCursor`, not as key presses, so the editor's auto-indent and bracket closing don't change what the script says. Each step schedules the next on one single-shot timer, which is what lets a pause land anywhere.
 
-**File ▸ Record Demo Script** writes a script from what you do; choose it again to stop, and the script opens in a new tab, ready to tidy and play. It records what you did, not where you clicked: the text typed, Preview and Render (`MainWindow._render` tells the recorder), named views (`Viewport.view_preset_chosen`), camera moves as a `@rotate` and `@zoom` once the camera has been still for 0.4 s, and idle gaps of a second or more as `@pause`, rounded to half seconds. Text is recorded as a diff between those moments (`text_steps`: the common prefix and suffix kept, the middle deleted and retyped, with `@goto` only where the cursor has to move), so the demo types at its own `@rate`, however fast or slowly you typed. Recording types into a tab of its own, which the script's opening `@new` recreates. Pans are not recorded, since the player has no way to play them back, and `@pause key` is left for you to put in.
+**File ▸ Record Demo Script** writes a script from what you do; choose it again to stop, and the script opens in a new tab named `demo.demo`, ready to tidy and play; Save As opens on All Files there, so the name stays `.demo` (#1107). It records what you did, not where you clicked: the text typed, Preview and Render (`MainWindow._render` tells the recorder), named views (`Viewport.view_preset_chosen`), camera moves as a `@rotate` and `@zoom` once the camera has been still for 0.4 s, and idle gaps of a second or more as `@pause`, rounded to half seconds. Text is recorded as a diff between those moments (`text_steps`: the common prefix and suffix kept, the middle deleted and retyped, with `@goto` only where the cursor has to move), so the demo types at its own `@rate`, however fast or slowly you typed. Recording works in the tab in front, and the script opens with a `@tab` naming it, so Play from the script tab types back into that tab. It follows you as you work: switching tabs is a `@tab`, File ▸ New a `@new`, a cursor moved by clicking or arrow keys a `@goto` and a scroll by hand a `@scroll`, each once it has been still for 0.4 s. A scroll that typing or a cursor move caused is not recorded, since replaying those scrolls the same way. Pans are not recorded, since the player has no way to play them back, and `@pause key` is left for you to put in.
 
 ## AI Chat
 
