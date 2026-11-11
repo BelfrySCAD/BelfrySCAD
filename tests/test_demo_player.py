@@ -311,7 +311,7 @@ t0 = time.monotonic()
 while w._demo_player is not None and time.monotonic() - t0 < 20:
     run(50)
 tab = w._current_tab()
-print("RESULT" + json.dumps({"script": script, "file": os.path.relpath(tab.file_path, d),
+print("RESULT" + json.dumps({"script": script, "file": os.path.relpath(tab.file_path, d).replace(os.sep, "/"),
                              "text": tab.editor.toPlainText()}), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
@@ -424,7 +424,7 @@ w.write_export(os.path.join(d, "rec.3mf"))
 w.write_export(os.path.join(other, "far.stl"))
 w._record_demo()
 out["script"] = w._current_editor().toPlainText().splitlines()[2:]
-out["other"] = other
+out["far"] = os.path.join(other, "far.stl")
 print("RESULT" + json.dumps(out), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
@@ -438,5 +438,4 @@ def test_export_plays_and_records():
     # a refused @export is reported and the demo goes on
     assert (out["stl"], out["text"]) == (True, "cube(1);\n!"), out
     assert out["last_format"] != ".stl", out        # a demo's export isn't remembered
-    far = out["other"] + "/far.stl"
-    assert out["script"] == ["@export rec.3mf", f"@export far.stl   // was {far}"], out
+    assert out["script"] == ["@export rec.3mf", f"@export far.stl   // was {out['far']}"], out
