@@ -24,6 +24,9 @@ Return. A directive may end in a `//` comment.
     @scroll 40               scroll the editor so line 40 is at the top
     @scroll customizer 40%   scroll a pane 40% of the way down (`end`: the bottom)
     @show customizer         show a docked pane (@hide hides it); see PANES
+    @show customizer 300     ... 300 pixels wide (high, docked at the top or bottom)
+    @mainwin size 1280 800   resize the main window
+    @mainwin position 100 100  move it
     @set width 30            set a Customizer parameter, as its control would
     @pause 3                 wait 3 seconds
     @pause key               wait for Space (or a presenter remote's "next")
@@ -213,7 +216,14 @@ def _directive(name, args, ms):
             raise ValueError(name)
         return ("pane_scroll", args[0].lower(), pct, 300 if ms is None else ms)
     if name in ("show", "hide") and len(args) == 1 and args[0].lower() in PANES:
-        return ("pane", args[0].lower(), name == "show")
+        return ("pane", args[0].lower(), name == "show", None)
+    if name == "show" and len(args) == 2 and args[0].lower() in PANES and int(args[1]) > 0:
+        return ("pane", args[0].lower(), True, int(args[1]))
+    if name == "mainwin" and len(args) == 3 and args[0].lower() in ("size", "position"):
+        a, b = int(args[1]), int(args[2])
+        if args[0].lower() == "size" and (a <= 0 or b <= 0):
+            raise ValueError(name)
+        return ("mainwin", args[0].lower(), a, b)
     if name == "pause" and args == ["key"]:
         return ("pause", None)
     if name == "pause" and len(args) == 1 and float(args[0]) >= 0:
@@ -487,13 +497,33 @@ class DemoPlayer(QObject):
         else:
             self._scroll_bar(bar, round(bar.maximum() * pct / 100), ms)
 
-    def _do_pane(self, pane, show):
-        dock = getattr(self._win, PANES[pane])
+    def _do_pane(self, pane, show, size=None):
+        win = self._win
+        dock = getattr(win, PANES[pane])
         if show:
             dock.show()
             dock.raise_()
+            if size is not None:
+                # once shown and laid out: resizeDocks ignores a dock not yet placed
+                QTimer.singleShot(0, lambda: self._size_dock(dock, size))
         else:
             dock.hide()
+        self._schedule(300)
+
+    def _size_dock(self, dock, size):
+        win = self._win
+        if dock.isFloating():
+            dock.resize(size, dock.height())
+        else:
+            across = win.dockWidgetArea(dock) in (Qt.DockWidgetArea.TopDockWidgetArea,
+                                                  Qt.DockWidgetArea.BottomDockWidgetArea)
+            win.resizeDocks([dock], [size], Qt.Orientation.Vertical if across else Qt.Orientation.Horizontal)
+
+    def _do_mainwin(self, what, a, b):
+        if what == "size":
+            self._win.resize(a, b)
+        else:
+            self._win.move(a, b)
         self._schedule(300)
 
     def _do_set(self, name, value):
@@ -636,7 +666,7 @@ def _merge_key(line):
         return (word,)
     if word == "@scroll":
         return (word, words[1] if len(words) > 2 and words[1] in PANES else "")
-    if word == "@set" and len(words) > 1:
+    if word in ("@set", "@mainwin") and len(words) > 1:
         return (word, words[1])
     return None
 
@@ -733,6 +763,10 @@ class DemoRecorder(QObject):
             signal.connect(slot)
         self._absorb_text = False
         window._customizer_pane.parameter_set.connect(self.note_set)
+        self._geom = (window.size(), window.pos())
+        self._geom_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
+        self._geom_settle.timeout.connect(self._geometry_settled)
+        window.installEventFilter(self)
         vp = window._viewport
         cam = vp._renderer.camera
         self._cam = (cam.azimuth, cam.elevation, cam.distance, cam.target.copy())
@@ -753,6 +787,7 @@ class DemoRecorder(QObject):
         for signal, slot in self._pane_links:
             signal.disconnect(slot)
         self._win._customizer_pane.parameter_set.disconnect(self.note_set)
+        self._win.removeEventFilter(self)
         vp = self._win._viewport
         vp.camera_changed.disconnect(self._on_camera)
         vp.view_preset_chosen.disconnect(self.note_view)
@@ -866,6 +901,23 @@ class DemoRecorder(QObject):
             self._scroll = value
             self._event(f"@scroll {value + 1}")
 
+    def eventFilter(self, obj, event):
+        if obj is self._win and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            self._geom_settle.start()
+        return False
+
+    def _geometry_settled(self):
+        self._geom_settle.stop()
+        size, pos = self._win.size(), self._win.pos()
+        lines = []
+        if size != self._geom[0]:
+            lines.append(f"@mainwin size {size.width()} {size.height()}")
+        if pos != self._geom[1]:
+            lines.append(f"@mainwin position {pos.x()} {pos.y()}")
+        self._geom = (size, pos)
+        if lines:
+            self._event(*lines)
+
     def _on_pane_shown(self, name):
         hidden = getattr(self._win, PANES[name]).isHidden()
         if hidden != self._hidden[name]:     # not just a tab switch among docks
@@ -903,7 +955,7 @@ class DemoRecorder(QObject):
 
     def _flush_pending(self):
         """Write what is still settling, so events stay in order."""
-        pending = [(self._settle, self._camera_settled),
+        pending = [(self._settle, self._camera_settled), (self._geom_settle, self._geometry_settled),
                    (self._cursor_settle, self._cursor_settled),
                    (self._scroll_settle, self._scroll_settled)]
         pending += [(t, lambda n=n: self._pane_scrolled(n)) for n, t in self._pane_settle.items()]

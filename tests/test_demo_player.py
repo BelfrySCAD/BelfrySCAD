@@ -444,10 +444,13 @@ def test_export_plays_and_records():
 def test_pane_and_set_directives():
     assert parse("@show Customizer\n@hide console\n@scroll customizer 40%\n@scroll docs end over 1s\n"
                  "@set width 30 // mm\n@set label \"a // b\"\n@set on true\n@set v [1, 2.5]\n") == [
-        ("pane", "customizer", True), ("pane", "console", False), ("pane_scroll", "customizer", 40.0, 300),
+        ("pane", "customizer", True, None), ("pane", "console", False, None), ("pane_scroll", "customizer", 40.0, 300),
         ("pane_scroll", "docs", 100.0, 1000), ("set", "width", 30), ("set", "label", "a // b"),
         ("set", "on", True), ("set", "v", [1, 2.5])]
-    for bad in ("@show sidebar", "@scroll customizer 40", "@scroll customizer 140%", "@set width",
+    assert parse("@show customizer 300\n@mainwin size 1280 800\n@mainwin Position -20 100\n") == [
+        ("pane", "customizer", True, 300), ("mainwin", "size", 1280, 800), ("mainwin", "position", -20, 100)]
+    for bad in ("@hide customizer 300", "@show customizer 0", "@mainwin size 0 800", "@mainwin size 1280",
+                "@mainwin where 1 2", "@show sidebar", "@scroll customizer 40", "@scroll customizer 140%", "@set width",
                 "@set 9x 1", "@set w foo"):
         with pytest.raises(DemoScriptError, match="Line 1"):
             parse(bad)
@@ -476,6 +479,7 @@ w._customizer_dock.show(); w._console_dock.show(); app.processEvents(); run(300)
 pane = w._customizer_pane
 w._record_demo()
 w._console_dock.hide(); app.processEvents()
+w.resize(1300, 760); app.processEvents(); run(150)
 pane._widgets["p3"][0].set_value(42); pane._on_widget_changed("p3", 42)
 pane._on_widget_changed("p3", 43)
 run(100)
@@ -484,7 +488,8 @@ script = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().sp
 w._close_tab(w._tabs.currentIndex(), confirm=False)
 w._console_dock.show()
 p = os.path.join(tempfile.mkdtemp(), "t.demo")
-open(p, "w").write("@set p7 70\\n@set nope 1\\n@hide console\\n@scroll customizer end over 0.1s\\n")
+open(p, "w").write("@set p7 70\\n@set nope 1\\n@hide console\\n@mainwin size 1400 680\\n"
+                   "@show customizer 333\\n@scroll customizer end over 0.1s\\n")
 w._play_demo(p)
 t0 = time.monotonic()
 while w._demo_player is not None and time.monotonic() - t0 < 20:
@@ -492,7 +497,8 @@ while w._demo_player is not None and time.monotonic() - t0 < 20:
 bar = pane_scrollbar(w._customizer_dock)
 print("RESULT" + json.dumps({"script": script, "text": w._current_editor().toPlainText().splitlines()[7],
                              "console_hidden": w._console_dock.isHidden(),
-                             "scrolled": bar.maximum() > 0 and bar.value() == bar.maximum()}), flush=True)
+                             "scrolled": bar.maximum() > 0 and bar.value() == bar.maximum(),
+                             "size": [w.width(), w.height()], "cust_w": w._customizer_dock.width()}), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
@@ -503,5 +509,7 @@ def test_panes_and_set_record_and_play():
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
     # the write-back into the editor is not recorded as typing
-    assert out["script"] == ["@hide console", "@set p3 43"], out
-    assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True}, out
+    assert out["script"] == ["@hide console", "@mainwin size 1300 760", "@set p3 43"], out
+    assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True,
+                   "size": [1400, 680]}, out
+    assert abs(out["cust_w"] - 333) <= 2, out
