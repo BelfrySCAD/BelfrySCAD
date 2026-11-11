@@ -1,5 +1,6 @@
-"""Shorter document tabs (#1096): no .scad by default, and tabs that shrink
-longest first, down to a minimum, with scroll arrows past it."""
+"""Shorter document tabs (#1096): .scad dropped first when the tabs don't
+fit, then the longest shrink first, down to a minimum, with scroll arrows
+past it."""
 import json
 import subprocess
 import sys
@@ -40,7 +41,6 @@ def fits():
     return sum(widths()) <= bar.width() + 1
 out = {"default": labels(), "tooltip_full": bar.tabToolTip(4).endswith(".scad")}
 w._tabs.setCurrentIndex(4)             # the current tab is drawn bolder: keep it a long one
-natural = widths()
 # More long names than fit: the short tabs keep their width, the long ones
 # are cut to one level.
 # Added one at a time until they first overflow, so the test holds at any
@@ -50,9 +50,11 @@ while sum(bar.__class__.__mro__[1].tabSizeHint(bar, i).width() for i in range(ba
     p = os.path.join(d, f"another_quite_long_part_name_{k}.scad"); open(p, "w").write("x\\n")
     w.open_file_by_path(p); k += 1
 n_long = bar.count()
+out["stripped"] = labels()[:5]
 cut = widths()
-out["short_kept"] = cut[:4] == natural[:4]
+# natural widths of the names shown, now without .scad
 nat = [bar.__class__.__mro__[1].tabSizeHint(bar, i).width() for i in range(bar.count())]
+out["short_kept"] = cut[:4] == nat[:4]
 level = max(cut)
 # Every tab keeps its own width or sits at the one level; the longest is cut.
 out["long_level"] = (all(c == n or abs(c - level) <= 1 for c, n in zip(cut, nat))
@@ -64,14 +66,13 @@ for k in range(40):
     w.open_file_by_path(p)
 tiny = widths()
 fm = bar.fontMetrics()
-# The long tabs stop at their floor -- 12 characters of the name -- not below.
+# The long tabs stop at their floor -- 8 characters of the name -- not below.
 out["min_kept"] = all(bar.minimumTabSizeHint(i).width() <= tiny[i] < cut[i] for i in range(4, n_long))
-out["short_not_widened"] = tiny[:4] == natural[:4]
+out["short_not_widened"] = tiny[:4] == nat[:4]
 out["scrolls"] = not fits()
 for i in range(bar.count() - 1, 4, -1):
     w._close_tab(i)
-app_settings().setValue("editor/tabHideScadExtension", False)
-w._apply_preferences()
+app.processEvents()
 out["shown"] = labels()
 print("RESULT" + json.dumps(out)); import sys; sys.stdout.flush()
 from belfryscad.main import hard_exit; hard_exit(0)
@@ -83,8 +84,9 @@ def test_tab_labels_and_shrinking():
     line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
-    assert out == {"default": ["a", "b", "notes.txt", "Shout*", "a_very_long_name_for_a_bracket_part"],
+    full = ["a.scad", "b.scad", "notes.txt", "Shout.SCAD*", "a_very_long_name_for_a_bracket_part.scad"]
+    assert out == {"default": full,
+                   "stripped": ["a", "b", "notes.txt", "Shout*", "a_very_long_name_for_a_bracket_part"],
                    "tooltip_full": True, "short_kept": True, "long_level": True, "fits": True,
                    "min_kept": True, "short_not_widened": True, "scrolls": True,
-                   "shown": ["a.scad", "b.scad", "notes.txt", "Shout.SCAD*",
-                             "a_very_long_name_for_a_bracket_part.scad"]}, out
+                   "shown": full}, out

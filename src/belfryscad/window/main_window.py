@@ -610,13 +610,10 @@ class FileTab(QWidget):
         return name
 
     def tab_label(self):
-        """display_name() for the tab itself: without `.scad` unless
-        Preferences > Editor says otherwise (#1096). The tooltip keeps the
-        full path, and dialogs keep the full name."""
-        name = self.display_name()
-        if load_preference("editor/tabHideScadExtension", bool):
-            name = re.sub(r"\.scad(?=\*?( \(ro\))?$)", "", name, flags=re.IGNORECASE)
-        return name
+        """display_name() for the tab itself. The tab bar drops `.scad`
+        when the tabs don't fit (_ShrinkingTabBar, #1096); the tooltip
+        keeps the full path, and dialogs keep the full name."""
+        return self.display_name()
 
     def has_unsaved_content(self):
         """Whether this buffer holds text that is not on disk.
@@ -1045,18 +1042,25 @@ class _RenderWorker(QObject):
                             geometry, export_name)
 
 
-class _ShrinkingTabBar(QTabBar):
-    """Document tabs that shrink longest first (#1096): a tab wider than
-    the rest is cut to the width of the next widest, and so on down, so a
-    short name stays whole until every tab is the same width. No tab goes
-    below MIN_CHARS characters of its name; past that the scroll arrows take
-    over. Names are cut in the middle, where the end that tells similar
-    files apart survives."""
+def _strip_scad(label: str) -> str:
+    """A tab label without its `.scad`, keeping any `*` or ` (ro)` after it."""
+    return re.sub(r"\.scad(?=\*?( \(ro\))?$)", "", label, flags=re.IGNORECASE)
 
-    MIN_CHARS = 12
+
+class _ShrinkingTabBar(QTabBar):
+    """Document tabs that fit (#1096). First every `.scad` is dropped, if
+    the full names don't fit. Then the longest shrink first: a tab wider
+    than the rest is cut to the width of the next widest, and so on down,
+    so a short name stays whole until every tab is the same width. No tab
+    goes below MIN_CHARS characters of its name; past that the scroll
+    arrows take over. Names are cut in the middle, where the end that tells
+    similar files apart survives. Each tab's full label is its tabData."""
+
+    MIN_CHARS = 8
 
     def __init__(self):
         super().__init__()
+        self._relabelling = False
         self.setUsesScrollButtons(True)
         self.setElideMode(Qt.TextElideMode.ElideMiddle)
         self.setExpanding(False)
@@ -1093,7 +1097,40 @@ class _ShrinkingTabBar(QTabBar):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relabel()
         self.updateGeometry()       # the widths above depend on this one
+
+    def setTabText(self, index, text):
+        self.setTabData(index, text)
+        super().setTabText(index, text)
+        self._relabel()
+
+    def tabInserted(self, index):
+        super().tabInserted(index)
+        self.setTabData(index, self.tabText(index))
+        self._relabel()
+
+    def tabRemoved(self, index):
+        super().tabRemoved(index)
+        self._relabel()
+
+    def _relabel(self):
+        """Full names if they all fit, else every tab without `.scad`."""
+        if self._relabelling:
+            return
+        self._relabelling = True
+        try:
+            fm = self.fontMetrics()
+            full = [self.tabData(i) or self.tabText(i) for i in range(self.count())]
+            natural = sum(QTabBar.tabSizeHint(self, i).width() - fm.horizontalAdvance(self.tabText(i))
+                          + fm.horizontalAdvance(f) for i, f in enumerate(full))
+            fits = natural <= self.width()
+            for i, f in enumerate(full):
+                text = f if fits else _strip_scad(f)
+                if self.tabText(i) != text:
+                    QTabBar.setTabText(self, i, text)
+        finally:
+            self._relabelling = False
 
 
 def _water_level(widths, room):
