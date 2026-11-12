@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.21" date="2026-11-12">
+      <description>
+        <p>Long animations no longer use up memory; an animation pauses on a frame that fails; demo recording writes no @pause; Preview of an empty editor clears the view; docs links work in list sections</p>
+      </description>
+    </release>
     <release version="1.99.20" date="2026-11-11">
       <description>
         <p>Demo scripts record tabs, cursor moves, scrolls, panes and Customizer changes, and gain @open, @close, @export, @enter, @show, @set and @mainwin; Customizer groups are collapsible sections; tabs drop .scad only when they don't fit</p>
