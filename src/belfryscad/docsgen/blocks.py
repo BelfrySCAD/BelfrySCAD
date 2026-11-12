@@ -323,7 +323,7 @@ class BulletListBlock(GenericBlock):
         sub = self.parse_links(self.subtitle, controller, target)
         sub = target.escape_entities(sub)
         out = target.block_header(self.title, sub)
-        out.extend(target.bullet_list(self.body))
+        out.extend(target.bullet_list([self.parse_links(x, controller, target) for x in self.body]))
         return out
 
 
@@ -335,7 +335,7 @@ class NumberedListBlock(GenericBlock):
         sub = self.parse_links(self.subtitle, controller, target)
         sub = target.escape_entities(sub)
         out = target.block_header(self.title, sub)
-        out.extend(target.numbered_list(self.body))
+        out.extend(target.numbered_list([self.parse_links(x, controller, target) for x in self.body]))
         return out
 
 
