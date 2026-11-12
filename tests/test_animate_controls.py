@@ -243,3 +243,42 @@ def test_a_frame_that_fails_pauses_the_animation():
     assert out["t"] >= 0.3
     assert "too far" in out["console"]
     assert "Animation paused" in out["console"]
+
+
+CACHE_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.main import hard_exit
+sys.excepthook = lambda *e: (__import__("traceback").print_exception(*e), hard_exit(1))
+from belfryscad.window.main_window import MainWindow
+w = MainWindow(); w.skip_unsaved_prompts = True
+w._current_editor().setPlainText("rotate($t * 360) cube([1, 2, 3]);")
+pane = w._animate_pane
+pane._steps = 30
+sizes = []
+for step in range(30):
+    pane._step = step
+    w._render()
+    end = time.time() + 30
+    while w._render_jobs and time.time() < end:
+        app.processEvents(); time.sleep(0.005)
+    sizes.append(w._csg_cache.size())
+print(json.dumps(sizes), flush=True)
+hard_exit(0)
+'''
+
+
+def test_the_render_cache_stays_bounded_over_an_animation():
+    """#1117: every frame's keys are new, and the unbounded cache grew by
+    a frame per frame until a long animation took all of RAM."""
+    env = dict(os.environ)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    proc = subprocess.run([sys.executable, "-c", CACHE_DRIVER], capture_output=True,
+                          text=True, env=env, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    sizes = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert max(sizes) <= 10, sizes
