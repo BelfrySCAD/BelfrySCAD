@@ -167,6 +167,15 @@ def _now_iso() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+def point_literal(p) -> str:
+    """`[10, 0, 2.5]`: an OpenSCAD vector, to 4 decimals, trailing zeros
+    dropped. Snapped points carry float noise a script doesn't want."""
+    def num(c):
+        t = f"{float(c):.4f}".rstrip("0").rstrip(".")
+        return "0" if t in ("", "-0") else t
+    return "[" + ", ".join(num(c) for c in p) + "]"
+
+
 @dataclass
 class Measurement:
     """One finished measurement, in world space.
@@ -192,6 +201,13 @@ class Measurement:
             return float("nan")     # a leg of no length has no angle
         cos = float(np.dot(a, b)) / (na * nb)
         return float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
+
+    def where(self) -> str:
+        """The points, as literals to copy into a script (#1118)."""
+        p = [point_literal(x) for x in self.points]
+        if self.kind == "distance":
+            return f"from {p[0]} to {p[1]}"
+        return f"at {p[1]} between {p[0]} and {p[2]}"
 
     def label(self) -> str:
         v = self.value()
@@ -1629,6 +1645,9 @@ class Viewport(QOpenGLWidget):
             if changed:
                 self._rebuild_measure_overlay()
                 self.update()
+                # Where the next click would land, to read off or copy (#1118).
+                where = f"  {point_literal(hover[0])} ({hover[1]})" if hover else ""
+                self.measure_progress.emit(self._measure_prompt() + where)
 
         # Gizmo drag update
         if self._gizmo_drag_axis >= 0:
