@@ -3514,7 +3514,7 @@ class MainWindow(QMainWindow):
         self._viewport.set_measurements(self._measurements)
         kinds = "/".join(measurement.snaps)
         self.log(f"Measured {measurement.kind}: {measurement.label()}  "
-                 f"[snapped to {kinds}]")
+                 f"{measurement.where()}  [snapped to {kinds}]")
 
     def _on_measurement_dismissed(self, index: int):
         if not (0 <= index < len(self._measurements)):
