@@ -619,8 +619,6 @@ class DemoPlayer(QObject):
 
 # -- recording -------------------------------------------------------------
 
-#: An idle gap at least this long becomes a @pause, rounded to half seconds.
-PAUSE_MIN_S = 1.0
 #: A camera that has not moved for this long has finished moving.
 SETTLE_MS = 400
 
@@ -718,7 +716,7 @@ class DemoRecorder(QObject):
     It records what you did, not when you did it: the text typed (as a diff
     between moments, so the script types it at its own @rate), cursor moves,
     editor scrolls, tab switches, File > New, Preview and Render, named
-    views, camera moves once they settle, and pauses of a second or more.
+    views and camera moves once they settle. Not pauses.
     It records in the tab in front, and opens with a @tab naming it. Pans
     are not recorded; the player has none.
     """
@@ -729,7 +727,6 @@ class DemoRecorder(QObject):
         self._editor = None
         self._touched = 0.0
         self._new_tab = False
-        self._idle_from = time.monotonic()
         self._cursor_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
         self._cursor_settle.timeout.connect(self._cursor_settled)
         self._scroll_settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
@@ -951,11 +948,7 @@ class DemoRecorder(QObject):
         if self._absorb_text:           # a Customizer write-back
             self._snap = self._last = self._editor.toPlainText()
             return
-        if time.monotonic() - self._idle_from >= PAUSE_MIN_S:
-            self._flush_text()          # the text before the pause
-            self._pause()
         self._last = self._editor.toPlainText()
-        self._idle_from = time.monotonic()
 
     def note_render(self, preview):
         self._event("@preview" if preview else "@render")
@@ -997,21 +990,17 @@ class DemoRecorder(QObject):
                 at = " at " + " ".join(f"{c:.4g}" for c in now[3])
             lines.append(f"@zoom {before[2] / now[2]:.2f}{at} over {secs:g}s")
         if lines:
-            self._event(*lines, idle_before=started)
+            self._event(*lines)
 
     # -- writing ---------------------------------------------------------
 
-    def _event(self, *lines, idle_before=None):
+    def _event(self, *lines):
+        # No @pause: how long you paused while recording is rarely how long
+        # the demo should, and they were a fifth of a recording's lines
+        # (#1108). Add @pause key where you want to stop and talk.
         self._flush_pending()
         self._flush_text()
-        self._pause(idle_before)
         self._lines += lines
-        self._idle_from = time.monotonic()
-
-    def _pause(self, until=None):
-        gap = (until or time.monotonic()) - self._idle_from
-        if gap >= PAUSE_MIN_S:
-            self._lines.append(f"@pause {round(gap * 2) / 2:g}")
 
     def _flush_text(self):
         lines, self._cursor = text_steps(self._snap, self._last, self._cursor)
