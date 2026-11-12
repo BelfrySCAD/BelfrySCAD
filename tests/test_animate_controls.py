@@ -200,3 +200,46 @@ def test_dump_pictures_asks_for_the_folder_before_the_first_frame():
     k = out["mid_start"]
     assert out["mid_order"] == [f"frame{(k + i) % 3:04d}.png" for i in range(3)]
     assert out["mid_after"] == {"playing": True, "ticked": False, "complete": True}
+
+
+ERROR_DRIVER = '''
+import json, os, sys, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.main import hard_exit
+sys.excepthook = lambda *e: (__import__("traceback").print_exception(*e), hard_exit(1))
+from belfryscad.window.main_window import MainWindow
+
+w = MainWindow(); w.skip_unsaved_prompts = True
+src = os.path.join(tempfile.mkdtemp(), "bad.scad")
+open(src, "w").write('assert($t < 0.3, "too far"); cube(1);')
+w.open_file_by_path(src, render=False)
+pane = w._animate_pane
+pane._steps = 10
+pane.play()
+deadline = time.time() + 30
+while pane.is_playing() and time.time() < deadline:
+    app.processEvents(); time.sleep(0.01)
+while w._render_jobs and time.time() < deadline:
+    app.processEvents(); time.sleep(0.01)
+print(json.dumps({"playing": pane.is_playing(), "t": pane.current_t(),
+                  "console": w._console.toPlainText()}), flush=True)
+hard_exit(0)
+'''
+
+
+def test_a_frame_that_fails_pauses_the_animation():
+    """#1116: playing on cleared and reprinted the error every frame."""
+    env = dict(os.environ)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    proc = subprocess.run([sys.executable, "-c", ERROR_DRIVER], capture_output=True,
+                          text=True, env=env, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["playing"] is False
+    assert out["t"] >= 0.3
+    assert "too far" in out["console"]
+    assert "Animation paused" in out["console"]
