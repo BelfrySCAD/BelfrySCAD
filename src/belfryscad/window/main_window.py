@@ -3981,6 +3981,10 @@ class MainWindow(QMainWindow):
             self._demo_recorder.note_render(preview)
         source = tab.editor.toPlainText()
         if not source.strip():
+            # Nothing to draw, so draw nothing, as OpenSCAD does (#1108:
+            # File > New was the only other way to clear the viewport).
+            self._render_id += 1        # nor a render still in flight
+            self._clear_viewport()
             return
         # What this text uses or includes is what Automatic Reload should
         # now watch -- an `include` typed since the last save counts, as
