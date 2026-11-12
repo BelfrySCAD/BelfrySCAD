@@ -1311,7 +1311,11 @@ class MainWindow(QMainWindow):
         # earlier renders are harmless (those files no longer exist).
         self._path_labels: dict[str, str] = {}
         from openscad_cpp_evaluator import ManifoldCache
-        self._csg_cache = ManifoldCache()  # content-hash cache of generated CSGNode subtrees, shared across renders/debug sessions
+        # Content-hash cache of generated CSGNode subtrees, shared across
+        # renders and debug sessions. Bounded to what the last 4 renders
+        # used: an animation makes new keys every frame, and unbounded it
+        # grew until a long one took all of RAM (#1117).
+        self._csg_cache = ManifoldCache(keep_renders=4)
         self._rendered_tab: FileTab | None = None  # tab that produced the current viewport geometry
         self._dump_dir: Optional[str] = None
         # The step the next dumped PNG is of; None until a dump's own frame
