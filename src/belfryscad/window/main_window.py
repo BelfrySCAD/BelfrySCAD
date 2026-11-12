@@ -679,6 +679,7 @@ class _RenderCallback(QObject):
         self._file_tab = file_tab
         self._render_id = render_id
         self._repeat_blocks: dict[int, int] = {}   # repeat id -> console block
+        self._landed = False                      # on_finished ran: no error
 
     @Slot(str)
     def on_logged(self, msg: str):
@@ -727,6 +728,7 @@ class _RenderCallback(QObject):
     @Slot(object, object, float, object, object, object, object, object)
     def on_finished(self, bodies, id_to_node, elapsed_ms: float, final_vp: dict, csg_tree: list, profile_result,
                     geometry=None, export_name=None):
+        self._landed = True
         self._mw._on_render_done(self._file_tab, bodies, id_to_node, elapsed_ms, self._render_id, final_vp, csg_tree,
                                  profile_result=profile_result, geometry=geometry, export_name=export_name)
 
@@ -734,6 +736,12 @@ class _RenderCallback(QObject):
     def on_done(self):
         self._mw._set_render_busy(False)
         if self._render_id == self._mw._render_id:
+            if not self._landed and self._mw._animate_pane.is_playing():
+                # A frame that failed stops the animation, leaving its error
+                # on the console. Playing on cleared and reprinted it every
+                # frame, so it flashed too fast to read (#1116).
+                self._mw._animate_pane.pause()
+                self._mw.log("Animation paused: the frame did not render.")
             self._mw._on_render_thread_done(self._file_tab)
 
 
