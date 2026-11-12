@@ -141,7 +141,6 @@ from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window import demo_player
 from belfryscad.window.main_window import MainWindow
-demo_player.PAUSE_MIN_S = 0.2
 demo_player.SETTLE_MS = 50
 w = MainWindow(); w.show(); w.resize(900, 600); app.processEvents()
 def run(ms):
@@ -151,7 +150,7 @@ w._record_demo()                           # records here: no new tab
 tabs_recording = w._tabs.count()
 first.textCursor().insertText("cube(1);\\n" + "//\\n" * 120)
 w._demo_recorder.note_render(True)
-run(300)                                   # a pause
+run(300)                                   # a pause: not recorded (#1108)
 w._file_new()
 w._current_editor().textCursor().insertText("sphere(2);")
 w._viewport.set_view_preset("top")
@@ -201,7 +200,8 @@ def test_record_then_play():
     assert out["tabs_recording"] == 1, out
     assert lines[0] == "@tab 1" and lines[4] == "cube(1);" and "@preview" in lines, out["script"]
     assert all(not l.startswith("@mainwin") for l in lines[4:]), out["script"]
-    events = [l.split()[0] for l in lines if l.startswith("@") and not l.startswith("@pause")]
+    assert not any(l.startswith("@pause") for l in lines), out["script"]
+    events = [l.split()[0] for l in lines if l.startswith("@")]
     assert events[events.index("@new"):] == ["@new", "@type", "@view", "@tab", "@goto", "@scroll", "@rotate", "@zoom", "@zoom"], out["script"]
     assert any(l.startswith("@zoom 2.00 at 3 -1 2 over") for l in lines), out["script"]
     assert lines[-1].startswith("@zoom 0.50 at 0 0 0 over"), out["script"]
