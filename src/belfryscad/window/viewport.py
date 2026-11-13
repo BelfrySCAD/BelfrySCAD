@@ -986,6 +986,7 @@ class Viewport(QOpenGLWidget):
         buttons in step. A tool left running over a cleared selection would
         draw no gizmo and answer no clicks."""
         self._renderer.selected_id = orig_id
+        self._renderer.selected_group = frozenset()   # MainWindow sets it per level
         if orig_id is None and self._active_tool in _GIZMO_TOOLS:
             self.set_active_tool(-1)
         self._sync_tool_buttons()

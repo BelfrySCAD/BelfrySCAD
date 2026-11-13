@@ -42,6 +42,8 @@ class _FakeWindow:
     _span_at_level = MainWindow._span_at_level
     _selectable_span_for_id = MainWindow._selectable_span_for_id
     _editable_span_for_id = MainWindow._editable_span_for_id
+    _ids_under = MainWindow._ids_under
+    _level_group = MainWindow._level_group
 
     def _extrude_state(self, span, tab):
         return False, False  # which tools show is not what these tests are about
@@ -359,7 +361,7 @@ def test_applying_it_selects_the_span_that_starts_there(tmp_path):
     node = SimpleNamespace(position=_pos(str(script), 19, 27), call_sites=())
     mw = _build({7: node}, tab)
     mw._pending_reselect = (1, 19)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: selected.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: selected.setdefault("id", i),
                                    update=lambda: None)
     tab.editor.set_selection = lambda a, b: selected.setdefault("span", (a, b))
     mw._viewport.set_selection_editable = lambda v: selected.setdefault("editable", v)
@@ -379,7 +381,7 @@ def test_nothing_matching_clears_rather_than_selecting_the_wrong_thing(tmp_path)
     cleared = {}
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 9), call_sites=())}, tab)
     mw._pending_reselect = (1, 999)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: cleared.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
                                    set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
@@ -456,7 +458,7 @@ def test_a_stale_render_does_not_consume_the_pending_reselect(tmp_path):
     tab = _tab(str(script), str(script))
     cleared = {}
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: cleared.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: cleared.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
                                    set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
@@ -482,7 +484,7 @@ def test_a_later_render_can_still_satisfy_it(tmp_path):
     tab = _tab(str(script), str(script))
     got = {}
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 19, 28), call_sites=())}, tab)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
                                    set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
@@ -507,7 +509,7 @@ def test_the_reselect_matches_by_region_not_an_exact_offset(tmp_path):
         2: SimpleNamespace(position=_pos(str(script), 28, 37), call_sites=()),
         3: SimpleNamespace(position=_pos(str(script), 38, 46), call_sites=()),
     }, tab)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
                                    set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
@@ -528,7 +530,7 @@ def test_an_edit_after_every_body_clears(tmp_path):
     tab = _tab(str(script), str(script))
     got = {}
     mw = _build({1: SimpleNamespace(position=_pos(str(script), 0, 8), call_sites=())}, tab)
-    mw._viewport = SimpleNamespace(set_selection=lambda i: got.setdefault("id", i),
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), set_selection=lambda i: got.setdefault("id", i),
                                    set_selection_editable=lambda v: None,
                                    set_selection_extrudable=lambda *a: None,
                                    update=lambda: None)
@@ -629,7 +631,57 @@ def test_hovering_a_trace_entry_highlights_only_in_the_rendered_tab(tmp_path):
         return t
 
     rendered, other = tab_for(main), tab_for(lib)
-    mw = _build({}, rendered, [other])
+    mw = _build({5: SimpleNamespace(position=_pos(main, 3, 9), call_sites=())}, rendered, [other])
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), update=lambda: None)
     MainWindow._preview_trace_line(mw, _pos(main, 3, 9))
+    assert mw._viewport._renderer.selected_group == {5}, "the viewport shows what it would select"
     MainWindow._preview_trace_line(mw, _pos(lib, 1, 2))     # open, but not the rendered tab
     assert calls == [(main, 3, 9), (main, "clear")]
+
+
+def _module_window(tmp_path):
+    """#1123's script: a module of two cubes, called once."""
+    script = tmp_path / "m.scad"
+    src = ("module part2(){\n"
+           "    cube([10,10,60]);\n"
+           "    translate([10,5,2])cube([5,5,5]);\n"
+           "}\n"
+           "cube([50,50,2]);\n"
+           "part2();\n")
+    script.write_text(src)
+    o = str(script)
+    at = lambda text: _pos(o, src.index(text), src.index(text) + len(text))
+    call = at("part2();")
+    id_to_node = {
+        1: SimpleNamespace(position=at("cube([10,10,60]);"), call_sites=(call,)),
+        2: SimpleNamespace(position=at("cube([5,5,5]);"), call_sites=(call,)),
+        3: SimpleNamespace(position=at("cube([50,50,2]);"), call_sites=()),
+    }
+    return _build(id_to_node, _tab(o, o)), src
+
+
+def test_a_module_call_level_selects_every_body_the_module_built(tmp_path):
+    """#1123: choosing `part2()` has to light and move the whole module, not
+    the one cube that was clicked."""
+    mw, _src = _module_window(tmp_path)
+    assert mw._level_group(1) == {1}, "the default level is the clicked cube's own line"
+    mw._selection_level_id, mw._selection_level = 1, 1
+    assert mw._level_group(1) == {1, 2}, "the call level is everything the call built"
+
+
+def test_a_dragged_module_call_stays_selected(tmp_path):
+    """#1123: a drag of `part2();` edits the call, so the selection that
+    comes back has to be the call -- the bodies' default level is a line
+    inside the module, before the edit, which used to lose it."""
+    mw, src = _module_window(tmp_path)
+    got = {}
+    mw._pending_reselect = (1, src.index("part2();"))
+    mw._viewport = SimpleNamespace(_renderer=SimpleNamespace(), update=lambda: None,
+                                   set_selection=lambda i: got.setdefault("id", i),
+                                   set_selection_editable=lambda v: None,
+                                   set_selection_extrudable=lambda *a: None)
+    mw._rendered_tab.editor.set_selection = lambda a, b: got.setdefault("span", (a, b))
+    MainWindow._apply_pending_reselect(mw)
+    assert got["id"] in (1, 2)
+    assert src[slice(*got["span"])] == "part2();"
+    assert mw._viewport._renderer.selected_group == {1, 2}
