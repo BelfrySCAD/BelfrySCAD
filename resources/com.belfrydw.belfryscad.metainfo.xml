@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.22" date="2026-11-12">
+      <description>
+        <p>Measure shows the coordinates of the snapped point and logs each point picked; polyhedron faces that are not flat fold the way OpenSCAD folds them</p>
+      </description>
+    </release>
     <release version="1.99.21" date="2026-11-12">
       <description>
         <p>Long animations no longer use up memory; an animation pauses on a frame that fails; demo recording writes no @pause; Preview of an empty editor clears the view; docs links work in list sections</p>
