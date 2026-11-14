@@ -1228,6 +1228,10 @@ class SceneRenderer:
         self.axes_color = (0.2, 0.2, 0.2, 1.0)
         self.unselected_vertex_color = (0.0, 0.9, 0.9, 1.0)
         self.selected_id: Optional[int] = None
+        # The other ids drawn, and dragged, as part of the selection: every
+        # body built under the call level the user picked, so choosing a
+        # module call shows -- and moves -- the whole module (#1123).
+        self.selected_group: frozenset = frozenset()
         self.show_gizmo: bool = False
         self.active_gizmo_axis: int = -1   # -1=none, 0=X, 1=Y, 2=Z
         self.drag_offset: np.ndarray = np.zeros(3, dtype=np.float32)
@@ -1359,6 +1363,7 @@ class SceneRenderer:
     def load_geometry(self, bodies: list[ColoredBody]):
         self._clear_buffers()
         self.selected_id = None
+        self.selected_group = frozenset()
         self.drag_offset = np.zeros(3, dtype=np.float32)
         self.drag_extrude = None
         self.drag_rotation_angle = 0.0
@@ -2037,7 +2042,7 @@ class SceneRenderer:
                 buf_models.append(model)
                 continue
 
-            is_selected = self.selected_id is not None and self.selected_id in buf.original_ids
+            is_selected = self.is_selected_buffer(buf)
             base_color = self.buffer_color(buf)
             color = _highlight_color(base_color) if is_selected else base_color
 
@@ -2779,6 +2784,10 @@ class SceneRenderer:
                              self.drag_scale_factor, self.drag_scale_uniform)
         self.held_model = m if self.held_model is None else m @ self.held_model
 
+    def is_selected_buffer(self, buf) -> bool:
+        return ((self.selected_id is not None and self.selected_id in buf.original_ids)
+                or not self.selected_group.isdisjoint(buf.original_ids))
+
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
         if self.selected_id is None:
             return None
@@ -2786,7 +2795,7 @@ class SceneRenderer:
         # across two buffers sharing the same original_ids -- aggregate
         # every matching buffer's vertices, not just the first, or the
         # rotate/scale center would be computed from only part of the body.
-        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        matches = [buf for buf in self._buffers if self.is_selected_buffer(buf)]
         if not matches:
             return None
         all_v = np.vstack([v for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
@@ -2804,7 +2813,7 @@ class SceneRenderer:
         """(zmin, zmax) of the selection, for the extrude preview."""
         if self.selected_id is None:
             return None
-        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        matches = [buf for buf in self._buffers if self.is_selected_buffer(buf)]
         if not matches:
             return None
         zs = np.concatenate([v[:, 2] for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
@@ -2814,7 +2823,7 @@ class SceneRenderer:
         """Is the selection a 2D shape -- drawn as the flat preview slab?"""
         if self.selected_id is None:
             return False
-        matches = [buf for buf in self._buffers if self.selected_id in buf.original_ids]
+        matches = [buf for buf in self._buffers if self.is_selected_buffer(buf)]
         return bool(matches) and all(buf.flat_preview for buf in matches)
 
     def pick_gizmo_axis(self, px: float, py: float, w: int, h: int) -> int:

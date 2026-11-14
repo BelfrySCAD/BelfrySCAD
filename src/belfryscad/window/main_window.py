@@ -7038,7 +7038,11 @@ class MainWindow(QMainWindow):
 
     def _preview_trace_line(self, span):
         """Hovering a call trace entry highlights its call in the rendered
-        tab, as OpenSCAD's does; a call in any other file shows nothing."""
+        tab, as OpenSCAD's does; a call in any other file shows nothing.
+        The viewport lights everything that call built, so the entry shows
+        what choosing it would select (#1123)."""
+        self._viewport._renderer.selected_group = self._ids_under(span)
+        self._viewport.update()
         rendered = self._rendered_tab
         if rendered is not None and self._tab_for_origin(span.origin) is rendered:
             rendered.editor.set_selection(span.start_offset, span.end_offset)
@@ -7103,6 +7107,27 @@ class MainWindow(QMainWindow):
                 continue
             levels.append(frame)
         return levels
+
+    def _ids_under(self, span) -> frozenset:
+        """Every id built at `span` or under it: the bodies whose own node
+        or call chain names that line. Choosing a module call's level
+        selects them all, since an edit there moves them all (#1123)."""
+        key = (span.origin, span.start_offset)
+        return frozenset(
+            i for i, n in self.id_to_node.items()
+            if (n.position.origin, n.position.start_offset) == key
+            or any((f.origin, f.start_offset) == key
+                   for f in (getattr(n, "call_sites", ()) or ())))
+
+    def _level_group(self, orig_id) -> frozenset:
+        """`_ids_under` the level `orig_id` is selected at."""
+        levels = self._selection_levels(orig_id)
+        if not levels:
+            return frozenset()
+        level = (self._selection_level if self._selection_level_id == orig_id else None)
+        if level is None:
+            level = self._default_selection_level(levels) or 0
+        return self._ids_under(levels[max(0, min(level, len(levels) - 1))])
 
     def _tab_for_origin(self, origin):
         """The open tab showing `origin`, or None."""
@@ -7185,10 +7210,15 @@ class MainWindow(QMainWindow):
         rendered = self._rendered_tab
         if rendered is None:
             return
+        renderer = self._viewport._renderer
         if orig_id < 0:
+            renderer.selected_group = frozenset()
+            self._viewport.update()
             rendered.editor.clear_selection()
             return
         span, tab = self._selectable_span_for_id(orig_id)
+        renderer.selected_group = self._level_group(orig_id)
+        self._viewport.update()
         if span is None:
             rendered.editor.clear_selection()
             self._viewport.set_selection_editable(False)
@@ -7457,16 +7487,20 @@ class MainWindow(QMainWindow):
             return          # an older render; leave it pending for the right one
         self._pending_reselect = None
 
+        # Every level of every id, not only its default: a drag of a module
+        # call edits the call, and its bodies' default level is a line inside
+        # the module, so the default alone lost the selection (#1123).
         best = None
         for orig_id in self.id_to_node:
-            # Non-mutating: a scan must not leave the level set from
-            # whichever id it happened to touch last.
-            span, tab = self._span_at_level(orig_id)
-            if span is None or tab is None or tab.editor.isReadOnly():
-                continue
-            if span.start_offset >= edit_start and (best is None
-                                                    or span.start_offset < best[1]):
-                best = (orig_id, span.start_offset, span, tab)
+            for level in range(len(self._selection_levels(orig_id))):
+                # Non-mutating: a scan must not leave the level set from
+                # whichever id it happened to touch last.
+                span, tab = self._span_at_level(orig_id, level)
+                if span is None or tab is None or tab.editor.isReadOnly():
+                    continue
+                if span.start_offset >= edit_start and (best is None
+                                                        or span.start_offset < best[1]):
+                    best = (orig_id, span.start_offset, span, tab, level)
 
         if best is None:
             self._viewport.set_selection(None)
@@ -7475,11 +7509,11 @@ class MainWindow(QMainWindow):
             self._viewport.update()
             return
 
-        orig_id, _start, span, tab = best
-        # A fresh pick, so its level starts at its own default.
+        orig_id, _start, span, tab, level = best
         self._selection_level_id = orig_id
-        self._selection_level = None
+        self._selection_level = level
         self._viewport.set_selection(orig_id)
+        self._viewport._renderer.selected_group = self._level_group(orig_id)
         # Refreshed here too: otherwise it keeps whatever the last CLICK
         # set, so the tools could stay hidden for a selection that is now
         # editable, or shown for one that is not.
