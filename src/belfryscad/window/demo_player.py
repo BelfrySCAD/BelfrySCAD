@@ -21,10 +21,14 @@ Return. A directive may end in a `//` comment.
     @goto start              move the cursor to the start of the text
     @goto end                ... or to its end
     @delete 4                delete the 4 characters after the cursor
+    @remove 3 width=5,       delete the first "width=5," on line 3, leaving
+                             the cursor there (the text is exact: no comment)
     @scroll 40               scroll the editor so line 40 is at the top
     @scroll customizer 40%   scroll a pane 40% of the way down (`end`: the bottom)
     @show customizer         show a docked pane (@hide hides it); see PANES
     @show customizer 300     ... 300 pixels wide (high, docked at the top or bottom)
+    @show edges              turn on a View-menu display: edges, axes or
+                             crosshairs (Cmd+1, 2, 3); @hide turns it off
     @mainwin size 1280 800   resize the main window
     @mainwin position 100 100  move it
     @set width 30            set a Customizer parameter, as its control would
@@ -33,6 +37,7 @@ Return. A directive may end in a `//` comment.
     @preview / @render       F5 / F6, waiting until the result lands
     @view front              a View-menu view: top bottom left right front
                              back iso all center
+    @view top over 2s        ... swinging (or framing) over 2 seconds
     @rotate 30 20 over 1.5s  swing to azimuth 30, elevation 20
     @zoom 1.5 over 1s        zoom in 1.5x (below 1 zooms out)
     @zoom 2 at 10 0 5        ... ending centred on the point [10, 0, 5]
@@ -58,6 +63,9 @@ PANES = {"editor": "_editor_dock", "console": "_console_dock", "customizer": "_c
          "debugger": "_debugger_dock", "animate": "_animate_dock", "ai": "_ai_chat_dock",
          "testing": "_testing_dock", "docs": "_docs_dock", "colors": "_color_list_dock"}
 
+#: View-menu displays @show and @hide turn on and off, and their actions.
+TOGGLES = {"edges": "_act_show_edges", "axes": "_act_show_axes", "crosshairs": "_act_show_cross"}
+
 VIEWS = ("top", "bottom", "left", "right", "front", "back", "iso", "all", "center")
 DEFAULT_RATE = 8.0
 #: How long Viewport.animate_camera_to swings to a named view.
@@ -81,6 +89,10 @@ def parse(text: str) -> list[tuple]:
     for n, line in enumerate(text.splitlines(), 1):
         if line.startswith("@type "):   # raw: no comment, no strip, no newline
             steps.append(("type", line[6:]))
+            continue
+        m = re.match(r"@remove\s+(\d+) (.+)$", line, re.IGNORECASE)
+        if m and int(m.group(1)) >= 1:    # raw, as @type: code holds // and spaces
+            steps.append(("remove", int(m.group(1)), m.group(2)))
             continue
         if line.startswith("@@"):
             steps.append(("type", line[1:] + "\n"))
@@ -215,6 +227,8 @@ def _directive(name, args, ms):
         if not args[1].endswith("%") and args[1].lower() != "end" or not 0 <= pct <= 100:
             raise ValueError(name)
         return ("pane_scroll", args[0].lower(), pct, 300 if ms is None else ms)
+    if name in ("show", "hide") and len(args) == 1 and args[0].lower() in TOGGLES:
+        return ("toggle", args[0].lower(), name == "show")
     if name in ("show", "hide") and len(args) == 1 and args[0].lower() in PANES:
         return ("pane", args[0].lower(), name == "show", None)
     if name == "show" and len(args) == 2 and args[0].lower() in PANES and int(args[1]) > 0:
@@ -231,7 +245,7 @@ def _directive(name, args, ms):
     if name in ("preview", "render") and not args:
         return ("render", name == "preview")
     if name == "view" and len(args) == 1 and args[0].lower() in VIEWS:
-        return ("view", args[0].lower())
+        return ("view", args[0].lower(), ms)
     if name == "rotate" and len(args) == 2:
         return ("rotate", float(args[0]), float(args[1]), 1000 if ms is None else ms)
     if name == "zoom" and len(args) in (1, 5) and float(args[0]) > 0:
@@ -564,9 +578,38 @@ class DemoPlayer(QObject):
         else:
             self._schedule(0)
 
-    def _do_view(self, preset):
-        self._viewport().set_view_preset(preset)
-        self._schedule(VIEW_MS if preset not in ("all", "center") else 0)
+    def _do_view(self, preset, ms=None):
+        vp = self._viewport()
+        if ms is None:
+            vp.set_view_preset(preset)
+            self._schedule(VIEW_MS if preset not in ("all", "center") else 0)
+        elif preset in vp.VIEW_PRESETS:
+            self._do_rotate(*vp.VIEW_PRESETS[preset], ms)
+        else:
+            # all/center: where the menu would cut to, glided to instead
+            cam = vp._renderer.camera
+            d0, t0 = cam.distance, cam.target.copy()
+            vp.set_view_preset(preset)
+            d1, t1 = cam.distance, cam.target.copy()
+            cam.target = t0
+            vp.set_distance(d0)
+            self._glide(d1, t1, ms)
+
+    def _do_toggle(self, what, on):
+        getattr(self._win, TOGGLES[what]).setChecked(on)
+        self._schedule(300)
+
+    def _do_remove(self, line, text):
+        block = self._editor.document().findBlockByNumber(line - 1)
+        at = block.text().find(text) if block.isValid() else -1
+        if at < 0:
+            self._win.log(f"Demo: line {line} has no {text!r} to remove.")
+            self._schedule(0)
+            return
+        self._cursor.setPosition(block.position() + at)
+        self._editor.setTextCursor(self._cursor)
+        self._deleting = len(text)
+        self._schedule(1000 / self._rate)
 
     def _do_rotate(self, az, el, ms):
         vp = self._viewport()
@@ -594,14 +637,19 @@ class DemoPlayer(QObject):
             QTimer.singleShot(300, self._rotate_watch)
 
     def _do_zoom(self, factor, ms, at=None):
+        cam = self._viewport()._renderer.camera
+        t0 = cam.target.copy()
+        self._glide(cam.distance / factor, t0 if at is None else np.array(at, dtype=t0.dtype), ms)
+
+    def _glide(self, d1, t1, ms):
+        """Move the camera to distance `d1` from target `t1` over `ms`."""
         vp = self._viewport()
         cam = vp._renderer.camera
         d0, t0 = cam.distance, cam.target.copy()
-        t1 = t0 if at is None else np.array(at, dtype=t0.dtype)
 
         def step(v):
             cam.target = t0 + (t1 - t0) * v
-            vp.set_distance(d0 + (d0 / factor - d0) * v)
+            vp.set_distance(d0 + (d1 - d0) * v)
         anim = QVariantAnimation(self)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
@@ -756,6 +804,9 @@ class DemoRecorder(QObject):
                 for area in dock.findChildren(QAbstractScrollArea):
                     self._pane_links.append((area.verticalScrollBar().valueChanged,
                                              lambda _v, n=name: self._on_pane_scroll(n)))
+        for name, attr in TOGGLES.items():     # View > Show Edges/Axes/Crosshairs
+            self._pane_links.append((getattr(window, attr).toggled,
+                                     lambda on, n=name: self._event(f"@{'show' if on else 'hide'} {n}")))
         for signal, slot in self._pane_links:
             signal.connect(slot)
         self._absorb_text = False
