@@ -605,13 +605,19 @@ class OpenSCADHighlighter(QSyntaxHighlighter):
         keyword_format.setFontWeight(QFont.Weight.Bold)
         keywords = [
             "module", "function", "if", "else", "for", "let",
-            "each", "true", "false", "undef", "include", "use",
+            "each", "true", "false", "undef",
         ]
         for kw in keywords:
             self._rules.append((
                 QRegularExpression(rf"\b{kw}\b"),
                 keyword_format,
             ))
+        # Keywords only before a `<`, as the parser reads them (#1138);
+        # elsewhere `include`/`use` are ordinary names.
+        self._rules.append((
+            QRegularExpression(r"\b(?:include|use)\b(?=\s*<)"),
+            keyword_format,
+        ))
 
         self._builtin_format = builtin_format = QTextCharFormat()
         builtins = [

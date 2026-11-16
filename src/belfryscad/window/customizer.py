@@ -89,7 +89,7 @@ def _valid_param_name(name: str) -> bool:
     is handed the live camera as `$vp*` (`MainWindow._viewport_params`) and
     the evaluated result is applied back to it (`_apply_vp_params`). A
     control for one would be editing a value the next render overrides."""
-    _KEYWORDS = {'true', 'false', 'undef', 'use', 'include',
+    _KEYWORDS = {'true', 'false', 'undef',
                  'module', 'function', 'for', 'if', 'else', 'let', 'each'}
     return bool(name) and name not in _KEYWORDS and not name.startswith('$vp')
 
