@@ -86,3 +86,10 @@ def test_unparseable_source_falls_back_to_the_line_scanner():
     src = "// Width\nwidth = 20; // [1:50]\nbroken = ;\n"
     got = _tup(scan_parameters(src))
     assert [(n, v, c) for n, v, _, _, c, _ in got] == [("width", 20, "[1:50]")]
+
+
+def test_a_parameter_named_include_or_use_is_offered():
+    # #1138: `include`/`use` are keywords only before a `<`, so they are
+    # ordinary names a script may give a parameter.
+    names = [p.name for p in scan_parameters("include = 3;\nuse = true;\n")]
+    assert names == ["include", "use"]
