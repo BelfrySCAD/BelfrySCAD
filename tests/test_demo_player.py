@@ -17,7 +17,7 @@ def test_parse():
     ) == [
         ("new",), ("rate", 20.0), ("type", "cube(1);\n"), ("type", "\n"), ("type", "@x\n"),
         ("pause", None), ("pause", 0.5), ("render", True), ("render", False),
-        ("view", "front"), ("rotate", 30.0, 20.0, 1500), ("zoom", 2.0, 500, None), ("zoom", 0.5, 2000, None),
+        ("view", "front", None), ("rotate", 30.0, 20.0, 1500), ("zoom", 2.0, 500, None), ("zoom", 0.5, 2000, None),
         ("zoom", 3.0, 500, (1.0, -2.0, 0.5)),
     ]
 
@@ -518,3 +518,65 @@ def test_panes_and_set_record_and_play():
     assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True,
                    "size": [1800, 680]}, out
     assert abs(out["cust_w"] - 333) <= 2, out
+
+
+def test_remove_view_over_and_displays_parse():
+    assert parse("@remove 3 width = 5, // mm\n@REMOVE 1  x\n@view top over 2s\n@view all over 0.5\n"
+                 "@show Edges\n@hide axes\n@show crosshairs // Cmd+3\n") == [
+        ("remove", 3, "width = 5, // mm"), ("remove", 1, " x"), ("view", "top", 2000), ("view", "all", 500),
+        ("toggle", "edges", True), ("toggle", "axes", False), ("toggle", "crosshairs", True)]
+    for bad in ("@remove 0 x", "@remove 3", "@remove x y", "@show edges 300", "@view top over"):
+        with pytest.raises(DemoScriptError, match="Line 1"):
+            parse(bad)
+
+
+VIEW_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+def play(script):
+    p = os.path.join(tempfile.mkdtemp(), "t.demo")
+    open(p, "w").write(script)
+    w._play_demo(p)
+    t0 = time.monotonic()
+    while w._demo_player is not None and time.monotonic() - t0 < 20:
+        run(20)
+w = MainWindow(); w.show(); app.processEvents()
+w._record_demo()
+w._act_show_edges.setChecked(True); w._act_show_axes.setChecked(False)
+run(50)
+w._record_demo()
+recorded = [l.split("//")[0].strip() for l in w._current_editor().toPlainText().splitlines()][4:]
+w._close_tab(w._tabs.currentIndex(), confirm=False)
+w._act_show_edges.setChecked(False); w._act_show_axes.setChecked(True)
+cam = w._viewport._renderer.camera
+w._current_editor().setPlainText("cuboid([10, 20, 30], rounding=2, anchor=BOT);\\n")
+seen = []
+w._viewport.camera_changed.connect(lambda: seen.append(round(cam.azimuth)))
+play("@rate 400\\n@remove 1 rounding=2, \\n@type chamfer=1, \\n@remove 1 nothing\\n"
+     "@show edges\\n@hide axes\\n@show crosshairs\\n@view top over 0.3s\\n")
+print("RESULT" + json.dumps({
+    "recorded": recorded, "text": w._current_editor().toPlainText(),
+    "edges": w._act_show_edges.isChecked(), "axes": w._act_show_axes.isChecked(),
+    "cross": w._act_show_cross.isChecked(), "el": round(cam.elevation), "frames": len(set(seen))}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_remove_displays_and_view_over_play_and_record():
+    r = subprocess.run([sys.executable, "-c", VIEW_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    assert out["recorded"] == ["@show edges", "@hide axes"], out
+    assert out["text"] == "cuboid([10, 20, 30], chamfer=1, anchor=BOT);\n", out
+    assert (out["edges"], out["axes"], out["cross"], out["el"]) == (True, False, True, 90), out
+    assert out["frames"] > 3, out      # swung, not cut
