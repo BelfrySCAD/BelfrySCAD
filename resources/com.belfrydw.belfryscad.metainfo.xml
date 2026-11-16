@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.24" date="2026-11-16">
+      <description>
+        <p>include and use can be used as names, as in OpenSCAD; a failed parse no longer breaks the next one on a comment</p>
+      </description>
+    </release>
     <release version="1.99.23" date="2026-11-14">
       <description>
         <p>Choosing a module call from the selection menu selects everything it built, and stays selected after a drag; the menu keeps every level after a re-render</p>
