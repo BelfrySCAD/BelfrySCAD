@@ -3864,6 +3864,12 @@ class MainWindow(QMainWindow):
         # A folder of its own, left behind: the slicer reads the file after
         # this returns, perhaps much later, so there is no moment to delete it.
         name = os.path.basename(self._default_export_path()) or "model"
+        # The 3MF questions too, the first time: they are otherwise only
+        # asked by an Export, and a model never exported went out as
+        # whatever the defaults said (#1142). Asked once, then remembered.
+        if not app_settings().contains("export/printType"):
+            if ask_export_options(".3mf", self, name + ".3mf") is None:
+                return
         path = os.path.join(tempfile.mkdtemp(prefix="belfryscad-slicer-"), name + ".3mf")
         tab = self._current_tab()
         design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""

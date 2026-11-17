@@ -91,6 +91,15 @@ render("color(\\"red\\") cube(10); color(\\"blue\\") translate([20,0,0]) cube(5)
 from PySide6.QtWidgets import QInputDialog
 QInputDialog.getItem = staticmethod(lambda *a, **k: ("Other Application…", True))
 mw.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (fake, ""))
+# ... and, never having exported, the 3MF questions too (#1142)
+from belfryscad.window.export_options import remember
+asked = []
+def ask(ext, parent, filename):
+    asked.append([ext, filename])
+    answers = {"export/printType": "single", "export/splitComponents": False}
+    remember(answers)
+    return answers
+mw.ask_export_options = ask
 w._send_to_slicer()
 deadline = time.time() + 20
 while not os.path.exists(record) and time.time() < deadline:
@@ -99,6 +108,8 @@ sent = json.load(open(record))
 out["argv_len"] = len(sent)
 out["name"] = os.path.basename(sent[0])
 out["is_3mf_zip"] = zipfile_ok = __import__("zipfile").is_zipfile(sent[0])
+model = __import__("zipfile").ZipFile(sent[0]).read("3D/3dmodel.model").decode()
+out["objects"] = model.count("<object ")   # single-material: the two colours welded
 out["pref"] = [load_preference("print/slicer", str), load_preference("print/slicerPath", str) == fake]
 # Second send: remembered, no question.
 os.remove(record)
@@ -108,6 +119,7 @@ deadline = time.time() + 20
 while not os.path.exists(record) and time.time() < deadline:
     app.processEvents(); time.sleep(0.05)
 out["second_send"] = os.path.exists(record)
+out["asked"] = asked
 # A 2D model is refused, and nothing launched.
 os.remove(record)
 w._geometry = None; w._bodies = []
@@ -134,5 +146,7 @@ def test_send_to_slicer_exports_3mf_and_launches_the_chosen_app(tmp_path):
     assert out["is_3mf_zip"]
     assert out["pref"] == ["custom", True]
     assert out["second_send"]
+    assert out["asked"] == [[".3mf", "bracket.3mf"]]   # once, not on the second send
+    assert out["objects"] == 1
     assert out["2d_launched"] is False
     assert out["warnings"] == ["This model is 2D. A slicer needs a 3D model: extrude it first."]
