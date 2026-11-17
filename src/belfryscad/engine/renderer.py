@@ -1107,6 +1107,12 @@ def _tick_is_drawn(k: int, major_steps: int, end_on: bool, stride: int) -> bool:
     return k % stride == 0
 
 
+def _release_buffer(buf) -> None:
+    for gl in (buf.vao, buf.vbo, buf.ibo, buf.edge_vao, buf.edge_vbo):
+        if gl is not None:
+            gl.release()
+
+
 class MeshBuffer:
     def __init__(self, ctx: mgl.Context, vbo: mgl.Buffer, ibo: Optional[mgl.Buffer],
                  vao: mgl.VertexArray, num_indices: int, color: tuple,
@@ -1217,6 +1223,9 @@ class SceneRenderer:
         self._mesh_prog: Optional[mgl.Program] = None
         self._marker_prog: Optional[mgl.Program] = None
         self._buffers: list[MeshBuffer] = []
+        #: id(buf) -> (selected ids in it, [selected part, the rest]); see
+        #: _drawn_buffers.
+        self._splits: dict = {}
         self._line_buffers: list[LineBuffer] = []
         self._point_buffers: list[PointBuffer] = []
         self.depth_test_points: bool = False
@@ -1381,16 +1390,65 @@ class SceneRenderer:
             self._buffers.extend(self._upload_body(cb))
 
     def _clear_buffers(self):
-        for buf in self._buffers:
-            buf.vao.release()
-            buf.vbo.release()
-            if buf.ibo is not None:
-                buf.ibo.release()
-            if buf.edge_vao is not None:
-                buf.edge_vao.release()
-            if buf.edge_vbo is not None:
-                buf.edge_vbo.release()
+        for buf in self._buffers + [b for _, parts in self._splits.values() for b in parts]:
+            _release_buffer(buf)
         self._buffers.clear()
+        self._splits.clear()
+
+    def _selection_ids(self) -> frozenset:
+        if self.selected_id is None:
+            return self.selected_group
+        return self.selected_group | {self.selected_id}
+
+    def _drawn_buffers(self) -> list:
+        """`_buffers`, with each one the selection covers only PART of cut
+        in two: the selected triangles and the rest. A union is one body,
+        so one buffer, and the highlight, drag and extrude preview of one
+        of its parts took the whole of it (#1123). Cut on demand, kept while
+        the selection stays, so an unselected model draws as it was."""
+        sel = self._selection_ids()
+        splits, out = {}, []
+        for buf in self._buffers:
+            hit = sel & buf.original_ids if sel and buf.program is self._prog else None
+            if not hit or hit == buf.original_ids:
+                out.append(buf)
+                continue
+            key = id(buf)
+            old = self._splits.pop(key, None)
+            if old is not None and old[0] == hit:
+                parts = old[1]
+            else:
+                if old is not None:
+                    for b in old[1]:
+                        _release_buffer(b)
+                mask = np.isin(buf.tri_ids, list(hit))
+                parts = [self._sub_buffer(buf, m) for m in (mask, ~mask)]
+            splits[key] = (hit, parts)
+            out.extend(parts)
+        for _, parts in self._splits.values():
+            for b in parts:
+                _release_buffer(b)
+        self._splits = splits
+        return out
+
+    def _sub_buffer(self, buf, mask):
+        tc = buf.tri_colors[mask] if buf.tri_colors is not None else None
+        sub = self._make_mesh_buffer(buf.cpu_v0[mask], buf.cpu_v1[mask], buf.cpu_v2[mask],
+                                     buf.tri_ids[mask], tc, buf.color, buf.flat_preview,
+                                     buf.role, buf.uses_vertex_color)
+        sub.theme_cut = getattr(buf, "theme_cut", False)
+        return sub
+
+    def _selected_vertices(self):
+        """Every vertex of a selected triangle, or None."""
+        sel = self._selection_ids()
+        vs = []
+        for buf in self._buffers:
+            if sel.isdisjoint(buf.original_ids):
+                continue
+            mask = np.isin(buf.tri_ids, list(sel))
+            vs += [buf.cpu_v0[mask], buf.cpu_v1[mask], buf.cpu_v2[mask]]
+        return np.vstack(vs) if vs else None
 
     def _upload_body(self, cb: ColoredBody) -> list[MeshBuffer]:
         mesh = cb.body.to_mesh()
@@ -1458,17 +1516,8 @@ class SceneRenderer:
             buffers.append(self._make_mesh_buffer(
                 v0[m], v1[m], v2[m], tri_ids[m], cb.tri_colors[m],
                 (1.0, 1.0, 1.0, 0.5), cb.flat_preview, cb.role, uses_vertex_color=True))
-        # Selection/drag-highlight (is_selected, in paint()) and ray_cast()'s
-        # returned ID both key off MeshBuffer.original_ids -- splitting one
-        # merged body into two buffers must not let selecting/dragging one
-        # half (e.g. the opaque cube part of a union) leave the other half
-        # (the translucent dome part) behind. Both buffers share the full,
-        # unsplit ID set so either one being "selected" moves/highlights the
-        # whole original body together, matching pre-split behavior.
-        if len(buffers) > 1:
-            full_ids = set(int(x) for x in tri_ids)
-            for buf in buffers:
-                buf.original_ids = full_ids
+        # Selection works per triangle (_drawn_buffers), so each colour's
+        # buffer keeps its own ids: a selected part moves in both.
         return buffers
 
     def buffer_color(self, buf) -> tuple:
@@ -1989,6 +2038,27 @@ class SceneRenderer:
             if bbox is not None:
                 scale_center, _ = bbox
 
+        def drag_model(buf):
+            """Where a drag, or a released one still held, puts `buf`. Every
+            pass asks: a `%` or `#` part of a dragged module stayed put
+            while the rest of it moved (#1123)."""
+            if not self.is_selected_buffer(buf):
+                return model
+            if has_drag:
+                m = np.eye(4, dtype=np.float32)
+                m[:3, 3] = self.drag_offset
+            elif self.drag_extrude is not None:
+                m = np.eye(4, dtype=np.float32)
+                m[2, 2], m[2, 3] = self.drag_extrude
+            elif has_rotation and rot_center is not None:
+                m = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
+            elif has_scale and scale_center is not None:
+                m = _scale_model(scale_center, self.drag_scale_axis,
+                                 self.drag_scale_factor, self.drag_scale_uniform)
+            else:
+                m = model
+            return m if self.held_model is None else m @ self.held_model
+
         # Edge lines bias themselves toward the viewer instead (see
         # _EDGE_VERT). A polygon offset here would be slope-scaled, which is
         # what used to shove a near-edge-on silhouette face back past its own
@@ -1998,7 +2068,8 @@ class SceneRenderer:
         # Highlighted bodies are drawn only in the overlay pass below, never
         # opaquely: `#` means "show me this see-through", and a solid draw
         # underneath leaves nothing to see through to.
-        opaque_bufs = [buf for buf in self._buffers
+        drawn = self._drawn_buffers()
+        opaque_bufs = [buf for buf in drawn
                        if buf.role not in ("background", "highlight", "highlight_ghost")]
         # The torch is a property of the frame, not of any one buffer.
         self._prog["beam"].value = (float(self.torch_centre[0]),
@@ -2045,22 +2116,7 @@ class SceneRenderer:
             is_selected = self.is_selected_buffer(buf)
             base_color = self.buffer_color(buf)
             color = _highlight_color(base_color) if is_selected else base_color
-
-            if is_selected and has_drag:
-                buf_model = np.eye(4, dtype=np.float32)
-                buf_model[:3, 3] = self.drag_offset
-            elif is_selected and self.drag_extrude is not None:
-                buf_model = np.eye(4, dtype=np.float32)
-                buf_model[2, 2], buf_model[2, 3] = self.drag_extrude
-            elif is_selected and has_rotation and rot_center is not None:
-                buf_model = _rotation_model(rot_center, self.drag_rotation_axis, self.drag_rotation_angle)
-            elif is_selected and has_scale and scale_center is not None:
-                buf_model = _scale_model(scale_center, self.drag_scale_axis,
-                                         self.drag_scale_factor, self.drag_scale_uniform)
-            else:
-                buf_model = model
-            if is_selected and self.held_model is not None:
-                buf_model = buf_model @ self.held_model
+            buf_model = drag_model(buf)
 
             buf_models.append(buf_model)
             if color[3] < 1.0:
@@ -2295,7 +2351,7 @@ class SceneRenderer:
             self._render_axis_labels(mvp)
 
         # --- Pass 2: background ghosts (%) — translucent, no depth write ---
-        bg_bufs = [buf for buf in self._buffers if buf.role == "background"]
+        bg_bufs = [buf for buf in drawn if buf.role == "background"]
         if bg_bufs:
             self._ctx.enable(mgl.BLEND)
             self._ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
@@ -2309,8 +2365,9 @@ class SceneRenderer:
             # use: glPolygonOffset did nothing on CI's software GL.
             self._prog["depth_bias"].value = 0.00001
             for buf in bg_bufs:
-                self._prog["model"].write(model.T.tobytes())
-                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
+                m = drag_model(buf)
+                self._prog["model"].write(m.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ m).T.astype(np.float32).tobytes())
                 self._prog["object_color"].value = _BACKGROUND_COLOR
                 self._prog["flat_preview"].value = buf.flat_preview or self.light_backfaces
                 self._prog["glass"].value = 0.0
@@ -2329,7 +2386,7 @@ class SceneRenderer:
         #
         # Back faces are culled so the far wall of a box does not show
         # through the near one and read as solid.
-        hi_bufs = [buf for buf in self._buffers
+        hi_bufs = [buf for buf in drawn
                    if buf.role in ("highlight", "highlight_ghost")]
         if hi_bufs:
             self._ctx.enable(mgl.BLEND)
@@ -2340,8 +2397,9 @@ class SceneRenderer:
             # the model's faces.
             self._prog["depth_bias"].value = 0.00001
             for buf in hi_bufs:
-                self._prog["model"].write(model.T.tobytes())
-                self._prog["mvp"].write((proj @ view @ model).T.astype(np.float32).tobytes())
+                m = drag_model(buf)
+                self._prog["model"].write(m.T.tobytes())
+                self._prog["mvp"].write((proj @ view @ m).T.astype(np.float32).tobytes())
                 # Measured, not guessed: below about 0.4 the wash lands
                 # within a shade of the untouched colour and reads as no
                 # highlight at all.
@@ -2791,14 +2849,11 @@ class SceneRenderer:
     def _selected_buffer_bbox(self) -> Optional[tuple[np.ndarray, float]]:
         if self.selected_id is None:
             return None
-        # A multi-color CSG merge (see _upload_body) can split one body
-        # across two buffers sharing the same original_ids -- aggregate
-        # every matching buffer's vertices, not just the first, or the
-        # rotate/scale center would be computed from only part of the body.
-        matches = [buf for buf in self._buffers if self.is_selected_buffer(buf)]
-        if not matches:
+        # The selected triangles of every buffer: a body can span several
+        # (one per colour), and a buffer can hold more than the selection.
+        all_v = self._selected_vertices()
+        if all_v is None or len(all_v) == 0:
             return None
-        all_v = np.vstack([v for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
         if self.held_model is not None:
             # Where the part is drawn, so the gizmo, the next drag's pivot
             # and its commit all follow a held drag (#817).
@@ -2813,11 +2868,10 @@ class SceneRenderer:
         """(zmin, zmax) of the selection, for the extrude preview."""
         if self.selected_id is None:
             return None
-        matches = [buf for buf in self._buffers if self.is_selected_buffer(buf)]
-        if not matches:
+        v = self._selected_vertices()
+        if v is None or len(v) == 0:
             return None
-        zs = np.concatenate([v[:, 2] for buf in matches for v in (buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)])
-        return float(zs.min()), float(zs.max())
+        return float(v[:, 2].min()), float(v[:, 2].max())
 
     def selected_is_2d(self) -> bool:
         """Is the selection a 2D shape -- drawn as the flat preview slab?"""
