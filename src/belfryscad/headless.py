@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from belfryscad import scad_temp
+from belfryscad import overrides, scad_temp
 from belfryscad.export_name import seed_params
 
 _VALID_EXPORT_FORMATS = {"asciistl", "binstl"}
@@ -72,8 +72,7 @@ def _prepare_source(source_path: str, defines: list[str]):
     # Written into the SAME directory as the real file so relative
     # use/include paths still resolve, matching _RenderWorker's own
     # unsaved-buffer convention (main_window.py).
-    path = scad_temp.write_temp_scad(
-        src.read_text(encoding="utf-8") + "\n" + prelude, near=src)
+    path = overrides.write_temp(src.read_text(encoding="utf-8"), prelude, near=src)
     return path, path
 
 
@@ -120,6 +119,8 @@ def _evaluate(parse_path: str, viewport_params: dict, quiet: bool = False, hard_
         return None
 
     def echo_fn(m):
+        if overrides.is_override_warning(m):
+            return      # a -D value, which OpenSCAD applies silently
         if hard_warnings and m.startswith("WARNING:"):
             raise _HardWarning(m)
         if not quiet:

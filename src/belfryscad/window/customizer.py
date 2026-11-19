@@ -853,12 +853,17 @@ class _VectorWidget(QWidget):
 
 class CustomizerPane(QWidget):
     """Form widget that auto-generates controls from top-level parameter
-    variables in the active source file.  Emits *source_changed* with the
-    updated source text when the user edits a value; does NOT trigger a
-    render automatically.
+    variables in the active source file.
+
+    A value set here is an override, as in OpenSCAD (#1146): kept in the
+    tab's own dict (`set_overrides`) and applied at render, not written into
+    the source. *overrides_changed* says one changed; **Write to Source**
+    puts them in the code, through *source_changed*, which also carries
+    the parameter editor's edits. Neither triggers a render by itself.
     """
 
     source_changed = Signal(str)
+    overrides_changed = Signal()
     #: A parameter set through its control (name, value), for the demo recorder.
     parameter_set = Signal(str, object)
 
@@ -877,6 +882,8 @@ class CustomizerPane(QWidget):
         self._updating = False
         self._file_path: Optional[str] = None
         self._presets: dict[str, dict[str, Any]] = {}
+        #: The active tab's FileTab.customizer_overrides, shared, not copied.
+        self._overrides: dict[str, Any] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -891,15 +898,26 @@ class CustomizerPane(QWidget):
         self._add_param_btn.clicked.connect(self._on_add_parameter)
         add_row.addWidget(self._add_param_btn)
         add_row.addStretch()
+        # A row of their own, so the pane can still be made as narrow.
+        values_row = QHBoxLayout()
+        values_row.setContentsMargins(6, 0, 6, 0)
+        self._reset_btn = QPushButton("Reset")
+        self._reset_btn.setToolTip("Back to the values in the source")
+        self._reset_btn.clicked.connect(self._on_reset)
+        values_row.addWidget(self._reset_btn)
+        self._write_btn = QPushButton("Write to Source")
+        self._write_btn.setToolTip("Put the values set here into the code")
+        self._write_btn.clicked.connect(self._on_write_to_source)
+        values_row.addWidget(self._write_btn)
+        values_row.addStretch()
         # OpenSCAD's "Automatic Preview" box (#397): off, a field change
-        # still writes the value back to the source but nothing renders
-        # until Render/F6 -- what you want while tuning a model that takes
+        # still sets the value but nothing renders until Render/F6 -- what you want while tuning a model that takes
         # minutes. A preference, so it stays off across sessions.
         from belfryscad.window.preferences import load_preference, save_preferences
         self._auto_update = QCheckBox("Automatic update")
         self._auto_update.setToolTip(
             "Render 2 seconds after the last field change.\n"
-            "Off: fields still update the source; press Render (F6) when ready.")
+            "Off: press Render (F6) when ready.")
         self._auto_update.setChecked(load_preference("customizer/autoUpdate", type_=bool))
         self._auto_update.toggled.connect(
             lambda on: save_preferences({"customizer/autoUpdate": bool(on)}))
@@ -960,14 +978,53 @@ class CustomizerPane(QWidget):
         self._empty_label.setEnabled(False)
         outer.addWidget(self._empty_label)
 
+        values_row_widget = QWidget()
+        values_row_widget.setLayout(values_row)
+        outer.addWidget(values_row_widget)
         outer.addWidget(add_row_widget)
 
         self._sections.hide()
         self._preset_row_widget.hide()
+        self._update_override_buttons()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_overrides(self, overrides: dict[str, Any]):
+        """The active tab's values (its own dict, kept up to date in place)."""
+        self._overrides = overrides
+        self._show_values()
+
+    def _value_of(self, p) -> Any:
+        return self._overrides.get(p.name, p.default)
+
+    def _show_values(self):
+        self._updating = True
+        for p in self._params:
+            for w in self._widgets.get(p.name, ()):
+                w.set_value(self._value_of(p))
+        self._updating = False
+        self._update_override_buttons()
+
+    def _update_override_buttons(self):
+        self._reset_btn.setEnabled(bool(self._overrides))
+        self._write_btn.setEnabled(bool(self._overrides))
+
+    def _on_reset(self):
+        self._overrides.clear()
+        self._show_values()
+        self.overrides_changed.emit()
+
+    def _on_write_to_source(self):
+        new_source = self._source
+        for name, val in self._overrides.items():
+            new_source = write_back_value(new_source, name, val)
+        self._overrides.clear()
+        self._update_override_buttons()
+        if new_source != self._source:
+            self._source = new_source
+            self.source_changed.emit(new_source)
 
     def set_file_path(self, path: Optional[str]):
         """Tells the pane which .scad file is active, so presets can be
@@ -986,18 +1043,20 @@ class CustomizerPane(QWidget):
             return
         self._source = source
         new_params = scan_parameters(source)
+        # A value for a parameter the source no longer has would assign a
+        # variable the script never declared.
+        names = {p.name for p in new_params}
+        for gone in [n for n in self._overrides if n not in names]:
+            del self._overrides[gone]
 
         if self._structurally_equal(new_params):
             # Fast path: same parameters, only values may differ
-            self._updating = True
-            for p in new_params:
-                for w in self._widgets.get(p.name, ()):
-                    w.set_value(p.default)
-            self._updating = False
             self._params = new_params
+            self._show_values()
         else:
             self._params = new_params
             self._rebuild_ui()
+            self._update_override_buttons()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -1109,7 +1168,7 @@ class CustomizerPane(QWidget):
     def _make_widget(self, param: ParameterDef) -> Optional[QWidget]:
         spec = _parse_constraint(param.constraint, param.default)
         wtype = spec['type']
-        val = param.default
+        val = self._value_of(param)
 
         if isinstance(val, bool):
             w = _BoolWidget(val)
@@ -1161,10 +1220,17 @@ class CustomizerPane(QWidget):
         for w in self._widgets.get(name, ()):
             w.set_value(new_value)
         self._updating = False
-        new_source = write_back_value(self._source, name, new_value)
-        if new_source != self._source:
-            self._source = new_source
-            self.source_changed.emit(new_source)
+        self._set_override(name, new_value)
+        self._update_override_buttons()
+        self.overrides_changed.emit()
+
+    def _set_override(self, name: str, value: Any):
+        """Set, or drop when it is the source's own value again."""
+        default = next((p.default for p in self._params if p.name == name), None)
+        if value == default:
+            self._overrides.pop(name, None)
+        else:
+            self._overrides[name] = value
 
     # ------------------------------------------------------------------
     # Parameter Editor (create/edit/delete parameter *definitions*)
@@ -1242,10 +1308,10 @@ class CustomizerPane(QWidget):
     # ------------------------------------------------------------------
 
     def _current_values(self) -> dict[str, Any]:
-        """Re-scans self._source (already up to date with any in-flight
-        widget edit -- see _on_widget_changed) rather than trusting
-        self._params, which a caller may not have refreshed yet."""
-        return {p.name: p.default for p in scan_parameters(self._source)}
+        """Every parameter's value as shown: its override, else the
+        source's. Re-scans self._source rather than trusting self._params,
+        which a caller may not have refreshed yet."""
+        return {p.name: self._value_of(p) for p in scan_parameters(self._source)}
 
     def _refresh_preset_combo(self):
         self._preset_combo.blockSignals(True)
@@ -1272,17 +1338,11 @@ class CustomizerPane(QWidget):
         self._apply_preset_values(values)
 
     def _apply_preset_values(self, values: dict[str, Any]):
-        self._updating = True
         for name, val in values.items():
-            for w in self._widgets.get(name, ()):
-                w.set_value(val)
-        self._updating = False
-        new_source = self._source
-        for name, val in values.items():
-            new_source = write_back_value(new_source, name, val)
-        if new_source != self._source:
-            self._source = new_source
-            self.source_changed.emit(new_source)
+            if any(p.name == name for p in self._params):
+                self._set_override(name, val)
+        self._show_values()
+        self.overrides_changed.emit()
 
     def _on_preset_save_as(self):
         if not self._file_path:

@@ -116,6 +116,8 @@ def remove(path) -> None:
     """Delete a temp written by `write_temp_scad`, ignoring failures."""
     if not path:
         return
+    from belfryscad import overrides
+    overrides.forget(path)
     try:
         os.unlink(path)
     except OSError:
