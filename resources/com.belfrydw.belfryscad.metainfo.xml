@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.99.27" date="2026-11-19">
+      <description>
+        <p>Customizer values no longer edit the source, as in OpenSCAD; docs can give a file a display title</p>
+      </description>
+    </release>
     <release version="1.99.26" date="2026-11-19">
       <description>
         <p>Select and drag one part of a joined body; Save As keeps the extension typed; positional arguments after named ones bind as in OpenSCAD</p>
