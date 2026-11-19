@@ -388,6 +388,13 @@ class DocsGenParser(object):
                     raise DocsGenException(title, "Must provide a subtitle when declaring block:")
                 self._check_filenode(title, origin)
                 self.curr_file_block.summary = subtitle.strip()
+            elif title == "FileTitle":
+                if body:
+                    raise DocsGenException(title, "Body not supported, while declaring block:")
+                if not subtitle:
+                    raise DocsGenException(title, "Must provide a subtitle when declaring block:")
+                self._check_filenode(title, origin)
+                self.curr_file_block.file_title = subtitle.strip()
             elif title == "FileGroup":
                 if not subtitle:
                     raise DocsGenException(title, "Must provide a subtitle when declaring block:")
@@ -818,8 +825,8 @@ class DocsGenParser(object):
                 if fblock.group != group:
                     continue
                 file = fblock.subtitle
-                anch = target.header_link("{}. {}".format(fnum+1, file))
-                link = target.get_link(file, anchor=anch, literalize=False)
+                anch = target.header_link("{}. {}".format(fnum+1, fblock.display_title))
+                link = target.get_link(fblock.display_title, anchor=anch, literalize=False)
                 filelink = target.get_link("docs", file=file, literalize=False)
                 tags = {tag: text for tag, text, origin in fblock.footnotes}
                 marks = target.mouseover_tags(tags, "#file-footnotes")
@@ -1074,7 +1081,7 @@ class DocsGenParser(object):
                 if fblock.group != group:
                     continue
                 file = fblock.subtitle
-                link = target.get_link(file, file=file, literalize=False)
+                link = target.get_link(fblock.display_title, file=file, literalize=False)
                 for mark, note, origin in fblock.footnotes:
                     try:
                         if mark not in footmarks:
