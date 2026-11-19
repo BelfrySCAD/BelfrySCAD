@@ -12,6 +12,16 @@ from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.customizer import CustomizerPane
 pane = CustomizerPane(); pane.resize(300, 600); pane.show()
+# #1150: a section shown before it had a parent was a window of its own,
+# a blank one flashing up per section on every rebuild.
+from PySide6.QtCore import QObject, QEvent
+class Windows(QObject):
+    shown = []
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Show and obj.isWidgetType() and obj.isWindow() and obj is not pane:
+            self.shown.append(type(obj).__name__)
+        return False
+windows = Windows(); app.installEventFilter(windows)
 src = "/* [Size] */\\nw = 3;\\nh = 4;\\n/* [Look] */\\nr = 1;\\n/* [Extra] */\\nn = 2;\\n"
 pane.set_source(src); app.processEvents()
 def headers():
@@ -24,6 +34,7 @@ pane.set_source(src + "/* [More] */\\nm = 1;\\n"); app.processEvents()   # a reb
 out["after_rebuild"] = [(b.text(), b.isChecked()) for b in headers()]
 pane.set_source("w = 3;\\n"); app.processEvents()
 out["single_group_headers"] = len(headers())
+out["windows_shown"] = windows.shown
 print("RESULT" + json.dumps(out), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
@@ -37,4 +48,4 @@ def test_groups_are_collapsible_sections():
     assert out == {"names": ["Size", "Look", "Extra"], "closed_after_click": ["Look"],
                    "new_param_group": "Look",
                    "after_rebuild": [["Size", True], ["Look", False], ["Extra", True], ["More", True]],
-                   "single_group_headers": 0}, out
+                   "single_group_headers": 0, "windows_shown": []}, out
