@@ -1054,7 +1054,7 @@ class CustomizerPane(QWidget):
             self._last_section = next(iter(tabs)) or 'Parameters'
         for tab_name, params in tabs.items():
             tab_name = tab_name or 'Parameters'
-            container = QWidget()
+            container = QWidget(page)   # parentless, setVisible() made it a window (#1150)
             if len(tabs) > 1:       # one group needs no header
                 column.addWidget(self._section_header(tab_name, container))
                 container.setVisible(tab_name not in self._collapsed)
