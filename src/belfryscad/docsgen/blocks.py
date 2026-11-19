@@ -387,9 +387,18 @@ class FileBlock(GenericBlock):
         self.footnotes = []
         self.summary = ""
         self.group = ""
+        # FileTitle: shown instead of the filename in headings, the TOC, the
+        # sidebar and the cheat sheet. Output paths and links keep the
+        # filename (BOSL2#1889, from openscad_docsgen#39).
+        self.file_title = ""
+
+    @property
+    def display_title(self):
+        return self.file_title or self.subtitle
 
     def get_data(self):
         d = super().get_data()
+        d["filetitle"] = self.file_title
         d["includes"] = self.includes
         d["commoncode"] = self.common_code
         d["group"] = self.group
@@ -421,7 +430,7 @@ class FileBlock(GenericBlock):
             sect for sect in self.children
             if isinstance(sect, SectionBlock)
         ]
-        link = self.get_link(target, label=self.subtitle, currfile=currfile)
+        link = self.get_link(target, label=self.display_title, currfile=currfile)
         out = []
         out.extend(target.header("{}. {}".format(n, link), lev=target.SECTION, esc=False))
         if self.summary:
@@ -453,12 +462,13 @@ class FileBlock(GenericBlock):
             lines.extend(child.get_cheatsheet_lines(controller, target))
         out = []
         if lines:
-            out.extend(target.header("{}: {}".format(self.title, self.subtitle), lev=target.SUBSECTION))
+            out.extend(target.header(self.file_title or "{}: {}".format(self.title, self.subtitle),
+                                     lev=target.SUBSECTION))
             out.extend(lines)
         return out
 
     def get_file_lines(self, controller, target):
-        out = target.header(str(self), lev=target.FILE)
+        out = target.header(self.file_title or str(self), lev=target.FILE)
         out.extend(target.markdown_block(self.get_markdown_body(controller, target)))
         for child in self.children:
             if not isinstance(child, SectionBlock):

@@ -59,6 +59,14 @@ error at the `SynTags:` line naming the tag and the rc key to define it
 under. The verdict is unchanged -- such a file fails either way -- only
 the message and the fact that the rest of the file is still checked.
 
+An addition, not a fix: the `// FileTitle: Title` block (#1149, for
+BOSL2#1889), ported from openscad_docsgen#39, which is still unmerged.
+It names a file in its page heading, the TOC, the sidebar and the cheat
+sheet in place of its filename, so a part of `std.scad` is not presented
+as a file to include on its own. Output files and links keep the filename,
+and a file without one is unchanged. Docsgen without #39 reports it as an
+"Unrecognized block".
+
 Only the two modules that shelled out to OpenSCAD are ours. They keep the
 upstream module names, class names and method signatures, which is why the
 vendored files need **no import edits at all**:
