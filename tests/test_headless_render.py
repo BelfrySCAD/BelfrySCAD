@@ -388,3 +388,70 @@ def test_ghost_face_coplanar_with_solid_does_not_z_fight(tmp_path):
     # broke differently along each row, in visible stripes.
     greens = [_pixel(w, h, px, x, y)[1] for y in range(50, 120) for x in range(110, 180)]
     assert max(greens) - min(greens) <= 4, (min(greens), max(greens))
+
+
+@needs_gl
+def test_a_dragged_selection_takes_its_background_and_highlight_parts_along(tmp_path):
+    """#1123: dragging a module moved its solid parts and left a `%` (or `#`)
+    part behind. Those passes drew at the origin and ignored the drag."""
+    import numpy as np
+    from belfryscad.headless import _evaluate
+    from belfryscad.headless_render import _RenderOptions, _make_offscreen_renderer, paint_rgba
+    opts = _RenderOptions.parse(imgsize="200,200", camera=None, autocenter=False, viewall=False,
+                                projection=None, view=None, colorscheme=None,
+                                show_backfaces=False, preview=True)
+    _app, ctx, r, fbo, read_fbo = _make_offscreen_renderer(opts)
+
+    def frame():
+        fbo.use()
+        ctx.viewport = (0, 0, opts.w, opts.h)
+        r.paint(fbo=fbo)
+        read_fbo.use()
+        ctx.copy_framebuffer(read_fbo, fbo)
+        return np.frombuffer(read_fbo.read(components=3, alignment=1), dtype=np.uint8)
+
+    for mark in ("%", "#"):
+        src = tmp_path / "m.scad"
+        src.write_text(f"cube(1); {mark}translate([0, 0, 0]) cube(10);")
+        bodies = _evaluate(str(src), {"$preview": True}, quiet=True)[0]
+        paint_rgba(ctx, r, fbo, opts, bodies, read_fbo)
+        part = [b for b in r._buffers if b.role != "normal"]
+        assert part, mark
+        still = frame()
+        r.selected_group = frozenset().union(*(b.original_ids for b in part))
+        r.drag_offset = np.array([8, 0, 0], dtype=np.float32)
+        moved = frame()
+        r.hold_drag()
+        r.drag_offset = np.zeros(3, dtype=np.float32)
+        assert not np.array_equal(moved, still), f"{mark} part stayed put during the drag"
+        assert np.array_equal(frame(), moved), f"{mark} part not held after release"
+
+
+@needs_gl
+def test_selecting_one_part_of_a_union_takes_only_that_part(tmp_path):
+    """#1123: a union is one body, so one buffer, and the highlight, drag and
+    extrude preview of one of its parts took the whole of it."""
+    import numpy as np
+    from belfryscad.headless import _evaluate
+    from belfryscad.headless_render import _RenderOptions, _make_offscreen_renderer, paint_rgba
+    opts = _RenderOptions.parse(imgsize="200,200", camera=None, autocenter=False, viewall=False,
+                                projection=None, view=None, colorscheme=None,
+                                show_backfaces=False, preview=True)
+    _app, ctx, r, fbo, read_fbo = _make_offscreen_renderer(opts)
+    src = tmp_path / "u.scad"
+    src.write_text("union() { cube(10); translate([20, 0, 0]) cube(10); }")
+    paint_rgba(ctx, r, fbo, opts, _evaluate(str(src), {"$preview": True}, quiet=True)[0], read_fbo)
+    [buf] = r._buffers
+    far = int(buf.tri_ids[buf.cpu_v0[:, 0].argmax()])   # the cube at x=20
+    r.selected_id = far
+    assert np.allclose(r._selected_buffer_bbox()[0], [25, 5, 5])
+    assert r.selected_z_range() == (0.0, 10.0)
+    r.drag_offset = np.array([0, 0, 5], dtype=np.float32)
+    fbo.use()
+    r.paint(fbo=fbo)
+    drawn = r._drawn_buffers()
+    moved = [b for b in drawn if r.is_selected_buffer(b)]
+    assert len(drawn) == 2 and len(moved) == 1
+    assert moved[0].cpu_v0[:, 0].min() >= 20      # only the far cube's triangles
+    r.selected_id = None
+    assert r._drawn_buffers() == [buf]             # unselected: drawn whole again

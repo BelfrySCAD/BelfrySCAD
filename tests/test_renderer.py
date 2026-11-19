@@ -869,7 +869,7 @@ def test_a_released_drag_is_held_until_the_next_render():
     from belfryscad.engine.renderer import SceneRenderer
     r = SceneRenderer()
     v = np.array([[0, 0, 0], [10, 10, 10]], dtype=np.float32)
-    r._buffers = [types.SimpleNamespace(original_ids={7}, cpu_v0=v, cpu_v1=v, cpu_v2=v)]
+    r._buffers = [types.SimpleNamespace(original_ids={7}, tri_ids=np.array([7, 7]), cpu_v0=v, cpu_v1=v, cpu_v2=v)]
     r.selected_id = 7
     r.drag_offset = np.array([3, 0, 0], dtype=np.float32)
     r.hold_drag()
