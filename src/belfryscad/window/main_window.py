@@ -23,7 +23,7 @@ from belfryscad.window import cursors
 from belfryscad.window import aspect_frame
 from belfryscad.window.editor import CodeEditor
 from belfryscad.qt_positions import qt_length
-from belfryscad import scad_temp
+from belfryscad import overrides, scad_temp
 from belfryscad.window.console import ConsoleWidget
 from belfryscad.export_name import default_export_name, resolve_export_name, seed_params
 from belfryscad.window.ui_colors import (apply_themed_icon, document_tab_style,
@@ -467,6 +467,10 @@ class FileTab(QWidget):
         self.chat_id = FileTab._next_chat_id
         FileTab._next_chat_id += 1
         self.file_path = None
+        #: Customizer values set for this tab, {name: value}: applied at
+        #: render and debug, never written into the source unless asked
+        #: (#1146). Lost with the tab, as in OpenSCAD; presets keep them.
+        self.customizer_overrides: dict = {}
         # A name for a tab that isn't on disk yet -- the AI's
         # propose_new_script supplies one, and without this the tab it
         # created read as "Untitled" and its filename argument did nothing.
@@ -774,9 +778,10 @@ class _RenderWorker(QObject):
 
     def __init__(self, source: str, file_path, cancel: threading.Event, viewport_params: dict | None = None,
                  manifold_cache=None, profile: bool = False, max_warnings: int | None = None,
-                 keep_minuend_color: bool = False, near=None):
+                 keep_minuend_color: bool = False, near=None, appended: str = ""):
         super().__init__()
         self._source = source
+        self._appended = appended     # Customizer values, see overrides.py
         self._file_path = file_path
         self._near = near or file_path
         self._cancel = cancel
@@ -853,6 +858,8 @@ class _RenderWorker(QObject):
         import time
         if self._cancel.is_set():
             raise _RenderWorker._Cancelled()
+        if overrides.is_override_warning(msg):
+            return      # a Customizer value overriding its own default
         if self._finishing_past_limit:
             # Past the limit: the render only runs on to draw the shape.
             if msg.startswith("ERROR"):
@@ -947,8 +954,8 @@ class _RenderWorker(QObject):
         # goes in *that* file's own directory so relative use/include
         # statements still resolve (same convention as
         # belfryscad.headless's CLI -D handling, _prepare_source).
-        parse_path = self._tmp_path = scad_temp.write_temp_scad(
-            self._source, near=self._near)
+        parse_path = self._tmp_path = overrides.write_temp(
+            self._source, self._appended, near=self._near)
         # Every position the evaluator reports (errors, warnings, profile
         # call sites) names this temp file rather than the tab, since that
         # is genuinely what it parsed. Announce it so the UI can show the
@@ -1566,6 +1573,7 @@ class MainWindow(QMainWindow):
         # --- Customizer dock (right, bottom — tabbed with Animate) ---
         self._customizer_pane = CustomizerPane()
         self._customizer_pane.source_changed.connect(self._on_customizer_source_changed)
+        self._customizer_pane.overrides_changed.connect(self._on_customizer_values_changed)
         # Auto-render _CUSTOMIZER_RENDER_DELAY_MS after the user stops
         # editing Customizer fields -- start()ing an already-running QTimer
         # restarts its countdown, which
@@ -2481,6 +2489,7 @@ class MainWindow(QMainWindow):
             tab.undo_stack.setActive(True)
             self._sync_split_actions()
             self._customizer_pane.set_file_path(tab.file_path)
+            self._customizer_pane.set_overrides(tab.customizer_overrides)
             self._customizer_pane.set_source(tab.editor.toPlainText())
             self._act_read_only.setChecked(tab.editor.isReadOnly())
             self._refresh_docs_pane()
@@ -2875,6 +2884,14 @@ class MainWindow(QMainWindow):
         cursor = editor.textCursor()
         cursor.setPosition(min(cursor_pos, qt_length(new_source)))
         editor.setTextCursor(cursor)
+        self._on_customizer_values_changed()
+
+    def _on_customizer_values_changed(self):
+        """A Customizer value, or the source through it, changed: the next
+        render is due once editing pauses (or at F6, #397)."""
+        tab = self._current_tab()
+        if not tab:
+            return
         # A render already in flight is now stale (it's computing geometry
         # for source this edit just superseded) -- cancel it right away
         # rather than letting it run to completion for nothing; the
@@ -2885,7 +2902,7 @@ class MainWindow(QMainWindow):
             self._set_render_busy(False)
             self.log("Render canceled — Customizer field changed.")
         if not self._customizer_pane.auto_update():
-            return          # #397: the source is updated; the render waits for F6
+            return          # #397: the render waits for F6
         self._customizer_render_tab = tab
         self._customizer_render_timer.start(self._CUSTOMIZER_RENDER_DELAY_MS)
 
@@ -4050,7 +4067,8 @@ class MainWindow(QMainWindow):
         worker = _RenderWorker(source, tab.file_path, cancel, params, manifold_cache=self._csg_cache,
                                max_warnings=self._warning_limit(), profile=profile,
                                keep_minuend_color=load_preference("viewport/keepMinuendColor", bool),
-                               near=tab.resolve_near)
+                               near=tab.resolve_near,
+                               appended=overrides.assignments(tab.customizer_overrides))
         callback = _RenderCallback(self, tab, render_id, parent=self)
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -6059,8 +6077,9 @@ class MainWindow(QMainWindow):
         # Written into file_path's own directory (when set) so relative
         # use/include still resolve. The debug session owns the temp's
         # lifetime -- it unlinks cleanup_path when it ends.
-        parse_path = cleanup_path = scad_temp.write_temp_scad(
-            source, near=tab.file_path or tab.resolve_near)
+        parse_path = cleanup_path = overrides.write_temp(
+            source, overrides.assignments(tab.customizer_overrides),
+            near=tab.file_path or tab.resolve_near)
         tab._last_parse_path = parse_path
 
         # checkDebug()/AST positions now always report *parse_path* as
@@ -6416,6 +6435,8 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentWidget(stop_tab)
 
     def _on_debug_print(self, text: str):
+        if overrides.is_override_warning(text):
+            return
         self._console.append_output(text)
 
     def _on_debug_print_value(self, name: str, value: object):

@@ -504,6 +504,7 @@ while w._demo_player is not None and time.monotonic() - t0 < 20:
     run(50)
 bar = pane_scrollbar(w._customizer_dock)
 print("RESULT" + json.dumps({"script": script, "text": w._current_editor().toPlainText().splitlines()[7],
+                             "overrides": w._current_tab().customizer_overrides,
                              "console_hidden": w._console_dock.isHidden(),
                              "scrolled": bar.maximum() > 0 and bar.value() == bar.maximum(),
                              "size": [w.width(), w.height()], "cust_w": w._customizer_dock.width(),
@@ -517,11 +518,12 @@ def test_panes_and_set_record_and_play():
     line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
-    # the write-back into the editor is not recorded as typing
+    # a set value is not recorded as typing
     # the window as it was when recording began, once, then what was done
     assert out["script"][2] == f"@mainwin size {out['rec_size']}" and out["script"][3].startswith("@mainwin position"), out
     assert out["script"][4:] == ["@hide console", "@set p3 43"], out
-    assert out == {**out, "text": "p7 = 70; // [0:100]", "console_hidden": True, "scrolled": True,
+    # @set sets the value, as the control would; the source keeps its own (#1146)
+    assert out == {**out, "text": "p7 = 7; // [0:100]", "overrides": {"p3": 43, "p7": 70}, "console_hidden": True, "scrolled": True,
                    "size": [1800, 680]}, out
     assert abs(out["cust_w"] - 333) <= 2, out
 
