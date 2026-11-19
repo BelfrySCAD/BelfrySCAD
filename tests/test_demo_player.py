@@ -220,25 +220,31 @@ app = QApplication([])
 from belfryscad.settings import use_scratch_settings
 use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
 from belfryscad.window.main_window import MainWindow
-asked = []
-QFileDialog.getSaveFileName = staticmethod(lambda *a: asked.append(a[2:]) or ("", ""))
+d = tempfile.mkdtemp()
+asked, answers = [], [os.path.join(d, "notes.txt"), os.path.join(d, "plain"), ""]
+QFileDialog.getSaveFileName = staticmethod(lambda *a: asked.append(a[2:]) or (answers.pop(0), ""))
 w = MainWindow(); w.show(); app.processEvents()
-w._save_file_as()                          # an ordinary script
+w._save_file_as()                          # an extension typed: kept
+w._save_file_as()                          # none typed: .scad
 w._record_demo(); w._record_demo()         # a recording opens in a tab
 w._save_file_as()
 print("RESULT" + json.dumps({"asked": [[os.path.basename(a[0])] + list(a[2:]) for a in asked],
+                             "saved": sorted(os.listdir(d)),
                              "label": w._current_tab().display_name()}), flush=True)
 from belfryscad.main import hard_exit; hard_exit(0)
 '''
 
 
 def test_save_demo_as_opens_on_all_files():
-    """#1107: macOS's save panel adds .scad when that filter is selected."""
+    """#1107: macOS's save panel adds .scad when that filter is selected, so
+    Save As opens on All Files; a name typed with no extension gets .scad."""
     r = subprocess.run([sys.executable, "-c", SAVE_DRIVER], capture_output=True, text=True, timeout=120)
     line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
     assert line, r.stdout + r.stderr
     out = json.loads(line[6:])
-    assert out["asked"][0][1] == "" and out["asked"][1] == ["demo.demo", "All Files (*)"], out
+    assert all(a[-1] == "All Files (*)" for a in out["asked"]), out
+    assert out["asked"][2][0] == "demo.demo", out
+    assert out["saved"] == ["notes.txt", "plain.scad"], out
     assert out["label"].startswith("demo.demo"), out
 
 

@@ -3090,16 +3090,16 @@ class MainWindow(QMainWindow):
         start = tab.file_path or getattr(tab, "demo_base", None) or file_dialog_dir()
         if not tab.file_path and tab.suggested_name:
             start = str(Path(start) / tab.suggested_name)
-        # A demo script opens on All Files, or macOS's save panel adds .scad
-        # to the name typed (#1107).
-        demo = getattr(tab, "is_demo", False) or start.lower().endswith(".demo")
+        # Opens on All Files: on *.scad, macOS's save panel hides the
+        # extension and saves `notes.txt` as `notes.txt.scad` (#1107). The
+        # name's own extension is kept, and a name with none gets .scad.
         path, _ = QFileDialog.getSaveFileName(
             self, "Save File", start,
-            "OpenSCAD Files (*.scad);;All Files (*)",
-            "All Files (*)" if demo else "",
-        )
+            "OpenSCAD Files (*.scad);;All Files (*)", "All Files (*)")
         if not path:
             return False
+        if not Path(path).suffix:
+            path += ".scad"
         # A second tab on one file would overwrite the first's on every save
         # (#1094), so ask for the other tab to be closed instead.
         if get_document_manager().open_elsewhere(path, tab.editor):
