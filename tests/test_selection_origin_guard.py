@@ -564,9 +564,14 @@ class _TraceWindow(_FakeWindow):
 class _RecordingMenu:
     made = []
 
-    def __init__(self, parent=None):
+    def __init__(self, title=None, parent=None):
+        self.title = title
         self.actions = []
+        self.menus = []
         _RecordingMenu.made.append(self)
+
+    def addMenu(self, sub):
+        self.menus.append(sub)
 
     def addAction(self, text):
         act = SimpleNamespace(text=text, slots=[], hover_slots=[])
@@ -585,7 +590,8 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     libroot = tmp_path / "libraries"
     (libroot / "BOSL2").mkdir(parents=True)
     lib = libroot / "BOSL2" / "shapes3d.scad"
-    lib.write_text("module cuboid(size) {\n    attachable() cube(size);\n}\n")
+    # LF on Windows too: the offsets below are bytes into this file.
+    lib.write_text("module cuboid(size) {\n    attachable() cube(size);\n}\n", newline="\n")
     monkeypatch.setattr(libmgr, "_library_dir", lambda: libroot)
     script = tmp_path / "part.scad"
     script.write_text("include <BOSL2/std.scad>\ncuboid(10);\n")
@@ -601,15 +607,48 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     mw = _TraceWindow({7: node}, tab, pick=7)
 
     mw._viewport_context_menu(None, None)
-    menu = _RecordingMenu.made[-1]
-    # Outermost first, as OpenSCAD lists it: the user's call, then the library.
-    assert [a.text for a in menu.actions] == ["cuboid (part.scad:2)",
-                                              "attachable (library BOSL2/shapes3d.scad:2)"]
+    menu, library = _RecordingMenu.made[0], _RecordingMenu.made[1]
+    # Outermost first, as OpenSCAD lists it: the user's call, and the
+    # library's frames under one submenu after it (#1157).
+    assert [a.text for a in menu.actions] == ["cuboid (part.scad:2)"]
+    assert menu.menus == [library] and library.title == "Library Calls"
+    assert [a.text for a in library.actions] == ["attachable (library BOSL2/shapes3d.scad:2)"]
     # Choosing the library line selects at that level -- the innermost, 0.
-    menu.actions[1].slots[0]()
+    library.actions[0].slots[0]()
     assert mw.chosen == [(7, 0)]
     # Dismissed (exec returned no action): the hover highlight is undone.
     assert mw.restored == [-1]
+
+
+def test_trace_labels_read_byte_offsets(tmp_path, monkeypatch):
+    """#1157: spans are UTF-8 byte offsets into the file as parsed. Read as
+    character indices, an accented comment in the script or a CRLF library
+    shifted every name: "ranslate", "otate", "?"."""
+    import belfryscad.window.main_window as mwmod
+    import belfryscad.window.library_manager as libmgr
+    libroot = tmp_path / "libraries"
+    (libroot / "BOSL2").mkdir(parents=True)
+    lib = libroot / "BOSL2" / "transforms.scad"
+    lib_bytes = "// \u00e9\u00e9\r\nmodule t() {\r\n  _translate([1,0,0]) children();\r\n}\r\n".encode()
+    lib.write_bytes(lib_bytes)
+    monkeypatch.setattr(libmgr, "_library_dir", lambda: libroot)
+    script = tmp_path / "guitar.scad"
+    src = "// \u0433\u0438\u0442\u0430\u0440\u0430\nfretless();\n"
+    script.write_text(src, encoding="utf-8")
+    at_lib = lib_bytes.index(b"_translate")
+    at_src = src.encode().index(b"fretless")
+    chain = (SimpleNamespace(origin=str(lib), start_offset=at_lib, end_offset=at_lib + 10, line=3),
+             SimpleNamespace(origin=str(script), start_offset=at_src, end_offset=at_src + 10, line=2))
+    tab = _tab(str(script), str(script))
+    tab.editor.toPlainText = lambda: src
+    tab.display_name = lambda: "guitar.scad"
+    monkeypatch.setattr(mwmod, "QMenu", _RecordingMenu)
+    _RecordingMenu.made.clear()
+    mw = _TraceWindow({7: SimpleNamespace(position=chain[0], call_sites=chain)}, tab, pick=7)
+    mw._viewport_context_menu(None, None)
+    menu, library = _RecordingMenu.made
+    assert [a.text for a in menu.actions + library.actions] == [
+        "fretless (guitar.scad:2)", "_translate (library BOSL2/transforms.scad:3)"]
 
 
 def test_right_click_on_nothing_opens_no_menu(monkeypatch):

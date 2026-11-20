@@ -129,7 +129,11 @@ most inside BOSL2's own `attachable`/`_attach_transform` layers.
 **Right-clicking the view lists that chain** (#927), as OpenSCAD's right-click after F5 does:
 the shape under the pointer, its frames **outermost first**, each `name (where:line)` -- the name
 read from the source at the frame's span (frames carry no name), a library file as `library
-BOSL2/shapes3d.scad`, the rendered script by its tab name. Choosing one selects the shape at that
+BOSL2/shapes3d.scad`, the rendered script by its tab name. Frames in the libraries folder go under a
+trailing **Library Calls** submenu, so the top level lists only the user's own calls (#1157); a chain
+wholly inside libraries stays flat. Names are read at the span's **byte** offset (`_indexed_span` for a
+tab, raw bytes for a file on disk): read as character indices, an accented comment or a CRLF library
+shifted them (`ranslate`, `?`). Choosing one selects the shape at that
 level and shows the line (`_viewport_context_menu` -> `_select_at_level`, shared with Ctrl+Cmd+Up/Down
 stepping). Only a right-click that did not pan opens it: the viewport holds a right-press menu event
 until the release (`Viewport.event`), and the data viewers' viewports keep their own menus.
