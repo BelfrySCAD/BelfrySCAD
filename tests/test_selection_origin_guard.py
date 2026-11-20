@@ -564,9 +564,14 @@ class _TraceWindow(_FakeWindow):
 class _RecordingMenu:
     made = []
 
-    def __init__(self, parent=None):
+    def __init__(self, title=None, parent=None):
+        self.title = title
         self.actions = []
+        self.menus = []
         _RecordingMenu.made.append(self)
+
+    def addMenu(self, sub):
+        self.menus.append(sub)
 
     def addAction(self, text):
         act = SimpleNamespace(text=text, slots=[], hover_slots=[])
@@ -601,12 +606,14 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     mw = _TraceWindow({7: node}, tab, pick=7)
 
     mw._viewport_context_menu(None, None)
-    menu = _RecordingMenu.made[-1]
-    # Outermost first, as OpenSCAD lists it: the user's call, then the library.
-    assert [a.text for a in menu.actions] == ["cuboid (part.scad:2)",
-                                              "attachable (library BOSL2/shapes3d.scad:2)"]
+    menu, library = _RecordingMenu.made[0], _RecordingMenu.made[1]
+    # Outermost first, as OpenSCAD lists it: the user's call, and the
+    # library's frames under one submenu after it (#1157).
+    assert [a.text for a in menu.actions] == ["cuboid (part.scad:2)"]
+    assert menu.menus == [library] and library.title == "Library Calls"
+    assert [a.text for a in library.actions] == ["attachable (library BOSL2/shapes3d.scad:2)"]
     # Choosing the library line selects at that level -- the innermost, 0.
-    menu.actions[1].slots[0]()
+    library.actions[0].slots[0]()
     assert mw.chosen == [(7, 0)]
     # Dismissed (exec returned no action): the hover highlight is undone.
     assert mw.restored == [-1]
@@ -638,7 +645,8 @@ def test_trace_labels_read_byte_offsets(tmp_path, monkeypatch):
     _RecordingMenu.made.clear()
     mw = _TraceWindow({7: SimpleNamespace(position=chain[0], call_sites=chain)}, tab, pick=7)
     mw._viewport_context_menu(None, None)
-    assert [a.text for a in _RecordingMenu.made[-1].actions] == [
+    menu, library = _RecordingMenu.made
+    assert [a.text for a in menu.actions + library.actions] == [
         "fretless (guitar.scad:2)", "_translate (library BOSL2/transforms.scad:3)"]
 
 

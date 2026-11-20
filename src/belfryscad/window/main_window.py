@@ -7063,10 +7063,20 @@ class MainWindow(QMainWindow):
         if not levels:
             return
         menu = QMenu(self)
+        # The user's own calls first; a library's frames (BOSL2's translate
+        # and rotate wrappers, a dozen per shape) under one submenu, so the
+        # list reads as the script does (#1157). Both outermost first.
+        from belfryscad.window.library_manager import _library_dir
+        lib = Path(os.path.realpath(_library_dir()))
+        in_lib = [Path(os.path.realpath(s.origin)).is_relative_to(lib) for s in levels]
+        library = QMenu("Library Calls", menu) if any(in_lib) and not all(in_lib) else None
         for i in reversed(range(len(levels))):
-            act = menu.addAction(self._call_trace_label(levels[i]))
+            act = (library if library is not None and in_lib[i] else menu).addAction(
+                self._call_trace_label(levels[i]))
             act.triggered.connect(lambda _=False, i=i: self._pick_at_level(orig_id, levels, i))
             act.hovered.connect(lambda span=levels[i]: self._preview_trace_line(span))
+        if library is not None:
+            menu.addMenu(library)             # after the user's calls
         if menu.exec(global_pos) is None:
             # Dismissed: put back what the hovering replaced.
             selected = self._viewport._renderer.selected_id
