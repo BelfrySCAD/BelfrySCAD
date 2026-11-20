@@ -590,7 +590,8 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     libroot = tmp_path / "libraries"
     (libroot / "BOSL2").mkdir(parents=True)
     lib = libroot / "BOSL2" / "shapes3d.scad"
-    lib.write_text("module cuboid(size) {\n    attachable() cube(size);\n}\n")
+    # LF on Windows too: the offsets below are bytes into this file.
+    lib.write_text("module cuboid(size) {\n    attachable() cube(size);\n}\n", newline="\n")
     monkeypatch.setattr(libmgr, "_library_dir", lambda: libroot)
     script = tmp_path / "part.scad"
     script.write_text("include <BOSL2/std.scad>\ncuboid(10);\n")
