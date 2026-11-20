@@ -1258,6 +1258,9 @@ class _DetachedTabBar(QWidget):
         return self.tab_bar
 
 
+# Send to Slicer asks the 3MF questions once per launch (#1142).
+_asked_3mf_this_launch = False
+
 class MainWindow(QMainWindow):
     # Increment whenever the dock layout structure changes so stale saved
     # states are discarded rather than applied on top of the new layout.
@@ -3775,6 +3778,9 @@ class MainWindow(QMainWindow):
             options = ask_export_options(ext, self, os.path.basename(path))
         if options is None:
             return
+        if ext == ".3mf" and not quick_ext:
+            global _asked_3mf_this_launch
+            _asked_3mf_this_launch = True
         problem = self.write_export(path, ext, options)
         if problem:
             QMessageBox.critical(self, "Export Error", problem)
@@ -3881,12 +3887,15 @@ class MainWindow(QMainWindow):
         # A folder of its own, left behind: the slicer reads the file after
         # this returns, perhaps much later, so there is no moment to delete it.
         name = os.path.basename(self._default_export_path()) or "model"
-        # The 3MF questions too, the first time: they are otherwise only
-        # asked by an Export, and a model never exported went out as
-        # whatever the defaults said (#1142). Asked once, then remembered.
-        if not app_settings().contains("export/printType"):
+        # The 3MF questions too, once per launch (#1142): saved answers from
+        # weeks ago sent a model out single- or multi-material unasked. The
+        # dialog opens on them, so confirming is one key; a 3MF Export this
+        # session counts as asking.
+        global _asked_3mf_this_launch
+        if not _asked_3mf_this_launch:
             if ask_export_options(".3mf", self, name + ".3mf") is None:
                 return
+            _asked_3mf_this_launch = True
         path = os.path.join(tempfile.mkdtemp(prefix="belfryscad-slicer-"), name + ".3mf")
         tab = self._current_tab()
         design = os.path.basename(str(tab.file_path)) if tab is not None and tab.file_path else ""
