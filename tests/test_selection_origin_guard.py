@@ -612,6 +612,36 @@ def test_right_click_lists_the_call_trace_outermost_first(tmp_path, monkeypatch)
     assert mw.restored == [-1]
 
 
+def test_trace_labels_read_byte_offsets(tmp_path, monkeypatch):
+    """#1157: spans are UTF-8 byte offsets into the file as parsed. Read as
+    character indices, an accented comment in the script or a CRLF library
+    shifted every name: "ranslate", "otate", "?"."""
+    import belfryscad.window.main_window as mwmod
+    import belfryscad.window.library_manager as libmgr
+    libroot = tmp_path / "libraries"
+    (libroot / "BOSL2").mkdir(parents=True)
+    lib = libroot / "BOSL2" / "transforms.scad"
+    lib_bytes = "// \u00e9\u00e9\r\nmodule t() {\r\n  _translate([1,0,0]) children();\r\n}\r\n".encode()
+    lib.write_bytes(lib_bytes)
+    monkeypatch.setattr(libmgr, "_library_dir", lambda: libroot)
+    script = tmp_path / "guitar.scad"
+    src = "// \u0433\u0438\u0442\u0430\u0440\u0430\nfretless();\n"
+    script.write_text(src, encoding="utf-8")
+    at_lib = lib_bytes.index(b"_translate")
+    at_src = src.encode().index(b"fretless")
+    chain = (SimpleNamespace(origin=str(lib), start_offset=at_lib, end_offset=at_lib + 10, line=3),
+             SimpleNamespace(origin=str(script), start_offset=at_src, end_offset=at_src + 10, line=2))
+    tab = _tab(str(script), str(script))
+    tab.editor.toPlainText = lambda: src
+    tab.display_name = lambda: "guitar.scad"
+    monkeypatch.setattr(mwmod, "QMenu", _RecordingMenu)
+    _RecordingMenu.made.clear()
+    mw = _TraceWindow({7: SimpleNamespace(position=chain[0], call_sites=chain)}, tab, pick=7)
+    mw._viewport_context_menu(None, None)
+    assert [a.text for a in _RecordingMenu.made[-1].actions] == [
+        "fretless (guitar.scad:2)", "_translate (library BOSL2/transforms.scad:3)"]
+
+
 def test_right_click_on_nothing_opens_no_menu(monkeypatch):
     import belfryscad.window.main_window as mwmod
     monkeypatch.setattr(mwmod, "QMenu", _RecordingMenu)

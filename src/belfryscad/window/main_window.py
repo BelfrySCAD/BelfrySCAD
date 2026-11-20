@@ -7081,7 +7081,8 @@ class MainWindow(QMainWindow):
         self._viewport.update()
         rendered = self._rendered_tab
         if rendered is not None and self._tab_for_origin(span.origin) is rendered:
-            rendered.editor.set_selection(span.start_offset, span.end_offset)
+            s = _indexed_span(span, rendered)
+            rendered.editor.set_selection(s.start_offset, s.end_offset)
         elif rendered is not None:
             rendered.editor.clear_selection()
 
@@ -7094,12 +7095,23 @@ class MainWindow(QMainWindow):
         """`name (where:line)`, as OpenSCAD labels a trace entry: the name
         read from the source at the span, a library file by its path in the
         libraries folder, the rendered script by its tab's name."""
+        # Span offsets are UTF-8 bytes into the file as parsed: a tab's text
+        # converts through _indexed_span, a file on disk is sliced as bytes,
+        # CRLF and all. Read as text, each accented letter or CR before the
+        # call shifted the name right, so "translate" showed as "ranslate"
+        # or "?" (#1157).
         tab = self._tab_for_origin(span.origin)
-        try:
-            text = tab.editor.toPlainText() if tab is not None else Path(span.origin).read_text()
-        except OSError:
-            text = ""
-        m = re.match(r"[$A-Za-z_][\w$]*", text[span.start_offset:span.start_offset + 200])
+        if tab is not None:
+            s = _indexed_span(span, tab)
+            head = tab.editor.toPlainText()[s.start_offset:s.start_offset + 200]
+        else:
+            try:
+                with open(span.origin, "rb") as f:
+                    f.seek(span.start_offset)
+                    head = f.read(200).decode("utf-8", "replace")
+            except OSError:
+                head = ""
+        m = re.match(r"[$A-Za-z_][\w$]*", head)
         name = m.group(0) if m else "?"
         from belfryscad.window.library_manager import _library_dir
         real, lib = Path(os.path.realpath(span.origin)), Path(os.path.realpath(_library_dir()))
