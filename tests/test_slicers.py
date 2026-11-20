@@ -91,8 +91,10 @@ render("color(\\"red\\") cube(10); color(\\"blue\\") translate([20,0,0]) cube(5)
 from PySide6.QtWidgets import QInputDialog
 QInputDialog.getItem = staticmethod(lambda *a, **k: ("Other Application…", True))
 mw.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (fake, ""))
-# ... and, never having exported, the 3MF questions too (#1142)
+# ... and the 3MF questions too, once per launch, even with answers saved
+# by an earlier launch (#1142)
 from belfryscad.window.export_options import remember
+remember({"export/printType": "multi", "export/splitComponents": True})
 asked = []
 def ask(ext, parent, filename):
     asked.append([ext, filename])
