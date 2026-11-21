@@ -91,6 +91,9 @@ def test_exporting_from_the_same_source_folder_starts_where_the_last_export_went
     assert offered() == os.path.join(str(out), "part")
     tab.file_path = str(tmp_path / "src") + os.sep + "." + os.sep + "other.scad"
     assert offered() == os.path.join(str(out), "part")
+    # An untitled design has no folder of its own: the last export's (#1097).
+    tab.file_path = None
+    assert offered() == os.path.join(str(out), "part")
     tab.file_path = design
     os.rmdir(out)
     assert offered() == os.path.join(str(tmp_path / "src"), "part")
