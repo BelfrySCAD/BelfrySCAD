@@ -2474,5 +2474,23 @@
         "primary": true
       }
     ]
+  },
+  {
+    "name": "Enclosure",
+    "description": "Create enclosures of up to three levels high.",
+    "type": "Single Topic",
+    "license": "MIT",
+    "download_url": "https://codeberg.org/rrioja/Enclosure",
+    "documentation_url": "https://codeberg.org/rrioja/Enclosure/src/branch/main/Enclosure.pdf",
+    "version": "20261113",
+    "default_branch": "main",
+    "install_as": "Enclosure",
+    "includes": [
+      {
+        "statement": "include <Enclosure/Enclosure.scad>",
+        "description": "Modules en_box(), en_box_bottom(), en_box_middle(), en_box_top() and 79 more.",
+        "primary": true
+      }
+    ]
   }
 ]
