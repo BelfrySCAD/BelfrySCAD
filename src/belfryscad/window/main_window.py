@@ -3660,7 +3660,8 @@ class MainWindow(QMainWindow):
         design from the same source folder as the last export starts in the
         folder that export went to (#863, #1018), so a separate output folder
         is chosen once, not once per file -- while a design in another
-        project's folder still starts beside itself."""
+        project's folder still starts beside itself. An untitled design has
+        no folder of its own, so it starts where the last export went (#1097)."""
         tab = self._current_tab()
         if tab is None:
             return ""
@@ -3670,7 +3671,7 @@ class MainWindow(QMainWindow):
         # One folder can be spelled many ways -- "/" or "\\", any letter case
         # on Windows, through a link -- so compare what they resolve to (#1097).
         same = lambda f: os.path.normcase(os.path.realpath(os.path.dirname(f)))
-        if last and os.path.isdir(last) and source and (
+        if last and os.path.isdir(last) and (not source or
                 same(load_preference("export/lastSource", str)) == same(source)):
             folder = last
         elif tab.file_path:
