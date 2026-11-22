@@ -41,6 +41,10 @@ Return. A directive may end in a `//` comment.
     @rotate 30 20 over 1.5s  swing to azimuth 30, elevation 20
     @zoom 1.5 over 1s        zoom in 1.5x (below 1 zooms out)
     @zoom 2 at 10 0 5        ... ending centred on the point [10, 0, 5]
+    @super on title.png      lay an image from the script's folder over the
+                             whole main window, stretched to its size
+    @super on title.png over 2s   ... fading it in over 2 seconds
+    @super off title.png [over 2s]  remove it (fading it out first)
 
 During playback Space pauses and resumes wherever the demo is, Up and
 Down speed it up and slow it down, and Esc stops it, keeping what it typed.
@@ -56,7 +60,8 @@ import time
 import numpy as np
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, Qt, QTimer, QVariantAnimation
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QWidget
 
 #: Pane names for @show, @hide and @scroll, and their MainWindow docks.
 PANES = {"editor": "_editor_dock", "console": "_console_dock", "customizer": "_customizer_dock",
@@ -115,6 +120,10 @@ def parse(text: str) -> list[tuple]:
                 raise DemoScriptError(f"Line {n}: @{verb} {name}: {problem}")
             steps.append((verb, name))
             continue
+        m = re.match(r"@super\s+(on|off)(\s|$)", line, re.IGNORECASE)
+        if m:
+            steps.append(_super_step(n, m.group(1).lower(), line[m.end():]))
+            continue
         body, ms = _split_over(line[1:].split("//", 1)[0].strip())
         name, *args = body.split() or [""]
         try:
@@ -138,6 +147,16 @@ def _set_step(n, rest):
         if parsed is not None:
             return ("set", m.group(1), parsed)
     raise DemoScriptError(f"Line {n}: can't read '@set{rest}'")
+
+
+def _super_step(n, which, rest):
+    """@super on|off NAME [over Ns]: NAME may hold spaces, or be quoted."""
+    body, ms = _split_over(rest.split("//", 1)[0].strip())
+    name = _open_name(body)
+    problem = _bad_name(name)
+    if problem:
+        raise DemoScriptError(f"Line {n}: @super {which} {name}: {problem}")
+    return ("super", which == "on", name, ms)
 
 
 def _open_name(rest):
@@ -183,7 +202,7 @@ def open_path(base, name, verb="open"):
         path = os.path.realpath(os.path.join(root, name))
         if os.path.commonpath([root, path]) != root:
             problem = "outside the script's folder"
-        elif verb == "open" and not os.path.isfile(path):
+        elif verb != "export" and not os.path.isfile(path):
             problem = "no such file"
         elif verb == "export" and not os.path.isdir(os.path.dirname(path)):
             problem = "no such folder"
@@ -287,6 +306,7 @@ class DemoPlayer(QObject):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._tick)
         self._remaining = None
+        self._supers = {}           # @super name -> its _Superimpose
 
     def start(self):
         QApplication.instance().installEventFilter(self)
@@ -299,6 +319,10 @@ class DemoPlayer(QObject):
         self._timer.stop()
         if self._anim is not None:
             self._anim.stop()
+        # every overlay, one fading out included: none outlives the demo
+        for overlay in self._win.findChildren(_Superimpose):
+            overlay.deleteLater()
+        self._supers.clear()
         QApplication.instance().removeEventFilter(self)
         self._win.log("Demo finished." if finished else "Demo stopped.")
         if self._win._demo_player is self:
@@ -611,6 +635,51 @@ class DemoPlayer(QObject):
         self._deleting = len(text)
         self._schedule(1000 / self._rate)
 
+    def _do_super(self, on, name, ms):
+        old = self._supers.pop(name, None)
+        if not on:
+            if old is None:
+                self._win.log(f"Demo: no @super {name} to take off.")
+                self._schedule(0)
+            elif ms is None:
+                old.deleteLater()
+                self._schedule(0)
+            else:
+                self._fade(old, 1.0, 0.0, ms, old.deleteLater)
+            return
+        if old is not None:
+            old.deleteLater()           # a second @super on of one name replaces it
+        try:
+            path = open_path(self._base, name, "super")
+        except DemoScriptError as e:
+            self._win.log(f"ERROR: Demo: {e}")
+            self._schedule(0)
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            self._win.log(f"ERROR: Demo: @super {name}: not an image Qt can read.")
+            self._schedule(0)
+            return
+        overlay = _Superimpose(self._win, pixmap)
+        self._supers[name] = overlay
+        if ms is None:
+            self._schedule(0)
+        else:
+            overlay.set_opacity(0.0)
+            self._fade(overlay, 0.0, 1.0, ms)
+
+    def _fade(self, overlay, a, b, ms, then=None):
+        anim = QVariantAnimation(self)
+        anim.setStartValue(a)
+        anim.setEndValue(b)
+        anim.setDuration(max(1, int(ms / self._speed)))
+        anim.valueChanged.connect(overlay.set_opacity)
+        if then is not None:
+            anim.finished.connect(then)
+        anim.finished.connect(self._zoom_done)
+        self._anim = anim
+        anim.start()
+
     def _do_rotate(self, az, el, ms):
         vp = self._viewport()
         vp.animate_camera_to(az, el, duration_ms=max(1, int(ms / self._speed)))
@@ -663,6 +732,38 @@ class DemoPlayer(QObject):
     def _zoom_done(self):
         self._anim = None
         self._schedule(0)
+
+
+class _Superimpose(QWidget):
+    """@super's image: a child covering the whole main window, the image
+    stretched to fit it, following the window as it resizes, and passing
+    the mouse through to what is beneath."""
+
+    def __init__(self, window, pixmap):
+        super().__init__(window)
+        self._pixmap = pixmap
+        self._opacity = 1.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setGeometry(window.rect())
+        window.installEventFilter(self)
+        self.show()
+        self.raise_()
+
+    def set_opacity(self, value):
+        self._opacity = float(value)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self.parent() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(obj.rect())
+        return False
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setOpacity(self._opacity)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawPixmap(self.rect(), self._pixmap)
+        p.end()
 
 
 # -- recording -------------------------------------------------------------

@@ -588,3 +588,62 @@ def test_remove_displays_and_view_over_play_and_record():
     assert out["text"] == "cuboid([10, 20, 30], chamfer=1, anchor=BOT);\n", out
     assert (out["edges"], out["axes"], out["cross"], out["el"]) == (True, False, True, 90), out
     assert out["frames"] > 3, out      # swung, not cut
+
+
+def test_super_parses():
+    assert parse("@super on title.png\n@super ON my title.png over 2s // fade\n"
+                 "@super off \"my title.png\" over 0.5\n@super off title.png\n") == [
+        ("super", True, "title.png", None), ("super", True, "my title.png", 2000),
+        ("super", False, "my title.png", 500), ("super", False, "title.png", None)]
+    for bad in ("@super on", "@super on /etc/a.png", "@super on ~/a.png", "@super", "@super up a.png"):
+        with pytest.raises(DemoScriptError, match="Line 1"):
+            parse(bad)
+
+
+SUPER_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtGui import QColor, QImage
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+from belfryscad.window.demo_player import _Superimpose
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+w = MainWindow(); w.resize(900, 600); w.show(); app.processEvents()
+d = tempfile.mkdtemp()
+img = QImage(10, 10, QImage.Format.Format_RGB32); img.fill(QColor("red")); img.save(os.path.join(d, "t.png"))
+open(os.path.join(d, "x.png"), "w").write("not an image")
+p = os.path.join(d, "t.demo")
+open(p, "w").write("@super on t.png over 0.4s\\n@pause 0.3\\n@mainwin size 1000 700\\n@pause 0.3\\n"
+                   "@super on x.png\\n@super on gone.png\\n@super off nope.png\\n"
+                   "@super off t.png over 0.4s\\n@pause 0.3\\n")
+w._play_demo(p)
+seen = []
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 20:
+    o = w.findChildren(_Superimpose)
+    seen.append([round(o[0]._opacity, 2), o[0].width(), o[0].height()] if o else None)
+    run(30)
+app.processEvents(); run(50)
+print("RESULT" + json.dumps({"seen": seen, "left": len(w.findChildren(_Superimpose)),
+                             "win": [w.width(), w.height()]}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_super_fades_in_follows_the_window_and_fades_out():
+    r = subprocess.run([sys.executable, "-c", SUPER_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    shown = [s for s in out["seen"] if s]
+    opacities = [s[0] for s in shown]
+    assert 0 < min(o for o in opacities if o > 0) < 1 and max(opacities) == 1.0, opacities  # faded in
+    assert shown[-1][0] < 1, opacities                                                          # faded out
+    assert [out["win"][0], out["win"][1]] in [s[1:] for s in shown], out                        # followed the resize
+    assert out["seen"][-1] is None and out["left"] == 0, out                                    # then removed
