@@ -1420,11 +1420,16 @@ class MainWindow(QMainWindow):
         self._act_measure_angle = make(
             "&Angle Between Three Points", "toolbar-measure-angle.svg",
             "Measure angle between three points")
+        # #1131: selects whole edges and faces, not just points on them.
+        self._act_measure_features = make(
+            "&Edges and Faces", "toolbar-measure-features.svg",
+            "Measure between points, edges and faces")
 
         self._measure_group = QActionGroup(self)
         self._measure_group.setExclusionPolicy(
             QActionGroup.ExclusionPolicy.ExclusiveOptional)
-        for act in (self._act_measure_distance, self._act_measure_angle):
+        for act in (self._act_measure_distance, self._act_measure_angle,
+                    self._act_measure_features):
             self._measure_group.addAction(act)
             # One handler reading the group, rather than each action acting
             # on its own toggle: switching tools fires an un-check and a
@@ -1493,6 +1498,7 @@ class MainWindow(QMainWindow):
         self._viewport.context_menu_requested.connect(self._viewport_context_menu)
         self._viewport.measurement_taken.connect(self._on_measurement_taken)
         self._viewport.measure_progress.connect(self._on_measure_progress)
+        self._viewport.measure_log.connect(self.log)
         self._viewport.measurement_dismissed.connect(self._on_measurement_dismissed)
         self._viewport.translate_committed.connect(self._on_translate_committed)
         self._viewport.rotate_committed.connect(self._on_rotate_committed)
@@ -1887,6 +1893,7 @@ class MainWindow(QMainWindow):
         ttb.addSeparator()
         ttb.addAction(self._act_measure_distance)
         ttb.addAction(self._act_measure_angle)
+        ttb.addAction(self._act_measure_features)
 
         return tb, vtb, ttb
 
@@ -2047,6 +2054,7 @@ class MainWindow(QMainWindow):
         measure_menu = design_menu.addMenu("&Measure")
         measure_menu.addAction(self._act_measure_distance)
         measure_menu.addAction(self._act_measure_angle)
+        measure_menu.addAction(self._act_measure_features)
         measure_menu.addSeparator()
         self._add_action(measure_menu, "&Clear Measurements",
                           self._clear_measurements)
@@ -3487,7 +3495,8 @@ class MainWindow(QMainWindow):
         viewport where every click would report a miss.
         """
         has_geometry = bool(getattr(self, "_bodies", None))
-        for act in (self._act_measure_distance, self._act_measure_angle):
+        for act in (self._act_measure_distance, self._act_measure_angle,
+                    self._act_measure_features):
             act.setEnabled(has_geometry)
         if not has_geometry and self._viewport.measure_mode() is not None:
             self._set_measure_mode(None)
@@ -3500,6 +3509,8 @@ class MainWindow(QMainWindow):
             mode = "distance"
         elif self._act_measure_angle.isChecked():
             mode = "angle"
+        elif self._act_measure_features.isChecked():
+            mode = "features"
         else:
             mode = None
         self._apply_measure_mode(mode)
@@ -3508,7 +3519,8 @@ class MainWindow(QMainWindow):
         """Enter or leave a measurement mode programmatically, keeping the
         toolbar and menu toggles in step."""
         for act, want in ((self._act_measure_distance, mode == "distance"),
-                           (self._act_measure_angle, mode == "angle")):
+                           (self._act_measure_angle, mode == "angle"),
+                           (self._act_measure_features, mode == "features")):
             if act.isChecked() != want:
                 blocked = act.blockSignals(True)
                 act.setChecked(want)
@@ -3532,6 +3544,9 @@ class MainWindow(QMainWindow):
         # buried under thirty labels is worse than one that forgets.
         del self._measurements[:-self._MAX_MEASUREMENTS]
         self._viewport.set_measurements(self._measurements)
+        if measurement.kind == "features":
+            self.log("Measurements:\n" + "\n".join(measurement.lines))
+            return
         kinds = "/".join(measurement.snaps)
         self.log(f"Measured {measurement.kind}: {measurement.label()}  "
                  f"{measurement.where()}  [snapped to {kinds}]")
@@ -6647,6 +6662,7 @@ class MainWindow(QMainWindow):
                 return
             self._act_measure_distance.setChecked(False)
             self._act_measure_angle.setChecked(False)
+            self._act_measure_features.setChecked(False)
             self._set_measure_mode(None)
             return
         if event.key() == Qt.Key.Key_Escape and self._cancel_busy():
