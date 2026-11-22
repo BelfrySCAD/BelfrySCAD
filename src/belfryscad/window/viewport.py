@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QPushButton
@@ -186,9 +186,15 @@ class Measurement:
     snapped to a vertex that no longer exists would still draw, and a
     plausible wrong number is worse than none.
     """
-    kind: str                 # "distance" | "angle"
-    points: list              # 2 for a distance, 3 for an angle (middle = vertex)
+    kind: str                 # "distance" | "angle" | "features"
+    points: list              # 2 for a distance, 3 for an angle (middle = vertex);
+                              # for features, the ends of its dimension line
     snaps: list               # how each point was snapped: vertex/edge/face
+    # "features" only (#1131): the two selections, the console report and
+    # the label's text, all fixed when it is taken.
+    features: list = field(default_factory=list)
+    lines: list = field(default_factory=list)
+    head: str = ""
 
     def value(self) -> float:
         """Length, or degrees at the middle point."""
@@ -204,12 +210,16 @@ class Measurement:
 
     def where(self) -> str:
         """The points, as literals to copy into a script (#1118)."""
+        if self.kind == "features":
+            return ""
         p = [point_literal(x) for x in self.points]
         if self.kind == "distance":
             return f"from {p[0]} to {p[1]}"
         return f"at {p[1]} between {p[0]} and {p[2]}"
 
     def label(self) -> str:
+        if self.kind == "features":
+            return self.head
         v = self.value()
         if self.kind == "distance":
             d = self.points[1] - self.points[0]
@@ -445,6 +455,7 @@ class Viewport(QOpenGLWidget):
     measurement_taken   = Signal(object)                  # a finished Measurement
     measurement_dismissed = Signal(int)                   # index into the list
     measure_progress    = Signal(str)                     # prompt for the next click
+    measure_log         = Signal(str)                     # a line for the console
 
     def __init__(self, parent=None, selectable: bool = True, pan_speed: float = 1.0,
                  orientation_cube: bool = False):
@@ -486,6 +497,10 @@ class Viewport(QOpenGLWidget):
         self._measure_mode = None
         self._measure_pending: list = []
         self._measure_hover = None
+        # Measure Features (#1131): the selections made, and what the
+        # cursor is over as (Feature, highlight segments).
+        self._measure_pending_features: list = []
+        self._measure_hover_feature = None
         self._measurements: list = []
 
         # Delta overlay label
@@ -724,8 +739,23 @@ class Viewport(QOpenGLWidget):
                 d[axis] = r
                 segs.append((p - d, p + d, rgb))
 
+        def feature(f, rgb):
+            for a, b in f.segments():
+                segs.append((a, b, rgb))
+            if f.kind == "point":
+                cross(f.point, rgb)
+            elif f.kind == "face":       # its normal, as an arrow off the centroid
+                tip = f.point + f.face.normal * self._measure_marker_size() * 6
+                segs.append((f.point, tip, rgb))
+
         for m in self._measurements:
             rgb = self._MEASURE_RGB
+            if m.kind == "features":
+                for f in m.features:
+                    feature(f, rgb)
+                if not np.allclose(m.points[0], m.points[1]):
+                    segs.append((m.points[0], m.points[1], rgb))
+                continue
             if m.kind == "distance":
                 segs.append((m.points[0], m.points[1], rgb))
             else:
@@ -736,6 +766,16 @@ class Viewport(QOpenGLWidget):
 
         # The one being taken: placed points, plus a rubber band to
         # whatever the cursor is currently over.
+        if self._measure_mode == self.MEASURE_FEATURES:
+            for f in self._measure_pending_features:
+                feature(f, self._PENDING_RGB)
+            if self._measure_hover_feature is not None:
+                f, highlight = self._measure_hover_feature
+                for a, b in highlight:
+                    segs.append((a, b, self._PENDING_RGB))
+                if f.kind == "point":
+                    cross(f.point, self._PENDING_RGB)
+            return segs
         placed = [p for p, _ in self._measure_pending]
         for p in placed:
             cross(p, self._PENDING_RGB)
@@ -801,7 +841,7 @@ class Viewport(QOpenGLWidget):
         mvp = (self._renderer.camera.projection_matrix(aspect)
                 @ self._renderer.camera.view_matrix())
         for m, lab in zip(self._measurements, self._measure_labels):
-            anchor_pt = (m.points[0] + m.points[1]) / 2.0 if m.kind == "distance" \
+            anchor_pt = (m.points[0] + m.points[1]) / 2.0 if m.kind != "angle" \
                 else m.points[1]
             clip = mvp.astype(np.float64) @ np.array(
                 [anchor_pt[0], anchor_pt[1], anchor_pt[2], 1.0])
@@ -868,6 +908,7 @@ class Viewport(QOpenGLWidget):
 
     MEASURE_DISTANCE = "distance"
     MEASURE_ANGLE = "angle"
+    MEASURE_FEATURES = "features"
 
     def set_measure_mode(self, mode):
         """Enter, switch or leave measurement. Anything half-picked is
@@ -876,6 +917,8 @@ class Viewport(QOpenGLWidget):
         self._measure_mode = mode
         self._measure_pending = []
         self._measure_hover = None
+        self._measure_pending_features = []
+        self._measure_hover_feature = None
         self.setCursor(Qt.CursorShape.CrossCursor if mode
                         else Qt.CursorShape.ArrowCursor)
         self.measure_progress.emit(self._measure_prompt())
@@ -889,6 +932,9 @@ class Viewport(QOpenGLWidget):
         if self._measure_mode is None:
             return ""
         n = len(self._measure_pending)
+        if self._measure_mode == self.MEASURE_FEATURES:
+            return ("Measure: click a point, edge or face." if not self._measure_pending_features
+                    else "Measure: click a second point, edge or face.  (Esc cancels)")
         if self._measure_mode == self.MEASURE_DISTANCE:
             return ("Measure: click the first point." if n == 0
                     else "Measure: click the second point.  (Esc cancels)")
@@ -900,9 +946,10 @@ class Viewport(QOpenGLWidget):
 
     def cancel_measurement(self):
         """Drop a half-taken measurement, staying in the mode."""
-        if not self._measure_pending:
+        if not self._measure_pending and not self._measure_pending_features:
             return False
         self._measure_pending = []
+        self._measure_pending_features = []
         self.measure_progress.emit(self._measure_prompt())
         self._rebuild_measure_overlay()
         self.update()
@@ -914,7 +961,32 @@ class Viewport(QOpenGLWidget):
         self._rebuild_measure_overlay()
         self.update()
 
+    def _do_features_click(self, pos) -> bool:
+        from belfryscad.engine.mesh_features import describe, measure
+        picked = self._renderer.feature_at(pos.x(), pos.y(), self.width(), self.height())
+        if picked is None:
+            self.measure_progress.emit("Measure: that click missed the model.")
+            return True
+        f = picked[0]
+        pending = self._measure_pending_features
+        pending.append(f)
+        if len(pending) == 1:
+            self.measure_log.emit(describe(f, 1))
+        else:
+            self._measure_pending_features = []
+            lines, head, p, q = measure(pending[0], pending[1])
+            report = [describe(pending[0], 1), describe(pending[1], 2)] + lines
+            self.measurement_taken.emit(Measurement(
+                self.MEASURE_FEATURES, [p, q], [x.tag or x.kind for x in pending],
+                features=list(pending), lines=report, head=head))
+        self.measure_progress.emit(self._measure_prompt())
+        self._rebuild_measure_overlay()
+        self.update()
+        return True
+
     def _do_measure_click(self, pos) -> bool:
+        if self._measure_mode == self.MEASURE_FEATURES:
+            return self._do_features_click(pos)
         snap = self._renderer.snap_at(pos.x(), pos.y(), self.width(), self.height())
         if snap is None:
             # A click on empty space is not a measurement point. Silently
@@ -1636,7 +1708,21 @@ class Viewport(QOpenGLWidget):
                                            (self.height() - pos.y()) * dpr)
             self.update()
 
-        if self._measure_mode is not None and self._last_mouse is None:
+        if self._measure_mode == self.MEASURE_FEATURES and self._last_mouse is None:
+            picked = self._renderer.feature_at(pos.x(), pos.y(), self.width(), self.height())
+            old = self._measure_hover_feature
+            same = (picked is None) == (old is None) and (
+                picked is None or (picked[0].kind == old[0].kind
+                                   and np.allclose(picked[0].point, old[0].point)))
+            self._measure_hover_feature = picked
+            if not same:
+                self._rebuild_measure_overlay()
+                self.update()
+                f = picked[0] if picked else None
+                where = (f"  {f.kind} {point_literal(f.point)}" + (f" ({f.tag})" if f.tag else "")
+                         if f else "")
+                self.measure_progress.emit(self._measure_prompt() + where)
+        elif self._measure_mode is not None and self._last_mouse is None:
             snap = self._renderer.snap_at(pos.x(), pos.y(), self.width(), self.height())
             hover = (np.asarray(snap[0], dtype=np.float64), snap[1]) if snap else None
             changed = (hover is None) != (self._measure_hover is None)

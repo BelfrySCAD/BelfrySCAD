@@ -3087,6 +3087,58 @@ class SceneRenderer:
         cursor_o, cursor_d = self.camera_ray(px, py, w, h)
         return choose_snap(point, tri, edges, cursor_o, cursor_d, mvp, px, py, w, h)
 
+    def feature_at(self, px: float, py: float, w: int, h: int,
+                   vertex_px: float = 14.0, edge_px: float = 10.0):
+        """What the Measure Features tool would select at (px, py) (#1131).
+
+        Returns (Feature, highlight segments) or None. Priority is vertex,
+        edge midpoint, face centroid, edge, then face: the points first, as
+        in choose_snap, because near any of them the edge or face under it
+        is always at least as close. Each buffer's MeshTopology is built on
+        first use and dropped with the buffer at the next render (~0.1 s
+        for 110K triangles, ~0.65 s for 680K).
+        """
+        from .mesh_features import Feature, MeshTopology
+        hit = None
+        for ox, oy in self._SNAP_PROBES:
+            ray_origin, ray_dir = self.camera_ray(px + ox, py + oy, w, h)
+            hit = self.ray_cast_point(ray_origin, ray_dir)
+            if hit is not None:
+                break
+        if hit is None:
+            return None
+        _point, tri, buf, idx = hit
+        topo = getattr(buf, "_topology", None)
+        if topo is None:
+            topo = buf._topology = MeshTopology(buf.cpu_v0, buf.cpu_v1, buf.cpu_v2)
+        aspect = w / h if h > 0 else 1.0
+        mvp = self.camera.projection_matrix(aspect) @ self.camera.view_matrix()
+        cursor_o, cursor_d = self.camera_ray(px, py, w, h)
+
+        verts = np.asarray(tri, dtype=np.float64)
+        k = nearest_point_index(verts, mvp, px, py, w, h, vertex_px)
+        if k >= 0:
+            edges = topo.edges_at_vertex(topo.corner_vertex(idx, k))
+            return Feature("point", verts[k], "vertex"), edges
+
+        chains = [topo.edge_chain(e) for e in topo.feature_edges_of(idx)]
+        if chains:
+            mids = np.array([(a + b) / 2 for a, b in chains])
+            j = nearest_point_index(mids, mvp, px, py, w, h, vertex_px)
+            if j >= 0:
+                return Feature("point", mids[j], "edge cp"), [chains[j]]
+        face = topo.face_of(idx)
+        if nearest_point_index(face.centroid[None, :], mvp, px, py, w, h, vertex_px) == 0:
+            return Feature("point", face.centroid.copy(), "face cp", face=face), list(face.outline)
+        if chains:
+            pts = np.array([p for c in chains for p in c])
+            found = nearest_segment_index(pts, [(2 * i, 2 * i + 1) for i in range(len(chains))],
+                                          cursor_o, cursor_d, mvp, px, py, w, h, edge_px)
+            if found is not None:
+                a, b = chains[found[0]]
+                return Feature("edge", (a + b) / 2, a=a, b=b), [(a, b)]
+        return Feature("face", face.centroid.copy(), face=face), list(face.outline)
+
     def release(self):
         self._clear_buffers()
         self._release_anaglyph_targets()

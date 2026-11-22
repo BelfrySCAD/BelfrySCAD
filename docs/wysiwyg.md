@@ -217,16 +217,34 @@ Only one runs at a time, and clicking the running one turns it off (`Viewport._a
 
 ## Measurement
 
-Two viewport measuring tools, toggled from the toolbar and mutually exclusive (a `QActionGroup` with `ExclusionPolicy.ExclusiveOptional`, so both may be off). Both are disabled whenever there is no geometry to measure — `MainWindow._update_measure_actions_enabled()`.
+Three viewport measuring tools, toggled from the toolbar and mutually exclusive (a `QActionGroup` with `ExclusionPolicy.ExclusiveOptional`, so all may be off). All are disabled whenever there is no geometry to measure — `MainWindow._update_measure_actions_enabled()`.
 
 | Tool | Picks | Reports |
 |---|---|---|
 | Linear | Two points | Distance between them |
 | Angle | Three points | Angle at the second, the vertex |
+| Edges and Faces (#1131) | Two points, edges or faces | Everything the pair defines (below) |
 
 Each click ray-casts to a surface point (`SceneRenderer.ray_cast_point`), then `snap_at()`/`choose_snap()` snap it to a vertex or feature edge if one is near in *screen* space, falling back to the raw surface point. Priority is vertex, then edge, then face.
 
 The edges offered are filtered by `feature_edges_of_triangle()`, which keeps an edge only if it is a boundary or its dihedral angle is sharp. Without that, a flat square face — two triangles — would offer its triangulation diagonal as a snap target, which moves when `$fn` changes and means nothing.
+
+### Edges and Faces
+
+The viewport holds triangle soup, so `engine/mesh_features.py`'s `MeshTopology` recovers adjacency by matching corners by position (packed int64 keys and 1-D `np.unique`: ~0.1 s for 110K triangles, ~0.65 s for 680K). It is built on the first hover after a render and cached on the `MeshBuffer`, which the next render discards. A **face** is a connected set of coplanar triangles, so a cube side is one face and each facet of a `$fn` cylinder is its own: true to the mesh. An **edge** is a straight run of feature edges (the same 20° rule), so a cube edge split by a vertex on it still measures its full length.
+
+`SceneRenderer.feature_at()` picks, in priority order: a vertex (highlighting the edges meeting there), an edge's midpoint, a face's centroid (the points are tagged `vertex`/`edge cp`/`face cp`), then the edge, then the face (its outline highlighted). The first selection is logged at once: an edge's length and ends, a face's normal, area and centroid. The second completes the measurement, and every line `mesh_features.measure()` has for the pair goes to the console under `Measurements:`:
+
+| Pair | Reports |
+|---|---|
+| point–point | distance, dx/dy/dz |
+| point–edge | shortest distance to the segment, and to its infinite line |
+| point–face | signed distance to the face's plane (negative behind it) |
+| edge–edge | shortest distance between the segments; their angle (0–90°, edges have no direction) |
+| edge–face | angle to the plane; the distance too, when parallel |
+| face–face | angle between the normals; the distance between the planes, when parallel |
+
+The overlay draws each selection (a face with its normal as an arrow) and a dimension line between the closest points, labelled with the headline value.
 
 Finished measurements draw as overlay lines (`Viewport.upload_lines`) with a `_MeasureLabel` per measurement. A label is dismissed by clicking it; Escape peels one measurement at a time rather than clearing them all.
 
