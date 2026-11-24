@@ -90,6 +90,11 @@
   </supports>
 
   <releases>
+    <release version="1.102.0" date="2026-11-24">
+      <description>
+        <p>OpenSCAD 2026.11 parity: fragments(), object printing and equality, and inside-out solids turned right side out</p>
+      </description>
+    </release>
     <release version="1.101.0" date="2026-11-22">
       <description>
         <p>A measuring tool for edges and faces, reporting the distances and angles between them</p>
