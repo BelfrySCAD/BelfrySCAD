@@ -105,6 +105,7 @@ BUILTIN_SIGNATURES: dict[str, str] = {
     "textmetrics": ("textmetrics(text, size=10 | em, font, direction, language, script, "
                     "halign, valign, spacing)"),
     "fontmetrics": "fontmetrics(size=10 | em, font)",
+    "fragments": "fragments(r | d)",
 }
 
 #: `module NAME(` or `function NAME(`, at the start of a declaration.

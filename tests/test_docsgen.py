@@ -1700,14 +1700,18 @@ def test_render_actions_use_the_live_buffer(tmp_path):
 _OPEN_SURFACE = "polyhedron([[0,0,0],[10,0,0],[0,10,0],[0,0,10]], [[0,1,2],[0,3,1],[0,2,3]]);"
 _MISORIENTED = ("polyhedron([[0,0,0],[10,0,0],[0,10,0],[0,0,10]], "
                 "[[0,1,2],[0,3,1],[0,2,3],[1,2,3]]);")
+# Every face wound backwards: closed, but inside out (flipped, with a warning).
+_INSIDE_OUT = ("polyhedron([[0,0,0],[10,0,0],[0,10,0],[0,0,10]], "
+               "[[0,2,1],[0,1,3],[0,3,2],[1,2,3]]);")
 
 
 @pytest.mark.parametrize("script", [
     _OPEN_SURFACE,
     _MISORIENTED,
+    _INSIDE_OUT,
     "hull() { square(5); cube(5); }",               # Mixing 2D and 3D
     "linear_extrude(2) { square(5); cube(3); }",    # Ignoring 3D child for 2D
-], ids=["open", "misoriented", "mixed-dims", "ignored-child"])
+], ids=["open", "misoriented", "inside-out", "mixed-dims", "ignored-child"])
 def test_docs_mask_covers_the_evaluators_own_mesh_warnings(tmp_path, script):
     from belfryscad.docsgen.imagemanager import _unmasked
     from belfryscad.docsgen.runner import runner
