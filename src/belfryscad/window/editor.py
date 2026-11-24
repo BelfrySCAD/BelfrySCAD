@@ -2995,7 +2995,7 @@ class CodeEditor(QPlainTextEdit):
         "is_undef", "is_bool", "is_num", "is_string", "is_list", "is_function",
         "is_object", "search", "lookup",
         "version", "version_num", "parent_module",
-        "object", "textmetrics", "fontmetrics",
+        "object", "textmetrics", "fontmetrics", "fragments",
     }
     _BUILTIN_CONSTANTS = {"PI"}
     _BUILTIN_DOLLAR_VARS = {

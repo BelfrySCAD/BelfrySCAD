@@ -71,6 +71,9 @@ _DEFAULT_FRAMES = 36
 _MASKED_WARNINGS = (
     "mesh is not closed",
     "faces are not consistently wound",
+    # Evaluator 1.56.0 turns an inside-out solid right side out, as OpenSCAD
+    # 2026.11 does silently; BOSL2's skin/turtle3d examples build such solids.
+    "the solid is inside out",
     "Mixing 2D and 3D objects is not supported",
     "Ignoring 2D child object for 3D operation",
     "Ignoring 3D child object for 2D operation",
