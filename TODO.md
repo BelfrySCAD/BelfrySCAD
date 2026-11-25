@@ -103,7 +103,7 @@ since two BOSL2 examples build inside-out solids). Already matched before:
 
 **Still open:**
 
-- **OBJ import** (RC1 #7232). Ours (the evaluator's `mesh_import.cpp`
+- **OBJ import** (RC1 #7232; evaluator #344). Ours (the evaluator's `mesh_import.cpp`
   `loadObj`) fails three cases, checked 2026-11-24: negative (relative) face
   indices error (`face index -5 is past its 4 vertices`); an unparsable index
   stops the render with a bare `stoi: no conversion`; and a tab after `v`/`f`
