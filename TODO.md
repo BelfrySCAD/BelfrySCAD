@@ -89,6 +89,32 @@
   callback into script is the same shape as the `warp()` experiment, where the
   builtin lost to four lines of userspace.
 
+## OpenSCAD 2026.11 parity
+
+Surveyed 2026-11-24 from the 2026.11-RC1 release notes, probed through
+`belfryscad` (we have no RC1 binary; the reference is still 2026.02.01).
+
+**Done** in evaluator 1.56.0 / BelfrySCAD 1.102.0 (evaluator #338-#341):
+objects print as `{ a : 1 }`, object `==` ignores key order, `fragments()`,
+and an inside-out closed `polyhedron()`/`import()` is flipped right side out
+with a warning (RC1 flips silently; BelfrySCAD's docsgen masks the warning,
+since two BOSL2 examples build inside-out solids). Already matched before:
+`color(undef)` leaves child colours alone; MCAD was never bundled.
+
+**Still open:**
+
+- **OBJ import** (RC1 #7232). Ours (the evaluator's `mesh_import.cpp`
+  `loadObj`) fails three cases, checked 2026-11-24: negative (relative) face
+  indices error (`face index -5 is past its 4 vertices`); an unparsable index
+  stops the render with a bare `stoi: no conversion`; and a tab after `v`/`f`
+  skips the line (`rfind("v ")`), so a tab-separated file imports as nothing,
+  silently. A `v` line with a `w` or `r g b` tail already imports, but the
+  vertex colours are dropped.
+- **`--animate-sharding`** (renamed from `--animate_sharding`): we have
+  neither spelling. Only matters for splitting an animation across processes.
+- **Verify the four done items against a real RC1/2026.11 binary** once
+  one is installed; all four were written from the release notes.
+
 ## OpenSCAD GUI parity gaps
 
 Surveyed 2026-09-17 against openscad/openscad `master` @ 4c1d47946 (2026-09-16),
