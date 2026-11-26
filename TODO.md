@@ -112,8 +112,20 @@ since two BOSL2 examples build inside-out solids). Already matched before:
   vertex colours are dropped.
 - **`--animate-sharding`** (renamed from `--animate_sharding`): we have
   neither spelling. Only matters for splitting an animation across processes.
-- **Verify the four done items against a real RC1/2026.11 binary** once
-  one is installed; all four were written from the release notes.
+- **Unexpected-argument warning quotes the name in RC1**:
+  `variable "foo" not specified as parameter`, where we print
+  `variable foo not ...`. Found 2026-11-26 while verifying the above. A
+  warning-text change, so it needs the BOSL2 docsgen A/B before release.
+
+**Verified against 2026.11-RC1** (`~/Desktop/OpenSCAD-RC1.app`, 2026-11-26):
+object printing (identifier and quoted keys, empty, nested, every value type,
+`str()`) and object equality (order-insensitive, nested, inside lists) match
+line for line; `fragments()` matches in every case tried (`r`/`d`/both,
+default, zero and negative radius, bad types, `$fn` fractional/small/negative,
+clamped `$fa`/`$fs`, call-site and inherited `$` variables), warnings
+included. Inside-out solids match inside a boolean (`polyhedron()` and
+`import()` alike; RC1 flips them silently) and diverge **deliberately** for a
+lone top-level object: RC1 exports it inside out, we flip it and warn.
 
 ## OpenSCAD GUI parity gaps
 
