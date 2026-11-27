@@ -2482,7 +2482,7 @@
     "license": "MIT",
     "download_url": "https://codeberg.org/rrioja/Enclosure",
     "documentation_url": "https://codeberg.org/rrioja/Enclosure/src/branch/main/Enclosure.pdf",
-    "version": "20261113",
+    "version": "20261121",
     "default_branch": "main",
     "install_as": "Enclosure",
     "includes": [
