@@ -1620,6 +1620,15 @@ class CodeEditor(QPlainTextEdit):
         # Tab stops are measured in the font, so they have to follow it.
         self.set_indent_size(self._indent_size)
 
+    def set_font_size(self, size: float):
+        """Set the text to `size` points -- a demo's @editfontsize. A
+        fraction is kept (8.7), finer than the whole-point zoom steps; this
+        editor only, and not saved, as with the zoom."""
+        f = self.font()
+        f.setPointSizeF(max(float(size), self._MIN_POINT_SIZE))
+        self.setFont(f)
+        self.set_indent_size(self._indent_size)
+
     def wheelEvent(self, event):
         # Qt reports macOS's Cmd as ControlModifier, so this is Cmd+wheel
         # there and Ctrl+wheel elsewhere. QPlainTextEdit's own Ctrl+wheel

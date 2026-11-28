@@ -31,6 +31,8 @@ Return. A directive may end in a `//` comment.
                              crosshairs (Cmd+1, 2, 3); @hide turns it off
     @mainwin size 1280 800   resize the main window
     @mainwin position 100 100  move it
+    @editfontsize 16        set the editor's text to 16 points (6 or more),
+                             as Cmd/Ctrl +/- would but to any size; not saved
     @set width 30            set a Customizer parameter, as its control would
     @pause 3                 wait 3 seconds
     @pause key               wait for Space (or a presenter remote's "next")
@@ -257,6 +259,9 @@ def _directive(name, args, ms):
         if args[0].lower() == "size" and (a <= 0 or b <= 0):
             raise ValueError(name)
         return ("mainwin", args[0].lower(), a, b)
+    # 6 is the smallest the editor's own zoom goes (CodeEditor._MIN_POINT_SIZE)
+    if name == "editfontsize" and len(args) == 1 and ms is None and float(args[0]) >= 6:
+        return ("editfontsize", float(args[0]))
     if name == "pause" and args == ["key"]:
         return ("pause", None)
     if name == "pause" and len(args) == 1 and float(args[0]) >= 0:
@@ -582,6 +587,14 @@ class DemoPlayer(QObject):
 
     def _do_rate(self, cps):
         self._rate = cps
+        self._schedule(0)
+
+    def _do_editfontsize(self, size):
+        editor = self._win._current_editor()
+        if editor is None:
+            self._win.log("Demo: no editor for @editfontsize.")
+        else:
+            editor.set_font_size(size)
         self._schedule(0)
 
     def _do_pause(self, seconds):

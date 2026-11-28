@@ -31,7 +31,9 @@ def test_parse_editing_directives():
 
 @pytest.mark.parametrize("bad", ["@bogus", "@rate", "@rate 0", "@view sideways", "@pause soon", "@zoom -1",
                                  "@speed 0", "@goto 0 1", "@goto 1", "@delete 0",
-                                 "@tab 0", "@tab", "@scroll 0", "@goto middle", "@zoom 2 at 1 2", "@zoom 2 to 1 2 3"])
+                                 "@tab 0", "@tab", "@scroll 0", "@goto middle", "@zoom 2 at 1 2", "@zoom 2 to 1 2 3",
+                                 "@editfontsize", "@editfontsize 5", "@editfontsize big", "@editfontsize 12 14",
+                                 "@editfontsize 12 over 1s"])
 def test_parse_rejects(bad):
     with pytest.raises(DemoScriptError, match="Line 2"):
         parse("ok\n" + bad)
@@ -647,3 +649,49 @@ def test_super_fades_in_follows_the_window_and_fades_out():
     assert shown[-1][0] < 1, opacities                                                          # faded out
     assert [out["win"][0], out["win"][1]] in [s[1:] for s in shown], out                        # followed the resize
     assert out["seen"][-1] is None and out["left"] == 0, out                                    # then removed
+
+
+def test_editfontsize_parses():
+    assert parse("@editfontsize 14\n@EditFontSize 8.7 // fit 720p\n@editfontsize 6\n") == [
+        ("editfontsize", 14.0), ("editfontsize", 8.7), ("editfontsize", 6.0)]
+
+
+FONT_DRIVER = '''
+import json, os, tempfile, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from belfryscad.settings import use_scratch_settings
+use_scratch_settings(tempfile.mkdtemp(prefix="belfryscad-test-"), seed=False)
+from belfryscad.window.main_window import MainWindow
+MainWindow._render = lambda *a, **k: None
+def run(ms):
+    loop = QEventLoop(); QTimer.singleShot(ms, loop.quit); loop.exec()
+w = MainWindow(); w.show(); app.processEvents()
+d = tempfile.mkdtemp(); p = os.path.join(d, "t.demo")
+open(p, "w").write("@new\\n@editfontsize 8.7\\n@pause 0.3\\n@editfontsize 20\\n")
+w._play_demo(p)
+sizes = []
+t0 = time.monotonic()
+while w._demo_player is not None and time.monotonic() - t0 < 20:
+    s = w._current_editor().font().pointSizeF()
+    if not sizes or sizes[-1] != s:
+        sizes.append(s)
+    run(20)
+ed = w._current_editor()
+if sizes[-1] != ed.font().pointSizeF():
+    sizes.append(ed.font().pointSizeF())    # the last step ends the demo
+ed.step_font_size(1)          # Cmd+ after a demo size still steps from it
+print("RESULT" + json.dumps({"sizes": sizes, "after_step": ed.font().pointSizeF()}), flush=True)
+from belfryscad.main import hard_exit; hard_exit(0)
+'''
+
+
+def test_editfontsize_sets_the_editor_text_size():
+    r = subprocess.run([sys.executable, "-c", FONT_DRIVER], capture_output=True, text=True, timeout=120)
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
+    assert line, r.stdout + r.stderr
+    out = json.loads(line[6:])
+    assert out["sizes"] == [13.0, 8.7, 20.0], out      # the default, the fraction kept, then a whole size
+    assert out["after_step"] == 21.0, out
