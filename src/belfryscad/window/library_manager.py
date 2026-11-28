@@ -161,9 +161,19 @@ class _InstalledVersions:
         v = s.value(f"{self._PREFIX}{name}/version")
         return str(v) if v is not None else None
 
-    def set(self, name: str, version: str) -> None:
+    def set(self, name: str, version: str, commit: str = "") -> None:
         s = app_settings()
         s.setValue(f"{self._PREFIX}{name}/version", version)
+        if commit:
+            s.setValue(f"{self._PREFIX}{name}/commit", commit)
+        else:
+            s.remove(f"{self._PREFIX}{name}/commit")
+
+    def commit(self, name: str) -> str | None:
+        """The commit the installed version's tag pointed at when it was
+        installed, or None if not recorded (installed before 1.104)."""
+        v = app_settings().value(f"{self._PREFIX}{name}/commit")
+        return str(v) if v else None
 
     def remove(self, name: str) -> None:
         s = app_settings()
@@ -185,17 +195,55 @@ class _InstalledVersions:
 # Background workers
 # ---------------------------------------------------------------------------
 
+_GH_HEADERS = {"Accept": "application/vnd.github.v3+json", "User-Agent": "BelfrySCAD"}
+_CB_HEADERS = {"Accept": "application/json", "User-Agent": "BelfrySCAD"}
+
+
+def _api_get(url, headers):
+    req = Request(url, headers=headers)
+    with urlopen(req, timeout=10, context=_SSL_CTX) as resp:
+        return json.loads(resp.read())
+
+
+def _tag_commit(download_url: str, tag: str) -> str | None:
+    """The full commit SHA `tag` points at now, or None if it can't be asked.
+
+    What tells a re-used tag apart (#1179): an author who deletes a release
+    and makes it again under the same name moves the tag, and the name alone
+    then says nothing has changed."""
+    try:
+        host, owner, repo = _parse_repo(download_url)
+        if host == "github.com":
+            return _api_get(f"https://api.github.com/repos/{owner}/{repo}/commits/{tag}", _GH_HEADERS)["sha"]
+        if host == "codeberg.org":
+            return _api_get(f"https://codeberg.org/api/v1/repos/{owner}/{repo}/tags/{tag}", _CB_HEADERS)["commit"]["sha"]
+    except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _version_to_download(lib: dict, remote_version: str | None) -> str:
+    """The latest version once an update check has found it, else the
+    catalogue's. Install and Upgrade used to fetch the catalogue's version
+    always, so an Upgrade re-installed what was already there (#1179)."""
+    return remote_version or lib.get("version", "")
+
+
+def _update_available(installed: str | None, latest: str | None, retagged: bool) -> bool:
+    return bool(installed and latest and (installed != latest or retagged))
+
 class _DownloadWorker(QObject):
     progress = Signal(str, int)
-    finished = Signal(str)
+    finished = Signal(str, str)  # version, the commit its tag pointed at ("" if unknown)
     errored = Signal(str)
     done = Signal()
 
-    def __init__(self, lib_entry: dict, target_dir: Path, cancel: threading.Event):
+    def __init__(self, lib_entry: dict, target_dir: Path, cancel: threading.Event, version: str = ""):
         super().__init__()
         self._lib = lib_entry
         self._target = target_dir
         self._cancel = cancel
+        self._version = version
 
     @Slot()
     def run(self):
@@ -209,7 +257,7 @@ class _DownloadWorker(QObject):
     def _do_download(self):
         name = self._lib["name"]
         install_as = self._lib.get("install_as", name)
-        version = self._lib.get("version", "")
+        version = self._version
         branch = self._lib.get("default_branch", "main")
 
         zip_url = self._build_zip_url(version, branch)
@@ -261,7 +309,9 @@ class _DownloadWorker(QObject):
             shutil.rmtree(extract_dir, ignore_errors=True)
 
             self.progress.emit(f"Installed {name}", 100)
-            self.finished.emit(version)
+            # ponytail: asked after the download, so a tag moved in between
+            # is recorded one move late and offered again; harmless.
+            self.finished.emit(version, (_tag_commit(self._lib["download_url"], version) or "") if version else "")
 
         except Exception:
             if 'backup' in dir() and backup and backup.exists():
@@ -285,20 +335,22 @@ class _DownloadWorker(QObject):
 
 
 class _UpdateCheckWorker(QObject):
-    checked = Signal(str, str)
+    checked = Signal(str, str, bool)  # name, latest version, re-tagged since install
     status = Signal(str)
     done = Signal()
 
-    def __init__(self, catalog: list[dict], cancel: threading.Event):
+    def __init__(self, catalog: list[dict], cancel: threading.Event,
+                 installed: dict[str, tuple[str, str | None]] | None = None):
         super().__init__()
         self._catalog = catalog
         self._cancel = cancel
+        # name -> (installed version, commit recorded at install)
+        self._installed = installed or {}
 
     @Slot()
     def run(self):
         try:
-            headers_gh = {"Accept": "application/vnd.github.v3+json", "User-Agent": "BelfrySCAD"}
-            headers_cb = {"Accept": "application/json", "User-Agent": "BelfrySCAD"}
+            headers_gh, headers_cb = _GH_HEADERS, _CB_HEADERS
             for lib in self._catalog:
                 if self._cancel.is_set():
                     break
@@ -324,7 +376,7 @@ class _UpdateCheckWorker(QObject):
                     continue
 
                 if version:
-                    self.checked.emit(name, version)
+                    self.checked.emit(name, version, self._retagged(lib, version))
         finally:
             self.done.emit()
 
@@ -352,11 +404,18 @@ class _UpdateCheckWorker(QObject):
             return info["commit"]["id"][:7]
         return None
 
+    def _retagged(self, lib: dict, latest: str) -> bool:
+        """The installed version has the latest's name, but its tag has moved
+        to another commit since. One extra request, only in that case."""
+        inst_ver, inst_commit = self._installed.get(lib["name"], (None, None))
+        if inst_ver != latest or not inst_commit:
+            return False
+        now = _tag_commit(lib["download_url"], latest)
+        return bool(now) and now != inst_commit
+
     @staticmethod
     def _api_get(url, headers):
-        req = Request(url, headers=headers)
-        with urlopen(req, timeout=10, context=_SSL_CTX) as resp:
-            return json.loads(resp.read())
+        return _api_get(url, headers)
 
 
 class _ThumbnailLoader(QObject):
@@ -405,6 +464,7 @@ class LibraryManagerWindow(QDialog):
         self._catalog = _load_catalog()
         self._versions = _InstalledVersions()
         self._remote_versions: dict[str, str] = {}
+        self._retagged: set[str] = set()
         self._download_thread: QThread | None = None
         self._download_worker: _DownloadWorker | None = None
         self._download_cancel = threading.Event()
@@ -549,7 +609,7 @@ class LibraryManagerWindow(QDialog):
             remote_ver = self._remote_versions.get(name)
 
             latest = remote_ver or catalog_ver
-            update_available = is_installed and inst_ver and latest and inst_ver != latest
+            update_available = is_installed and _update_available(inst_ver, latest, name in self._retagged)
 
             suffix = ""
             if update_available:
@@ -637,7 +697,8 @@ class LibraryManagerWindow(QDialog):
             label = "Latest" if remote_ver else "Catalog version"
             ver_parts.append(f"{label}: {latest}")
         if is_installed:
-            ver_parts.append(f"Installed: {inst_ver or '(unknown version)'}")
+            moved = " (re-released since you installed it)" if name in self._retagged else ""
+            ver_parts.append(f"Installed: {inst_ver or '(unknown version)'}{moved}")
         else:
             ver_parts.append("Not installed")
         self._detail_version.setText("\n".join(ver_parts))
@@ -647,8 +708,8 @@ class LibraryManagerWindow(QDialog):
         self._btn_browse.show()
         if is_installed:
             self._btn_install.hide()
-            update_available = inst_ver and latest and inst_ver != latest
-            self._btn_upgrade.setVisible(bool(update_available))
+            update_available = _update_available(inst_ver, latest, name in self._retagged)
+            self._btn_upgrade.setVisible(update_available)
             self._btn_upgrade.setEnabled(not busy)
             self._btn_uninstall.show()
             self._btn_uninstall.setEnabled(not busy)
@@ -713,7 +774,8 @@ class LibraryManagerWindow(QDialog):
         self._download_lib_name = lib["name"]
         target = _library_dir()
 
-        worker = _DownloadWorker(lib, target, self._download_cancel)
+        worker = _DownloadWorker(lib, target, self._download_cancel,
+                                 _version_to_download(lib, self._remote_versions.get(lib["name"])))
         thread = QThread()
         worker.moveToThread(thread)
 
@@ -735,10 +797,11 @@ class LibraryManagerWindow(QDialog):
         self._status_label.setText(msg)
         self._progress_bar.setValue(pct)
 
-    @Slot(str)
-    def _on_download_finished(self, version: str):
+    @Slot(str, str)
+    def _on_download_finished(self, version: str, commit: str):
         name = self._download_lib_name
-        self._versions.set(name, version)
+        self._versions.set(name, version, commit)
+        self._retagged.discard(name)
         self._status_label.setText(f"Installed {name} {version}")
 
     @Slot(str)
@@ -780,7 +843,9 @@ class LibraryManagerWindow(QDialog):
         self._btn_check_updates.setEnabled(False)
         self._status_label.setText("Checking for updates…")
 
-        worker = _UpdateCheckWorker(self._catalog, self._update_cancel)
+        installed = {lib["name"]: (v, self._versions.commit(lib["name"]))
+                     for lib in self._catalog if (v := self._versions.get(lib["name"]))}
+        worker = _UpdateCheckWorker(self._catalog, self._update_cancel, installed)
         thread = QThread()
         worker.moveToThread(thread)
 
@@ -793,9 +858,13 @@ class LibraryManagerWindow(QDialog):
         self._update_worker = worker
         thread.start()
 
-    @Slot(str, str)
-    def _on_update_checked(self, name: str, version: str):
+    @Slot(str, str, bool)
+    def _on_update_checked(self, name: str, version: str, retagged: bool):
         self._remote_versions[name] = version
+        if retagged:
+            self._retagged.add(name)
+        else:
+            self._retagged.discard(name)
 
     @Slot(str)
     def _on_update_status(self, msg: str):
