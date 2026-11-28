@@ -31,7 +31,7 @@ Return. A directive may end in a `//` comment.
                              crosshairs (Cmd+1, 2, 3); @hide turns it off
     @mainwin size 1280 800   resize the main window
     @mainwin position 100 100  move it
-    @editfontsize 16        set the editor's text to 16 points (6 or more),
+    @editfontsize 16         set the editor's text to 16 points (6 or more),
                              as Cmd/Ctrl +/- would but to any size; not saved
     @set width 30            set a Customizer parameter, as its control would
     @pause 3                 wait 3 seconds
